@@ -13,7 +13,7 @@ public discussion.
 
 Use GitHub's private vulnerability reporting for this repository when it is
 available. If that option is unavailable, contact the repository owner through
-the contact method on the [iodriller GitHub profile](https://github.com/iodriller)
+the contact method on the [oney-erge GitHub profile](https://github.com/oney-erge)
 and request a private reporting channel.
 
 Include:

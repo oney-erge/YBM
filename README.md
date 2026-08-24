@@ -57,18 +57,18 @@ The installer gets everything YBM needs, starts it, and opens the setup page. Th
 
 **Option 1 - guided installer**
 
-1. **[Download YBM-Setup.msi](https://github.com/iodriller/YBM/releases/latest/download/YBM-Setup.msi).**
+1. **[Download YBM-Setup.msi](https://github.com/oney-erge/YBM/releases/latest/download/YBM-Setup.msi).**
 2. Open it, install, and leave **Launch YBM now** selected.
 3. In the browser, choose a model and start chatting.
 
 **Option 2 - no MSI**
 
-1. **[Download Install-YBM.bat](https://github.com/iodriller/YBM/releases/latest/download/Install-YBM.bat).**
+1. **[Download Install-YBM.bat](https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.bat).**
 2. Double-click it and leave the progress window open for 2-5 minutes.
 3. In the browser, choose a model and start chatting.
 
 The second option is a plain-text wrapper around
-[`Install-YBM.ps1`](https://github.com/iodriller/YBM/releases/latest/download/Install-YBM.ps1),
+[`Install-YBM.ps1`](https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.ps1),
 does not require administrator access or script signing, verifies the downloaded release, and shows
 which step failed if setup cannot finish. Open **YBM** from the Start Menu after an MSI install, or
 double-click `YBM.bat` in `%USERPROFILE%\ybm` after a script install.
@@ -79,7 +79,7 @@ double-click `YBM.bat` in `%USERPROFILE%\ybm` after a script install.
 2. Paste this command:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/iodriller/YBM/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.sh | bash
 ```
 
 3. When YBM opens in your browser, choose a model and start chatting.
@@ -91,7 +91,7 @@ everything else. Docker, source-checkout, headless, and verification instruction
 ### Docker (headless)
 
 The release image is
-[`ghcr.io/iodriller/ybm:latest`](https://github.com/iodriller/YBM/pkgs/container/ybm). It includes
+[`ghcr.io/oney-erge/ybm:latest`](https://github.com/oney-erge/YBM/pkgs/container/ybm). It includes
 the web console and is intended for Telegram, WhatsApp, API, and server workflows. See
 [Local setup](docs/LOCAL_SETUP.md#docker-for-a-headless-server) for the required admin token,
 volumes, and loopback-only port mapping.

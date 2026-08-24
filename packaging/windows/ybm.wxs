@@ -40,7 +40,7 @@
 
   <Package
       Name="YBM"
-      Manufacturer="iodriller"
+      Manufacturer="oney-erge"
       Version="$(Version)"
       Scope="perUser"
       Compressed="yes"
@@ -58,8 +58,8 @@
 
     <!-- Shown in Add or remove programs, so someone auditing what is installed
          can find out what this is and where it came from. -->
-    <Property Id="ARPHELPLINK" Value="https://github.com/iodriller/YBM/issues" />
-    <Property Id="ARPURLINFOABOUT" Value="https://github.com/iodriller/YBM" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/oney-erge/YBM/issues" />
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/oney-erge/YBM" />
     <Property Id="ARPNOREPAIR" Value="1" />
     <Icon Id="YbmIcon" SourceFile="$(IconFile)" />
     <Property Id="ARPPRODUCTICON" Value="YbmIcon" />
@@ -124,7 +124,7 @@
         <RemoveFolder Id="RemoveShortcutFolder" Directory="ShortcutFolder" On="uninstall" />
         <!-- A per-user component needs a per-user keypath, and HKCU is the only
              hive this install is allowed to write. -->
-        <RegistryValue Root="HKCU" Key="Software\iodriller\YBM" Name="installed" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\oney-erge\YBM" Name="installed" Type="integer" Value="1" KeyPath="yes" />
       </Component>
 
       <Component Id="StartupShortcut" Directory="StartupFolder" Guid="C51E7A38-6B04-4D2F-9A17-2E8D3F60B4C9"
@@ -135,7 +135,7 @@
                   Target="[INSTALLFOLDER]YBM.bat"
                   WorkingDirectory="INSTALLFOLDER"
                   Icon="YbmIcon" />
-        <RegistryValue Root="HKCU" Key="Software\iodriller\YBM" Name="startAtLogin" Type="integer" Value="1" KeyPath="yes" />
+        <RegistryValue Root="HKCU" Key="Software\oney-erge\YBM" Name="startAtLogin" Type="integer" Value="1" KeyPath="yes" />
       </Component>
     </ComponentGroup>
   </Fragment>

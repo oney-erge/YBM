@@ -10,7 +10,7 @@ The first start downloads the runtime and usually takes 2-5 minutes. Later start
 
 ## Windows option 1: MSI
 
-1. **[Download YBM for Windows](https://github.com/iodriller/YBM/releases/latest/download/YBM-Setup.msi).**
+1. **[Download YBM for Windows](https://github.com/oney-erge/YBM/releases/latest/download/YBM-Setup.msi).**
 2. Open the file, install, and leave **Launch YBM now** selected.
 3. In the browser page that opens, choose a model and start chatting.
 
@@ -24,12 +24,12 @@ uninstalled on a clean Windows CI runner before a release can publish. The relea
 checksums and signed build provenance. To verify a downloaded installer with GitHub CLI:
 
 ```powershell
-gh attestation verify .\YBM-Setup.msi --repo iodriller/YBM
+gh attestation verify .\YBM-Setup.msi --repo oney-erge/YBM
 ```
 
 ## Windows option 2: double-click script
 
-1. **[Download Install-YBM.bat](https://github.com/iodriller/YBM/releases/latest/download/Install-YBM.bat).**
+1. **[Download Install-YBM.bat](https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.bat).**
 2. Double-click it and leave the progress window open for 2-5 minutes.
 3. Configure a model in the browser page that opens.
 
@@ -42,7 +42,7 @@ files while preserving settings and task data.
 For a terminal instead of a double-click:
 
 ```powershell
-irm https://raw.githubusercontent.com/iodriller/YBM/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.ps1 | iex
 ```
 
 Use `irm <url> | more` instead to inspect the script. From a checkout, the same bootstrap supports
@@ -55,7 +55,7 @@ variables are `YBM_DRY_RUN`, `YBM_NO_PROMPT`, and `YBM_INSTALL_DIR`.
 2. Paste this command:
 
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/iodriller/YBM/main/scripts/install.sh | bash
+   curl -fsSL https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.sh | bash
    ```
 
 3. In the browser page that opens, choose a model and start chatting.
@@ -68,7 +68,7 @@ From a checkout, `install.sh` also accepts `--dry-run`, `--verify`, `--no-prompt
 
 ## Docker for a headless server
 
-Docker runs the published `ghcr.io/iodriller/ybm:latest` headless image. It bundles the admin
+Docker runs the published `ghcr.io/oney-erge/ybm:latest` headless image. It bundles the admin
 console and WhatsApp dependencies, but it cannot attach to the host desktop, Chrome display, or
 VS Code session.
 
@@ -170,7 +170,7 @@ To save a Telegram token during setup:
 .\scripts\ybm.ps1 setup --telegram-token <token>
 ```
 
-To point YBM at a local [LocalDeploy](https://github.com/iodriller/LocalDeploy) checkout, add this to
+To point YBM at a local [LocalDeploy](https://github.com/oney-erge/LocalDeploy) checkout, add this to
 `.env` before starting:
 
 ```text

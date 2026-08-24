@@ -17,7 +17,7 @@ if errorlevel 1 (
 )
 
 set "INSTALLER_FILE=%TEMP%\Install-YBM-%RANDOM%-%RANDOM%.ps1"
-set "INSTALLER_URL=https://github.com/iodriller/YBM/releases/latest/download/Install-YBM.ps1"
+set "INSTALLER_URL=https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.ps1"
 if defined YBM_INSTALLER_PS1_PATH (
   copy /y "%YBM_INSTALLER_PS1_PATH%" "%INSTALLER_FILE%" >nul
 ) else (

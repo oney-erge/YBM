@@ -9,7 +9,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- The publish-only release job now targets `iodriller/YBM` explicitly after
+- The publish-only release job now targets `oney-erge/YBM` explicitly after
   downloading artifacts, so it does not require a local Git checkout to create
   the release page.
 - Artifact upload/download actions use their current Node.js 24-based releases,
@@ -36,7 +36,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   `Install-YBM.ps1` for direct inspection or terminal use. Downloaded archives
   are checked against the release's SHA256 list before extraction.
 - Tagged releases publish the tested headless image as
-  `ghcr.io/iodriller/ybm:<version>` and `ghcr.io/iodriller/ybm:latest`.
+  `ghcr.io/oney-erge/ybm:<version>` and `ghcr.io/oney-erge/ybm:latest`.
 
 ### Removed
 

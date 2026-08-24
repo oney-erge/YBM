@@ -262,7 +262,7 @@ jobs:
       - name: Build and publish GHCR image
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE: ghcr.io/iodriller/ybm
+          IMAGE: ghcr.io/oney-erge/ybm
           VERSION: ${{ github.ref_name }}
         run: |
           set -euo pipefail
@@ -318,7 +318,7 @@ jobs:
           ```
           # Proves it was built by this repo's release workflow, not just that
           # it matches a hash published on the same page as the download.
-          gh attestation verify .\YBM-Setup.msi --repo iodriller/YBM
+          gh attestation verify .\YBM-Setup.msi --repo oney-erge/YBM
 
           # Or, without gh:
           Get-FileHash .\YBM-Setup.msi -Algorithm SHA256
@@ -345,7 +345,7 @@ jobs:
           ## Verify any download
 
           ```
-          gh attestation verify <file> --repo iodriller/YBM
+          gh attestation verify <file> --repo oney-erge/YBM
           ```
 
           Full checksums are in `SHA256SUMS.txt`.
@@ -353,10 +353,10 @@ jobs:
           ## Docker
 
           ```
-          docker pull ghcr.io/iodriller/ybm:__VERSION__
+          docker pull ghcr.io/oney-erge/ybm:__VERSION__
           ```
 
-          The image is also published as `ghcr.io/iodriller/ybm:latest`. It is the headless
+          The image is also published as `ghcr.io/oney-erge/ybm:latest`. It is the headless
           profile: desktop control, visible Chrome, and the VS Code bridge require a host install.
           '@
           $notes = $notes.Replace("__SHA__", $installerSha).Replace("__VERSION__", $version)
@@ -371,4 +371,4 @@ jobs:
             --title "YBM $version" `
             --notes-file release-notes.md `
             --verify-tag `
-            --repo iodriller/YBM
+            --repo oney-erge/YBM

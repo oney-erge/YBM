@@ -31,7 +31,7 @@ $version = "0.1.2"
 ```
 
 That downloads the published `YBM-Setup.msi`, hashes it, and writes the
-completed manifests to `dist\winget\manifests\i\iodriller\YBM\<version>\`.
+completed manifests to `dist\winget\manifests\o\oney-erge\YBM\<version>\`.
 Hashing the actual published asset is deliberate: a manifest whose SHA does not
 match what users download fails validation, and copying the number by hand from
 a build log is exactly how that happens.
@@ -42,8 +42,8 @@ Validate locally first, against the real machine:
 
 ```powershell
 $version = "0.1.2"
-winget validate --manifest "dist\winget\manifests\i\iodriller\YBM\$version"
-winget install --manifest "dist\winget\manifests\i\iodriller\YBM\$version"
+winget validate --manifest "dist\winget\manifests\o\oney-erge\YBM\$version"
+winget install --manifest "dist\winget\manifests\o\oney-erge\YBM\$version"
 ```
 
 Then open a pull request against [microsoft/winget-pkgs][winget-pkgs] with the
@@ -52,12 +52,12 @@ needs no code-signing certificate.
 
 For the first submission, use the rendered manifests and pull-request flow above.
 Alternatively, run `wingetcreate new` and answer its interactive prompts; its final
-prompt can submit the new package. After `iodriller.YBM` has been accepted,
+prompt can submit the new package. After `oney-erge.YBM` has been accepted,
 [wingetcreate][wingetcreate] is the easier route for subsequent version bumps:
 
 ```powershell
-wingetcreate update iodriller.YBM --version 0.1.2 `
-  --urls https://github.com/iodriller/YBM/releases/download/v0.1.2/YBM-Setup.msi `
+wingetcreate update oney-erge.YBM --version 0.1.2 `
+  --urls https://github.com/oney-erge/YBM/releases/download/v0.1.2/YBM-Setup.msi `
   --submit
 ```
 

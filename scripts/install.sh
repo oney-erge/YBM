@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # One-command bootstrap for YBM on Linux/macOS:
-#   curl -fsSL https://raw.githubusercontent.com/iodriller/YBM/main/scripts/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.sh | bash
 #
 # Git, Python, Node.js, and uv do not need to be preinstalled. This script
 # requires Bash, curl, and tar. It downloads the latest release archive, which
@@ -13,8 +13,8 @@
 set -euo pipefail
 
 # The pinned uv version lives in ./ybm.sh now, which is what installs it.
-RELEASE_URL="https://github.com/iodriller/YBM/releases/latest/download/YBM-unix.tar.gz"
-CHECKSUMS_URL="https://github.com/iodriller/YBM/releases/latest/download/SHA256SUMS.txt"
+RELEASE_URL="https://github.com/oney-erge/YBM/releases/latest/download/YBM-unix.tar.gz"
+CHECKSUMS_URL="https://github.com/oney-erge/YBM/releases/latest/download/SHA256SUMS.txt"
 INSTALL_DIR="${YBM_INSTALL_DIR:-$HOME/ybm}"
 
 DRY_RUN="${YBM_DRY_RUN:-0}"
@@ -63,7 +63,7 @@ else
   if [ "$status" = "404" ]; then
     rm -rf "$tmp"
     fail "the latest release archive is not available (HTTP 404)" \
-         "Open https://github.com/iodriller/YBM/releases/latest and check that YBM-unix.tar.gz exists."
+         "Open https://github.com/oney-erge/YBM/releases/latest and check that YBM-unix.tar.gz exists."
   fi
   [ "$status" = "200" ] || { rm -rf "$tmp"; fail "download failed (HTTP $status)" "Check your internet connection and re-run."; }
   log "Verifying the downloaded release"
