@@ -13,7 +13,7 @@ import json
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-LATEST_RELEASE_API = "https://api.github.com/repos/iodriller/YBM/releases/latest"
+LATEST_RELEASE_API = "https://api.github.com/repos/oney-erge/YBM/releases/latest"
 
 
 @dataclass

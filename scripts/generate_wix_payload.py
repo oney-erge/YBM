@@ -17,7 +17,7 @@ import uuid
 
 
 WIX_NS = "http://wixtoolset.org/schemas/v4/wxs"
-REGISTRY_KEY = r"Software\iodriller\YBM\Components"
+REGISTRY_KEY = r"Software\oney-erge\YBM\Components"
 COMPONENT_NAMESPACE = uuid.UUID("0fcd92d0-04e7-49fb-a73c-44b8de24c318")
 
 

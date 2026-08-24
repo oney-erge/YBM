@@ -2,7 +2,7 @@
 name = "agent-control-backend"
 version = "0.1.2"
 description = "Configurable local agentic control system backend"
-authors = [{ name = "iodriller" }]
+authors = [{ name = "oney-erge" }]
 license = { text = "MIT" }
 requires-python = ">=3.12"
 keywords = ["agent", "automation", "fastapi", "local-first", "telegram"]
@@ -43,9 +43,9 @@ ybm = "agent_control.cli:main"
 ybm-mcp = "agent_control.mcp_server:main"
 
 [project.urls]
-Homepage = "https://github.com/iodriller/YBM"
-Issues = "https://github.com/iodriller/YBM/issues"
-Repository = "https://github.com/iodriller/YBM.git"
+Homepage = "https://github.com/oney-erge/YBM"
+Issues = "https://github.com/oney-erge/YBM/issues"
+Repository = "https://github.com/oney-erge/YBM.git"
 
 [project.optional-dependencies]
 # Desktop observation/control (computer.use, desktop.screenshot capabilities).

@@ -6,7 +6,7 @@
 #
 #   .\scripts\render_winget_manifests.ps1 -Version 0.1.0
 #
-# Writes dist\winget\manifests\i\iodriller\YBM\<version>\, which is the layout
+# Writes dist\winget\manifests\o\oney-erge\YBM\<version>\, which is the layout
 # microsoft/winget-pkgs expects. See packaging/winget/README.md.
 
 [CmdletBinding()]
@@ -26,7 +26,7 @@ $RepoRoot = (Resolve-Path "$PSScriptRoot\..").Path
 $TemplateDir = Join-Path $RepoRoot "packaging\winget"
 if (-not [IO.Path]::IsPathRooted($OutputRoot)) { $OutputRoot = Join-Path $RepoRoot $OutputRoot }
 
-$InstallerUrl = "https://github.com/iodriller/YBM/releases/download/v$Version/YBM-Setup.msi"
+$InstallerUrl = "https://github.com/oney-erge/YBM/releases/download/v$Version/YBM-Setup.msi"
 
 if ($InstallerPath) {
     if (-not (Test-Path -LiteralPath $InstallerPath)) { throw "no installer at $InstallerPath" }
@@ -47,11 +47,11 @@ $sha = (Get-FileHash -LiteralPath $localInstaller -Algorithm SHA256).Hash.ToUppe
 # winget wants a plain calendar date for the release, not a timestamp.
 $releaseDate = (Get-Date).ToString("yyyy-MM-dd")
 
-$targetDir = Join-Path $OutputRoot "manifests\i\iodriller\YBM\$Version"
+$targetDir = Join-Path $OutputRoot "manifests\o\oney-erge\YBM\$Version"
 if (Test-Path -LiteralPath $targetDir) { Remove-Item -LiteralPath $targetDir -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $targetDir | Out-Null
 
-foreach ($template in Get-ChildItem -LiteralPath $TemplateDir -Filter "iodriller.YBM*.yaml") {
+foreach ($template in Get-ChildItem -LiteralPath $TemplateDir -Filter "oney-erge.YBM*.yaml") {
     $text = Get-Content -LiteralPath $template.FullName -Raw
     $text = $text.Replace("__VERSION__", $Version).
                   Replace("__SHA256__", $sha).

@@ -1,5 +1,5 @@
 # yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.1.12.0.schema.json
-PackageIdentifier: iodriller.YBM
+PackageIdentifier: oney-erge.YBM
 PackageVersion: __VERSION__
 
 # Per-user by design: packaging/windows/ybm.wxs sets Scope="perUser" and
@@ -20,7 +20,7 @@ ReleaseDate: __RELEASE_DATE__
 
 Installers:
   - Architecture: x64
-    InstallerUrl: https://github.com/iodriller/YBM/releases/download/v__VERSION__/YBM-Setup.msi
+    InstallerUrl: https://github.com/oney-erge/YBM/releases/download/v__VERSION__/YBM-Setup.msi
     InstallerSha256: __SHA256__
 
 ManifestType: installer

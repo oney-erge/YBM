@@ -1,5 +1,5 @@
 # One-command bootstrap for YBM on Windows:
-#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/iodriller/YBM/main/scripts/install.ps1 | iex"
+#   powershell -ExecutionPolicy Bypass -c "irm https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.ps1 | iex"
 #
 # With no terminal, download Install-YBM.bat from the latest release and
 # double-click it. That wrapper downloads this script, verifies the release,
@@ -34,8 +34,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$ReleaseZipUrl = "https://github.com/iodriller/YBM/releases/latest/download/YBM-windows.zip"
-$ChecksumsUrl = "https://github.com/iodriller/YBM/releases/latest/download/SHA256SUMS.txt"
+$ReleaseZipUrl = "https://github.com/oney-erge/YBM/releases/latest/download/YBM-windows.zip"
+$ChecksumsUrl = "https://github.com/oney-erge/YBM/releases/latest/download/SHA256SUMS.txt"
 
 if (-not $InstallDir) {
     $InstallDir = if ($env:YBM_INSTALL_DIR) { $env:YBM_INSTALL_DIR } else { Join-Path $HOME "ybm" }
@@ -82,7 +82,7 @@ if ($inRepo) {
         } | Select-Object -First 1
         if (-not $checksumLine) {
             Fail "the release checksum file has no Windows archive entry" `
-                 "Open https://github.com/iodriller/YBM/releases/latest and report the broken release."
+                 "Open https://github.com/oney-erge/YBM/releases/latest and report the broken release."
         }
         $expectedHash = ($checksumLine -split '\s+')[0].ToUpperInvariant()
         $actualHash = (Get-FileHash -LiteralPath $tempZip -Algorithm SHA256).Hash
@@ -107,7 +107,7 @@ if ($inRepo) {
         $status = if ($_.Exception.Response) { $_.Exception.Response.StatusCode.value__ } else { $null }
         if ($status -eq 404) {
             Fail "the latest release archive is not available (HTTP 404)" `
-                 "Open https://github.com/iodriller/YBM/releases/latest and check that YBM-windows.zip exists."
+                 "Open https://github.com/oney-erge/YBM/releases/latest and check that YBM-windows.zip exists."
         }
         Fail "could not download the latest YBM release ($($_.Exception.Message))" `
              "Check your internet connection and re-run."
