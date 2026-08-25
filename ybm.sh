@@ -5,6 +5,7 @@
 #
 #   ./ybm.sh              start (installing anything missing first)
 #   ./ybm.sh --no-desktop skip the desktop-control extras
+#   ./ybm.sh --no-browser do not open the console automatically
 #
 # Why this exists: Windows had `ybm.ps1 run` as a single idempotent entry
 # point, and macOS/Linux had nothing equivalent. The documented path was
@@ -18,11 +19,13 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
 NO_DESKTOP=0
+NO_BROWSER=0
 for arg in "$@"; do
   case "$arg" in
     --no-desktop) NO_DESKTOP=1 ;;
+    --no-browser) NO_BROWSER=1 ;;
     -h|--help)
-      echo "usage: ./ybm.sh [--no-desktop]"
+      echo "usage: ./ybm.sh [--no-desktop] [--no-browser]"
       exit 0 ;;
     *) echo "unknown option: $arg" >&2; exit 2 ;;
   esac
@@ -130,5 +133,7 @@ log "[2/3] Setting up config and tokens"
 "$YBM_BIN" setup
 
 log "[3/3] Starting YBM and opening the console"
-"$YBM_BIN" start --open \
+START_ARGS=(start)
+[ "$NO_BROWSER" = "0" ] && START_ARGS+=(--open)
+"$YBM_BIN" "${START_ARGS[@]}" \
   || fail "startup failed" "Run '$YBM_BIN doctor' to diagnose. Logs: $HERE/.agent_control/logs"

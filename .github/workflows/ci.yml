@@ -17,6 +17,22 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  launchers:
+    name: Launcher contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Check POSIX and PowerShell syntax
+        shell: pwsh
+        run: |
+          bash -n run.sh run.command ybm.sh
+          shellcheck --severity=error run.sh run.command ybm.sh
+          $errors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path run.ps1), [ref]$null, [ref]$errors)
+          if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }
+
   backend-tests:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

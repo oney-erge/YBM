@@ -235,6 +235,8 @@ function Get-YbmLockFingerprint {
 }
 
 function Invoke-YbmRun {
+  param([string[]]$Argv = @())
+  $openBrowser = -not ($Argv -contains "-NoBrowser" -or $Argv -contains "--no-browser")
   # The one command a non-developer should ever need (docs/UI_UX_AUDIT.md
   # Phase 10, second review): install whatever's missing, do nothing when
   # there's nothing to do, and start the console in a few seconds - not
@@ -255,7 +257,9 @@ function Invoke-YbmRun {
     Write-Host "First run - setting things up." -ForegroundColor Yellow
     Write-Host "This downloads Python and YBM's dependencies, and usually takes 2-5 minutes."
     Write-Host "You only wait once; after this YBM starts in a few seconds."
-    Write-Host "Leave this window open - it opens your browser when it is ready."
+    if ($openBrowser) {
+      Write-Host "Leave this window open - it opens your browser when it is ready."
+    }
     Write-Host ""
   }
 
@@ -315,8 +319,10 @@ function Invoke-YbmRun {
   # reasoning as `ybm check-updates` itself (docs/UI_UX_AUDIT.md Phase 6).
 
   Write-Host ""
-  Write-Host "[4/4] Starting YBM and opening the console..." -ForegroundColor Cyan
-  Invoke-YbmStart -Argv @("-Open")
+  Write-Host "[4/4] Starting YBM$(if ($openBrowser) { ' and opening the console' })..." -ForegroundColor Cyan
+  $startArgv = @()
+  if ($openBrowser) { $startArgv += "-Open" }
+  Invoke-YbmStart -Argv $startArgv
 }
 
 function Invoke-YbmDoctor {
@@ -715,7 +721,7 @@ function Invoke-YbmConfig {
 switch ($Command) {
   "help" { Show-YbmHelp }
   "setup" { Invoke-YbmSetup -Argv (@($Sub) + $Rest | Where-Object { $_ }); exit $LASTEXITCODE }
-  "run" { Invoke-YbmRun }
+  "run" { Invoke-YbmRun -Argv (@($Sub) + $Rest | Where-Object { $_ }) }
   "doctor" { Invoke-YbmDoctor; exit $LASTEXITCODE }
   "start" { Invoke-YbmStart -Argv (@($Sub) + $Rest | Where-Object { $_ }) }
   "stop" { Invoke-YbmStop }
