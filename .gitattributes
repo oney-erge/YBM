@@ -17,6 +17,7 @@
 # Must be LF wherever they are checked out, because they run on Linux even when
 # they were written on Windows.
 *.sh          text eol=lf
+*.command     text eol=lf
 Dockerfile    text eol=lf
 *.yml         text eol=lf
 *.yaml        text eol=lf
