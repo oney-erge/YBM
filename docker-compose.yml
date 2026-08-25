@@ -17,6 +17,8 @@
 services:
   ybm:
     image: ghcr.io/oney-erge/ybm:latest
+    build:
+      context: .
     restart: unless-stopped
     # Published to loopback only. The admin API refuses to serve on a
     # non-loopback host without a token, but binding the port itself to
