@@ -53,7 +53,26 @@ particular:
 The installer gets everything YBM needs, starts it, and opens the setup page. The first start takes
 2-5 minutes while Python and the runtime are downloaded. Later starts take seconds.
 
-### Windows: choose either installer
+### From a source checkout
+
+The root launchers provide the same lifecycle on every platform. They install
+or repair the local runtime, start YBM, wait for readiness, and then open the
+admin console.
+
+```powershell
+.\run.bat          # Windows
+```
+
+```bash
+./run.command      # macOS
+./run.sh           # Linux
+```
+
+Use `.\run.ps1` from PowerShell. Every launcher accepts `doctor`, `repair`,
+`docker`, `logs`, and `stop`, and supports a no-browser mode. Re-running the
+default command reuses a healthy environment.
+
+### Windows release: choose either installer
 
 **Option 1 - guided installer**
 

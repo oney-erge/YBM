@@ -19,13 +19,13 @@ configuration examples aligned with the code that exists.
 
 ## Supported Commands
 
-The end-user entry point is a single file at the repo root, one per platform:
-`YBM.bat` on Windows (double-click, no terminal) and `./ybm.sh` on macOS/Linux.
-Both install or update whatever is missing - including `uv` itself - then start
-the stack and open the console, and both are idempotent: run again with nothing
-changed and they just start.
+The stable source-checkout entry points are `run.bat` and `run.ps1` on Windows,
+`run.command` on macOS, and `run.sh` on Linux. They provide the shared `run`,
+`doctor`, `repair`, `docker`, `logs`, and `stop` actions. The default action
+installs or updates what is missing, starts the stack, waits for readiness, and
+opens the console. It is idempotent.
 
-`YBM.bat` wraps `scripts\ybm.ps1 run`; `ybm.sh` is self-contained because the
+The release-specific `YBM.bat` wraps `scripts\ybm.ps1 run`; `ybm.sh` is self-contained because the
 installed Python CLI lives inside the virtualenv it has to create and so cannot
 bootstrap it. Keep the runtime extras in `ybm.sh` in step with
 `Get-YbmRuntimeExtraArgs` in `scripts/ybm.ps1`. `scripts/install.sh` and
