@@ -28,6 +28,9 @@ param(
 
 $ErrorActionPreference = "Stop"
 . "$PSScriptRoot\lib\common.ps1"
+. "$Script:YbmRoot\scripts\install-utils.ps1"
+Initialize-Install -RepositoryRoot $Script:YbmRoot -ProductName "YBM"
+trap { Write-InstallFailure $_; Exit-InstallLock; exit 1 }
 Import-DotEnv
 
 function Show-YbmHelp {
@@ -151,8 +154,28 @@ function Get-YbmRuntimeExtraArgs {
   return $extraArgs
 }
 
+function Invoke-YbmUvSync {
+  param([string]$Uv, [string[]]$Arguments)
+  Invoke-InstallRetry "dependency synchronization" {
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+      $output = & $Uv sync @Arguments 2>&1
+      $code = $LASTEXITCODE
+    } finally {
+      $ErrorActionPreference = $previousPreference
+    }
+    $output | Out-Host
+    if ($code -ne 0) {
+      throw "uv sync failed with exit $($code): $($output -join [Environment]::NewLine)"
+    }
+  }
+}
+
 function Invoke-YbmSetup {
   param([string[]]$Argv)
+  Enter-InstallLock
+  Assert-InstallFreeSpace -Path $Script:YbmRoot -RequiredGB 3
 
   $runtimeOnly = ($Argv -contains "-RuntimeOnly") -or ($Argv -contains "--runtime-only")
 
@@ -185,10 +208,7 @@ function Invoke-YbmSetup {
         # `uv run --frozen ruff check .` step AGENTS.md/CONTRIBUTING.md document.
         $extraArgs = @("--extra", "test", "--extra", "e2e", "--extra", "dev") + (Get-YbmRuntimeExtraArgs -Argv $Argv)
       }
-      & $uv sync @extraArgs
-      if ($LASTEXITCODE -ne 0) {
-        throw "uv sync failed (exit $LASTEXITCODE)"
-      }
+      Invoke-YbmUvSync -Uv $uv -Arguments $extraArgs
     } finally {
       Pop-Location
     }
@@ -271,7 +291,7 @@ function Invoke-YbmRun {
   if ($LASTEXITCODE -ne 0) {
     Write-Host ""
     Write-Host "Setup failed (exit $LASTEXITCODE) - see the message above." -ForegroundColor Red
-    exit $LASTEXITCODE
+    throw "Setup failed with exit $LASTEXITCODE"
   }
 
   # Resolve-YbmUv, not Get-Command: setup may have just installed uv, whose
@@ -294,12 +314,7 @@ function Invoke-YbmRun {
         # into a fatal NativeCommandError even on success - confirmed live,
         # not a hypothetical (this exact line halted `ybm run` the first
         # time). Letting it print normally avoids the whole gotcha.
-        & $uvCmd sync @(Get-YbmRuntimeExtraArgs -Argv @())
-        if ($LASTEXITCODE -ne 0) {
-          Write-Host ""
-          Write-Host "Dependency sync failed (exit $LASTEXITCODE) - see the message above." -ForegroundColor Red
-          exit $LASTEXITCODE
-        }
+        Invoke-YbmUvSync -Uv $uvCmd -Arguments (Get-YbmRuntimeExtraArgs -Argv @())
       } finally {
         Pop-Location
       }
@@ -309,6 +324,7 @@ function Invoke-YbmRun {
     }
   }
 
+  Complete-Install
   Write-Host ""
   Write-Host "[3/4] Checking for updates..." -ForegroundColor Cyan
   $env:PYTHONPATH = "$Script:YbmRoot\backend\src"
@@ -720,7 +736,7 @@ function Invoke-YbmConfig {
 
 switch ($Command) {
   "help" { Show-YbmHelp }
-  "setup" { Invoke-YbmSetup -Argv (@($Sub) + $Rest | Where-Object { $_ }); exit $LASTEXITCODE }
+  "setup" { Invoke-YbmSetup -Argv (@($Sub) + $Rest | Where-Object { $_ }); Complete-Install; exit $LASTEXITCODE }
   "run" { Invoke-YbmRun -Argv (@($Sub) + $Rest | Where-Object { $_ }) }
   "doctor" { Invoke-YbmDoctor; exit $LASTEXITCODE }
   "start" { Invoke-YbmStart -Argv (@($Sub) + $Rest | Where-Object { $_ }) }

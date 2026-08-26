@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")"
+source ./scripts/install-utils.sh
+install_init "$PWD" "YBM"
+install_enable_traps
 action=run
 case "${1:-}" in run|doctor|repair|docker|stop|logs) action=$1; shift ;; esac
 no_browser=0
@@ -26,9 +29,12 @@ case "$action" in
   docker)
     command -v docker >/dev/null 2>&1 || { echo "Docker is not installed." >&2; exit 1; }
     docker info >/dev/null 2>&1 || { echo "Docker is installed but its engine is not running." >&2; exit 1; }
+    install_lock
+    install_require_space "$PWD" 3
     ensure_env
     docker compose up --detach --build
     wait_ready || { docker compose logs ybm; echo "YBM did not become ready at $url." >&2; exit 1; }
+    install_complete
     echo "YBM is ready at $url/admin"; open_url; exit 0 ;;
   stop) docker_running && exec docker compose down; [ -x backend/.venv/bin/ybm ] && exec backend/.venv/bin/ybm stop; echo "YBM is not installed or running."; exit 0 ;;
   logs) docker_running && exec docker compose logs --follow; [ -x backend/.venv/bin/ybm ] || { echo "YBM is not installed." >&2; exit 1; }; exec backend/.venv/bin/ybm logs backend --follow ;;

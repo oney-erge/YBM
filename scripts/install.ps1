@@ -48,6 +48,25 @@ function Write-Info($msg) { Write-Host "    $msg" -ForegroundColor DarkGray }
 function Write-Good($msg) { Write-Host "    $msg" -ForegroundColor Green }
 function Write-Plan($msg) { Write-Host "[dry-run] $msg" -ForegroundColor Yellow }
 
+function Save-ReleaseDownload([string]$Url, [string]$Destination, [string]$Label) {
+    $lastError = $null
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            Invoke-WebRequest -Uri $Url -OutFile $Destination -UseBasicParsing
+            if (-not (Test-Path -LiteralPath $Destination) -or (Get-Item -LiteralPath $Destination).Length -eq 0) {
+                throw "$Label returned an empty file"
+            }
+            return
+        } catch {
+            $lastError = $_
+            $status = if ($_.Exception.Response) { [int]$_.Exception.Response.StatusCode } else { $null }
+            if ($status -in @(400, 401, 403, 404, 405, 409, 410, 422) -or $attempt -eq 3) { throw }
+            Start-Sleep -Seconds ([Math]::Pow(2, $attempt - 1))
+        }
+    }
+    throw "$Label failed after 3 attempts: $($lastError.Exception.Message)"
+}
+
 function Fail($msg, $hint) {
     Write-Host ""
     Write-Host "ERROR: $msg" -ForegroundColor Red
@@ -74,9 +93,9 @@ if ($inRepo) {
     $tempSums = Join-Path ([IO.Path]::GetTempPath()) "ybm-$([guid]::NewGuid().ToString('N'))-SHA256SUMS.txt"
     $tempDir = Join-Path ([IO.Path]::GetTempPath()) "ybm-$([guid]::NewGuid().ToString('N'))"
     try {
-        Invoke-WebRequest -Uri $ReleaseZipUrl -OutFile $tempZip -UseBasicParsing
+        Save-ReleaseDownload $ReleaseZipUrl $tempZip "YBM release"
         Write-Step "Verifying the downloaded release"
-        Invoke-WebRequest -Uri $ChecksumsUrl -OutFile $tempSums -UseBasicParsing
+        Save-ReleaseDownload $ChecksumsUrl $tempSums "YBM checksums"
         $checksumLine = Get-Content -LiteralPath $tempSums | Where-Object {
             $_ -match '^[0-9A-Fa-f]{64}\s+(YBM-windows\.zip|YBM-[^\s]+-windows\.zip)$'
         } | Select-Object -First 1

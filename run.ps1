@@ -5,6 +5,9 @@ param(
 )
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
+. .\scripts\install-utils.ps1
+Initialize-Install -RepositoryRoot $PSScriptRoot -ProductName "YBM"
+trap { Write-InstallFailure $_; Exit-InstallLock; exit 1 }
 $url = "http://127.0.0.1:8765"
 
 function Test-DockerRunning {
@@ -40,9 +43,13 @@ if ($Action -eq "docker") {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "Docker is not installed." }
   docker info *> $null
   if ($LASTEXITCODE -ne 0) { throw "Docker is installed but its engine is not running." }
+  Enter-InstallLock
+  Assert-InstallFreeSpace -Path $PSScriptRoot -RequiredGB 3
   Initialize-Environment
   docker compose up --detach --build
+  if ($LASTEXITCODE -ne 0) { throw "Docker Compose build or startup failed." }
   if (-not (Wait-Ready)) { docker compose logs ybm; throw "YBM did not become ready at $url." }
+  Complete-Install
   Write-Host "YBM is ready at $url/admin" -ForegroundColor Green
   if (-not $NoBrowser) { Start-Process "$url/admin" }
   exit 0
