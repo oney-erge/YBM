@@ -72,6 +72,10 @@ Use `.\run.ps1` from PowerShell. Every launcher accepts `doctor`, `repair`,
 `docker`, `logs`, and `stop`, and supports a no-browser mode. Re-running the
 default command reuses a healthy environment.
 
+Setup checks disk space, prevents concurrent dependency changes, retries
+temporary downloads and package synchronization up to three times, and records
+failures in `.setup/install.log`.
+
 ### Windows release: choose either installer
 
 **Option 1 - guided installer**

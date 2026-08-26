@@ -17,6 +17,9 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
+source ./scripts/install-utils.sh
+install_init "$HERE" "YBM"
+install_enable_traps
 
 NO_DESKTOP=0
 NO_BROWSER=0
@@ -56,13 +59,16 @@ find_uv() {
 }
 
 ensure_uv() {
-  local uv
+  local uv installer
   uv="$(find_uv || true)"
   if [ -n "$uv" ]; then printf '%s' "$uv"; return 0; fi
   log "Installing uv ${UV_VERSION} (standalone; no Python needed)" >&2
-  curl -LsSf "$UV_INSTALLER" | sh >&2 \
+  installer="$(mktemp)"
+  install_download "$UV_INSTALLER" "$installer" "uv download" &&
+  sh "$installer" >&2 \
     || fail "could not install uv from $UV_INSTALLER" \
             "Check your internet connection, then try again. uv is the only thing YBM needs to bootstrap."
+  rm -f -- "$installer"
   uv="$(find_uv || true)"
   [ -n "$uv" ] || fail "uv installed but could not be located" \
                        "Looked in ~/.local/bin and ~/.cargo/bin."
@@ -89,6 +95,8 @@ echo ""
 printf '\033[36mYBM\033[0m\n'
 echo "==========="
 echo ""
+install_lock
+install_require_space "$HERE" 3
 
 # A first run downloads uv, a Python runtime, and a few hundred MB of
 # dependencies. An unexplained multi-minute pause reads as a hang rather than
@@ -118,7 +126,7 @@ if [ -x "$VENV_PY" ] && [ -n "$CURRENT_FP" ] && [ "$CURRENT_FP" = "$STORED_FP" ]
   info "[1/3] Dependencies up to date - skipping sync."
 else
   log "[1/3] Installing dependencies (the long part on a first run)"
-  ( cd backend && "$UV" sync "${EXTRAS[@]}" ) \
+  ( cd backend && install_retry "dependency synchronization" "$UV" sync "${EXTRAS[@]}" ) \
     || fail "dependency install failed" "See the message above."
   [ -n "$CURRENT_FP" ] && printf '%s' "$CURRENT_FP" > "$FINGERPRINT_FILE"
 fi
@@ -132,6 +140,7 @@ YBM_BIN="$HERE/backend/.venv/bin/ybm"
 log "[2/3] Setting up config and tokens"
 "$YBM_BIN" setup
 
+install_complete
 log "[3/3] Starting YBM and opening the console"
 START_ARGS=(start)
 [ "$NO_BROWSER" = "0" ] && START_ARGS+=(--open)

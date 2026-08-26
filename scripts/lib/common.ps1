@@ -45,10 +45,15 @@ function Install-YbmUv {
 
   $installer = "https://astral.sh/uv/$Script:YbmUvVersion/install.ps1"
   Write-Host "Installing uv $Script:YbmUvVersion (standalone; no Python needed)..." -ForegroundColor Cyan
+  $installerFile = Join-Path ([IO.Path]::GetTempPath()) "ybm-uv-$Script:YbmUvVersion.ps1"
   try {
-    Invoke-RestMethod $installer -UseBasicParsing | Invoke-Expression
+    Save-InstallDownload -Url $installer -Destination $installerFile -Label "uv download"
+    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installerFile
+    if ($LASTEXITCODE -ne 0) { throw "uv installer exited with code $LASTEXITCODE" }
   } catch {
     throw "Could not install uv from $installer ($($_.Exception.Message)). Check your internet connection and try again - uv is the only thing YBM needs to bootstrap."
+  } finally {
+    Remove-Item -LiteralPath $installerFile -Force -ErrorAction SilentlyContinue
   }
 
   $uv = Resolve-YbmUv

@@ -43,6 +43,11 @@ fail() {
   exit 1
 }
 
+download_release() {
+  local url=$1 destination=$2
+  curl --fail --location --silent --show-error --retry 2 --retry-delay 1 +       --retry-connrefused --output "$destination" --write-out '%{http_code}' "$url"
+}
+
 # --- 1. Get the complete release -----------------------------------------
 # Source archives intentionally omit the generated admin console. The public
 # installer therefore downloads the release archive, not the main branch.
@@ -56,7 +61,7 @@ elif [ "$DRY_RUN" = "1" ]; then
 else
   log "Downloading the latest YBM release"
   tmp="$(mktemp -d)"
-  if ! status="$(curl -sL -o "$tmp/ybm.tar.gz" -w '%{http_code}' "$RELEASE_URL")"; then
+  if ! status="$(download_release "$RELEASE_URL" "$tmp/ybm.tar.gz")"; then
     rm -rf "$tmp"
     fail "download failed" "Check your internet connection and re-run."
   fi
@@ -67,7 +72,7 @@ else
   fi
   [ "$status" = "200" ] || { rm -rf "$tmp"; fail "download failed (HTTP $status)" "Check your internet connection and re-run."; }
   log "Verifying the downloaded release"
-  if ! checksum_status="$(curl -sL -o "$tmp/SHA256SUMS.txt" -w '%{http_code}' "$CHECKSUMS_URL")"; then
+  if ! checksum_status="$(download_release "$CHECKSUMS_URL" "$tmp/SHA256SUMS.txt")"; then
     rm -rf "$tmp"
     fail "checksum download failed" "Check your internet connection and re-run."
   fi
