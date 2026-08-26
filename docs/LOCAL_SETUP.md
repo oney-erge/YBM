@@ -8,6 +8,23 @@ Git, Node.js, and a system Python are not required.
 
 The first start downloads the runtime and usually takes 2-5 minutes. Later starts take seconds.
 
+## Source checkout
+
+Use the stable root launcher when running from a clone:
+
+```powershell
+.\run.bat          # Windows
+```
+
+```bash
+./run.command      # macOS
+./run.sh           # Linux
+```
+
+Use `.\run.ps1` from PowerShell. Append `doctor`, `repair`, `docker`, `logs`,
+or `stop` for the same lifecycle operations on every platform. The default
+action is safe to rerun and opens the console only after readiness succeeds.
+
 ## Windows option 1: MSI
 
 1. **[Download YBM for Windows](https://github.com/oney-erge/YBM/releases/latest/download/YBM-Setup.msi).**
@@ -105,7 +122,7 @@ docker build --tag ybm-control:local .
 4. YBM initializes its local database, starts the services, and opens the console.
 
 Existing config, tokens, task history, and other local state are retained. A source checkout is for
-development: double-click `YBM.bat` on Windows or run `./ybm.sh` on macOS/Linux. Source UI changes
+development: use `run.bat` on Windows, `run.command` on macOS, or `run.sh` on Linux. Source UI changes
 require Node.js 22.22 or newer and `ybm ui-build`; release installs do not.
 
 ## First-run configuration
@@ -136,13 +153,13 @@ The Windows equivalent is:
 The Windows wrapper and installed Python CLI share the main runtime operations, but they are not
 identical.
 
-| Operation | Windows wrapper | Installed CLI on macOS/Linux |
+| Operation | Windows source path | macOS/Linux source path |
 |---|---|---|
-| Start and open | `YBM.bat` or `.\scripts\ybm.ps1 run` | `./ybm.sh` or `./backend/.venv/bin/ybm start --open` |
-| Diagnose | `.\scripts\ybm.ps1 doctor` | `./backend/.venv/bin/ybm doctor` |
+| Start and open | `run.bat` or `.\run.ps1` | `./run.command` (macOS) or `./run.sh` (Linux) |
+| Diagnose | `.\run.ps1 doctor` | `./run.sh doctor` |
 | Status | `.\scripts\ybm.ps1 status` | `./backend/.venv/bin/ybm status` |
-| Follow worker log | `.\scripts\ybm.ps1 logs worker -Follow` | `./backend/.venv/bin/ybm logs worker --follow` |
-| Stop | `.\scripts\ybm.ps1 stop` | `./backend/.venv/bin/ybm stop` |
+| Follow service log | `.\run.ps1 logs` | `./run.sh logs` |
+| Stop | `.\run.ps1 stop` | `./run.sh stop` |
 | Trace a task | `.\scripts\ybm.ps1 trace <task_id>` | `./backend/.venv/bin/ybm trace-task <task_id>` |
 | Change config | `.\scripts\ybm.ps1 config set <path> <value>` | `./backend/.venv/bin/ybm config-set <path> <value>` |
 | Build UI | `.\scripts\ybm.ps1 ui-build` | `./backend/.venv/bin/ybm ui-build` |
