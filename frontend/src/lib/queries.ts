@@ -29,6 +29,7 @@ import {
   listSkills,
   listSkillsCatalog,
   listTasks,
+  replayTask,
   reviewAdapter,
   revokeGrant,
   runDoctor,
@@ -231,6 +232,16 @@ export function useTaskSignal() {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] })
       void queryClient.invalidateQueries({ queryKey: ["tasks", "trace", variables.taskId] })
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
+    },
+  })
+}
+
+export function useReplayTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (taskId: string) => replayTask(taskId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] })
     },
   })
 }

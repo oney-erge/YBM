@@ -1,6 +1,7 @@
 import { useState } from "react"
-import { useParams } from "react-router"
+import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
+import { Repeat } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -11,7 +12,7 @@ import { DurationChart } from "@/components/tasks/DurationChart"
 import { OperatorHistoryList } from "@/components/tasks/OperatorHistoryList"
 import { TraceGraph } from "@/components/tasks/TraceGraph"
 import { TraceTimeline } from "@/components/tasks/TraceTimeline"
-import { useTaskSignal, useTaskTrace } from "@/lib/queries"
+import { useReplayTask, useTaskSignal, useTaskTrace } from "@/lib/queries"
 import { useAdvancedMode } from "@/lib/advanced-mode"
 import { ApiError, tokenUsageOf, type EvidenceItem } from "@/lib/api"
 import { isTerminal } from "@/lib/chat"
@@ -26,6 +27,8 @@ export function TaskTracePage() {
   const { data: trace, isPending, isError, error } = useTaskTrace(taskId)
   const { advanced } = useAdvancedMode()
   const signal = useTaskSignal()
+  const replay = useReplayTask()
+  const navigate = useNavigate()
   const [view, setView] = useState<TraceView>("steps")
 
   if (isPending) {
@@ -62,6 +65,19 @@ export function TaskTracePage() {
     )
   }
 
+  function handleReplay() {
+    if (!taskId) return
+    replay.mutate(taskId, {
+      onSuccess: (result) => {
+        toast.success("Replay started from this task's successful steps.")
+        navigate(`/tasks/${result.task.id}`)
+      },
+      onError: (err) => {
+        toast.error(err instanceof ApiError ? err.message : "Could not replay this task.")
+      },
+    })
+  }
+
   return (
     <div className="h-full overflow-y-auto">
       <div className="mx-auto flex max-w-6xl flex-col gap-5 p-4 sm:p-6 lg:p-8 [&>*]:shrink-0">
@@ -93,6 +109,12 @@ export function TaskTracePage() {
         {CANCELLABLE.has(task.status) && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("cancel")}>
             Cancel
+          </Button>
+        )}
+        {task.status === "completed" && (
+          <Button variant="outline" size="sm" disabled={replay.isPending} onClick={handleReplay}>
+            <Repeat className="size-3.5" />
+            Replay
           </Button>
         )}
       </div>

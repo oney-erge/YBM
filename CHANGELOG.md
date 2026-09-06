@@ -100,6 +100,19 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   token spend, a per-tool failure-rate table with a least-reliable-tool
   callout, and per-model/per-task-type breakdowns. Entirely computed on
   read from existing task/tool-invocation data - nothing new persisted.
+- A completed task can now be replayed (`POST /api/tasks/{id}/replay`, a
+  new "Replay" button on its trace page): a new task is created whose
+  operator loop deterministically reissues that task's own succeeded tool
+  calls in order, through the exact same approval, retry, and verification
+  pipeline a live LLM-driven task uses - authority does not carry over, so
+  a step that needed approval the first time needs it again. Delegated and
+  parallel-batch calls are excluded from the replay plan for now, since
+  reissuing those needs different handling than a single call; a step that
+  fails or is denied on replay blocks the same way it would live, and a
+  timeout or rate-limit is reissued up to three times before giving up
+  rather than looping forever. Built as a thin scripted-decision layer over
+  the existing operator loop rather than a second execution engine, so it
+  needed no changes to `ToolExecutor`, `PolicyEngine`, or verification.
 
 ## [0.1.3] - 2026-08-11
 

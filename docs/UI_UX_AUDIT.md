@@ -150,7 +150,11 @@ numbered phase say so.
 ### P3 - Expansion only after evidence
 
 1. Multiple local chat threads, search, archive, and export.
-2. Re-run/replay from a trace with a clear statement of what can cause side effects again.
+2. ~~Re-run/replay from a trace with a clear statement of what can cause side effects again~~ -
+   shipped (trace page's Replay button, `POST /api/tasks/{id}/replay`): reissues a completed
+   task's own succeeded tool calls through the same approval/retry/verification pipeline, so a
+   step that needed approval the first time asks for it again rather than carrying authority over
+   silently. Delegated and parallel-batch steps are not yet replayable.
 3. Configurable workflow graphs only after the runtime becomes data-driven.
 4. Multi-user/RBAC only if the product moves beyond its current trusted-local-operator boundary.
 

@@ -303,4 +303,87 @@ test.describe("task trace", () => {
     await expect(webStep.locator("xpath=ancestor::div[contains(@class,'flex-col')][1]").getByText("untrusted content")).toBeVisible()
     await expect(localStep.locator("xpath=ancestor::div[contains(@class,'flex-col')][1]").getByText("untrusted content")).toHaveCount(0)
   })
+
+  test("replaying a completed task posts to the replay endpoint and opens the new task's trace", async ({ page }) => {
+    const completedTask = chatTask("completed")
+    const REPLAY_TASK_ID = "task_receipts_sort_replay"
+    const replayedTask = { ...chatTask("received"), id: REPLAY_TASK_ID, objective: `Replay: ${OBJECTIVE}` }
+    let replayRequested = false
+
+    await page.route("**/admin/api/**", async (route) => {
+      const request = route.request()
+      const url = new URL(request.url())
+      const path = url.pathname.replace(/^\/admin/, "")
+
+      if (path === "/api/bootstrap") {
+        return route.fulfill({
+          json: { token_required: false, onboarding_complete: true, llm_reachable: true, version: "0.1.0-e2e" },
+        })
+      }
+      if (path === "/api/approvals") {
+        return route.fulfill({ json: { approvals: [] } })
+      }
+      if (path === "/api/summary") {
+        return route.fulfill({ json: minimalSummary([completedTask]) })
+      }
+      if (path === `/api/tasks/${TASK_ID}/replay` && request.method() === "POST") {
+        replayRequested = true
+        return route.fulfill({ json: { task: replayedTask } })
+      }
+      if (path === `/api/tasks/${REPLAY_TASK_ID}/trace`) {
+        return route.fulfill({
+          json: {
+            task: replayedTask,
+            context: {},
+            operator_history: [],
+            timeline: [],
+            tool_invocations: [],
+            evidence: { files: [], urls: [], commands: [] },
+            llm_calls: [],
+            approvals: [],
+            artifacts: [],
+            signals: [],
+            audit: [],
+          },
+        })
+      }
+      if (path === `/api/tasks/${TASK_ID}/trace`) {
+        return route.fulfill({
+          json: {
+            task: completedTask,
+            context: {},
+            operator_history: [
+              {
+                tool_name: "filesystem.manage",
+                input: { operation: "apply_manifest" },
+                status: "succeeded",
+                output_summary: "Sorted 12 receipts.",
+                error: null,
+                duration_ms: 500,
+                content_trust: null,
+              },
+            ],
+            timeline: [],
+            tool_invocations: [],
+            evidence: { files: [], urls: [], commands: [] },
+            llm_calls: [],
+            approvals: [],
+            artifacts: [],
+            signals: [],
+            audit: [],
+          },
+        })
+      }
+      return route.fulfill({ status: 404, json: { detail: `no e2e mock for ${path}` } })
+    })
+
+    await page.goto(`./tasks/${TASK_ID}`)
+
+    await expect(page.getByRole("heading", { name: OBJECTIVE })).toBeVisible()
+    await page.getByRole("button", { name: "Replay" }).click()
+
+    await expect.poll(() => replayRequested).toBe(true)
+    await expect(page).toHaveURL(new RegExp(`/tasks/${REPLAY_TASK_ID}$`))
+    await expect(page.getByRole("heading", { name: `Replay: ${OBJECTIVE}` })).toBeVisible()
+  })
 })

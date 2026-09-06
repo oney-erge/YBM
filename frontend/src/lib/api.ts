@@ -710,6 +710,20 @@ export function sendTaskSignal(taskId: string, signal: "pause" | "resume" | "can
   })
 }
 
+const ReplayTaskResponseSchema = z.object({ task: TaskRecordSchema })
+
+// Re-issues a completed task's own succeeded tool calls as a new task
+// (docs/ROADMAP.md "reusable verified workflows") - not the objective run
+// through the LLM again, a literal replay of the exact sequence that
+// worked, through the identical approval/verification pipeline a live task
+// uses. Authority never carries over: a step that needed approval the
+// first time needs it again.
+export function replayTask(taskId: string) {
+  return apiFetch(`/api/tasks/${taskId}/replay`, ReplayTaskResponseSchema, {
+    method: "POST",
+  })
+}
+
 function tokenUsageOf(task: TaskRecord): TokenUsage | null {
   const parsed = TokenUsageSchema.safeParse(task.metadata.token_usage)
   return parsed.success ? parsed.data : null

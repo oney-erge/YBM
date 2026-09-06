@@ -1954,6 +1954,61 @@ def test_admin_dashboard_rejects_an_out_of_range_window(monkeypatch, tmp_path) -
     assert response.status_code == 422
 
 
+# ---- docs/ROADMAP.md "reusable verified workflows": replay ---------------
+
+def test_admin_replays_a_completed_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort receipts by vendor")
+    repositories.tasks.update_metadata(
+        source.id,
+        {
+            **source.metadata,
+            "operator_history": [
+                {"tool_name": "filesystem.manage", "input": {"operation": "move", "path": "a"}, "status": "succeeded"},
+                {"tool_name": "filesystem.manage", "input": {"operation": "move", "path": "b"}, "status": "rate_limited"},
+                {"tool_name": "filesystem.manage", "input": {"operation": "move", "path": "b"}, "status": "succeeded"},
+            ],
+        },
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/tasks/{source.id}/replay")
+    body = response.json()
+
+    assert response.status_code == 200
+    replay_task = repositories.tasks.get(body["task"]["id"])
+    assert replay_task is not None
+    assert replay_task.metadata["replay_of"] == source.id
+    assert replay_task.metadata["replay_plan"] == [
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "move", "path": "a"}},
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "move", "path": "b"}},
+    ]
+    assert replay_task.status == TaskStatus.RECEIVED
+
+
+def test_admin_replay_404s_for_an_unknown_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/tasks/task_does_not_exist/replay")
+
+    assert response.status_code == 404
+
+
+def test_admin_replay_rejects_a_task_with_nothing_to_replay(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("a task that never called a tool")
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/tasks/{source.id}/replay")
+
+    assert response.status_code == 400
+
+
 def test_admin_writes_telegram_runtime_config(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")

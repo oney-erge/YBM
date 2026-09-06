@@ -456,7 +456,11 @@ class TaskWorker:
         appears - written by the same completion callback the plan-based path
         used (cli.py), which is status-based, not plan-shaped.
         """
-        if self.operator is None or self.executor is None:
+        # self.operator is checked further down, only on the branch that
+        # actually needs it - a replay task (metadata["replay_plan"])
+        # never calls decide() at all, so a worker with no LLM configured
+        # can still run one (see _next_replay_decision's own docstring).
+        if self.executor is None:
             return self._transition_operator(task, task.metadata, TaskStatus.BLOCKED, "operator_loop_not_configured")
 
         latest = self.repositories.tasks.get(task.id) or task
@@ -586,30 +590,45 @@ class TaskWorker:
         # awaiting_external, which stash it the same way they already stash
         # tool_name/tool_input.
         step_id = new_id("step")
-        try:
-            decision = await self.operator.decide(
-                latest.objective, self._planner_context(), history,
-                memory_context=memory_context, prefer_major=prefer_major,
-            )
-            latest = self._record_llm_usage(
-                latest, "operator", getattr(self.operator, "last_usage", None),
-                fallback_used=getattr(self.operator, "last_fallback_used", False),
-            )
-            self._record_llm_call(latest.id, "operator", len(history), self.operator, step_id=step_id)
-        except Exception as exc:
-            # describe_exception, not str(exc): an empty message here produced
-            # "operator_decide_failed: " with nothing after it, which is what a
-            # failed model call looked like while three fixture recordings were
-            # being retried as if they were flakes.
-            reason = describe_exception(exc)
-            self.audit.append(
-                AuditEventType.ERROR, actor="operator", task_id=latest.id,
-                payload={"error": "operator_decide_failed", "reason": reason},
-            )
-            return self._transition_operator(
-                latest, {**latest.metadata, "operator_history": history},
-                TaskStatus.FAILED, f"operator_decide_failed: {reason}"[:400],
-            )
+        replay_plan = latest.metadata.get("replay_plan")
+        if isinstance(replay_plan, list) and replay_plan:
+            # docs/ROADMAP.md "reusable verified workflows": walk a recorded
+            # plan instead of asking an LLM what to do next. Everything past
+            # this point - approval, retry, verification, fulfillment - is
+            # the exact same code a live decision goes through; only how
+            # `decision` gets produced differs. See _next_replay_decision's
+            # own docstring for why retry/failure handling needs its own
+            # per-step attempt cap here.
+            decision, metadata_updates = _next_replay_decision(replay_plan, history, latest.metadata)
+            if metadata_updates is not latest.metadata:
+                latest = self.repositories.tasks.update_metadata(latest.id, metadata_updates)
+        elif self.operator is None:
+            return self._transition_operator(latest, latest.metadata, TaskStatus.BLOCKED, "operator_loop_not_configured")
+        else:
+            try:
+                decision = await self.operator.decide(
+                    latest.objective, self._planner_context(), history,
+                    memory_context=memory_context, prefer_major=prefer_major,
+                )
+                latest = self._record_llm_usage(
+                    latest, "operator", getattr(self.operator, "last_usage", None),
+                    fallback_used=getattr(self.operator, "last_fallback_used", False),
+                )
+                self._record_llm_call(latest.id, "operator", len(history), self.operator, step_id=step_id)
+            except Exception as exc:
+                # describe_exception, not str(exc): an empty message here produced
+                # "operator_decide_failed: " with nothing after it, which is what a
+                # failed model call looked like while three fixture recordings were
+                # being retried as if they were flakes.
+                reason = describe_exception(exc)
+                self.audit.append(
+                    AuditEventType.ERROR, actor="operator", task_id=latest.id,
+                    payload={"error": "operator_decide_failed", "reason": reason},
+                )
+                return self._transition_operator(
+                    latest, {**latest.metadata, "operator_history": history},
+                    TaskStatus.FAILED, f"operator_decide_failed: {reason}"[:400],
+                )
 
         self.audit.append(
             AuditEventType.TASK_STATE_CHANGED, actor="operator", task_id=latest.id,
@@ -2744,6 +2763,144 @@ def _tool_call_count(history: list[dict[str, Any]]) -> int:
     tools. See docs/HISTORY.md §3.1.
     """
     return len([entry for entry in history if entry.get("tool_name") not in CHECK_ENTRY_NAMES])
+
+
+# A replay step gets this many attempts before a lingering TIMEOUT/
+# RATE_LIMITED result gives up and blocks instead of reissuing the same
+# call forever. Small and separate from RetryPolicy.max_retries (which
+# governs the automatic RETRYING backoff a live task also gets) - this
+# caps how many times _next_replay_decision itself will re-propose the
+# identical step across those backoff cycles.
+_MAX_REPLAY_STEP_ATTEMPTS = 3
+
+
+def _next_replay_decision(
+    replay_plan: list[dict[str, Any]],
+    history: list[dict[str, Any]],
+    metadata: dict[str, Any],
+) -> tuple[OperatorDecision, dict[str, Any]]:
+    """The replay counterpart to OperatorLoopService.decide() (docs/ROADMAP.md
+    "reusable verified workflows"): walks a recorded plan deterministically
+    instead of asking an LLM what to do next. Returns the same
+    OperatorDecision shape a live decide() call would, so every downstream
+    branch in _process_operator_loop - approval, retry, verification,
+    fulfillment, DONE grounding - runs completely unchanged regardless of
+    which produced it; only this one call site differs.
+
+    FAILED/DENIED (never auto-retried - RetryPolicy.RETRYABLE_STATUSES is
+    only TIMEOUT/RATE_LIMITED) stop the replay immediately: something about
+    the target changed since the source run, and silently trying the next
+    step anyway would mean skipping over a step nobody confirmed happened.
+
+    TIMEOUT/RATE_LIMITED are genuinely ambiguous by the time this function
+    ever sees one as the latest entry: reaching here at all means the task
+    is back in a state ready for a fresh decision, which happens both right
+    after RetryPolicy's own backoff cycle elapses (this step should simply
+    be reissued, same as a live task's LLM would naturally do) and once
+    RetryPolicy has separately exhausted itself on this step (reissuing
+    would just fail the same way again). Nothing available here can tell
+    those two apart, so this reissues up to _MAX_REPLAY_STEP_ATTEMPTS times
+    before giving up - bounded retries that would otherwise risk running
+    forever if the two cases can't be told apart.
+
+    Returns (decision, updated_metadata) rather than mutating in place: the
+    per-step attempt counter has to persist across ticks the same way
+    operator_retry_count already does, and the caller is what actually owns
+    writing task metadata.
+    """
+    real_entries = [entry for entry in history if entry.get("tool_name") not in CHECK_ENTRY_NAMES]
+    completed = len(real_entries)
+    last = real_entries[-1] if real_entries else None
+    last_status = str(last.get("status") or "") if last else ""
+
+    if last_status in {"failed", "denied"}:
+        tool_name = str((last or {}).get("tool_name") or "a step")
+        error = str((last or {}).get("error") or "it did not succeed")
+        return (
+            OperatorDecision(
+                action=OperatorAction.BLOCKED,
+                reason=f"Replay step {completed}/{len(replay_plan)} ({tool_name}) failed: {error}",
+            ),
+            metadata,
+        )
+
+    if last_status in {"timeout", "rate_limited"}:
+        attempts = int(metadata.get("replay_step_attempts", 0)) + 1
+        if attempts > _MAX_REPLAY_STEP_ATTEMPTS:
+            tool_name = str((last or {}).get("tool_name") or "a step")
+            error = str((last or {}).get("error") or last_status)
+            return (
+                OperatorDecision(
+                    action=OperatorAction.BLOCKED,
+                    reason=(
+                        f"Replay step {completed}/{len(replay_plan)} ({tool_name}) did not succeed "
+                        f"after {attempts - 1} attempt(s): {error}"
+                    ),
+                ),
+                metadata,
+            )
+        # completed still counts this step (it produced a history entry) -
+        # replay_plan[completed - 1] is the step that just came back
+        # timed-out/rate-limited, reissued rather than advanced past.
+        step = replay_plan[completed - 1]
+        return _replay_call_decision(step, completed, len(replay_plan)), {
+            **metadata,
+            "replay_step_attempts": attempts,
+        }
+
+    if completed >= len(replay_plan):
+        return (
+            OperatorDecision(
+                action=OperatorAction.DONE,
+                final_answer=f"Replayed {len(replay_plan)}/{len(replay_plan)} step(s) successfully.",
+            ),
+            metadata,
+        )
+
+    step = replay_plan[completed]
+    decision = _replay_call_decision(step, completed + 1, len(replay_plan))
+    if metadata.get("replay_step_attempts"):
+        return decision, {**metadata, "replay_step_attempts": 0}
+    return decision, metadata
+
+
+def build_replay_plan(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The ordered list of real, succeeded, single-tool calls from a
+    completed task's operator_history (docs/ROADMAP.md "reusable verified
+    workflows") - what admin.py's replay endpoint hands to a new task's
+    replay_plan. Only succeeded entries: a step that failed, got retried,
+    and then succeeded left more than one history entry behind for the
+    same conceptual step, and only the one that actually worked should be
+    reissued. risk_level is deliberately not carried over -
+    _effective_operator_risk always re-derives it from the tool's own
+    definition regardless of what a decision (live or replayed) declares,
+    the same runtime-owned-risk guarantee a live task gets.
+
+    Excludes "delegate" and anything with a non-empty `origin` (a
+    parallel-batch or subagent entry, per ToolCallRequest.origin's own
+    values) - both represent something other than one plain CALL_TOOL step
+    (a whole sub-task, or one member of a batch dispatched together), and
+    _next_replay_decision only ever reissues a single CALL_TOOL. Replaying
+    those correctly would need its own handling, left out of this pass.
+    """
+    return [
+        {"tool_name": entry["tool_name"], "tool_input": entry.get("input") or {}}
+        for entry in history
+        if entry.get("status") == "succeeded"
+        and entry.get("tool_name") not in CHECK_ENTRY_NAMES
+        and entry.get("tool_name") != "delegate"
+        and not entry.get("origin")
+    ]
+
+
+def _replay_call_decision(step: dict[str, Any], step_number: int, total: int) -> OperatorDecision:
+    return OperatorDecision(
+        action=OperatorAction.CALL_TOOL,
+        tool_name=str(step.get("tool_name") or ""),
+        tool_input=dict(step.get("tool_input") or {}),
+        risk_level=RiskLevel(str(step.get("risk_level") or "low")),
+        reasoning=f"Replaying step {step_number}/{total} from the source task.",
+    )
 
 
 def _fulfilled_step_budget_answer(task: TaskRecord, history: list[dict[str, Any]]) -> str:

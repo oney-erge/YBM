@@ -34,6 +34,7 @@ from agent_control.llm import hardware as llm_hardware
 from agent_control.llm.providers import build_provider_for_profile
 from agent_control.observation.artifacts import ArtifactService
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
+from agent_control.orchestration.worker import build_replay_plan
 from agent_control.policy import apply_access_modes_to_config, summarize_access_modes
 from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
@@ -1301,6 +1302,41 @@ def create_admin_router(
             "signal": signal.model_dump(mode="json"),
             "task": _redact_admin_output(updated.model_dump(mode="json"), loaded),
         }
+
+    @router.post("/api/tasks/{task_id}/replay")
+    def admin_replay_task(request: Request, task_id: str) -> dict[str, Any]:
+        """Re-issues a completed task's own succeeded tool calls as a new
+        task (docs/ROADMAP.md "reusable verified workflows") - not asking
+        the LLM to redo the objective from scratch, a literal replay of the
+        exact sequence that worked, through the identical approval/
+        verification pipeline a live task uses
+        (orchestration/worker.py's _next_replay_decision). Authority does
+        not carry over: a step that needed approval the first time needs
+        it again, and grants never outlive their own task.
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        source = repositories.tasks.get(task_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        history = source.metadata.get("operator_history") if isinstance(source.metadata, dict) else None
+        plan = build_replay_plan(history if isinstance(history, list) else [])
+        if not plan:
+            raise HTTPException(status_code=400, detail="this task has no succeeded tool calls to replay")
+
+        replay_task = repositories.tasks.create(
+            f"Replay: {source.objective}",
+            conversation_id=source.conversation_id,
+            metadata={"replay_of": source.id, "replay_plan": plan},
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            task_id=replay_task.id,
+            payload={"replay_of": source.id, "step_count": len(plan)},
+        )
+        return {"task": _redact_admin_output(replay_task.model_dump(mode="json"), loaded)}
 
     @router.post("/api/config/llm")
     def admin_update_llm_config(request: Request, payload: AdminLLMConfigRequest) -> dict[str, Any]:
