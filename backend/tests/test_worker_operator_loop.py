@@ -118,13 +118,22 @@ class QueueOperator:
     `usages`, if given, is a same-length list of usage dicts (or None) - one
     per decide() call, mirroring how the real OperatorLoopService sets
     self.last_usage after each call (docs/HISTORY.md Part 4 T1.4).
+    `fallback_flags` does the same for last_fallback_used (docs/ROADMAP.md
+    per-role models/fallback chain).
     """
 
-    def __init__(self, decisions: list[OperatorDecision], usages: list[dict | None] | None = None) -> None:
+    def __init__(
+        self,
+        decisions: list[OperatorDecision],
+        usages: list[dict | None] | None = None,
+        fallback_flags: list[bool] | None = None,
+    ) -> None:
         self.decisions = list(decisions)
         self._usages = list(usages) if usages is not None else None
+        self._fallback_flags = list(fallback_flags) if fallback_flags is not None else None
         self.calls = 0
         self.last_usage: dict | None = None
+        self.last_fallback_used: bool = False
         # docs/HISTORY.md Part 4 T2.6: one entry per decide() call, so tests
         # can assert exactly when the caller asked for the stronger model.
         self.prefer_major_calls: list[bool] = []
@@ -134,6 +143,8 @@ class QueueOperator:
         self.prefer_major_calls.append(prefer_major)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
+        if self._fallback_flags is not None:
+            self.last_fallback_used = self._fallback_flags.pop(0)
         return self.decisions.pop(0)
 
 
@@ -230,6 +241,41 @@ async def test_operator_loop_calls_tool_then_completes(tmp_path) -> None:
     assert running.metadata["operator_history"][0]["status"] == "succeeded"
     assert completed.status == TaskStatus.COMPLETED
     assert completed.metadata["synthesized_answer"] == "The answer is 42."
+
+
+@pytest.mark.asyncio
+async def test_fallback_used_is_recorded_and_stays_sticky(tmp_path) -> None:
+    """docs/ROADMAP.md 4.4: a receipt should be able to say a fallback model
+    answered somewhere in this task, and that fact must not be erased by a
+    later step that happens to succeed on the primary again."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Answer two questions")
+    settings = _settings()
+    executor = _executor(settings, audit, repos, output={"answer": "42"})
+    operator = QueueOperator(
+        [
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+            OperatorDecision(action=OperatorAction.DONE, final_answer="done"),
+        ],
+        usages=[
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "model": "fallback-model"},
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "model": "primary-model"},
+            None,
+        ],
+        fallback_flags=[True, False, False],
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator)
+
+    step1 = await worker.process_task(task.id)
+    step2 = await worker.process_task(step1.id)
+    completed = await worker.process_task(step2.id)
+
+    assert step1.metadata["token_usage"]["fallback_used"] is True
+    # Second call did not fall back, but the flag stays set for the task.
+    assert step2.metadata["token_usage"]["fallback_used"] is True
+    assert step2.metadata["token_usage"]["last_model"] == "primary-model"
+    assert completed.status == TaskStatus.COMPLETED
 
 
 @pytest.mark.asyncio

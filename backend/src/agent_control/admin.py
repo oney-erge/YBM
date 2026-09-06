@@ -94,6 +94,17 @@ class AdminLLMPresetRequest(StrictBaseModel):
     preset: str = Field(min_length=1, max_length=80)
 
 
+class AdminLLMRolesRequest(StrictBaseModel):
+    """Per-role model assignment (docs/ROADMAP.md "per-role models"). None
+    means "use default_profile" - the same meaning LLMConfig's own fields
+    carry, so clearing a role back to the shared default is just posting
+    None, not a separate unset endpoint."""
+    concierge_profile: str | None = Field(default=None, max_length=80)
+    operator_profile: str | None = Field(default=None, max_length=80)
+    auditor_profile: str | None = Field(default=None, max_length=80)
+    fallback_chain: list[str] = Field(default_factory=list, max_length=10)
+
+
 class AdminVoiceConfigRequest(StrictBaseModel):
     enabled: bool
     model: str | None = Field(default=None, min_length=1, max_length=80)
@@ -1211,6 +1222,38 @@ def create_admin_router(
         _audit_config_update(repositories_loader(), loaded, "llm_preset", {"preset": payload.preset, "profile": profile_name})
         return {"config_file": str(CONFIG_FILE_PATH), "preset": payload.preset, "llm": llm}
 
+    @router.post("/api/config/llm/roles")
+    def admin_update_llm_roles(request: Request, payload: AdminLLMRolesRequest) -> dict[str, Any]:
+        """Assigns an already-configured profile to Concierge/Operator/Auditor
+        and/or sets the ordered fallback chain (docs/ROADMAP.md "per-role
+        models"). Deliberately separate from admin_update_llm_config: that
+        endpoint creates/edits one profile's own connection details, this one
+        only points existing profile names at roles - the two forms shouldn't
+        fight over the same request shape.
+        """
+        loaded = require_admin(request)
+        known_profiles = set(loaded.llm.profiles)
+        for role, name in (
+            ("concierge_profile", payload.concierge_profile),
+            ("operator_profile", payload.operator_profile),
+            ("auditor_profile", payload.auditor_profile),
+        ):
+            if name and name not in known_profiles:
+                raise HTTPException(status_code=400, detail=f"unknown LLM profile for {role}: {name}")
+        for name in payload.fallback_chain:
+            if name not in known_profiles:
+                raise HTTPException(status_code=400, detail=f"unknown LLM profile in fallback_chain: {name}")
+
+        config = _read_config_file(config_manager)
+        llm = config.setdefault("llm", {})
+        llm["concierge_profile"] = payload.concierge_profile
+        llm["operator_profile"] = payload.operator_profile
+        llm["auditor_profile"] = payload.auditor_profile
+        llm["fallback_chain"] = payload.fallback_chain
+        _write_config_file(config_manager, config)
+        _audit_config_update(repositories_loader(), loaded, "llm_roles", payload.model_dump(mode="json"))
+        return {"config_file": str(CONFIG_FILE_PATH), "llm": llm}
+
     @router.post("/api/config/telegram")
     def admin_update_telegram_config(request: Request, payload: AdminTelegramConfigRequest) -> dict[str, Any]:
         loaded = require_admin(request)
@@ -2268,11 +2311,11 @@ async def _web_chat_reply(settings: AppSettings, objective: str) -> str | None:
     """
     from agent_control.channels.base import ChannelType as _ChannelType
     from agent_control.llm.classifier import LLMMessageClassifier
-    from agent_control.llm.providers import build_default_llm_provider
+    from agent_control.llm.providers import build_default_llm_provider, build_role_llm_provider
     from agent_control.schemas import InboundMessage, MessageKind
 
     try:
-        provider = build_default_llm_provider(settings)
+        provider = build_role_llm_provider(settings, "concierge") or build_default_llm_provider(settings)
         if provider is None:
             return None
         message = InboundMessage(

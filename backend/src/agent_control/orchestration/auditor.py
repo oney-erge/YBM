@@ -63,6 +63,7 @@ class AuditorService:
         self.last_model: str | None = None
         self.last_started_at: datetime | None = None
         self.last_latency_ms: float | None = None
+        self.last_fallback_used: bool = False
 
     @staticmethod
     def is_content_tool(tool_name: str | None) -> bool:
@@ -112,6 +113,7 @@ class AuditorService:
             self.last_model = getattr(self.provider, "last_model", None)
             self.last_started_at = getattr(self.provider, "last_started_at", None)
             self.last_latency_ms = getattr(self.provider, "last_latency_ms", None)
+            self.last_fallback_used = getattr(self.provider, "last_fallback_used", False)
         except Exception:
             logger.warning("auditor provider call failed; not blocking completion on it", exc_info=True)
             return AuditResult(sufficient=True, answer=None, reason="auditor_error")

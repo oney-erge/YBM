@@ -6,7 +6,14 @@ from pydantic import BaseModel
 
 from agent_control.channels.telegram import TelegramAdapter, TelegramIntakeService
 from agent_control.config import AppSettings, LLMConfig, LLMProfileConfig, TelegramConfig
-from agent_control.llm.providers import FailoverLLMProvider, build_default_llm_provider
+from agent_control.llm.providers import (
+    ChainLLMProvider,
+    FailoverLLMProvider,
+    OpenAICompatibleProvider,
+    _ChainEntry,
+    build_default_llm_provider,
+    build_role_llm_provider,
+)
 from agent_control.schemas import (
     ChannelType,
     TaskStatus,
@@ -99,6 +106,190 @@ def test_build_default_provider_without_fallback_stays_plain() -> None:
     )
     provider = build_default_llm_provider(settings)
     assert not isinstance(provider, FailoverLLMProvider)
+
+
+@pytest.mark.asyncio
+async def test_failover_now_treats_429_401_403_as_unavailability() -> None:
+    """docs/ROADMAP.md's per-role/fallback item: a 429 (this client should
+    back off) or 401/403 (this profile's own credential is bad) says nothing
+    about whether the *request* is wrong, unlike a 400 - all three are worth
+    trying a different profile for.
+    """
+    for status in (429, 401, 403):
+        primary = _Recorder(error=ValueError(f"LLM request failed with HTTP {status} at x: nope"))
+        fallback = _Recorder(response="fallback")
+        provider = FailoverLLMProvider(primary, fallback)
+        assert await provider.generate_text("s", "u") == "fallback"
+
+    # 400 still must not fail over - already covered by
+    # test_failover_does_not_mask_request_bugs above, restated here as the
+    # negative case for the same three-status change.
+    primary = _Recorder(error=ValueError("LLM request failed with HTTP 400 at x: bad request"))
+    fallback = _Recorder()
+    provider = FailoverLLMProvider(primary, fallback)
+    with pytest.raises(ValueError):
+        await provider.generate_text("s", "u")
+    assert fallback.calls == 0
+
+
+# --- ChainLLMProvider (docs/ROADMAP.md: ordered fallback chain + cooldown) -
+
+def _entry(name: str, response: str = "ok", error: Exception | None = None) -> _ChainEntry:
+    return _ChainEntry(name, _Recorder(response=response, error=error))
+
+
+@pytest.mark.asyncio
+async def test_chain_provider_uses_the_first_healthy_entry() -> None:
+    chain = ChainLLMProvider([_entry("primary", response="from primary")])
+
+    assert await chain.generate_text("s", "u") == "from primary"
+    assert chain.last_profile_name == "primary"
+    assert chain.last_fallback_used is False
+
+
+@pytest.mark.asyncio
+async def test_chain_provider_falls_through_multiple_unavailable_entries() -> None:
+    down1 = _entry("down1", error=httpx.ConnectError("refused"))
+    down2 = _entry("down2", error=httpx.ReadTimeout("timed out"))
+    healthy = _entry("healthy", response="from healthy")
+    chain = ChainLLMProvider([down1, down2, healthy])
+
+    result = await chain.generate_text("s", "u")
+
+    assert result == "from healthy"
+    assert chain.last_profile_name == "healthy"
+    assert chain.last_fallback_used is True
+
+
+@pytest.mark.asyncio
+async def test_chain_provider_does_not_mask_a_request_bug() -> None:
+    bad_request = _entry("primary", error=ValueError("LLM request failed with HTTP 400 at x: bad request"))
+    fallback = _entry("fallback", response="unreachable")
+    chain = ChainLLMProvider([bad_request, fallback])
+
+    with pytest.raises(ValueError):
+        await chain.generate_text("s", "u")
+    assert fallback.provider.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_chain_provider_raises_the_last_error_when_every_entry_fails() -> None:
+    chain = ChainLLMProvider([
+        _entry("a", error=httpx.ConnectError("a down")),
+        _entry("b", error=httpx.ConnectError("b down")),
+    ])
+
+    with pytest.raises(httpx.ConnectError, match="b down"):
+        await chain.generate_text("s", "u")
+
+
+@pytest.mark.asyncio
+async def test_chain_provider_skips_a_cooling_down_entry_on_the_next_call() -> None:
+    """A profile that just failed should not eat its own timeout again on the
+    very next call - it should be skipped straight to whatever comes after
+    it until the cooldown window passes."""
+    flaky = _entry("flaky", error=httpx.ConnectError("down"))
+    healthy = _entry("healthy", response="from healthy")
+    chain = ChainLLMProvider([flaky, healthy], cooldown_seconds=100.0)
+
+    await chain.generate_text("s", "u")
+    assert flaky.provider.calls == 1
+
+    # Second call: flaky is cooling down, so it should not be attempted again.
+    await chain.generate_text("s", "u")
+    assert flaky.provider.calls == 1
+    assert healthy.provider.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_chain_provider_always_attempts_the_last_entry_even_cooling_down() -> None:
+    """Every entry cooling down must still attempt something rather than
+    raising with nothing tried - the last entry is the one exception to the
+    cooldown skip."""
+    only = _entry("only", error=httpx.ConnectError("down"))
+    chain = ChainLLMProvider([only], cooldown_seconds=100.0)
+
+    with pytest.raises(httpx.ConnectError):
+        await chain.generate_text("s", "u")
+    with pytest.raises(httpx.ConnectError):
+        await chain.generate_text("s", "u")
+    assert only.provider.calls == 2
+
+
+def test_build_role_llm_provider_returns_none_without_an_override() -> None:
+    settings = AppSettings(
+        _env_file=None,
+        llm=LLMConfig(
+            default_profile="local",
+            profiles={"local": LLMProfileConfig(model="local-model", base_url="http://127.0.0.1:8000/v1")},
+        ),
+    )
+
+    assert build_role_llm_provider(settings, "operator") is None
+    assert build_role_llm_provider(settings, "auditor") is None
+    assert build_role_llm_provider(settings, "concierge") is None
+
+
+def test_build_role_llm_provider_builds_the_configured_override() -> None:
+    settings = AppSettings(
+        _env_file=None,
+        llm=LLMConfig(
+            default_profile="local",
+            operator_profile="strong",
+            profiles={
+                "local": LLMProfileConfig(model="local-model", base_url="http://127.0.0.1:8000/v1"),
+                "strong": LLMProfileConfig(model="strong-model", base_url="https://api.example.com/v1"),
+            },
+        ),
+    )
+
+    provider = build_role_llm_provider(settings, "operator")
+
+    assert provider is not None
+    assert not isinstance(provider, ChainLLMProvider)  # no fallback configured for this role
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider.profile.model == "strong-model"
+
+
+def test_build_role_llm_provider_chains_the_configured_fallback() -> None:
+    settings = AppSettings(
+        _env_file=None,
+        llm=LLMConfig(
+            default_profile="local",
+            auditor_profile="strong",
+            fallback_chain=["cheap", "local"],
+            profiles={
+                "local": LLMProfileConfig(model="local-model", base_url="http://127.0.0.1:8000/v1"),
+                "strong": LLMProfileConfig(model="strong-model", base_url="https://api.example.com/v1"),
+                "cheap": LLMProfileConfig(model="cheap-model", base_url="https://cheap.example.com/v1"),
+            },
+        ),
+    )
+
+    provider = build_role_llm_provider(settings, "auditor")
+
+    assert isinstance(provider, ChainLLMProvider)
+    assert [entry.name for entry in provider.entries] == ["strong", "cheap", "local"]
+
+
+def test_build_default_provider_with_fallback_chain_orders_every_entry() -> None:
+    settings = AppSettings(
+        _env_file=None,
+        llm=LLMConfig(
+            default_profile="local",
+            fallback_chain=["cheap", "cloud"],
+            profiles={
+                "local": LLMProfileConfig(model="local-model", base_url="http://127.0.0.1:8000/v1"),
+                "cheap": LLMProfileConfig(model="cheap-model", base_url="https://cheap.example.com/v1"),
+                "cloud": LLMProfileConfig(model="cloud-model", base_url="https://api.example.com/v1"),
+            },
+        ),
+    )
+
+    provider = build_default_llm_provider(settings)
+
+    assert isinstance(provider, ChainLLMProvider)
+    assert [entry.name for entry in provider.entries] == ["local", "cheap", "cloud"]
 
 
 # --- CLARIFYING ask-user loop ---

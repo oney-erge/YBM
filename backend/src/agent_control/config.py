@@ -100,8 +100,24 @@ class LLMConfig(StrictBaseModel):
     major_profile: str | None = None  # Profile for complex/major tasks (e.g. gemma4 with large context)
     # Profile used when the primary profile is unreachable (connection error,
     # timeout, or HTTP 5xx). Keeps the whole stack usable while the local
-    # model is down or still warming up.
+    # model is down or still warming up. Superseded by fallback_chain when
+    # that is non-empty; kept working on its own so an existing config with
+    # only this set is unaffected (see providers.py's _chain_profile_names).
     fallback_profile: str | None = None
+    # Ordered list of profiles to try, in order, after default_profile fails
+    # - each entry gets its own cooldown window on failure (providers.py's
+    # ChainLLMProvider) instead of every call re-paying that entry's timeout
+    # before moving on. Empty means "use fallback_profile alone", not "no
+    # fallback" - this is additive, not a replacement for that field.
+    fallback_chain: list[str] = Field(default_factory=list)
+    # Per-role model selection (docs/ROADMAP.md): None means "use
+    # default_profile", so an existing config naming only default_profile
+    # keeps today's behavior - Concierge, Operator, and Auditor all sharing
+    # one model - unchanged. Set one to route that role through a different
+    # profile (its own fallback_chain/fallback_profile still apply).
+    concierge_profile: str | None = None
+    operator_profile: str | None = None
+    auditor_profile: str | None = None
     profiles: dict[str, LLMProfileConfig] = Field(default_factory=dict)
 
     @field_validator("profiles")
@@ -680,6 +696,12 @@ class AppSettings(BaseSettings):
             },
             "llm": {
                 "default_profile": self.llm.default_profile,
+                "major_profile": self.llm.major_profile,
+                "fallback_profile": self.llm.fallback_profile,
+                "fallback_chain": self.llm.fallback_chain,
+                "concierge_profile": self.llm.concierge_profile,
+                "operator_profile": self.llm.operator_profile,
+                "auditor_profile": self.llm.auditor_profile,
                 "profiles": {
                     name: {
                         "provider": profile.provider,

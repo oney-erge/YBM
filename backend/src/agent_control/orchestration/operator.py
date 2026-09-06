@@ -43,6 +43,10 @@ class OperatorLoopService:
         self.last_model: str | None = None
         self.last_started_at: datetime | None = None
         self.last_latency_ms: float | None = None
+        # Set only when the provider is a ChainLLMProvider (docs/ROADMAP.md
+        # per-role models/fallback chain) - absent otherwise via getattr's
+        # default, same as every other last_* attribute above.
+        self.last_fallback_used: bool = False
 
     async def decide(
         self,
@@ -86,6 +90,7 @@ class OperatorLoopService:
                 self.last_model = getattr(provider, "last_model", None)
                 self.last_started_at = getattr(provider, "last_started_at", None)
                 self.last_latency_ms = getattr(provider, "last_latency_ms", None)
+                self.last_fallback_used = getattr(provider, "last_fallback_used", False)
                 return candidate
             except (ValueError, ValidationError) as exc:
                 last_error = exc

@@ -503,6 +503,10 @@ const TokenUsageSchema = z.object({
   total_tokens: z.number().int().optional(),
   by_source: z.record(z.string(), TokenUsageSourceSchema).optional(),
   last_model: z.string().optional(),
+  // Sticky for the whole task once any call falls back to a secondary
+  // profile (docs/ROADMAP.md 4.4: "an unexplained fallback is a silent
+  // quality change") - absent, not false, when no call ever needed one.
+  fallback_used: z.boolean().optional(),
 })
 export type TokenUsage = z.infer<typeof TokenUsageSchema>
 
@@ -936,6 +940,12 @@ const SettingsSummarySchema = z.object({
     channels: z.object({ telegram: TelegramConfigSchema }).passthrough(),
     llm: z.object({
       default_profile: z.string(),
+      major_profile: z.string().nullable(),
+      fallback_profile: z.string().nullable(),
+      fallback_chain: z.array(z.string()),
+      concierge_profile: z.string().nullable(),
+      operator_profile: z.string().nullable(),
+      auditor_profile: z.string().nullable(),
       profiles: z.record(z.string(), LLMProfileConfigSchema),
     }),
     adapters: z.object({
@@ -1144,6 +1154,24 @@ export function selectLLMPreset(preset: string) {
   return apiFetch("/api/config/llm/preset", ConfigUpdateResponseSchema, {
     method: "POST",
     body: JSON.stringify({ preset }),
+  })
+}
+
+export type LLMRolesInput = {
+  concierge_profile: string | null
+  operator_profile: string | null
+  auditor_profile: string | null
+  fallback_chain: string[]
+}
+
+// Assigns an already-configured profile to Concierge/Operator/Auditor and/or
+// sets the ordered fallback chain (docs/ROADMAP.md "per-role models") -
+// separate from updateLLMConfig, which creates/edits one profile's own
+// connection details rather than pointing existing profiles at roles.
+export function updateLLMRoles(input: LLMRolesInput) {
+  return apiFetch("/api/config/llm/roles", ConfigUpdateResponseSchema, {
+    method: "POST",
+    body: JSON.stringify(input),
   })
 }
 

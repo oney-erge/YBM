@@ -68,6 +68,9 @@ function formatReceiptAsText(receipt: TaskReceipt): string {
   }
   if (receipt.token_usage.total_tokens) {
     lines.push("", `Tokens used: ${receipt.token_usage.total_tokens} (model: ${receipt.token_usage.last_model ?? "unknown"})`)
+    if (receipt.token_usage.fallback_used) {
+      lines.push("A fallback model answered somewhere in this task - the primary was unavailable at least once.")
+    }
   }
   return lines.join("\n")
 }
@@ -223,6 +226,15 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
           {receipt.verification.missing.length > 0
             ? `Verified ${receipt.verification.verified}/${receipt.verification.checked} - ${receipt.verification.missing.length} missing`
             : `Verified ${receipt.verification.verified}/${receipt.verification.checked}, confirmed on disk`}
+        </div>
+      )}
+
+      {receipt.token_usage.fallback_used && (
+        <div className="flex items-center gap-1.5 text-warning">
+          <AlertTriangle className="size-3.5 shrink-0" />
+          {receipt.token_usage.last_model
+            ? `Answered by a fallback model (${receipt.token_usage.last_model}) - the primary was unavailable`
+            : "Answered by a fallback model - the primary was unavailable"}
         </div>
       )}
 

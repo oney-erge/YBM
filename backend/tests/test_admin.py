@@ -1585,6 +1585,62 @@ def test_admin_selects_llm_preset(monkeypatch, tmp_path) -> None:
     assert saved["llm"]["profiles"]["localdeploy_gemma3_12b"]["timeout_seconds"] == 360
 
 
+def _settings_with_llm_profiles(**profiles: str) -> AppSettings:
+    from agent_control.config import LLMConfig, LLMProfileConfig
+
+    return AppSettings(
+        _env_file=None,
+        llm=LLMConfig(
+            default_profile="local",
+            profiles={
+                name: LLMProfileConfig(model=model, base_url="http://127.0.0.1:8000/v1")
+                for name, model in {"local": "local-model", **profiles}.items()
+            },
+        ),
+    )
+
+
+def test_admin_assigns_per_role_llm_profiles(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    settings = _settings_with_llm_profiles(strong="strong-model", cheap="cheap-model")
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.post(
+        "/admin/api/config/llm/roles",
+        json={"operator_profile": "strong", "auditor_profile": "cheap", "fallback_chain": ["local"]},
+    )
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert saved["llm"]["operator_profile"] == "strong"
+    assert saved["llm"]["auditor_profile"] == "cheap"
+    assert saved["llm"]["concierge_profile"] is None
+    assert saved["llm"]["fallback_chain"] == ["local"]
+
+
+def test_admin_rejects_an_unknown_profile_for_a_role(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories, settings=_settings_with_llm_profiles())
+
+    response = client.post("/admin/api/config/llm/roles", json={"operator_profile": "does-not-exist"})
+
+    assert response.status_code == 400
+    assert "does-not-exist" in response.json()["detail"]
+
+
+def test_admin_rejects_an_unknown_profile_in_fallback_chain(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories, settings=_settings_with_llm_profiles())
+
+    response = client.post("/admin/api/config/llm/roles", json={"fallback_chain": ["ghost"]})
+
+    assert response.status_code == 400
+    assert "ghost" in response.json()["detail"]
+
+
 def test_admin_writes_telegram_runtime_config(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")

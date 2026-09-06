@@ -38,6 +38,7 @@ import {
   updateAccessModes,
   updateComputerUseConfig,
   updateLLMConfig,
+  updateLLMRoles,
   updateMemoryFact,
   updateTelegramConfig,
   updateVSCodeConfig,
@@ -47,6 +48,7 @@ import {
   type CapabilityAccessMode,
   type ComputerUseConfigInput,
   type LLMConfigInput,
+  type LLMRolesInput,
   type SkillInstallInput,
   type TelegramConfigInput,
   type VSCodeConfigInput,
@@ -334,6 +336,10 @@ export function useUpdateLLMConfig() {
 
 export function useSelectLLMPreset() {
   return useSettingsMutation((preset: string) => selectLLMPreset(preset))
+}
+
+export function useUpdateLLMRoles() {
+  return useSettingsMutation((input: LLMRolesInput) => updateLLMRoles(input))
 }
 
 export function useTestLLM() {

@@ -591,7 +591,10 @@ class TaskWorker:
                 latest.objective, self._planner_context(), history,
                 memory_context=memory_context, prefer_major=prefer_major,
             )
-            latest = self._record_llm_usage(latest, "operator", getattr(self.operator, "last_usage", None))
+            latest = self._record_llm_usage(
+                latest, "operator", getattr(self.operator, "last_usage", None),
+                fallback_used=getattr(self.operator, "last_fallback_used", False),
+            )
             self._record_llm_call(latest.id, "operator", len(history), self.operator, step_id=step_id)
         except Exception as exc:
             # describe_exception, not str(exc): an empty message here produced
@@ -657,7 +660,10 @@ class TaskWorker:
                         deliverable_evidence=deliverable_evidence(latest) if self._auditor_owns_fulfillment else "",
                         response_context=_auditor_response_context(latest, memory_context),
                     )
-                    latest = self._record_llm_usage(latest, "auditor", getattr(self.auditor, "last_usage", None))
+                    latest = self._record_llm_usage(
+                        latest, "auditor", getattr(self.auditor, "last_usage", None),
+                        fallback_used=getattr(self.auditor, "last_fallback_used", False),
+                    )
                     self._record_llm_call(latest.id, "auditor", len(history), self.auditor, step_id=step_id)
                     if not audit_result.sufficient:
                         history.append({
@@ -1273,7 +1279,10 @@ class TaskWorker:
                     "output_summary": None, "error": f"sub-task decide() failed: {exc}",
                     "origin": delegate_origin, "step_id": step_id,
                 }
-            task = self._record_llm_usage(task, "subagent", getattr(self.operator, "last_usage", None))
+            task = self._record_llm_usage(
+                task, "subagent", getattr(self.operator, "last_usage", None),
+                fallback_used=getattr(self.operator, "last_fallback_used", False),
+            )
             self._record_llm_call(task.id, "subagent", len(sub_history), self.operator, step_id=sub_step_id)
 
             if sub_decision.action == OperatorAction.DONE:
@@ -1932,7 +1941,9 @@ class TaskWorker:
                 payload={"error": "task_memory_update_failed", "reason": str(exc)},
             )
 
-    def _record_llm_usage(self, task: TaskRecord, source: str, usage: dict[str, Any] | None) -> TaskRecord:
+    def _record_llm_usage(
+        self, task: TaskRecord, source: str, usage: dict[str, Any] | None, *, fallback_used: bool = False,
+    ) -> TaskRecord:
         """Accumulate one LLM call's token usage into task.metadata["token_usage"].
 
         `source` is "operator" or "auditor" - the two LLM calls the worker
@@ -1944,6 +1955,11 @@ class TaskWorker:
         pricing, not merged with this one). `usage` is None whenever the
         provider didn't report it (replay in tests, or a server that omits
         the field) - a no-op, never a fabricated zero.
+
+        `fallback_used` (docs/ROADMAP.md 4.4: "an unexplained fallback is a
+        silent quality change") is sticky once set - a task where any call
+        ever fell back to a secondary profile stays flagged for the rest of
+        the task, even if a later call succeeds on the primary again.
         """
         if not usage:
             return task
@@ -1964,6 +1980,8 @@ class TaskWorker:
         current["by_source"] = by_source
         if usage.get("model"):
             current["last_model"] = usage["model"]
+        if fallback_used:
+            current["fallback_used"] = True
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "token_usage": current})
 
     def _record_llm_call(

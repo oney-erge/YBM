@@ -62,6 +62,18 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   now reaching the ordinary in-process retry path the next `decide()` call
   actually reads. A clean rejection (rate-limited, quota exhausted) still
   gets no such warning - nothing ran yet in that case.
+- Per-role LLM models: `concierge_profile`, `operator_profile`, and
+  `auditor_profile` let Concierge, Operator, and Auditor use different
+  profiles instead of always sharing `default_profile` - configurable from
+  Settings' new "Per-role models" card (advanced mode) or directly in
+  `config.yaml`. A new `fallback_chain` (ordered list of profile names)
+  replaces single-fallback `fallback_profile` when set, and each entry gets
+  its own cooldown after failing so a subsequent call skips straight to the
+  next one instead of re-paying that entry's timeout. `_is_unavailability`
+  now also treats HTTP 429/401/403 as failover-worthy, alongside the
+  existing 5xx/timeout/connection-error handling (still not 400 - a request
+  bug fails the same way against any profile). A receipt now says when a
+  fallback model answered somewhere in the task.
 
 ## [0.1.3] - 2026-08-11
 
