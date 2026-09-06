@@ -5,6 +5,31 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `frontend`: resolved the `fast-uri` (high) and `qs` (moderate) advisories
+  flagged by the scheduled dependency audit (#32) via `npm audit fix`.
+- The version a released archive reports through `ybm check-updates` now
+  always matches the git tag it was built from. `scripts/package_release.py`
+  previously copied `backend/pyproject.toml` into the payload unchanged, so
+  the installed package's own metadata - what `check-updates` actually reads
+  - stayed on whatever version was last committed there rather than the tag
+  the release was named after; a release could ship in a way that reported
+  itself as an *older* version than the download it came from. The packaging
+  step now stamps the staged copy with the release version being built.
+  Also caught up the committed value itself, which had drifted a full
+  release behind (`0.1.2` while `v0.1.3` was already public).
+
+### Added
+
+- `frontend`: a vitest + Testing Library unit-test setup, seeded with
+  coverage for access-mode preset computation, task-status action gating,
+  and the chat/task API response schemas - the console had TypeScript and a
+  production build as its only automated gates until now.
+- `frontend`: Playwright coverage for approving/denying a pending action,
+  an expired approval disabling every decision button, and a failed task's
+  trace highlighting the step that failed.
+
 ## [0.1.3] - 2026-08-11
 
 ### Fixed
