@@ -7,8 +7,8 @@ from typing import TypeVar
 import pytest
 from pydantic import BaseModel
 
-from agent_control.schemas import Capability, ToolCallRequest
-from agent_control.tools.filesystem_manage import FilesystemManageAdapter
+from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.tools.filesystem_manage import FilesystemManageAdapter, _verify_apply_manifest
 
 T = TypeVar("T", bound=BaseModel)
 
@@ -283,3 +283,105 @@ async def test_filesystem_manage_resolves_desktop_alias_prefix(monkeypatch, tmp_
 
     assert result.status.value == "succeeded"
     assert result.output["entries"][0]["path"] == str((desktop / "invoice.txt").resolve())
+
+
+# ---- _verify_apply_manifest (docs/ROADMAP.md "Proof": re-check the disk,
+# don't trust the adapter's own claim) -------------------------------------
+
+@pytest.mark.asyncio
+async def test_verify_apply_manifest_confirms_every_moved_file(tmp_path) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    (root / "b.txt").write_text("b", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    request = _request(
+        root,
+        "apply_manifest",
+        manifest=[
+            {"operation": "move", "source": "a.txt", "destination": "docs/a.txt"},
+            {"operation": "move", "source": "b.txt", "destination": "docs/b.txt"},
+        ],
+    )
+
+    result = await adapter.execute(request)
+    verification = _verify_apply_manifest(request, result)
+
+    assert verification is not None
+    assert verification.checked == 2
+    assert verification.verified == 2
+    assert verification.missing == []
+    assert verification.ok is True
+
+
+async def _apply_two_file_move(tmp_path: Path) -> tuple[ToolCallRequest, ToolCallResult, Path, Path]:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    request = _request(root, "apply_manifest", manifest=[{"operation": "move", "source": "a.txt", "destination": "docs/a.txt"}])
+    result = await adapter.execute(request)
+    return request, result, root / "a.txt", root / "docs" / "a.txt"
+
+
+@pytest.mark.asyncio
+async def test_verify_apply_manifest_flags_a_destination_missing_after_the_fact(tmp_path) -> None:
+    """The scenario the plan's "0 missing" line is meant to catch: the
+    adapter reported success, but the destination isn't actually there
+    (here, simulated by removing it right after) - verification must not
+    take the adapter's own claim at face value.
+    """
+    request, result, _source, destination = await _apply_two_file_move(tmp_path)
+    assert destination.exists()
+    destination.unlink()
+
+    verification = _verify_apply_manifest(request, result)
+
+    assert verification is not None
+    assert verification.checked == 1
+    assert verification.verified == 0
+    assert verification.missing == [f"destination not found: {destination}"]
+    assert verification.ok is False
+
+
+@pytest.mark.asyncio
+async def test_verify_apply_manifest_flags_a_source_left_behind_after_move(tmp_path) -> None:
+    request, result, source, _destination = await _apply_two_file_move(tmp_path)
+    # The move already removed the source; recreate it to simulate something
+    # else re-populating that path after the fact.
+    source.write_text("still here", encoding="utf-8")
+
+    verification = _verify_apply_manifest(request, result)
+
+    assert verification is not None
+    assert verification.verified == 0
+    assert any("source still present" in item for item in verification.missing)
+
+
+@pytest.mark.asyncio
+async def test_verify_apply_manifest_returns_none_for_a_dry_run(tmp_path) -> None:
+    root = tmp_path / "downloads"
+    root.mkdir()
+    (root / "a.txt").write_text("a", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    request = _request(
+        root, "apply_manifest", manifest=[{"operation": "move", "source": "a.txt", "destination": "docs/a.txt"}], dry_run=True,
+    )
+
+    result = await adapter.execute(request)
+
+    assert _verify_apply_manifest(request, result) is None
+    # Confirms this is genuinely a dry run and not a false pass: nothing moved.
+    assert (root / "a.txt").exists()
+
+
+def test_verify_apply_manifest_returns_none_when_the_output_has_no_manifest() -> None:
+    request = ToolCallRequest(
+        task_id="task_fs",
+        tool_name="filesystem.manage",
+        capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "apply_manifest", "root": "/tmp", "manifest": [{"operation": "move", "source": "a", "destination": "b"}]},
+    )
+    result = ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={})
+
+    assert _verify_apply_manifest(request, result) is None

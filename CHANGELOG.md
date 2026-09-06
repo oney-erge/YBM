@@ -29,6 +29,21 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `frontend`: Playwright coverage for approving/denying a pending action,
   an expired approval disabling every decision button, and a failed task's
   trace highlighting the step that failed.
+- Task receipts now report `execution` (calls attempted/succeeded/failed)
+  and `verification` (items mechanically re-checked/verified/missing),
+  surfaced in the chat receipt card and the plain-text export. Backed by a
+  new `ToolDefinition.verify` hook (currently implemented for
+  `filesystem.manage`'s `apply_manifest`, which re-reads the destination
+  and source paths on disk after every move/copy/rename instead of trusting
+  the adapter's own success claim) and a `ToolCallResult.verification`
+  field `ToolExecutor` attaches automatically on a succeeded call.
+- `ToolDefinition` gained a declarative `operation_egress` field:
+  `ToolExecutor` now records an operation's outbound host itself by reading
+  the call's own reported URL, so a tool needs no manual
+  `egress.record_egress()` call site to be covered. `http.request` moved
+  onto this from its old manual call; `browser.open` and `browser.control`
+  are now covered for the first time - previously only `http.request`
+  contacted egress, so browser traffic was invisible to receipts.
 
 ## [0.1.3] - 2026-08-11
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import Any, Protocol
 
+from agent_control.egress import extract_egress_hosts, record_egress
 from agent_control.policy import PolicyEngine
 from agent_control.schemas import (
     AuditEventType,
@@ -248,12 +249,33 @@ class ToolExecutor:
             return result, str(exc)
         return result.model_copy(update={"output": validated_output}), None
 
+    def _record_egress_and_verify(self, request: ToolCallRequest, result: ToolCallResult) -> ToolCallResult:
+        """Runs once, on the shared success path, for every tool call - the
+        two things docs/ROADMAP.md's "Proof" item asks for, both driven by
+        the ToolDefinition instead of a manual call site inside an adapter
+        (see spec.py's operation_egress/verify field comments).
+        """
+        definition = self.tool_definitions.get(request.tool_name)
+        if definition is None:
+            return result
+        operation = str(request.input.get("operation") or definition.default_operation or "")
+        if operation in definition.operation_egress:
+            for host in extract_egress_hosts(request.input, result.output or {}):
+                record_egress(self.audit, request.task_id, host, request.tool_name)
+        if definition.verify is not None:
+            verification = definition.verify(request, result)
+            if verification is not None:
+                result = result.model_copy(update={"verification": verification})
+        return result
+
     def _complete(self, request: ToolCallRequest, result: ToolCallResult) -> ToolCallResult:
         # This is the shared ingestion boundary for every adapter result. A
         # secret read from a local file otherwise flows into tool_invocations,
         # task metadata, the next LLM prompt, memory summaries, notifications,
         # and E2E dumps. Sanitize once here and return the same safe result to
         # the worker so all downstream consumers agree.
+        if result.status == ToolResultStatus.SUCCEEDED:
+            result = self._record_egress_and_verify(request, result)
         result = _redacted_result(result)
         self.repositories.tool_invocations.complete(result)
         self.audit.append(

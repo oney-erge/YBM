@@ -11,7 +11,7 @@ from typing import Any
 
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
-from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus, ToolVerification
 from agent_control.tools.contracts import (
     FilesystemApplyManifestInput,
     FilesystemCollectFolderSnapshotInput,
@@ -807,6 +807,58 @@ def _human_filesystem_output(operation: str, output: dict[str, Any]) -> str:
 
 
 
+def _verify_apply_manifest(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+    """Re-reads the disk after a SUCCEEDED apply_manifest to confirm each
+    manifest item's destination now actually exists, and that move/rename
+    left nothing behind at the source (docs/ROADMAP.md "Proof": "34 files
+    are now under Documents; confirmed" instead of trusting the adapter's
+    own claim). Skipped for a dry run - nothing on disk changed, so there is
+    nothing yet to re-check.
+
+    Reads exclusively from the adapter's own reported output, never from
+    the raw request: `manifest`'s source/destination are `_apply_manifest`'s
+    already-resolved absolute paths (the request's own paths may be
+    relative to `root`, which this function has no independent way to
+    re-resolve), and `changed_paths` is the *actual* final destination -
+    `_dedupe_destination` can rename around a collision after `manifest` is
+    already recorded, so `manifest`'s own destination field is not always
+    where the file really landed.
+    """
+    if request.input.get("dry_run"):
+        return None
+    manifest = result.output.get("manifest")
+    changed_paths = result.output.get("changed_paths")
+    if not isinstance(manifest, list) or not isinstance(changed_paths, list) or len(manifest) != len(changed_paths):
+        return None
+    checked = 0
+    missing: list[str] = []
+    for item, actual_destination in zip(manifest, changed_paths):
+        if not isinstance(item, dict) or not isinstance(actual_destination, str) or not actual_destination:
+            continue
+        checked += 1
+        if not Path(actual_destination).exists():
+            missing.append(f"destination not found: {actual_destination}")
+            continue
+        operation = str(item.get("operation") or "move")
+        source = item.get("source")
+        if operation in {"move", "rename"} and isinstance(source, str) and source and Path(source).exists():
+            missing.append(f"source still present after {operation}: {source}")
+    if checked == 0:
+        return None
+    return ToolVerification(
+        checked=checked,
+        verified=checked - len(missing),
+        missing=missing,
+        detail=f"Re-checked {checked} manifest destination path(s) on disk after apply_manifest.",
+    )
+
+
+def _verify_filesystem_manage(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+    if request.input.get("operation") != "apply_manifest":
+        return None
+    return _verify_apply_manifest(request, result)
+
+
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
     enabled = (
@@ -883,6 +935,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "rename_plan": RiskLevel.HIGH,
                 "apply_manifest": RiskLevel.HIGH,
             },
+            verify=_verify_filesystem_manage,
             examples=(
                 {"operation": "inspect_folder", "root": "{{folder_path}}"},
                 {"operation": "search", "root": "desktop", "query": "resume"},

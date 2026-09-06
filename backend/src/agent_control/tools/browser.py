@@ -1012,6 +1012,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             ),
             default_operation="open",
             minimum_risk=RiskLevel.LOW,
+            # "search"/"objective"-driven operations don't know their
+            # destination host until the adapter actually picks one, so this
+            # reads from the result's own browser_url/url/visited_urls, not
+            # from input (egress.extract_egress_hosts checks both).
+            operation_egress=("open", "search", "research", "research_pages"),
             examples=(
                 {"operation": "open", "url": "https://dizibox.com"},
                 {"operation": "summarize_page", "objective": "list the first 5 new episodes"},
@@ -1066,6 +1071,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "fill_form": RiskLevel.CRITICAL,
                 "fill_form_step": RiskLevel.CRITICAL,
             },
+            operation_egress=("navigate",),
             examples=(
                 {"operation": "navigate", "url": "https://example.com/contact"},
                 {"operation": "fill_form",

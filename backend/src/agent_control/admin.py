@@ -2418,6 +2418,8 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         if event.type == AuditEventType.EGRESS_CONTACTED
     ]
 
+    verification = _receipt_verification(tool_invocations)
+
     token_usage = metadata.get("token_usage") if isinstance(metadata.get("token_usage"), dict) else {}
     default_profile = settings.llm.profiles.get(settings.llm.default_profile)
     llm_left_machine = bool(
@@ -2434,6 +2436,10 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         uncertainties.append(str(metadata["fulfillment_gap"]))
     if task.status in {TaskStatus.FAILED, TaskStatus.BLOCKED} and metadata.get("last_worker_error"):
         uncertainties.append(str(metadata["last_worker_error"]))
+    if verification["missing"]:
+        shown = verification["missing"][:3]
+        more = f" (+{len(verification['missing']) - 3} more)" if len(verification["missing"]) > 3 else ""
+        uncertainties.append(f"{len(verification['missing'])} verification issue(s): " + "; ".join(shown) + more)
 
     duration_seconds = max(0.0, (task.updated_at - task.created_at).total_seconds())
 
@@ -2444,6 +2450,8 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         "result_summary": metadata.get("synthesized_answer") or metadata.get("document_summary"),
         "changes": _extract_evidence(tool_invocations),
         "tools_used": sorted(tools_used.values(), key=lambda entry: str(entry["tool_name"])),
+        "execution": _receipt_execution_counts(tool_invocations),
+        "verification": verification,
         "services_contacted": services_contacted,
         "data_left_machine": bool(services_contacted) or llm_left_machine,
         "llm_left_machine": llm_left_machine,
@@ -2458,6 +2466,62 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
     }
+
+
+# needs_approval never reached an adapter at all; denied/cancelled were
+# refused or withdrawn before one did either - none of the three were
+# "attempted" in any sense a receipt should claim.
+_NOT_ATTEMPTED_STATUSES = {"needs_approval", "denied", "cancelled"}
+_FAILED_STATUSES = {"failed", "timeout", "rate_limited"}
+
+
+def _receipt_execution_counts(tool_invocations: list[dict[str, Any]]) -> dict[str, int]:
+    """Call-level counts for the receipt (docs/ROADMAP.md "Proof") - one
+    entry per tool_invocations row, i.e. one per ToolCallRequest actually
+    issued this task, not per item a single call's manifest describes (see
+    _receipt_verification for that finer count).
+    """
+    attempted = 0
+    succeeded = 0
+    failed = 0
+    for invocation in tool_invocations:
+        status = str(invocation.get("status") or "")
+        if status in _NOT_ATTEMPTED_STATUSES:
+            continue
+        attempted += 1
+        if status == "succeeded":
+            succeeded += 1
+        elif status in _FAILED_STATUSES:
+            failed += 1
+    return {"calls_attempted": attempted, "calls_succeeded": succeeded, "calls_failed": failed}
+
+
+def _receipt_verification(tool_invocations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregates every tool call's ToolVerification (schemas.py) across the
+    task - the mechanical "did it actually happen" proof a ToolDefinition's
+    verify() hook attaches on success (docs/ROADMAP.md "Proof": "34 files
+    are now under Documents; confirmed", not the model's word for it).
+
+    Granularity note: one ToolVerification can cover many items in a single
+    call (filesystem.manage's apply_manifest checks one manifest entry at a
+    time), so `checked`/`verified` here count items, not calls - a 128-file
+    move contributes 128, not 1, matching the receipt's own "43 destination
+    paths verified" framing rather than "1 tool call succeeded".
+    """
+    checked = 0
+    verified = 0
+    missing: list[str] = []
+    for invocation in tool_invocations:
+        result = invocation.get("result")
+        if not isinstance(result, dict):
+            continue
+        record = result.get("verification")
+        if not isinstance(record, dict):
+            continue
+        checked += int(record.get("checked") or 0)
+        verified += int(record.get("verified") or 0)
+        missing.extend(str(item) for item in (record.get("missing") or []))
+    return {"checked": checked, "verified": verified, "missing": missing}
 
 
 # What a completed task actually touched (docs/HISTORY.md N5's "evidence view").

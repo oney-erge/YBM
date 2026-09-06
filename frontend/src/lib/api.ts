@@ -609,6 +609,25 @@ const ReceiptApprovalSchema = z.object({
   summary: z.string(),
 })
 
+// docs/ROADMAP.md "Proof": call-level counts (one entry per tool call this
+// task issued) - distinct from ReceiptVerificationSchema below, which
+// counts individual re-checked items (a single apply_manifest call can
+// verify many files).
+const ReceiptExecutionSchema = z.object({
+  calls_attempted: z.number().int(),
+  calls_succeeded: z.number().int(),
+  calls_failed: z.number().int(),
+})
+
+// Aggregated across every ToolCallResult.verification this task's calls
+// attached (schemas.py's ToolVerification) - mechanical re-checks of the
+// machine, not the model's word that something worked.
+const ReceiptVerificationSchema = z.object({
+  checked: z.number().int(),
+  verified: z.number().int(),
+  missing: z.array(z.string()),
+})
+
 export const TaskReceiptSchema = z.object({
   task_id: z.string(),
   objective: z.string(),
@@ -620,6 +639,8 @@ export const TaskReceiptSchema = z.object({
     commands: z.array(EvidenceItemSchema),
   }),
   tools_used: z.array(ToolUsageSummarySchema),
+  execution: ReceiptExecutionSchema,
+  verification: ReceiptVerificationSchema,
   services_contacted: z.array(ServiceContactedSchema),
   data_left_machine: z.boolean(),
   llm_left_machine: z.boolean(),

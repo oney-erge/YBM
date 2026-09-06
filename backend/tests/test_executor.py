@@ -16,12 +16,14 @@ from agent_control.orchestration.executor import StaticToolAdapter, ToolExecutor
 from agent_control.policy import PolicyEngine
 from agent_control.schemas import (
     ApprovalStatus,
+    AuditEventType,
     Capability,
     ErrorClass,
     RiskLevel,
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
+    ToolVerification,
 )
 from agent_control.tools.spec import ToolDefinition
 from helpers import make_repos
@@ -487,3 +489,164 @@ async def test_executor_rejects_risk_above_policy(tmp_path) -> None:
 
     assert result.status == ToolResultStatus.DENIED
     assert result.error_class == ErrorClass.POLICY_DENIED
+
+
+# ---- docs/ROADMAP.md "Proof": declared egress + mechanical verification --
+
+def _egress_definition(operations: tuple[str, ...] = ("fetch",), egress_operations: tuple[str, ...] | None = None) -> ToolDefinition:
+    return ToolDefinition(
+        name="fetch.tool",
+        capability=Capability.LLM_GENERATE,
+        enabled=True,
+        description="test tool for egress wiring",
+        operations=operations,
+        default_operation=operations[0],
+        operation_egress=egress_operations if egress_operations is not None else operations,
+    )
+
+
+def _tool_request(task_id: str, tool_name: str, operation: str, **extra_input: Any) -> ToolCallRequest:
+    return ToolCallRequest(
+        task_id=task_id,
+        tool_name=tool_name,
+        capability=Capability.LLM_GENERATE,
+        risk_level=RiskLevel.LOW,
+        input={"operation": operation, **extra_input},
+    )
+
+
+@pytest.mark.asyncio
+async def test_executor_records_egress_for_a_declared_operation(tmp_path) -> None:
+    """A tool needs zero manual record_egress() call of its own - declaring
+    the operation in operation_egress is enough, because ToolExecutor reads
+    the destination straight out of the adapter's own output.
+    """
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+    definition = _egress_definition()
+    adapter = StaticToolAdapter(output={"url": "https://real-host.example/data"})
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"fetch.tool": adapter},
+        tool_definitions=[definition],
+    )
+
+    await executor.execute(_tool_request(task.id, "fetch.tool", "fetch"))
+
+    events = [e for e in repos.audit.list_for_task(task.id) if e.type == AuditEventType.EGRESS_CONTACTED]
+    assert len(events) == 1
+    assert events[0].payload == {"host": "real-host.example", "tool_name": "fetch.tool"}
+
+
+@pytest.mark.asyncio
+async def test_executor_records_no_egress_for_an_undeclared_operation(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+    # "fetch" is declared for egress; "peek" is not, even on the same tool.
+    definition = _egress_definition(operations=("fetch", "peek"), egress_operations=("fetch",))
+    adapter = StaticToolAdapter(output={"url": "https://real-host.example/data"})
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"fetch.tool": adapter},
+        tool_definitions=[definition],
+    )
+
+    await executor.execute(_tool_request(task.id, "fetch.tool", "peek"))
+
+    events = [e for e in repos.audit.list_for_task(task.id) if e.type == AuditEventType.EGRESS_CONTACTED]
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_executor_records_no_egress_for_a_loopback_destination(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+    definition = _egress_definition()
+    adapter = StaticToolAdapter(output={"url": "http://127.0.0.1:11434/api"})
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"fetch.tool": adapter},
+        tool_definitions=[definition],
+    )
+
+    await executor.execute(_tool_request(task.id, "fetch.tool", "fetch"))
+
+    events = [e for e in repos.audit.list_for_task(task.id) if e.type == AuditEventType.EGRESS_CONTACTED]
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_executor_attaches_declared_verification_to_a_succeeded_result(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+
+    def verify(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+        return ToolVerification(checked=3, verified=3, detail="all 3 destinations exist")
+
+    definition = ToolDefinition(
+        name="verified.tool",
+        capability=Capability.LLM_GENERATE,
+        enabled=True,
+        description="test tool for verification wiring",
+        operations=("apply",),
+        default_operation="apply",
+        verify=verify,
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"verified.tool": StaticToolAdapter()},
+        tool_definitions=[definition],
+    )
+
+    result = await executor.execute(_tool_request(task.id, "verified.tool", "apply"))
+
+    assert result.verification == ToolVerification(checked=3, verified=3, detail="all 3 destinations exist")
+    persisted = repos.tool_invocations.list_for_task(task.id)[0]["result"]
+    assert persisted["verification"]["verified"] == 3
+
+
+@pytest.mark.asyncio
+async def test_executor_never_calls_verify_on_a_failed_result(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+    calls: list[ToolCallResult] = []
+
+    def verify(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+        calls.append(result)
+        return ToolVerification(checked=1, verified=1)
+
+    definition = ToolDefinition(
+        name="verified.tool",
+        capability=Capability.LLM_GENERATE,
+        enabled=True,
+        description="test tool for verification wiring",
+        operations=("apply",),
+        default_operation="apply",
+        verify=verify,
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"verified.tool": _ExplodingAdapter()},
+        tool_definitions=[definition],
+    )
+
+    result = await executor.execute(_tool_request(task.id, "verified.tool", "apply"))
+
+    assert result.status == ToolResultStatus.FAILED
+    assert result.verification is None
+    assert calls == []

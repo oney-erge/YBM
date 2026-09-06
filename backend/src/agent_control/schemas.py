@@ -614,6 +614,30 @@ class ToolCallRequest(StrictBaseModel):
     parent_step_id: str | None = None
 
 
+class ToolVerification(StrictBaseModel):
+    """Mechanical proof that a tool call's declared effect actually happened,
+    attached by ToolExecutor when the call's ToolDefinition.verify() hook
+    fires on a SUCCEEDED result (docs/ROADMAP.md "Proof": check the goal
+    instead of inferring it from wording).
+
+    Deliberately distinct from PlanPostcondition/fulfillment.py's
+    task-level checks: those infer what a whole task should have done from
+    the objective's wording. This is one call's own receipt, produced by a
+    tool re-reading the machine state its own request claims to have
+    changed (e.g. filesystem.manage's apply_manifest confirming each
+    manifest destination now exists on disk) - never by asking the model
+    whether it worked.
+    """
+    checked: int = Field(ge=0)
+    verified: int = Field(ge=0)
+    missing: list[str] = Field(default_factory=list)
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.checked > 0 and not self.missing
+
+
 class ToolCallResult(StrictBaseModel):
     id: str = Field(default_factory=lambda: new_id("toolres"))
     request_id: str
@@ -623,6 +647,10 @@ class ToolCallResult(StrictBaseModel):
     error_message: str | None = None
     artifact_ids: list[str] = Field(default_factory=list)
     completed_at: datetime = Field(default_factory=utc_now)
+    # None means "this tool call has no mechanical verification defined" -
+    # distinct from an empty ToolVerification, which would mean "checked
+    # and found nothing wrong". Absence of proof is not proof of absence.
+    verification: ToolVerification | None = None
 
 
 class LLMCallRecord(StrictBaseModel):

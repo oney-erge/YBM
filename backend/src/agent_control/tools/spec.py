@@ -18,7 +18,15 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, ValidationError
 
 from agent_control.config import AppSettings
-from agent_control.schemas import Capability, ErrorClass, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.schemas import (
+    Capability,
+    ErrorClass,
+    RiskLevel,
+    ToolCallRequest,
+    ToolCallResult,
+    ToolResultStatus,
+    ToolVerification,
+)
 
 
 def failed_result(request: ToolCallRequest, message: str) -> ToolCallResult:
@@ -95,6 +103,22 @@ class ToolDefinition:
     # imitates concrete examples much more reliably than it follows abstract
     # descriptions.
     examples: tuple[dict, ...] = ()
+    # Operations whose SUCCEEDED result can carry a real destination this
+    # machine contacted (docs/GAPS.md: "only http.request calls
+    # record_egress... browser, MCP, coding-agent, and Telegram traffic is
+    # invisible to receipts"). ToolExecutor consults this - a tool needs
+    # zero manual record_egress() call sites of its own to be covered;
+    # egress.extract_egress_hosts() does the actual URL/host scan over the
+    # call's validated input and output.
+    operation_egress: tuple[str, ...] = ()
+    # Optional mechanical proof hook (docs/ROADMAP.md "Proof"): given the
+    # completed request and result, return a ToolVerification describing
+    # what was actually re-checked on the machine, or None if this call has
+    # no defined verification. Same dispatch idiom as risk_resolver/
+    # approval_resolver (inspect value["operation"] internally) but answers
+    # "did it actually happen", not "is it allowed". Runs only once the
+    # result already reports SUCCEEDED.
+    verify: Callable[[ToolCallRequest, ToolCallResult], ToolVerification | None] | None = None
 
     def required_risk(self, value: dict) -> RiskLevel:
         if self.risk_resolver is not None:

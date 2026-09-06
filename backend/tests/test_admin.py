@@ -29,6 +29,7 @@ from agent_control.schemas import (
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
+    ToolVerification,
     utc_now,
 )
 from agent_control.storage import AuditLogger, Database, Repositories
@@ -1131,6 +1132,68 @@ def test_admin_task_receipt_reports_no_egress_for_a_fully_local_task(monkeypatch
     assert body["services_contacted"] == []
     assert body["data_left_machine"] is False
     assert body["uncertainties"] == []
+
+
+def test_admin_task_receipt_aggregates_verification_across_calls(monkeypatch, tmp_path) -> None:
+    """docs/ROADMAP.md "Proof": a receipt should say how many things were
+    actually re-checked on disk and how many came up missing, aggregated
+    across every call's own ToolVerification (schemas.py) - not just
+    whether the adapter reported "succeeded".
+    """
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    task = repositories.tasks.create("sort receipts by vendor")
+    repositories.tasks.update_metadata(task.id, {"synthesized_answer": "Sorted."}, TaskStatus.COMPLETED)
+
+    verified_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "apply_manifest"},
+    )
+    repositories.tool_invocations.create(verified_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(
+            request_id=verified_request.id,
+            status=ToolResultStatus.SUCCEEDED,
+            output={"changed_paths": ["a", "b"]},
+            verification=ToolVerification(checked=2, verified=2, missing=[]),
+        )
+    )
+    partial_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "apply_manifest"},
+    )
+    repositories.tool_invocations.create(partial_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(
+            request_id=partial_request.id,
+            status=ToolResultStatus.SUCCEEDED,
+            output={"changed_paths": ["c"]},
+            verification=ToolVerification(checked=1, verified=0, missing=["destination not found: c"]),
+        )
+    )
+    unverified_request = ToolCallRequest(
+        task_id=task.id, tool_name="web.search", capability=Capability.LLM_GENERATE, input={"query": "vendor names"},
+    )
+    repositories.tool_invocations.create(unverified_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=unverified_request.id, status=ToolResultStatus.SUCCEEDED, output={})
+    )
+    failing_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, input={"operation": "apply_manifest"},
+    )
+    repositories.tool_invocations.create(failing_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=failing_request.id, status=ToolResultStatus.FAILED, error_message="disk full")
+    )
+
+    response = client.get(f"/admin/api/tasks/{task.id}/receipt")
+    body = response.json()
+
+    assert body["verification"] == {"checked": 3, "verified": 2, "missing": ["destination not found: c"]}
+    # 4 calls total; none were needs_approval/denied/cancelled, so all 4
+    # were attempted - 3 succeeded (including the unverified web.search
+    # call, whose tool has no verify() hook), 1 failed.
+    assert body["execution"] == {"calls_attempted": 4, "calls_succeeded": 3, "calls_failed": 1}
+    assert any("1 verification issue" in item and "destination not found: c" in item for item in body["uncertainties"])
 
 
 def _settings_with_artifact_root(root: Path) -> AppSettings:

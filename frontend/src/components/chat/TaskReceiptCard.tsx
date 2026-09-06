@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router"
-import { Download, ExternalLink, Globe, HardDrive, LoaderCircle } from "lucide-react"
+import { AlertTriangle, Download, ExternalLink, Globe, HardDrive, LoaderCircle, ShieldCheck } from "lucide-react"
 import type { TaskReceipt, TaskStatus } from "@/lib/api"
 import { useTaskReceipt } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -44,10 +44,20 @@ function formatReceiptAsText(receipt: TaskReceipt): string {
   lines.push(
     receipt.data_left_machine
       ? `Data left this computer: yes - ${receipt.services_contacted.map((s) => s.host).join(", ") || "cloud model"}`
-      // Not "no": only http.request calls record_egress today, so a false
-      // here means no transfer was RECORDED, not that none happened.
+      // Not "no": a tool that reports its own destination is covered
+      // automatically (spec.py's operation_egress - http.request and
+      // browser today), but a tool with no such declaration is still
+      // invisible here, so this reflects what was recorded, not a
+      // guarantee that nothing else contacted anywhere.
       : "No external transfer was recorded",
   )
+  if (receipt.verification.checked > 0) {
+    lines.push(
+      receipt.verification.missing.length > 0
+        ? `Verified: ${receipt.verification.verified}/${receipt.verification.checked} - ${receipt.verification.missing.length} missing`
+        : `Verified: ${receipt.verification.verified}/${receipt.verification.checked}, all confirmed on disk`,
+    )
+  }
   if (receipt.approvals.length > 0) {
     lines.push("", "Approvals:")
     for (const a of receipt.approvals) lines.push(`- ${a.summary} -> ${a.status}`)
@@ -191,11 +201,30 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
         {receipt.data_left_machine ? <Globe className="size-3.5 shrink-0" /> : <HardDrive className="size-3.5 shrink-0" />}
         {receipt.data_left_machine
           ? `Contacted: ${contactedHosts.length > 0 ? contactedHosts.join(", ") : "a cloud model"}`
-          : // Not an absolute "nothing left" claim: only http.request calls
-            // record_egress today, so this reflects what was recorded, not
-            // a guarantee that nothing else contacted anywhere.
+          : // Not an absolute "nothing left" claim: a tool covers itself by
+            // declaring operation_egress (spec.py) - http.request and
+            // browser today - so this reflects what was recorded, not a
+            // guarantee that nothing else contacted anywhere.
             "No external transfer was recorded"}
       </div>
+
+      {receipt.verification.checked > 0 && (
+        <div
+          className={cn(
+            "flex items-center gap-1.5",
+            receipt.verification.missing.length > 0 ? "text-destructive" : "text-success",
+          )}
+        >
+          {receipt.verification.missing.length > 0 ? (
+            <AlertTriangle className="size-3.5 shrink-0" />
+          ) : (
+            <ShieldCheck className="size-3.5 shrink-0" />
+          )}
+          {receipt.verification.missing.length > 0
+            ? `Verified ${receipt.verification.verified}/${receipt.verification.checked} - ${receipt.verification.missing.length} missing`
+            : `Verified ${receipt.verification.verified}/${receipt.verification.checked}, confirmed on disk`}
+        </div>
+      )}
 
       <div className="flex items-center justify-between border-t border-current/15 pt-2 text-[11px] text-muted-foreground">
         <span>Time: {formatDuration(receipt.duration_seconds)}</span>
