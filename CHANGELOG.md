@@ -53,6 +53,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   `ToolCallResult.content_trust`, and it now shows as an "untrusted
   content" badge on the matching step in a task's trace. Does not yet
   reach the Operator prompt itself - see `docs/GAPS.md`.
+- An automatically-retried TIMEOUT or transient failure on a risky write
+  (filesystem/terminal/desktop/browser-control/VS Code, or high/critical
+  risk) now records an explicit warning in the retry's history entry - it
+  may have already taken effect before the connection was lost, so verify
+  before repeating it - the same "silently retrying can do a thing twice"
+  reasoning `reconcile_orphaned_tasks` already applies to a crashed worker,
+  now reaching the ordinary in-process retry path the next `decide()` call
+  actually reads. A clean rejection (rate-limited, quota exhausted) still
+  gets no such warning - nothing ran yet in that case.
 
 ## [0.1.3] - 2026-08-11
 

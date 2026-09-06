@@ -114,6 +114,40 @@ def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
     )
 
 
+# A clean rejection (the request never actually ran) versus an unknown
+# outcome (the request may have reached the far end before the connection
+# was lost). Only the second kind is worth warning the model about before
+# it retries a write - a 429/quota response means nothing happened yet.
+_AMBIGUOUS_COMPLETION_ERRORS = {ErrorClass.TRANSIENT}
+
+
+def _retry_error_text(result: ToolCallResult, request: ToolCallRequest | None) -> str | None:
+    """The error text recorded in history for an automatically-retried call.
+
+    Reuses _in_flight_is_ambiguous's own "is this a risky write" judgment
+    (same reasoning as reconcile_orphaned_tasks' crash recovery: a plain
+    retry silently re-decided by the model next step is exactly the
+    "silently retrying can do a thing twice" risk that function exists to
+    avoid for a crash - here nothing crashed, but a TIMEOUT/TRANSIENT result
+    is the same kind of unknown outcome, not the clean pre-execution
+    rejection a RATE_LIMITED/USAGE_LIMITED result is). The next decide()
+    call sees this text verbatim (operator.py's _format_history), so this is
+    the only lever available to make that risk visible to the model instead
+    of a generic "timed out" it will most naturally read as "try again".
+    """
+    text = result.error_message
+    if request is None:
+        return text
+    ambiguous_outcome = result.status == ToolResultStatus.TIMEOUT or result.error_class in _AMBIGUOUS_COMPLETION_ERRORS
+    if not ambiguous_outcome:
+        return text
+    risky = _in_flight_is_ambiguous({"risk_level": request.risk_level.value, "capability": request.capability.value})
+    if not risky:
+        return text
+    base = text or "the call did not return in time"
+    return f"{base} - this may have already taken effect before the connection was lost; verify before repeating it."
+
+
 def reconcile_orphaned_tasks(repositories: Repositories, audit: AuditLogger) -> int:
     """Recover tasks left RUNNING/INTERPRETING by a worker that never finished.
 
@@ -858,7 +892,7 @@ class TaskWorker:
         if _is_background_external_tool_result(tool_name, result):
             return self._await_operator_external(recorded, decision, result, history, step_id=step_id)
         if result.status != ToolResultStatus.SUCCEEDED:
-            retry_outcome = self._operator_retry_or_ask(recorded, decision, result, history, step_id=step_id)
+            retry_outcome = self._operator_retry_or_ask(recorded, decision, result, history, step_id=step_id, request=request)
             if retry_outcome is not None:
                 return retry_outcome
         output_text = _tool_output_text(result) if result.status == ToolResultStatus.SUCCEEDED else None
@@ -1368,6 +1402,7 @@ class TaskWorker:
         history: list[dict[str, Any]],
         *,
         step_id: str,
+        request: ToolCallRequest | None = None,
     ) -> TaskRecord | None:
         """Rate-limit/usage-limit backoff, ported from the plan-based path's
         _retry_decision so the loop doesn't hot-loop a rate-limited API on
@@ -1418,7 +1453,8 @@ class TaskWorker:
             return None
         history.append({
             "tool_name": decision.tool_name, "input": decision.tool_input,
-            "status": result.status.value, "output_summary": None, "error": result.error_message,
+            "status": result.status.value, "output_summary": None,
+            "error": _retry_error_text(result, request),
             "request_id": result.request_id, "step_id": step_id,
         })
         metadata = {

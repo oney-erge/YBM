@@ -59,6 +59,15 @@ class RateLimitedAdapter:
         )
 
 
+class TimedOutAdapter:
+    async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        return ToolCallResult(
+            request_id=request.id,
+            status=ToolResultStatus.TIMEOUT,
+            error_message="the call did not return in time",
+        )
+
+
 class UsageLimitedAdapter:
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
         return ToolCallResult(
@@ -1942,6 +1951,82 @@ async def test_operator_loop_retrying_resumes_and_retries_after_backoff_elapses(
 
     assert running_after_retry.metadata["operator_history"][-1]["status"] == "succeeded"
     assert completed.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_retrying_a_timed_out_write_warns_it_may_have_already_happened(tmp_path) -> None:
+    """docs/HISTORY.md P6's crash-recovery reasoning ("silently retrying can
+    do a thing twice") applies just as much to an ordinary TIMEOUT on a risky
+    write - the difference is nothing crashed, so the loop reaches
+    decide() again on its own next step instead of asking a human. That
+    decide() call only ever sees history as text (operator.py's
+    _format_history), so the warning has to live in the history entry's
+    error field itself, not in a side channel the model never reads.
+    """
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("move a file")
+    settings = AppSettings(
+        _env_file=None,
+        # Raised above HIGH so this test exercises the retry-warning logic
+        # in isolation, not the (separately tested) approval gate that would
+        # otherwise intercept a HIGH-risk filesystem write first.
+        approval_policy={"require_approval_at_or_above": RiskLevel.CRITICAL},
+        capabilities={
+            Capability.FILESYSTEM_WRITE: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH),
+        },
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"filesystem.manage": TimedOutAdapter()},
+        tool_definitions={
+            "filesystem.manage": ToolDefinition(
+                name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test tool",
+            )
+        },
+    )
+    operator = QueueOperator([
+        OperatorDecision(
+            action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
+            tool_input={"operation": "apply_manifest"}, risk_level=RiskLevel.HIGH,
+        ),
+    ])
+    worker = TaskWorker(
+        repos, audit, executor=executor, operator=operator,
+        retry_policy=RetryPolicy(settings.limits),
+    )
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.RETRYING
+    error = result.metadata["operator_history"][-1]["error"]
+    assert "the call did not return in time" in error
+    assert "may have already taken effect" in error
+
+
+@pytest.mark.asyncio
+async def test_retrying_a_timed_out_read_does_not_warn(tmp_path) -> None:
+    """The same TIMEOUT on a low-risk read carries no such warning - nothing
+    was left ambiguous by repeating a read, so nothing should make the model
+    more hesitant to just try again."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("check a status page")
+    settings = _settings()
+    executor = _executor_with_adapter(settings, audit, repos, TimedOutAdapter())
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+    ])
+    worker = TaskWorker(
+        repos, audit, executor=executor, operator=operator,
+        retry_policy=RetryPolicy(settings.limits),
+    )
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.RETRYING
+    error = result.metadata["operator_history"][-1]["error"]
+    assert error == "the call did not return in time"
 
 
 @pytest.mark.asyncio
