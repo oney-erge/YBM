@@ -599,7 +599,9 @@ class TaskWorker:
             # `decision` gets produced differs. See _next_replay_decision's
             # own docstring for why retry/failure handling needs its own
             # per-step attempt cap here.
-            decision, metadata_updates = _next_replay_decision(replay_plan, history, latest.metadata)
+            decision, metadata_updates = _next_replay_decision(
+                replay_plan, history, latest.metadata, self.executor.tool_definitions
+            )
             if metadata_updates is not latest.metadata:
                 latest = self.repositories.tasks.update_metadata(latest.id, metadata_updates)
         elif self.operator is None:
@@ -2774,10 +2776,31 @@ def _tool_call_count(history: list[dict[str, Any]]) -> int:
 _MAX_REPLAY_STEP_ATTEMPTS = 3
 
 
+def _replay_step_is_ambiguous(last: dict[str, Any] | None, tool_definitions: dict[str, Any]) -> bool:
+    """Whether a replay step that just timed out is a consequential write
+    (_in_flight_is_ambiguous's own test, fed from the step's ToolDefinition
+    instead of a live in-flight record - there is no live call here, only
+    the history entry that recorded the timeout). A tool no longer in the
+    registry (removed or disabled since the source task ran) is treated as
+    high-risk by default - the same fail-safe direction
+    _in_flight_is_ambiguous already takes for an unrecognized capability.
+    """
+    tool_name = str((last or {}).get("tool_name") or "")
+    step_input = (last or {}).get("input")
+    step_input = step_input if isinstance(step_input, dict) else {}
+    definition = tool_definitions.get(tool_name)
+    if definition is None:
+        return _in_flight_is_ambiguous({"risk_level": "high", "capability": ""})
+    return _in_flight_is_ambiguous(
+        {"risk_level": definition.required_risk(step_input).value, "capability": definition.capability.value}
+    )
+
+
 def _next_replay_decision(
     replay_plan: list[dict[str, Any]],
     history: list[dict[str, Any]],
     metadata: dict[str, Any],
+    tool_definitions: dict[str, Any],
 ) -> tuple[OperatorDecision, dict[str, Any]]:
     """The replay counterpart to OperatorLoopService.decide() (docs/ROADMAP.md
     "reusable verified workflows"): walks a recorded plan deterministically
@@ -2792,21 +2815,23 @@ def _next_replay_decision(
     the target changed since the source run, and silently trying the next
     step anyway would mean skipping over a step nobody confirmed happened.
 
-    TIMEOUT/RATE_LIMITED are genuinely ambiguous by the time this function
-    ever sees one as the latest entry: reaching here at all means the task
-    is back in a state ready for a fresh decision, which happens both right
-    after RetryPolicy's own backoff cycle elapses (this step should simply
-    be reissued, same as a live task's LLM would naturally do) and once
-    RetryPolicy has separately exhausted itself on this step (reissuing
-    would just fail the same way again). Nothing available here can tell
-    those two apart, so this reissues up to _MAX_REPLAY_STEP_ATTEMPTS times
-    before giving up - bounded retries that would otherwise risk running
-    forever if the two cases can't be told apart.
-
-    Returns (decision, updated_metadata) rather than mutating in place: the
-    per-step attempt counter has to persist across ticks the same way
-    operator_retry_count already does, and the caller is what actually owns
-    writing task metadata.
+    RATE_LIMITED is a clean pre-execution rejection - the live path's own
+    _AMBIGUOUS_COMPLETION_ERRORS distinction: nothing ran yet, so reissuing
+    is always safe. TIMEOUT is not: the call may have reached the far end
+    before the connection was lost. The governing rule (docs/ROADMAP.md
+    "Finish the Proof"): never repeat an uncertain consequential action
+    unless YBM can establish that repeating it is safe. "Consequential" is
+    _in_flight_is_ambiguous's own definition (reused, not re-derived, from
+    the step's ToolDefinition - reconcile_orphaned_tasks applies the exact
+    same test to a crashed worker's in-flight call). For a read or another
+    low-risk call, reissuing is fine either way, so both statuses share the
+    same bounded reissue-attempt logic. For a timed-out consequential write,
+    establishing safety would mean asking the tool's own verify() hook - but
+    every hook today (filesystem.manage's apply_manifest included) reads the
+    *completed* call's reported output to decide what to re-check, and a
+    timeout never produced one. Until a verifier exists that can also work
+    from the request alone, "establish it's safe" has no answer here, so the
+    honest move is to stop and ask a human rather than reissue on a guess.
     """
     real_entries = [entry for entry in history if entry.get("tool_name") not in CHECK_ENTRY_NAMES]
     completed = len(real_entries)
@@ -2820,6 +2845,21 @@ def _next_replay_decision(
             OperatorDecision(
                 action=OperatorAction.BLOCKED,
                 reason=f"Replay step {completed}/{len(replay_plan)} ({tool_name}) failed: {error}",
+            ),
+            metadata,
+        )
+
+    if last_status == "timeout" and _replay_step_is_ambiguous(last, tool_definitions):
+        tool_name = str((last or {}).get("tool_name") or "a step")
+        return (
+            OperatorDecision(
+                action=OperatorAction.BLOCKED,
+                reason=(
+                    f"Replay step {completed}/{len(replay_plan)} ({tool_name}) timed out. This is a "
+                    "consequential write, so it may have already taken effect before the connection "
+                    "was lost, and nothing can mechanically confirm that either way - refusing to "
+                    "reissue it automatically. Check the target for this step before retrying."
+                ),
             ),
             metadata,
         )

@@ -2434,8 +2434,22 @@ def _replay_plan() -> list[dict]:
     ]
 
 
+def _tool_defs(*definitions: ToolDefinition) -> dict[str, ToolDefinition]:
+    return {definition.name: definition for definition in definitions}
+
+
+# A consequential write - _in_flight_is_ambiguous's own test says a timeout
+# on this one can't be assumed safe to reissue.
+_WRITE_TOOL = ToolDefinition(
+    name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, enabled=True, description=""
+)
+# A low-risk, non-write capability - a timeout on this one is always safe
+# to reissue regardless of what establishing safety would otherwise need.
+_READ_ONLY_TOOL = ToolDefinition(name="web.search", capability=Capability.LLM_GENERATE, enabled=True, description="")
+
+
 def test_next_replay_decision_issues_the_first_step_from_an_empty_history() -> None:
-    decision, metadata = _next_replay_decision(_replay_plan(), [], {})
+    decision, metadata = _next_replay_decision(_replay_plan(), [], {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.CALL_TOOL
     assert decision.tool_name == "filesystem.manage"
@@ -2447,7 +2461,7 @@ def test_next_replay_decision_issues_the_first_step_from_an_empty_history() -> N
 def test_next_replay_decision_advances_after_a_succeeded_step() -> None:
     history = [{"tool_name": "filesystem.manage", "status": "succeeded"}]
 
-    decision, _metadata = _next_replay_decision(_replay_plan(), history, {})
+    decision, _metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.CALL_TOOL
     assert decision.tool_input == {"operation": "move", "path": "b"}
@@ -2459,7 +2473,7 @@ def test_next_replay_decision_completes_once_every_step_succeeded() -> None:
         {"tool_name": "filesystem.manage", "status": "succeeded"},
     ]
 
-    decision, _metadata = _next_replay_decision(_replay_plan(), history, {})
+    decision, _metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.DONE
 
@@ -2470,29 +2484,36 @@ def test_next_replay_decision_blocks_immediately_on_a_failed_step() -> None:
     which step and why."""
     history = [{"tool_name": "filesystem.manage", "status": "failed", "error": "disk full"}]
 
-    decision, _metadata = _next_replay_decision(_replay_plan(), history, {})
+    decision, _metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.BLOCKED
     assert "1/2" in decision.reason
     assert "disk full" in decision.reason
 
 
-def test_next_replay_decision_reissues_a_timed_out_step_instead_of_advancing() -> None:
-    history = [{"tool_name": "filesystem.manage", "status": "timeout", "error": "no response"}]
+def test_next_replay_decision_reissues_a_timed_out_read_instead_of_advancing() -> None:
+    """A timeout on a low-risk, non-write call is always safe to reissue -
+    nothing to establish, since nothing consequential could have half-run."""
+    plan = [
+        {"tool_name": "web.search", "tool_input": {"query": "a"}},
+        {"tool_name": "web.search", "tool_input": {"query": "b"}},
+    ]
+    history = [{"tool_name": "web.search", "status": "timeout", "error": "no response"}]
 
-    decision, metadata = _next_replay_decision(_replay_plan(), history, {})
+    decision, metadata = _next_replay_decision(plan, history, {}, _tool_defs(_READ_ONLY_TOOL))
 
-    # Reissues step 1 (path "a") again, not step 2 - a timeout is not a
+    # Reissues step 1 (query "a") again, not step 2 - a timeout is not a
     # confirmed outcome for that step.
     assert decision.action == OperatorAction.CALL_TOOL
-    assert decision.tool_input == {"operation": "move", "path": "a"}
+    assert decision.tool_input == {"query": "a"}
     assert metadata["replay_step_attempts"] == 1
 
 
-def test_next_replay_decision_gives_up_after_the_attempt_cap_on_repeated_timeouts() -> None:
-    history = [{"tool_name": "filesystem.manage", "status": "timeout", "error": "no response"}]
+def test_next_replay_decision_gives_up_after_the_attempt_cap_on_repeated_read_timeouts() -> None:
+    plan = [{"tool_name": "web.search", "tool_input": {"query": "a"}}]
+    history = [{"tool_name": "web.search", "status": "timeout", "error": "no response"}]
 
-    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 3})
+    decision, metadata = _next_replay_decision(plan, history, {"replay_step_attempts": 3}, _tool_defs(_READ_ONLY_TOOL))
 
     assert decision.action == OperatorAction.BLOCKED
     assert "3 attempt(s)" in decision.reason
@@ -2504,11 +2525,56 @@ def test_next_replay_decision_resets_the_attempt_counter_once_a_step_finally_suc
         {"tool_name": "filesystem.manage", "status": "succeeded"},  # step 1, after some earlier timeouts
     ]
 
-    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 2})
+    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 2}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.CALL_TOOL
     assert decision.tool_input == {"operation": "move", "path": "b"}
     assert metadata["replay_step_attempts"] == 0
+
+
+def test_next_replay_decision_blocks_instead_of_reissuing_a_timed_out_write() -> None:
+    """The core safety rule: never repeat an uncertain consequential action
+    unless YBM can establish that repeating it is safe. filesystem.manage's
+    apply_manifest verifier can't run against a timeout's empty output (it
+    needs the completed call's own reported manifest/changed_paths), so
+    nothing here can establish safety - this must stop on the very first
+    timeout, not reissue a few times first."""
+    history = [{"tool_name": "filesystem.manage", "status": "timeout", "error": "no response"}]
+
+    decision, metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
+
+    assert decision.action == OperatorAction.BLOCKED
+    assert "consequential write" in decision.reason
+    assert "1/2" in decision.reason
+    # Never even entered the bounded-reissue counter - blocked outright.
+    assert "replay_step_attempts" not in metadata
+
+
+def test_next_replay_decision_treats_an_unregistered_tool_as_ambiguous_on_timeout() -> None:
+    """A tool no longer in the registry (removed/disabled since the source
+    task ran) is treated as high-risk by default, the same fail-safe
+    direction _in_flight_is_ambiguous already takes for an unknown
+    capability - never assume a vanished tool was safe."""
+    plan = [{"tool_name": "some.removed.tool", "tool_input": {}}]
+    history = [{"tool_name": "some.removed.tool", "status": "timeout", "error": "no response"}]
+
+    decision, _metadata = _next_replay_decision(plan, history, {}, {})
+
+    assert decision.action == OperatorAction.BLOCKED
+    assert "consequential write" in decision.reason
+
+
+def test_next_replay_decision_still_gives_up_on_rate_limits_after_the_attempt_cap() -> None:
+    """rate_limited is a clean pre-execution rejection regardless of the
+    tool's risk - reusing the same bounded-reissue path a safe timeout
+    does, not the ambiguity check that only applies to timeout."""
+    history = [{"tool_name": "filesystem.manage", "status": "rate_limited", "error": "429"}]
+
+    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 3}, _tool_defs(_WRITE_TOOL))
+
+    assert decision.action == OperatorAction.BLOCKED
+    assert "3 attempt(s)" in decision.reason
+    assert metadata == {"replay_step_attempts": 3}
 
 
 @pytest.mark.asyncio

@@ -132,6 +132,23 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   and a per-tool `not_checked` count - so `verified_completed_pct` no
   longer has to be read without knowing whether its denominator was even
   checkable.
+- Replaying a task no longer blindly reissues a timed-out consequential
+  write. A `RATE_LIMITED` result is a clean pre-execution rejection -
+  nothing ran yet, so reissuing is always safe - but a `TIMEOUT` on a
+  filesystem/terminal/desktop/browser-control/VS Code write (the same
+  "consequential" test `reconcile_orphaned_tasks` already applies to a
+  crashed worker's in-flight call) means the call may have reached the far
+  end before the connection was lost, and replay had no equivalent of the
+  warning a live task's history entry gets in that situation. It now stops
+  and asks instead of guessing: establishing that a reissue is safe would
+  mean asking the tool's own `verify()` hook, but every hook today
+  (`filesystem.manage`'s `apply_manifest` included) reads the completed
+  call's reported output to decide what to re-check, and a timeout never
+  produced one - so a consequential write's timeout now blocks the replay
+  on the first occurrence, naming the step and why, rather than retrying a
+  few times first. A tool no longer in the registry is treated the same
+  fail-safe way. Reads and other low-risk calls are unaffected - a timeout
+  there still reissues, bounded the same as before.
 
 ## [0.1.3] - 2026-08-11
 
