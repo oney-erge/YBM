@@ -140,8 +140,11 @@ numbered phase say so.
    live list across tasks, one-click revoke). Still tool+capability-wide, not per-operation within
    one tool (e.g. a grant covering `filesystem.manage` covers every operation on it, not just the
    one that was approved).
-5. Cross-task reliability and cost dashboards: failure reason, tool latency, retry count, token
-   spend, model, and time window.
+5. ~~Cross-task reliability and cost dashboards~~ - shipped (Insights page, `GET /api/dashboard`):
+   completed/verified-completed/failed rates, retry count, token spend, per-tool failure rates with
+   a least-reliable-tool callout, and per-model/per-task-type breakdowns, over a 7- or 30-day
+   window. Not built: per-call tool latency (the receipt/trace views have per-step duration; this
+   dashboard doesn't aggregate it yet) and approval waiting time.
 6. SSE for task and approval events after measuring current polling load; keep polling fallback.
 
 ### P3 - Expansion only after evidence

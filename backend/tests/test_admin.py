@@ -1928,6 +1928,32 @@ def test_admin_review_adapter_rejects_a_path_outside_the_configured_root(monkeyp
     assert response.status_code == 400
 
 
+def test_admin_dashboard_reports_task_counts_for_the_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("sort downloads")
+    repositories.tasks.update_metadata(task.id, task.metadata, TaskStatus.COMPLETED)
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/dashboard", params={"window_days": 7})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["window_days"] == 7
+    assert body["tasks_attempted"] == 1
+    assert body["completed"] == 1
+
+
+def test_admin_dashboard_rejects_an_out_of_range_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/dashboard", params={"window_days": 9000})
+
+    assert response.status_code == 422
+
+
 def test_admin_writes_telegram_runtime_config(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")

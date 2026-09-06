@@ -93,6 +93,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   the actual generated adapter source and a real sandbox test result
   (`GET /api/adapters/review`), not just `adapter_dir`/`approved=true` -
   approving one used to be a decision made from the tool name alone.
+- A new Insights page (`GET /api/dashboard`) reports cross-task reliability
+  over a 7- or 30-day window: completion and *verified*-completion rate
+  (the same mechanical `ToolVerification` data a task receipt already
+  claims, not the model's word that it finished), failure/retry counts,
+  token spend, a per-tool failure-rate table with a least-reliable-tool
+  callout, and per-model/per-task-type breakdowns. Entirely computed on
+  read from existing task/tool-invocation data - nothing new persisted.
 
 ## [0.1.3] - 2026-08-11
 

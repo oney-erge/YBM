@@ -21,6 +21,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import Field, SecretStr
 
+from agent_control.analytics import build_reliability_dashboard
 from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
@@ -704,6 +705,18 @@ def create_admin_router(
                 "config_file": str(CONFIG_FILE_PATH),
             },
         }
+
+    @router.get("/api/dashboard")
+    def admin_reliability_dashboard(
+        request: Request,
+        window_days: int = Query(default=7, ge=1, le=90),
+    ) -> dict[str, Any]:
+        """Cross-task reliability dashboard (docs/ROADMAP.md) - success
+        rate, verified-success rate, retries, tool failures, token cost,
+        and per-tool/per-model/per-task-type breakdowns over the window.
+        """
+        require_admin(request)
+        return build_reliability_dashboard(repositories_loader(), window_days)
 
     @router.get("/api/doctor")
     def admin_doctor(request: Request) -> dict[str, Any]:

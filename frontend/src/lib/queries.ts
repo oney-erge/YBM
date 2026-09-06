@@ -9,6 +9,7 @@ import {
   fetchVoiceConfig,
   getBootstrap,
   getEffectiveConfig,
+  getReliabilityDashboard,
   getServiceLog,
   getSettingsSummary,
   getSetupDetect,
@@ -389,6 +390,13 @@ export function useAdapterReview(adapterDir: string | undefined) {
     queryKey: ["adapters", "review", adapterDir],
     queryFn: () => reviewAdapter(adapterDir!),
     enabled: adapterDir != null,
+  })
+}
+
+export function useReliabilityDashboard(windowDays: number) {
+  return useQuery({
+    queryKey: ["dashboard", "reliability", windowDays],
+    queryFn: () => getReliabilityDashboard(windowDays),
   })
 }
 

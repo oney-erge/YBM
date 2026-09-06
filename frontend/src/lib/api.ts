@@ -968,6 +968,58 @@ export function reviewAdapter(adapterDir: string) {
   return apiFetch(`/api/adapters/review?adapter_dir=${encodeURIComponent(adapterDir)}`, AdapterReviewSchema)
 }
 
+// ---- Reliability dashboard (docs/ROADMAP.md) ------------------------------
+
+const ToolReliabilityStatSchema = z.object({
+  tool_name: z.string(),
+  calls: z.number().int(),
+  succeeded: z.number().int(),
+  failed: z.number().int(),
+  failure_rate_pct: z.number(),
+})
+
+const ModelUsageStatSchema = z.object({
+  model: z.string(),
+  tasks: z.number().int(),
+  completed: z.number().int(),
+  total_tokens: z.number().int(),
+})
+
+const TaskTypeStatSchema = z.object({
+  task_type: z.string(),
+  tasks: z.number().int(),
+  completed: z.number().int(),
+  failed: z.number().int(),
+})
+
+const ReliabilityDashboardSchema = z.object({
+  window_days: z.number().int(),
+  tasks_attempted: z.number().int(),
+  completed: z.number().int(),
+  completed_pct: z.number(),
+  verified_completed: z.number().int(),
+  verified_completed_pct: z.number(),
+  failed: z.number().int(),
+  failed_pct: z.number(),
+  blocked: z.number().int(),
+  cancelled: z.number().int(),
+  tasks_with_retries: z.number().int(),
+  mean_retries: z.number(),
+  fallback_tasks: z.number().int(),
+  total_tokens: z.number().int(),
+  avg_task_duration_seconds: z.number().nullable(),
+  tool_call_failure_rate_pct: z.number(),
+  most_unreliable_tool: z.string().nullable(),
+  tools: z.array(ToolReliabilityStatSchema),
+  by_model: z.array(ModelUsageStatSchema),
+  by_task_type: z.array(TaskTypeStatSchema),
+})
+export type ReliabilityDashboard = z.infer<typeof ReliabilityDashboardSchema>
+
+export function getReliabilityDashboard(windowDays: number) {
+  return apiFetch(`/api/dashboard?window_days=${windowDays}`, ReliabilityDashboardSchema)
+}
+
 const ServiceItemSchema = z.object({
   name: z.string(),
   expected: z.boolean(),

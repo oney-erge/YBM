@@ -287,6 +287,18 @@ class TaskRepository:
             ).fetchall()
         return [self._row_to_task(row) for row in rows]
 
+    def list_since(self, cutoff: datetime, limit: int = 5000) -> list[TaskRecord]:
+        """Every task created at or after `cutoff` (docs/ROADMAP.md
+        "reliability dashboard") - the time-windowed view list_by_statuses
+        doesn't give, since that one filters by status, not by when.
+        """
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE created_at >= ? ORDER BY created_at ASC LIMIT ?",
+                (_dt(cutoff), limit),
+            ).fetchall()
+        return [self._row_to_task(row) for row in rows]
+
     def claim_next(
         self,
         statuses: list[TaskStatus],
