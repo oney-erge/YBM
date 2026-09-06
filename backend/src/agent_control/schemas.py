@@ -378,6 +378,37 @@ class MessageClassification(StrictBaseModel):
     # back to TelegramIntakeService's separate `responder` if one is configured
     # (see channels/responder.py) - kept for classifiers that don't populate this.
     reply: str | None = None
+    # Optional: which fixed outcome type(s) (docs/ROADMAP.md "Finish the
+    # Proof") this specific request objectively requires to count as done,
+    # when that's plain from the request itself - e.g. "make me a slide
+    # deck" implies presentation_file. This is transmitted via the
+    # structured-output JSON schema (LLMProvider.generate_structured's
+    # response_format), not embedded in system_prompt/user_prompt text, so
+    # adding it changes no fixture_key and needed no scenario re-record.
+    # orchestration/fulfillment.py's expected_postconditions() prefers this
+    # over its own keyword-matched guess when non-empty, but never requires
+    # it - every recorded fixture predates this field and simply omits it,
+    # which is indistinguishable from "the classifier chose not to declare
+    # anything", the documented safe default.
+    expected_postconditions: list[PostconditionType] = Field(
+        default_factory=list,
+        description=(
+            "Which of these fixed outcome types this specific request objectively requires "
+            "to count as done, only when that is plain from the request itself (e.g. "
+            "'make me a slide deck' implies presentation_file). Leave empty when it is not "
+            "obvious - an empty list is the safe default, not a wrong answer."
+        ),
+    )
+
+    @field_validator("expected_postconditions", mode="before")
+    @classmethod
+    def _drop_unrecognized_postcondition_types(cls, value: Any) -> Any:
+        # Same defensive posture as task_type_accepts_route_aliases below:
+        # one hallucinated value must not fail the whole classification.
+        if not isinstance(value, list):
+            return []
+        valid = {item.value for item in PostconditionType}
+        return [item for item in value if isinstance(item, str) and item in valid]
 
     @field_validator("task_type", mode="before")
     @classmethod

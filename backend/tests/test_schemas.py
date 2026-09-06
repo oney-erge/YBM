@@ -7,6 +7,7 @@ from agent_control.schemas import (
     Capability,
     ChannelType,
     InboundMessage,
+    MessageClassification,
     MessageKind,
     OperatorAction,
     OperatorDecision,
@@ -139,3 +140,29 @@ def test_operator_decision_delegate_tools_defaults_to_unrestricted() -> None:
     decision = OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="anything")
 
     assert decision.delegate_tools is None
+
+
+def test_message_classification_expected_postconditions_defaults_empty() -> None:
+    classification = MessageClassification(is_task=True, reason="ordinary task")
+
+    assert classification.expected_postconditions == []
+
+
+def test_message_classification_accepts_a_declared_postcondition() -> None:
+    classification = MessageClassification(
+        is_task=True, reason="wants a slide deck", expected_postconditions=["presentation_file"]
+    )
+
+    assert classification.expected_postconditions == [PostconditionType.PRESENTATION_FILE]
+
+
+def test_message_classification_silently_drops_an_unrecognized_postcondition_type() -> None:
+    """One hallucinated value must not fail the whole classification -
+    same defensive posture as task_type_accepts_route_aliases."""
+    classification = MessageClassification(
+        is_task=True,
+        reason="wants a slide deck",
+        expected_postconditions=["presentation_file", "made_up_type", 42],
+    )
+
+    assert classification.expected_postconditions == [PostconditionType.PRESENTATION_FILE]

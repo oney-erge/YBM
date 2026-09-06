@@ -166,6 +166,21 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   next-highest-frequency previously-unverified tools after the receipt's
   new `not_checked`/`unverified_tools` fields made that gap visible per
   call instead of only in the aggregate.
+- A completion obligation can now be declared instead of only inferred.
+  `MessageClassification` gained an optional `expected_postconditions`
+  field the Concierge can populate at intake, before any tool has run;
+  `orchestration/fulfillment.py`'s `expected_postconditions()` prefers a
+  non-empty declaration over its own keyword-matched guess at the
+  objective/original message text. Purely additive: the field is
+  transmitted through the structured-output JSON schema, not embedded in
+  prompt text, so it changed no `system_prompt`/`user_prompt` string and
+  needed no scenario fixture re-record - every recorded fixture and every
+  live classifier today simply omits it, which the fallback treats
+  identically to "nothing declared". A hallucinated or unrecognized value
+  is dropped rather than failing the whole classification, at both the
+  schema boundary and the fulfillment lookup. Keyword inference is
+  unchanged and remains the operative path until a classifier is actually
+  updated to populate the field.
 
 ## [0.1.3] - 2026-08-11
 

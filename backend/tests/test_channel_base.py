@@ -68,6 +68,52 @@ async def test_classify_and_spawn_task_creates_a_task_for_a_non_telegram_channel
 
 
 @pytest.mark.asyncio
+async def test_classify_and_spawn_task_persists_declared_expected_postconditions(tmp_path) -> None:
+    """orchestration/fulfillment.py's expected_postconditions() reads this
+    off task.metadata before falling back to keyword inference
+    (docs/ROADMAP.md "Finish the Proof") - it has to actually land there
+    for a classifier that declares one to matter at all."""
+    repos, audit = make_repos(tmp_path)
+    conversation_id = repos.conversations.get_or_create(ChannelType.DISCORD, "chat-1")
+    classifier = _StaticClassifier(
+        MessageClassification(
+            is_task=True,
+            task_type=TaskType.DEVELOPMENT,
+            normalized_objective="make me a slide deck",
+            reason="wants a presentation",
+            expected_postconditions=["presentation_file"],
+        )
+    )
+    inbound = _message(text="make me a slide deck")
+
+    result = await classify_and_spawn_task(
+        inbound, conversation_id,
+        repositories=repos, audit=audit, classifier=classifier, send_progress=_noop_progress,
+    )
+
+    assert result.task is not None
+    assert result.task.metadata["expected_postconditions"] == ["presentation_file"]
+
+
+@pytest.mark.asyncio
+async def test_classify_and_spawn_task_persists_an_empty_list_when_nothing_declared(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    conversation_id = repos.conversations.get_or_create(ChannelType.DISCORD, "chat-1")
+    classifier = _StaticClassifier(
+        MessageClassification(is_task=True, task_type=TaskType.DEVELOPMENT, normalized_objective="build me a script", reason="looks like work")
+    )
+    inbound = _message()
+
+    result = await classify_and_spawn_task(
+        inbound, conversation_id,
+        repositories=repos, audit=audit, classifier=classifier, send_progress=_noop_progress,
+    )
+
+    assert result.task is not None
+    assert result.task.metadata["expected_postconditions"] == []
+
+
+@pytest.mark.asyncio
 async def test_classify_and_spawn_task_chat_only_reply_uses_the_inbound_channel(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     conversation_id = repos.conversations.get_or_create(ChannelType.SLACK, "chat-1")

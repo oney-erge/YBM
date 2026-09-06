@@ -15,7 +15,7 @@ Tests are split accordingly:
 
 from __future__ import annotations
 
-from agent_control.orchestration.fulfillment import _postcondition_satisfied, validate_fulfillment
+from agent_control.orchestration.fulfillment import _postcondition_satisfied, expected_postconditions, validate_fulfillment
 from agent_control.schemas import PostconditionType, TaskRecord
 
 
@@ -512,6 +512,64 @@ def test_reading_every_listed_file_satisfies_source_content_evidence() -> None:
     task = TaskRecord(
         objective="Inspect every career-evidence file",
         metadata={"operator_history": history},
+    )
+
+    assert validate_fulfillment(task).ok
+
+
+# ---- expected_postconditions: a classifier's declared list (docs/ROADMAP.md
+# "Finish the Proof") beats keyword-inferred guesses when present ----------
+
+def test_expected_postconditions_prefers_a_declared_list_over_keyword_inference() -> None:
+    """The objective's own wording would infer nothing here ("summarize
+    this" has no construction/delivery verb the keyword matcher looks
+    for) - a declared postcondition is the only reason this task has any
+    obligation at all."""
+    task = TaskRecord(
+        objective="summarize this",
+        metadata={"expected_postconditions": ["document_summary"]},
+    )
+
+    expected = expected_postconditions(task)
+
+    assert [item.type for item in expected] == [PostconditionType.DOCUMENT_SUMMARY]
+
+
+def test_expected_postconditions_falls_back_to_keyword_inference_when_nothing_declared() -> None:
+    """Every classifier today leaves expected_postconditions empty
+    (schemas.py) - this is the path every real task still takes."""
+    task = TaskRecord(objective="Create a new script called report.py", metadata={})
+
+    expected = expected_postconditions(task)
+
+    assert PostconditionType.WORKSPACE_FILES in [item.type for item in expected]
+
+
+def test_expected_postconditions_ignores_a_garbage_declared_value_and_falls_back() -> None:
+    """A hallucinated postcondition type must not silently produce zero
+    obligations for a task whose wording would otherwise infer one - the
+    per-item filter (schemas.py's own validator already drops these before
+    they reach here, this is the second, defensive layer) falls through to
+    the keyword guess rather than leaving the task with no safety net."""
+    task = TaskRecord(
+        objective="Create a new script called report.py",
+        metadata={"expected_postconditions": ["not_a_real_type"]},
+    )
+
+    expected = expected_postconditions(task)
+
+    assert PostconditionType.WORKSPACE_FILES in [item.type for item in expected]
+
+
+def test_expected_postconditions_declared_list_is_checked_the_same_way_as_inferred() -> None:
+    """A declared postcondition is a real PlanPostcondition, not a special
+    case - validate_fulfillment doesn't need to know where it came from."""
+    task = TaskRecord(
+        objective="build me a slide deck",
+        metadata={
+            "expected_postconditions": ["presentation_file"],
+            "last_tool_result": {"output": {"path": "C:/out/deck.pptx"}},
+        },
     )
 
     assert validate_fulfillment(task).ok

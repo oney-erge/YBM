@@ -460,6 +460,12 @@ async def classify_and_spawn_task(
             "classification_confidence": classification.confidence,
             "classification_reason": classification.reason,
             "orchestration_intent": classification.intent.model_dump(mode="json") if classification.intent else None,
+            # orchestration/fulfillment.py's expected_postconditions() reads
+            # this before falling back to keyword inference. Empty for
+            # every classifier today (docs/ROADMAP.md "Finish the Proof") -
+            # stored anyway so the fallback stays automatic the moment a
+            # classifier starts declaring, with no worker.py change needed.
+            "expected_postconditions": [item.value for item in classification.expected_postconditions],
             "original_message_text": inbound.text,
             "memory_context": mem_ctx,
             **voice_metadata,
