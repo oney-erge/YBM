@@ -9,14 +9,17 @@ import {
   fetchVoiceConfig,
   getBootstrap,
   getEffectiveConfig,
+  getReliabilityDashboard,
   getServiceLog,
   getSettingsSummary,
   getSetupDetect,
   getSummary,
   getTaskReceipt,
   getTaskTrace,
+  deleteMCPServer,
   initSecretVault,
   installSkill,
+  listActiveGrants,
   listAudit,
   listChatMessages,
   listFolders,
@@ -26,27 +29,35 @@ import {
   listSkills,
   listSkillsCatalog,
   listTasks,
+  replayTask,
+  reviewAdapter,
+  revokeGrant,
   runDoctor,
   selectLLMPreset,
   sendChatMessage,
   sendTaskSignal,
   setSecret,
   testLLM,
+  testMCPServer,
   testTelegram,
   detectTelegramOperator,
   uninstallSkill,
   updateAccessModes,
   updateComputerUseConfig,
   updateLLMConfig,
+  updateLLMRoles,
   updateMemoryFact,
   updateTelegramConfig,
   updateVSCodeConfig,
   updateWorkspaceConfig,
   uploadChatAttachment,
+  upsertMCPServer,
   type ApprovalDecision,
   type CapabilityAccessMode,
   type ComputerUseConfigInput,
   type LLMConfigInput,
+  type LLMRolesInput,
+  type MCPServerInput,
   type SkillInstallInput,
   type TelegramConfigInput,
   type VSCodeConfigInput,
@@ -143,6 +154,27 @@ export function useDecideApproval() {
       void queryClient.invalidateQueries({ queryKey: ["approvals"] })
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
       void queryClient.invalidateQueries({ queryKey: ["summary"] })
+      // A fresh "approve_for_task" decision creates exactly the grant this
+      // list exists to show.
+      void queryClient.invalidateQueries({ queryKey: ["grants", "active"] })
+    },
+  })
+}
+
+export function useActiveGrants() {
+  return useQuery({
+    queryKey: ["grants", "active"],
+    queryFn: listActiveGrants,
+    refetchInterval: APPROVALS_POLL_MS,
+  })
+}
+
+export function useRevokeGrant() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (grantId: string) => revokeGrant(grantId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["grants", "active"] })
     },
   })
 }
@@ -200,6 +232,16 @@ export function useTaskSignal() {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] })
       void queryClient.invalidateQueries({ queryKey: ["tasks", "trace", variables.taskId] })
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
+    },
+  })
+}
+
+export function useReplayTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (taskId: string) => replayTask(taskId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] })
     },
   })
 }
@@ -334,6 +376,39 @@ export function useUpdateLLMConfig() {
 
 export function useSelectLLMPreset() {
   return useSettingsMutation((preset: string) => selectLLMPreset(preset))
+}
+
+export function useUpdateLLMRoles() {
+  return useSettingsMutation((input: LLMRolesInput) => updateLLMRoles(input))
+}
+
+export function useUpsertMCPServer() {
+  return useSettingsMutation((input: MCPServerInput) => upsertMCPServer(input))
+}
+
+export function useDeleteMCPServer() {
+  return useSettingsMutation((name: string) => deleteMCPServer(name))
+}
+
+export function useTestMCPServer() {
+  // Never polled or invalidated automatically - a real subprocess handshake,
+  // triggered only by an explicit button click (see api.ts's testMCPServer).
+  return useMutation({ mutationFn: testMCPServer })
+}
+
+export function useAdapterReview(adapterDir: string | undefined) {
+  return useQuery({
+    queryKey: ["adapters", "review", adapterDir],
+    queryFn: () => reviewAdapter(adapterDir!),
+    enabled: adapterDir != null,
+  })
+}
+
+export function useReliabilityDashboard(windowDays: number) {
+  return useQuery({
+    queryKey: ["dashboard", "reliability", windowDays],
+    queryFn: () => getReliabilityDashboard(windowDays),
+  })
 }
 
 export function useTestLLM() {

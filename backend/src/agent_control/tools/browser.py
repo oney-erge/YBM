@@ -40,6 +40,7 @@ from agent_control.tools.contracts import (
     BrowserToolOutput,
 )
 from agent_control.tools.spec import (
+    UNTRUSTED_EXTERNAL,
     Adapters,
     Definitions,
     RegistryDeps,
@@ -1012,6 +1013,21 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             ),
             default_operation="open",
             minimum_risk=RiskLevel.LOW,
+            # "search"/"objective"-driven operations don't know their
+            # destination host until the adapter actually picks one, so this
+            # reads from the result's own browser_url/url/visited_urls, not
+            # from input (egress.extract_egress_hosts checks both).
+            operation_egress=("open", "search", "research", "research_pages"),
+            # Page text a person did not author and this machine does not
+            # control (docs/THREAT_MODEL.md) - not inspect_tabs (tab
+            # metadata) or screenshot (an image, not text the model reads).
+            operation_content_trust={
+                "open": UNTRUSTED_EXTERNAL,
+                "search": UNTRUSTED_EXTERNAL,
+                "research": UNTRUSTED_EXTERNAL,
+                "research_pages": UNTRUSTED_EXTERNAL,
+                "summarize_page": UNTRUSTED_EXTERNAL,
+            },
             examples=(
                 {"operation": "open", "url": "https://dizibox.com"},
                 {"operation": "summarize_page", "objective": "list the first 5 new episodes"},
@@ -1065,6 +1081,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "click": RiskLevel.CRITICAL,
                 "fill_form": RiskLevel.CRITICAL,
                 "fill_form_step": RiskLevel.CRITICAL,
+            },
+            operation_egress=("navigate",),
+            operation_content_trust={
+                "extract_page_state": UNTRUSTED_EXTERNAL,
+                "check_page_update": UNTRUSTED_EXTERNAL,
             },
             examples=(
                 {"operation": "navigate", "url": "https://example.com/contact"},

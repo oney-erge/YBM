@@ -20,6 +20,7 @@ from agent_control.schemas import (
 from agent_control.storage.repositories import ArtifactRepository
 from agent_control.tools.contracts import DocumentManageInput, DocumentManageOutput
 from agent_control.tools.spec import (
+    UNTRUSTED_EXTERNAL,
     Adapters,
     Definitions,
     RegistryDeps,
@@ -342,6 +343,15 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 DocumentManageOutput,
             ),
             default_operation="inspect_document",
+            # A document's content is not authored by this machine or
+            # necessarily by the user who pointed at it - e.g. a downloaded
+            # PDF (docs/THREAT_MODEL.md). create_presentation/
+            # update_presentation are writes, not inbound content.
+            operation_content_trust={
+                "inspect_document": UNTRUSTED_EXTERNAL,
+                "extract_text": UNTRUSTED_EXTERNAL,
+                "summarize_pdf": UNTRUSTED_EXTERNAL,
+            },
             operation_risks={
                 "inspect_document": RiskLevel.LOW,
                 "extract_text": RiskLevel.LOW,

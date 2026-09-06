@@ -3,18 +3,29 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from agent_control.config import HttpRequestAdapterConfig, SecretVaultConfig
-from agent_control.schemas import AuditEventType, Capability, ToolCallRequest, ToolResultStatus
+from agent_control.config import AppSettings, CapabilityPolicy, HttpRequestAdapterConfig, SecretVaultConfig
+from agent_control.orchestration.executor import ToolExecutor
+from agent_control.policy import PolicyEngine
+from agent_control.schemas import AuditEventType, Capability, RiskLevel, ToolCallRequest, ToolResultStatus
 from agent_control.storage.secrets import SecretVault
 from agent_control.tools.http_request import HttpRequestAdapter, _require_allowed_url
+from agent_control.tools.registry import build_tool_registry
+from agent_control.tools.spec import ToolDefinition
+from helpers import make_repos
 
 
-class _FakeAudit:
-    def __init__(self) -> None:
-        self.events: list[tuple[AuditEventType, dict]] = []
+def test_http_request_declares_its_response_as_untrusted_content() -> None:
+    """docs/THREAT_MODEL.md: an HTTP response body is external, uncontrolled
+    content, same boundary as browser/document/MCP content."""
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+        adapters={"http_request": {"enabled": True, "allowed_hosts": ["api.example.com"]}},
+    )
+    registry = build_tool_registry(settings, "http://127.0.0.1:8765")
+    definition = next(d for d in registry.definitions if d.name == "http.request")
 
-    def append(self, event_type, *, actor, task_id, payload):
-        self.events.append((event_type, {"actor": actor, "task_id": task_id, **payload}))
+    assert definition.operation_content_trust == {"request": "untrusted_external"}
 
 
 @pytest.mark.asyncio
@@ -62,30 +73,60 @@ async def test_http_request_injects_and_redacts_secret(monkeypatch, tmp_path) ->
 async def test_http_request_records_egress_for_the_receipt(tmp_path) -> None:
     """docs/UI_UX_AUDIT.md Phase 2: a real, non-loopback call must show up
     as an EGRESS_CONTACTED audit event so Task Receipts can say what left
-    the machine - egress.record_egress()."""
+    the machine.
+
+    The adapter itself no longer calls egress.record_egress() - that
+    call site moved to ToolExecutor, driven by the ToolDefinition's
+    operation_egress declaration (spec.py), so this is now an executor-level
+    test through the real adapter rather than a direct adapter test.
+    """
     secrets_config = SecretVaultConfig(path=str(tmp_path / "vault.json"))
-    audit = _FakeAudit()
     adapter = HttpRequestAdapter(
         HttpRequestAdapterConfig(allowed_hosts=["api.example.com"]),
         secrets_config,
         transport=httpx.MockTransport(lambda request: httpx.Response(200, json={"ok": True})),
-        audit=audit,
+    )
+    definition = ToolDefinition(
+        name="http.request",
+        capability=Capability.NETWORK_HTTP,
+        enabled=True,
+        description="test",
+        operations=("request",),
+        default_operation="request",
+        # The real registration's risk_resolver drops a plain GET to LOW;
+        # matched here with minimum_risk so this test's request doesn't need
+        # an approval round-trip just to reach the adapter.
+        minimum_risk=RiskLevel.LOW,
+        operation_egress=("request",),
+    )
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = AppSettings()
+    settings.capabilities[Capability.NETWORK_HTTP] = CapabilityPolicy(
+        enabled=True, requires_approval=False, max_risk_level=RiskLevel.LOW,
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"http.request": adapter},
+        tool_definitions=[definition],
     )
 
-    await adapter.execute(
+    await executor.execute(
         ToolCallRequest(
-            task_id="task_egress",
+            task_id=task.id,
             tool_name="http.request",
             capability=Capability.NETWORK_HTTP,
+            risk_level=RiskLevel.LOW,
             input={"operation": "request", "method": "GET", "url": "https://api.example.com/status"},
         )
     )
 
-    assert len(audit.events) == 1
-    event_type, details = audit.events[0]
-    assert event_type == AuditEventType.EGRESS_CONTACTED
-    assert details["task_id"] == "task_egress"
-    assert details["host"] == "api.example.com"
+    events = [e for e in repos.audit.list_for_task(task.id) if e.type == AuditEventType.EGRESS_CONTACTED]
+    assert len(events) == 1
+    assert events[0].task_id == task.id
+    assert events[0].payload["host"] == "api.example.com"
 
 
 @pytest.mark.asyncio

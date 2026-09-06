@@ -614,6 +614,30 @@ class ToolCallRequest(StrictBaseModel):
     parent_step_id: str | None = None
 
 
+class ToolVerification(StrictBaseModel):
+    """Mechanical proof that a tool call's declared effect actually happened,
+    attached by ToolExecutor when the call's ToolDefinition.verify() hook
+    fires on a SUCCEEDED result (docs/ROADMAP.md "Proof": check the goal
+    instead of inferring it from wording).
+
+    Deliberately distinct from PlanPostcondition/fulfillment.py's
+    task-level checks: those infer what a whole task should have done from
+    the objective's wording. This is one call's own receipt, produced by a
+    tool re-reading the machine state its own request claims to have
+    changed (e.g. filesystem.manage's apply_manifest confirming each
+    manifest destination now exists on disk) - never by asking the model
+    whether it worked.
+    """
+    checked: int = Field(ge=0)
+    verified: int = Field(ge=0)
+    missing: list[str] = Field(default_factory=list)
+    detail: str = ""
+
+    @property
+    def ok(self) -> bool:
+        return self.checked > 0 and not self.missing
+
+
 class ToolCallResult(StrictBaseModel):
     id: str = Field(default_factory=lambda: new_id("toolres"))
     request_id: str
@@ -623,6 +647,21 @@ class ToolCallResult(StrictBaseModel):
     error_message: str | None = None
     artifact_ids: list[str] = Field(default_factory=list)
     completed_at: datetime = Field(default_factory=utc_now)
+    # None means "this tool call has no mechanical verification defined" -
+    # distinct from an empty ToolVerification, which would mean "checked
+    # and found nothing wrong". Absence of proof is not proof of absence.
+    verification: ToolVerification | None = None
+    # "untrusted_external" when ToolDefinition.operation_content_trust marks
+    # this operation as returning content this machine does not control - a
+    # web page, an HTTP response, an MCP server's own output, a document
+    # someone else authored (docs/THREAT_MODEL.md: "untrusted data, even
+    # when it looks like an instruction"). None for everything else, not a
+    # claim that unmarked content is safe - only that nothing here has
+    # classified it either way. Attached by ToolExecutor from the tool's own
+    # contract, the same boundary as egress/verification. Currently a
+    # visibility signal for the trace/evidence views, not yet consumed by
+    # the Operator prompt itself - see docs/GAPS.md.
+    content_trust: str | None = None
 
 
 class LLMCallRecord(StrictBaseModel):
@@ -681,8 +720,18 @@ class ApprovalGrant(StrictBaseModel):
     risk-ceiling checks still run before a grant is even consulted, so a
     grant only skips the "ask a human" step for a call that policy would
     have permitted anyway. Not "Always allow" - there is no grant that
-    outlives its task, and no revocation list yet (docs/UI_UX_AUDIT.md's
-    explicit scope-down for this pass).
+    outlives its task.
+
+    `scope` (docs/ROADMAP.md "scoped temporary authority") narrows further:
+    when set, a matching call's own `scope_target` must fall within it (the
+    same prefix containment PolicyEngine.scope_contains already applies to
+    a capability's configured scopes) - inherited automatically from the
+    approved action's own scope_target at grant creation, not a separate
+    field a human has to fill in. `max_operations` bounds the count of calls
+    a grant can cover regardless of how much time is left on its TTL;
+    `operations_used` is the running count ToolExecutor increments each time
+    the grant actually gates a call through. `revoked` is a human's early
+    "no more" - the previously-missing revocation list.
     """
 
     id: str = Field(default_factory=lambda: new_id("grant"))
@@ -692,6 +741,18 @@ class ApprovalGrant(StrictBaseModel):
     granted_from_approval_id: str
     created_at: datetime = Field(default_factory=utc_now)
     expires_at: datetime
+    scope: str | None = None
+    max_operations: int | None = Field(default=None, ge=1)
+    operations_used: int = Field(default=0, ge=0)
+    revoked: bool = False
+
+    @property
+    def active(self) -> bool:
+        if self.revoked:
+            return False
+        if self.max_operations is not None and self.operations_used >= self.max_operations:
+            return False
+        return self.expires_at > utc_now()
 
 
 class Artifact(StrictBaseModel):

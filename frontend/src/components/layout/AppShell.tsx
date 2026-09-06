@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { NavLink, Outlet, useLocation } from "react-router"
-import { Bot, ListTree, MessageSquare, Settings, ShieldCheck } from "lucide-react"
+import { ActivitySquare, Bot, ListTree, MessageSquare, Settings, ShieldCheck } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { HealthIndicator } from "@/components/layout/HealthIndicator"
 import { ApprovalBanner } from "@/components/approvals/ApprovalBanner"
@@ -29,6 +29,7 @@ import { ThemeToggle } from "@/components/layout/ThemeToggle"
 const NAV_ITEMS = [
   { to: "/", label: "Chat", icon: MessageSquare, end: true, matchPaths: [] as string[] },
   { to: "/tasks", label: "Tasks", icon: ListTree, end: false, matchPaths: [] as string[] },
+  { to: "/insights", label: "Insights", icon: ActivitySquare, end: false, matchPaths: [] as string[] },
   { to: "/access", label: "Access", icon: ShieldCheck, end: false, matchPaths: [] as string[] },
   { to: "/agent", label: "Agent", icon: Bot, end: false, matchPaths: ["/memory", "/skills", "/tools"] },
   { to: "/settings", label: "Settings", icon: Settings, end: false, matchPaths: [] as string[] },

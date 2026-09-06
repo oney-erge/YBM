@@ -47,6 +47,33 @@ def test_registry_exposes_browser_tools_when_enabled() -> None:
     assert "browser.open" in registry.adapters
     assert "browser.control" in registry.adapters
 
+
+def test_browser_tools_declare_which_operations_can_leave_the_machine() -> None:
+    """docs/GAPS.md: browser traffic was invisible to receipts because only
+    http.request called record_egress. ToolExecutor now drives that off
+    each ToolDefinition's operation_egress instead of a manual call site -
+    this pins exactly which operations these two tools declare, so a future
+    change here is a deliberate edit, not a silent regression back to the
+    old gap.
+    """
+    settings = AppSettings(
+        _env_file=None,
+        adapters={"browser": {"enabled": True}},
+        capabilities={
+            Capability.BROWSER_OPEN: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.LOW),
+            Capability.BROWSER_CONTROL: CapabilityPolicy(enabled=True, requires_approval=True, max_risk_level=RiskLevel.CRITICAL),
+        },
+    )
+
+    registry = build_tool_registry(settings, "http://127.0.0.1:8765")
+    definitions = {definition.name: definition for definition in registry.definitions}
+
+    assert set(definitions["browser.open"].operation_egress) == {"open", "search", "research", "research_pages"}
+    # Read-only operations against an already-open page contact no new host.
+    assert "inspect_tabs" not in definitions["browser.open"].operation_egress
+    assert "screenshot" not in definitions["browser.open"].operation_egress
+    assert definitions["browser.control"].operation_egress == ("navigate",)
+
 @pytest.mark.asyncio
 async def test_browser_adapter_research_uses_chrome_client(monkeypatch) -> None:
     class FakeClient:

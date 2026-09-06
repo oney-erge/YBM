@@ -30,7 +30,7 @@ from agent_control.channels.whatsapp_bridge_process import WhatsAppBridgeProcess
 from agent_control.channels.whatsapp_notifications import WhatsAppTaskNotifier
 from agent_control.config import AppSettings, backend_base_url, load_settings
 from agent_control.llm import LLMMessageClassifier, build_default_llm_provider
-from agent_control.llm.providers import build_major_llm_provider
+from agent_control.llm.providers import build_major_llm_provider, build_role_llm_provider
 from agent_control.observation import ArtifactService, ScreenshotService
 from agent_control.persona import persona_prompt_section
 from agent_control.tools.skills import skills_context_section
@@ -213,9 +213,10 @@ async def poll_telegram() -> None:
     repositories, audit = build_repositories()
     adapter = TelegramAdapter(settings.channels.telegram, audit)
     provider = build_default_llm_provider(settings)
-    classifier = LLMMessageClassifier(provider) if provider else None
-    responder = LLMChatResponder(provider, settings, repositories) if provider else None
-    memory_service = ConversationMemoryService(repositories, provider=provider)
+    concierge_provider = build_role_llm_provider(settings, "concierge") or provider
+    classifier = LLMMessageClassifier(concierge_provider) if concierge_provider else None
+    responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
+    memory_service = ConversationMemoryService(repositories, provider=concierge_provider)
     client = TelegramBotApi(load_telegram_token(settings.channels.telegram), audit=audit)
     service = TelegramIntakeService(
         adapter,
@@ -288,9 +289,10 @@ async def poll_whatsapp() -> None:
 
     adapter = WhatsAppAdapter(settings.channels.whatsapp, audit)
     provider = build_default_llm_provider(settings)
-    classifier = LLMMessageClassifier(provider) if provider else None
-    responder = LLMChatResponder(provider, settings, repositories) if provider else None
-    memory_service = ConversationMemoryService(repositories, provider=provider)
+    concierge_provider = build_role_llm_provider(settings, "concierge") or provider
+    classifier = LLMMessageClassifier(concierge_provider) if concierge_provider else None
+    responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
+    memory_service = ConversationMemoryService(repositories, provider=concierge_provider)
     client = WhatsAppBridgeClient(bridge.base_url, bridge.secret)
     service = WhatsAppIntakeService(
         adapter, repositories, audit,
@@ -349,8 +351,10 @@ async def run_worker() -> None:
         telegram_client=_telegram_client(settings, audit),
     )
     major_provider = build_major_llm_provider(settings)
-    operator = OperatorLoopService(provider, major_provider=major_provider) if provider else None
-    auditor = AuditorService(provider) if provider else None
+    operator_provider = build_role_llm_provider(settings, "operator") or provider
+    auditor_provider = build_role_llm_provider(settings, "auditor") or provider
+    operator = OperatorLoopService(operator_provider, major_provider=major_provider) if operator_provider else None
+    auditor = AuditorService(auditor_provider) if auditor_provider else None
     executor = ToolExecutor(
         policy,
         repositories,

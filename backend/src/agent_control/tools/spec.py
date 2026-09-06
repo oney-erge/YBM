@@ -18,7 +18,15 @@ from dataclasses import dataclass, field
 from pydantic import BaseModel, ValidationError
 
 from agent_control.config import AppSettings
-from agent_control.schemas import Capability, ErrorClass, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.schemas import (
+    Capability,
+    ErrorClass,
+    RiskLevel,
+    ToolCallRequest,
+    ToolCallResult,
+    ToolResultStatus,
+    ToolVerification,
+)
 
 
 def failed_result(request: ToolCallRequest, message: str) -> ToolCallResult:
@@ -36,6 +44,12 @@ def failed_result(request: ToolCallRequest, message: str) -> ToolCallResult:
         error_class=ErrorClass.ADAPTER_FAILED,
         error_message=message,
     )
+
+
+# Shared label for ToolDefinition.operation_content_trust, so every tool
+# module marks untrusted content the same way instead of each inventing its
+# own string.
+UNTRUSTED_EXTERNAL = "untrusted_external"
 
 
 CAPABILITY_MINIMUM_RISKS: dict[Capability, RiskLevel] = {
@@ -95,6 +109,33 @@ class ToolDefinition:
     # imitates concrete examples much more reliably than it follows abstract
     # descriptions.
     examples: tuple[dict, ...] = ()
+    # Operations whose SUCCEEDED result can carry a real destination this
+    # machine contacted (docs/GAPS.md: "only http.request calls
+    # record_egress... browser, MCP, coding-agent, and Telegram traffic is
+    # invisible to receipts"). ToolExecutor consults this - a tool needs
+    # zero manual record_egress() call sites of its own to be covered;
+    # egress.extract_egress_hosts() does the actual URL/host scan over the
+    # call's validated input and output.
+    operation_egress: tuple[str, ...] = ()
+    # Operations whose SUCCEEDED output is content this machine does not
+    # control - a web page, an HTTP response, an MCP server's own reply, a
+    # document someone else authored (docs/THREAT_MODEL.md's untrusted-input
+    # boundary). Maps operation -> a trust label, currently only
+    # "untrusted_external"; an operation absent from this mapping is not
+    # thereby "trusted", just unclassified. ToolExecutor stamps
+    # ToolCallResult.content_trust from this so the trace/evidence views can
+    # show a human which observations came from outside YBM's control - it
+    # does not yet reach the Operator prompt itself (docs/GAPS.md: that
+    # needs a reviewed prompt change and re-recorded scenario fixtures).
+    operation_content_trust: dict[str, str] = field(default_factory=dict)
+    # Optional mechanical proof hook (docs/ROADMAP.md "Proof"): given the
+    # completed request and result, return a ToolVerification describing
+    # what was actually re-checked on the machine, or None if this call has
+    # no defined verification. Same dispatch idiom as risk_resolver/
+    # approval_resolver (inspect value["operation"] internally) but answers
+    # "did it actually happen", not "is it allowed". Runs only once the
+    # result already reports SUCCEEDED.
+    verify: Callable[[ToolCallRequest, ToolCallResult], ToolVerification | None] | None = None
 
     def required_risk(self, value: dict) -> RiskLevel:
         if self.risk_resolver is not None:

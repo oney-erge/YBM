@@ -389,7 +389,15 @@ const ApprovalGrantSchema = z.object({
   granted_from_approval_id: z.string(),
   created_at: z.string(),
   expires_at: z.string(),
+  // docs/ROADMAP.md "scoped temporary authority" - all four absent on a
+  // grant created before this shipped, hence the defaults rather than
+  // required fields.
+  scope: z.string().nullable().default(null),
+  max_operations: z.number().int().nullable().default(null),
+  operations_used: z.number().int().default(0),
+  revoked: z.boolean().default(false),
 })
+export type ApprovalGrant = z.infer<typeof ApprovalGrantSchema>
 
 const DecideApprovalResponseSchema = z.object({
   approval: ApprovalRequestSchema.nullable(),
@@ -398,6 +406,30 @@ const DecideApprovalResponseSchema = z.object({
 
 export function listPendingApprovals() {
   return apiFetch("/api/approvals", PendingApprovalsResponseSchema)
+}
+
+const ActiveGrantItemSchema = z.object({
+  grant: ApprovalGrantSchema,
+  task_objective: z.string().nullable(),
+  task_status: TaskStatusSchema.nullable(),
+})
+export type ActiveGrantItem = z.infer<typeof ActiveGrantItemSchema>
+
+const ActiveGrantsResponseSchema = z.object({ grants: z.array(ActiveGrantItemSchema) })
+
+export function listActiveGrants() {
+  return apiFetch("/api/grants", ActiveGrantsResponseSchema)
+}
+
+const RevokeGrantResponseSchema = z.object({
+  grant: ApprovalGrantSchema.nullable(),
+  revoked: z.boolean(),
+})
+
+export function revokeGrant(grantId: string) {
+  return apiFetch(`/api/grants/${encodeURIComponent(grantId)}/revoke`, RevokeGrantResponseSchema, {
+    method: "POST",
+  })
 }
 
 export type ApprovalDecision = "approve" | "reject" | "approve_for_task"
@@ -482,6 +514,10 @@ const OperatorHistoryEntrySchema = z.object({
   // .optional() because entries recorded before this shipped have no such
   // key at all, not a present-but-null one.
   step_id: z.string().nullable().optional(),
+  // "untrusted_external" when this step's tool declared its output as
+  // content YBM does not control (docs/THREAT_MODEL.md) - joined the same
+  // way as duration_ms, so always present but null when undeclared.
+  content_trust: z.string().nullable(),
 })
 export type OperatorHistoryEntry = z.infer<typeof OperatorHistoryEntrySchema>
 
@@ -499,6 +535,10 @@ const TokenUsageSchema = z.object({
   total_tokens: z.number().int().optional(),
   by_source: z.record(z.string(), TokenUsageSourceSchema).optional(),
   last_model: z.string().optional(),
+  // Sticky for the whole task once any call falls back to a secondary
+  // profile (docs/ROADMAP.md 4.4: "an unexplained fallback is a silent
+  // quality change") - absent, not false, when no call ever needed one.
+  fallback_used: z.boolean().optional(),
 })
 export type TokenUsage = z.infer<typeof TokenUsageSchema>
 
@@ -609,6 +649,25 @@ const ReceiptApprovalSchema = z.object({
   summary: z.string(),
 })
 
+// docs/ROADMAP.md "Proof": call-level counts (one entry per tool call this
+// task issued) - distinct from ReceiptVerificationSchema below, which
+// counts individual re-checked items (a single apply_manifest call can
+// verify many files).
+const ReceiptExecutionSchema = z.object({
+  calls_attempted: z.number().int(),
+  calls_succeeded: z.number().int(),
+  calls_failed: z.number().int(),
+})
+
+// Aggregated across every ToolCallResult.verification this task's calls
+// attached (schemas.py's ToolVerification) - mechanical re-checks of the
+// machine, not the model's word that something worked.
+const ReceiptVerificationSchema = z.object({
+  checked: z.number().int(),
+  verified: z.number().int(),
+  missing: z.array(z.string()),
+})
+
 export const TaskReceiptSchema = z.object({
   task_id: z.string(),
   objective: z.string(),
@@ -620,6 +679,8 @@ export const TaskReceiptSchema = z.object({
     commands: z.array(EvidenceItemSchema),
   }),
   tools_used: z.array(ToolUsageSummarySchema),
+  execution: ReceiptExecutionSchema,
+  verification: ReceiptVerificationSchema,
   services_contacted: z.array(ServiceContactedSchema),
   data_left_machine: z.boolean(),
   llm_left_machine: z.boolean(),
@@ -646,6 +707,20 @@ export function sendTaskSignal(taskId: string, signal: "pause" | "resume" | "can
   return apiFetch(`/api/tasks/${taskId}/signals`, TaskSignalResponseSchema, {
     method: "POST",
     body: JSON.stringify({ signal }),
+  })
+}
+
+const ReplayTaskResponseSchema = z.object({ task: TaskRecordSchema })
+
+// Re-issues a completed task's own succeeded tool calls as a new task
+// (docs/ROADMAP.md "reusable verified workflows") - not the objective run
+// through the LLM again, a literal replay of the exact sequence that
+// worked, through the identical approval/verification pipeline a live task
+// uses. Authority never carries over: a step that needed approval the
+// first time needs it again.
+export function replayTask(taskId: string) {
+  return apiFetch(`/api/tasks/${taskId}/replay`, ReplayTaskResponseSchema, {
+    method: "POST",
   })
 }
 
@@ -832,6 +907,132 @@ const MCPConfigSchema = z.object({
   catalog_path: z.string(),
   servers: z.record(z.string(), MCPServerConfigSchema),
 })
+export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>
+
+export type MCPServerInput = {
+  name: string
+  enabled: boolean
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd: string | null
+  timeout_seconds: number
+  capability: string
+  risk_level: string
+  disabled_tools: string[]
+}
+
+const MCPConfigUpdateResponseSchema = z.object({
+  config_file: z.string(),
+  mcp: MCPConfigSchema,
+})
+
+// docs/ROADMAP.md "integration control plane" - add/edit/test/remove an MCP
+// server directly, rather than editing config.yaml by hand. Never sends env
+// *values* back (env is write-only from this client's point of view; the
+// server always answers with env_keys instead, mirroring the read side).
+export function upsertMCPServer(input: MCPServerInput) {
+  return apiFetch("/api/config/mcp/servers", MCPConfigUpdateResponseSchema, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteMCPServer(name: string) {
+  return apiFetch(`/api/config/mcp/servers/${encodeURIComponent(name)}`, MCPConfigUpdateResponseSchema, {
+    method: "DELETE",
+  })
+}
+
+const MCPServerTestResponseSchema = z.object({
+  healthy: z.boolean(),
+  error: z.string().nullable(),
+  tool_count: z.number().int(),
+  tools: z.array(z.string()),
+})
+
+// A real stdio MCP handshake against one server - never invoke from an
+// automated check, only from an explicit "Test connection" click.
+export function testMCPServer(name: string) {
+  return apiFetch(`/api/config/mcp/servers/${encodeURIComponent(name)}/test`, MCPServerTestResponseSchema, {
+    method: "POST",
+  })
+}
+
+// ---- Adapter Factory review (docs/ROADMAP.md "integration control plane") -
+
+const AdapterReviewSchema = z.object({
+  adapter_dir: z.string(),
+  manifest: z.record(z.string(), z.unknown()),
+  files: z.record(z.string(), z.string()),
+  test: z.object({
+    passed: z.boolean(),
+    summary: z.string(),
+    stdout: z.string(),
+    stderr: z.string(),
+  }),
+})
+export type AdapterReview = z.infer<typeof AdapterReviewSchema>
+
+// "I generated a connector. Here is exactly what it will access. Tests
+// pass. Install it?" - the actual generated source and sandbox test result
+// for a pending adapter.factory promote_after_approval approval, whose own
+// tool_input carries only adapter_dir and approved=true.
+export function reviewAdapter(adapterDir: string) {
+  return apiFetch(`/api/adapters/review?adapter_dir=${encodeURIComponent(adapterDir)}`, AdapterReviewSchema)
+}
+
+// ---- Reliability dashboard (docs/ROADMAP.md) ------------------------------
+
+const ToolReliabilityStatSchema = z.object({
+  tool_name: z.string(),
+  calls: z.number().int(),
+  succeeded: z.number().int(),
+  failed: z.number().int(),
+  failure_rate_pct: z.number(),
+})
+
+const ModelUsageStatSchema = z.object({
+  model: z.string(),
+  tasks: z.number().int(),
+  completed: z.number().int(),
+  total_tokens: z.number().int(),
+})
+
+const TaskTypeStatSchema = z.object({
+  task_type: z.string(),
+  tasks: z.number().int(),
+  completed: z.number().int(),
+  failed: z.number().int(),
+})
+
+const ReliabilityDashboardSchema = z.object({
+  window_days: z.number().int(),
+  tasks_attempted: z.number().int(),
+  completed: z.number().int(),
+  completed_pct: z.number(),
+  verified_completed: z.number().int(),
+  verified_completed_pct: z.number(),
+  failed: z.number().int(),
+  failed_pct: z.number(),
+  blocked: z.number().int(),
+  cancelled: z.number().int(),
+  tasks_with_retries: z.number().int(),
+  mean_retries: z.number(),
+  fallback_tasks: z.number().int(),
+  total_tokens: z.number().int(),
+  avg_task_duration_seconds: z.number().nullable(),
+  tool_call_failure_rate_pct: z.number(),
+  most_unreliable_tool: z.string().nullable(),
+  tools: z.array(ToolReliabilityStatSchema),
+  by_model: z.array(ModelUsageStatSchema),
+  by_task_type: z.array(TaskTypeStatSchema),
+})
+export type ReliabilityDashboard = z.infer<typeof ReliabilityDashboardSchema>
+
+export function getReliabilityDashboard(windowDays: number) {
+  return apiFetch(`/api/dashboard?window_days=${windowDays}`, ReliabilityDashboardSchema)
+}
 
 const ServiceItemSchema = z.object({
   name: z.string(),
@@ -911,6 +1112,12 @@ const SettingsSummarySchema = z.object({
     channels: z.object({ telegram: TelegramConfigSchema }).passthrough(),
     llm: z.object({
       default_profile: z.string(),
+      major_profile: z.string().nullable(),
+      fallback_profile: z.string().nullable(),
+      fallback_chain: z.array(z.string()),
+      concierge_profile: z.string().nullable(),
+      operator_profile: z.string().nullable(),
+      auditor_profile: z.string().nullable(),
       profiles: z.record(z.string(), LLMProfileConfigSchema),
     }),
     adapters: z.object({
@@ -1119,6 +1326,24 @@ export function selectLLMPreset(preset: string) {
   return apiFetch("/api/config/llm/preset", ConfigUpdateResponseSchema, {
     method: "POST",
     body: JSON.stringify({ preset }),
+  })
+}
+
+export type LLMRolesInput = {
+  concierge_profile: string | null
+  operator_profile: string | null
+  auditor_profile: string | null
+  fallback_chain: string[]
+}
+
+// Assigns an already-configured profile to Concierge/Operator/Auditor and/or
+// sets the ordered fallback chain (docs/ROADMAP.md "per-role models") -
+// separate from updateLLMConfig, which creates/edits one profile's own
+// connection details rather than pointing existing profiles at roles.
+export function updateLLMRoles(input: LLMRolesInput) {
+  return apiFetch("/api/config/llm/roles", ConfigUpdateResponseSchema, {
+    method: "POST",
+    body: JSON.stringify(input),
   })
 }
 

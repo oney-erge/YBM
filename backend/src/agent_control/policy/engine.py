@@ -24,6 +24,25 @@ RISK_ORDER = {
 }
 
 
+def normalize_scope_target(scope_target: str) -> str:
+    return scope_target.replace("\\", "/").lower()
+
+
+def scope_contains(normalized_target: str, scope: str) -> bool:
+    """Prefix containment for a scope string, shared by CapabilityPolicy's
+    configured scopes (_scope_allowed) and an ApprovalGrant's own `scope`
+    (docs/ROADMAP.md "scoped temporary authority") - the same matching rule
+    both places, not two copies that could drift apart.
+    """
+    raw_scope = scope.replace("\\", "/").lower()
+    if raw_scope == "/":
+        return normalized_target.startswith("/")
+    normalized_scope = raw_scope.rstrip("/")
+    if not normalized_scope:
+        return False
+    return normalized_target == normalized_scope or normalized_target.startswith(f"{normalized_scope}/")
+
+
 class PolicyDecision(StrictBaseModel):
     allowed: bool
     needs_approval: bool = False
@@ -130,7 +149,7 @@ class PolicyEngine:
             return True
         if not request.scope_target:
             return False
-        normalized = request.scope_target.replace("\\", "/").lower()
+        normalized = normalize_scope_target(request.scope_target)
         # Scope matching is a string prefix test, so "allowed/../../elsewhere"
         # would satisfy an "allowed" scope. The filesystem adapter resolves
         # paths before its own allowed-roots check, which is what actually
@@ -139,17 +158,11 @@ class PolicyEngine:
         # resolving, because scope_target is not necessarily a filesystem path.
         if any(segment == ".." for segment in normalized.split("/")):
             return False
-        return any(PolicyEngine._matches_scope(normalized, scope) for scope in policy.scopes)
+        return any(scope_contains(normalized, scope) for scope in policy.scopes)
 
     @staticmethod
     def _matches_scope(normalized_target: str, scope: str) -> bool:
-        raw_scope = scope.replace("\\", "/").lower()
-        if raw_scope == "/":
-            return normalized_target.startswith("/")
-        normalized_scope = raw_scope.rstrip("/")
-        if not normalized_scope:
-            return False
-        return normalized_target == normalized_scope or normalized_target.startswith(f"{normalized_scope}/")
+        return scope_contains(normalized_target, scope)
 
     @staticmethod
     def _patterns_allowed(request: ToolCallRequest, policy: CapabilityPolicy) -> bool:

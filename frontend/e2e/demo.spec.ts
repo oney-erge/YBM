@@ -169,6 +169,8 @@ function receipt() {
       commands: [],
     },
     tools_used: [{ tool_name: "filesystem.manage", calls: 3, succeeded: 3, failed: 0 }],
+    execution: { calls_attempted: 3, calls_succeeded: 3, calls_failed: 0 },
+    verification: { checked: 128, verified: 128, missing: [] },
     services_contacted: [],
     data_left_machine: false,
     llm_left_machine: false,

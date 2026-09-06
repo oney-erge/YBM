@@ -130,19 +130,31 @@ numbered phase say so.
 
 ### P2 - Differentiating control-plane features
 
-1. Per-role models for Concierge, Operator, and Auditor, with estimated cost/latency impact.
+1. ~~Per-role models for Concierge, Operator, and Auditor~~ - shipped (`concierge_profile`/
+   `operator_profile`/`auditor_profile`, plus an ordered `fallback_chain` with per-profile
+   cooldown). Estimated cost/latency impact per role is not shown anywhere yet.
 2. Versioned prompt overrides with diff, reset, and an explicit scenario-fixture warning.
 3. Named delegate presets such as Researcher or Coder, restricted to selected tools.
-4. Time-boxed grants with exact tool/operation scope, capped TTL, visible expiry, and revocation.
-   Task-scoped grants exist; there is still no way to see or revoke a live one.
-5. Cross-task reliability and cost dashboards: failure reason, tool latency, retry count, token
-   spend, model, and time window.
+4. ~~Time-boxed grants with capped TTL, visible expiry, and revocation~~ - shipped (Access page's
+   Active Grants card: path/target scope inherited from the approved call, `max_operations` cap,
+   live list across tasks, one-click revoke). Still tool+capability-wide, not per-operation within
+   one tool (e.g. a grant covering `filesystem.manage` covers every operation on it, not just the
+   one that was approved).
+5. ~~Cross-task reliability and cost dashboards~~ - shipped (Insights page, `GET /api/dashboard`):
+   completed/verified-completed/failed rates, retry count, token spend, per-tool failure rates with
+   a least-reliable-tool callout, and per-model/per-task-type breakdowns, over a 7- or 30-day
+   window. Not built: per-call tool latency (the receipt/trace views have per-step duration; this
+   dashboard doesn't aggregate it yet) and approval waiting time.
 6. SSE for task and approval events after measuring current polling load; keep polling fallback.
 
 ### P3 - Expansion only after evidence
 
 1. Multiple local chat threads, search, archive, and export.
-2. Re-run/replay from a trace with a clear statement of what can cause side effects again.
+2. ~~Re-run/replay from a trace with a clear statement of what can cause side effects again~~ -
+   shipped (trace page's Replay button, `POST /api/tasks/{id}/replay`): reissues a completed
+   task's own succeeded tool calls through the same approval/retry/verification pipeline, so a
+   step that needed approval the first time asks for it again rather than carrying authority over
+   silently. Delegated and parallel-batch steps are not yet replayable.
 3. Configurable workflow graphs only after the runtime becomes data-driven.
 4. Multi-user/RBAC only if the product moves beyond its current trusted-local-operator boundary.
 

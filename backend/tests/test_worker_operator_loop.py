@@ -16,6 +16,7 @@ from agent_control.orchestration import StaticToolAdapter, TaskWorker, ToolExecu
 from agent_control.orchestration.auditor import AuditResult
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.orchestration.worker import (
+    CHECK_ENTRY_FULFILLMENT,
     _canonical_operator_tool_call,
     _coding_agent_input_with_task_defaults,
     _coding_agent_input_with_explicit_workspace,
@@ -23,12 +24,14 @@ from agent_control.orchestration.worker import (
     _filesystem_search_input_with_content_intent,
     _ground_operator_final_answer,
     _clarification_recovery_reason,
+    _next_replay_decision,
     _operator_audit_evidence,
     _ordered_artifact_delivery_call,
     _required_named_coding_agent_call,
     _satisfied_task_does_not_need_clarification,
     _stale_read_recovery_call,
     _unsupported_write_claim,
+    build_replay_plan,
 )
 from agent_control.policy import PolicyEngine
 from agent_control.recovery import RetryPolicy
@@ -56,6 +59,20 @@ class RateLimitedAdapter:
             status=ToolResultStatus.RATE_LIMITED,
             error_class=ErrorClass.RATE_LIMITED,
             error_message="rate limited, try later",
+        )
+
+
+class FailingAdapter:
+    async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        raise RuntimeError("adapter blew up")
+
+
+class TimedOutAdapter:
+    async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        return ToolCallResult(
+            request_id=request.id,
+            status=ToolResultStatus.TIMEOUT,
+            error_message="the call did not return in time",
         )
 
 
@@ -109,13 +126,22 @@ class QueueOperator:
     `usages`, if given, is a same-length list of usage dicts (or None) - one
     per decide() call, mirroring how the real OperatorLoopService sets
     self.last_usage after each call (docs/HISTORY.md Part 4 T1.4).
+    `fallback_flags` does the same for last_fallback_used (docs/ROADMAP.md
+    per-role models/fallback chain).
     """
 
-    def __init__(self, decisions: list[OperatorDecision], usages: list[dict | None] | None = None) -> None:
+    def __init__(
+        self,
+        decisions: list[OperatorDecision],
+        usages: list[dict | None] | None = None,
+        fallback_flags: list[bool] | None = None,
+    ) -> None:
         self.decisions = list(decisions)
         self._usages = list(usages) if usages is not None else None
+        self._fallback_flags = list(fallback_flags) if fallback_flags is not None else None
         self.calls = 0
         self.last_usage: dict | None = None
+        self.last_fallback_used: bool = False
         # docs/HISTORY.md Part 4 T2.6: one entry per decide() call, so tests
         # can assert exactly when the caller asked for the stronger model.
         self.prefer_major_calls: list[bool] = []
@@ -125,6 +151,8 @@ class QueueOperator:
         self.prefer_major_calls.append(prefer_major)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
+        if self._fallback_flags is not None:
+            self.last_fallback_used = self._fallback_flags.pop(0)
         return self.decisions.pop(0)
 
 
@@ -221,6 +249,41 @@ async def test_operator_loop_calls_tool_then_completes(tmp_path) -> None:
     assert running.metadata["operator_history"][0]["status"] == "succeeded"
     assert completed.status == TaskStatus.COMPLETED
     assert completed.metadata["synthesized_answer"] == "The answer is 42."
+
+
+@pytest.mark.asyncio
+async def test_fallback_used_is_recorded_and_stays_sticky(tmp_path) -> None:
+    """docs/ROADMAP.md 4.4: a receipt should be able to say a fallback model
+    answered somewhere in this task, and that fact must not be erased by a
+    later step that happens to succeed on the primary again."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Answer two questions")
+    settings = _settings()
+    executor = _executor(settings, audit, repos, output={"answer": "42"})
+    operator = QueueOperator(
+        [
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+            OperatorDecision(action=OperatorAction.DONE, final_answer="done"),
+        ],
+        usages=[
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "model": "fallback-model"},
+            {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15, "model": "primary-model"},
+            None,
+        ],
+        fallback_flags=[True, False, False],
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator)
+
+    step1 = await worker.process_task(task.id)
+    step2 = await worker.process_task(step1.id)
+    completed = await worker.process_task(step2.id)
+
+    assert step1.metadata["token_usage"]["fallback_used"] is True
+    # Second call did not fall back, but the flag stays set for the task.
+    assert step2.metadata["token_usage"]["fallback_used"] is True
+    assert step2.metadata["token_usage"]["last_model"] == "primary-model"
+    assert completed.status == TaskStatus.COMPLETED
 
 
 @pytest.mark.asyncio
@@ -1945,6 +2008,82 @@ async def test_operator_loop_retrying_resumes_and_retries_after_backoff_elapses(
 
 
 @pytest.mark.asyncio
+async def test_retrying_a_timed_out_write_warns_it_may_have_already_happened(tmp_path) -> None:
+    """docs/HISTORY.md P6's crash-recovery reasoning ("silently retrying can
+    do a thing twice") applies just as much to an ordinary TIMEOUT on a risky
+    write - the difference is nothing crashed, so the loop reaches
+    decide() again on its own next step instead of asking a human. That
+    decide() call only ever sees history as text (operator.py's
+    _format_history), so the warning has to live in the history entry's
+    error field itself, not in a side channel the model never reads.
+    """
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("move a file")
+    settings = AppSettings(
+        _env_file=None,
+        # Raised above HIGH so this test exercises the retry-warning logic
+        # in isolation, not the (separately tested) approval gate that would
+        # otherwise intercept a HIGH-risk filesystem write first.
+        approval_policy={"require_approval_at_or_above": RiskLevel.CRITICAL},
+        capabilities={
+            Capability.FILESYSTEM_WRITE: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH),
+        },
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"filesystem.manage": TimedOutAdapter()},
+        tool_definitions={
+            "filesystem.manage": ToolDefinition(
+                name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test tool",
+            )
+        },
+    )
+    operator = QueueOperator([
+        OperatorDecision(
+            action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
+            tool_input={"operation": "apply_manifest"}, risk_level=RiskLevel.HIGH,
+        ),
+    ])
+    worker = TaskWorker(
+        repos, audit, executor=executor, operator=operator,
+        retry_policy=RetryPolicy(settings.limits),
+    )
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.RETRYING
+    error = result.metadata["operator_history"][-1]["error"]
+    assert "the call did not return in time" in error
+    assert "may have already taken effect" in error
+
+
+@pytest.mark.asyncio
+async def test_retrying_a_timed_out_read_does_not_warn(tmp_path) -> None:
+    """The same TIMEOUT on a low-risk read carries no such warning - nothing
+    was left ambiguous by repeating a read, so nothing should make the model
+    more hesitant to just try again."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("check a status page")
+    settings = _settings()
+    executor = _executor_with_adapter(settings, audit, repos, TimedOutAdapter())
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+    ])
+    worker = TaskWorker(
+        repos, audit, executor=executor, operator=operator,
+        retry_policy=RetryPolicy(settings.limits),
+    )
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.RETRYING
+    error = result.metadata["operator_history"][-1]["error"]
+    assert error == "the call did not return in time"
+
+
+@pytest.mark.asyncio
 async def test_operator_loop_usage_limited_waits_and_resumes_by_itself(tmp_path) -> None:
     """A usage limit is a timer, not a question for the operator.
 
@@ -2253,3 +2392,204 @@ def test_deliverable_evidence_reports_facts_without_inferring_intent(tmp_path) -
     assert "schedule_created" in evidence.split("Not produced:")[1]
     # No objective text anywhere - it must not re-derive intent.
     assert "anything at all" not in evidence
+
+
+# ---- docs/ROADMAP.md "reusable verified workflows": build_replay_plan ----
+
+def test_build_replay_plan_keeps_only_succeeded_real_tool_calls() -> None:
+    history = [
+        {"tool_name": "filesystem.manage", "input": {"path": "a"}, "status": "succeeded"},
+        {"tool_name": "filesystem.manage", "input": {"path": "b"}, "status": "rate_limited"},
+        {"tool_name": "filesystem.manage", "input": {"path": "b"}, "status": "succeeded"},
+        {"tool_name": CHECK_ENTRY_FULFILLMENT, "input": None, "status": "fulfillment_gap"},
+        {"tool_name": "filesystem.manage", "input": {"path": "c"}, "status": "failed"},
+    ]
+
+    plan = build_replay_plan(history)
+
+    assert plan == [
+        {"tool_name": "filesystem.manage", "tool_input": {"path": "a"}},
+        {"tool_name": "filesystem.manage", "tool_input": {"path": "b"}},
+    ]
+
+
+def test_build_replay_plan_excludes_delegate_and_batch_entries() -> None:
+    history = [
+        {"tool_name": "delegate", "input": {"objective": "research X"}, "status": "succeeded"},
+        {"tool_name": "filesystem.manage", "input": {}, "status": "succeeded", "origin": "parallel_batch:1"},
+        {"tool_name": "filesystem.manage", "input": {"path": "solo"}, "status": "succeeded"},
+    ]
+
+    plan = build_replay_plan(history)
+
+    assert plan == [{"tool_name": "filesystem.manage", "tool_input": {"path": "solo"}}]
+
+
+# ---- docs/ROADMAP.md "reusable verified workflows": _next_replay_decision -
+
+def _replay_plan() -> list[dict]:
+    return [
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "move", "path": "a"}, "risk_level": "high"},
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "move", "path": "b"}, "risk_level": "high"},
+    ]
+
+
+def test_next_replay_decision_issues_the_first_step_from_an_empty_history() -> None:
+    decision, metadata = _next_replay_decision(_replay_plan(), [], {})
+
+    assert decision.action == OperatorAction.CALL_TOOL
+    assert decision.tool_name == "filesystem.manage"
+    assert decision.tool_input == {"operation": "move", "path": "a"}
+    assert decision.risk_level == RiskLevel.HIGH
+    assert metadata == {}
+
+
+def test_next_replay_decision_advances_after_a_succeeded_step() -> None:
+    history = [{"tool_name": "filesystem.manage", "status": "succeeded"}]
+
+    decision, _metadata = _next_replay_decision(_replay_plan(), history, {})
+
+    assert decision.action == OperatorAction.CALL_TOOL
+    assert decision.tool_input == {"operation": "move", "path": "b"}
+
+
+def test_next_replay_decision_completes_once_every_step_succeeded() -> None:
+    history = [
+        {"tool_name": "filesystem.manage", "status": "succeeded"},
+        {"tool_name": "filesystem.manage", "status": "succeeded"},
+    ]
+
+    decision, _metadata = _next_replay_decision(_replay_plan(), history, {})
+
+    assert decision.action == OperatorAction.DONE
+
+
+def test_next_replay_decision_blocks_immediately_on_a_failed_step() -> None:
+    """FAILED/DENIED are never auto-retried, so a replay must not silently
+    skip past a step nobody confirmed happened - it has to stop and say
+    which step and why."""
+    history = [{"tool_name": "filesystem.manage", "status": "failed", "error": "disk full"}]
+
+    decision, _metadata = _next_replay_decision(_replay_plan(), history, {})
+
+    assert decision.action == OperatorAction.BLOCKED
+    assert "1/2" in decision.reason
+    assert "disk full" in decision.reason
+
+
+def test_next_replay_decision_reissues_a_timed_out_step_instead_of_advancing() -> None:
+    history = [{"tool_name": "filesystem.manage", "status": "timeout", "error": "no response"}]
+
+    decision, metadata = _next_replay_decision(_replay_plan(), history, {})
+
+    # Reissues step 1 (path "a") again, not step 2 - a timeout is not a
+    # confirmed outcome for that step.
+    assert decision.action == OperatorAction.CALL_TOOL
+    assert decision.tool_input == {"operation": "move", "path": "a"}
+    assert metadata["replay_step_attempts"] == 1
+
+
+def test_next_replay_decision_gives_up_after_the_attempt_cap_on_repeated_timeouts() -> None:
+    history = [{"tool_name": "filesystem.manage", "status": "timeout", "error": "no response"}]
+
+    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 3})
+
+    assert decision.action == OperatorAction.BLOCKED
+    assert "3 attempt(s)" in decision.reason
+    assert metadata == {"replay_step_attempts": 3}  # unchanged - giving up, not counting a 4th
+
+
+def test_next_replay_decision_resets_the_attempt_counter_once_a_step_finally_succeeds() -> None:
+    history = [
+        {"tool_name": "filesystem.manage", "status": "succeeded"},  # step 1, after some earlier timeouts
+    ]
+
+    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 2})
+
+    assert decision.action == OperatorAction.CALL_TOOL
+    assert decision.tool_input == {"operation": "move", "path": "b"}
+    assert metadata["replay_step_attempts"] == 0
+
+
+@pytest.mark.asyncio
+async def test_replay_plan_reissues_every_step_through_the_real_approval_and_verify_pipeline(tmp_path) -> None:
+    """End to end through TaskWorker: a replay task with no operator/LLM
+    configured at all still completes, because _next_replay_decision
+    replaces decide() entirely - approval, dispatch, and history recording
+    are the exact same code a live task uses.
+    """
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("replay: sort receipts")
+    repos.tasks.update_metadata(
+        task.id,
+        {
+            **task.metadata,
+            "replay_plan": [
+                {"tool_name": "llm", "tool_input": {"step": 1}, "risk_level": "low"},
+                {"tool_name": "llm", "tool_input": {"step": 2}, "risk_level": "low"},
+            ],
+        },
+    )
+    settings = _settings()
+    executor = _executor(settings, audit, repos, output={"ok": True})
+    worker = TaskWorker(repos, audit, executor=executor, operator=None)
+
+    step1 = await worker.process_task(task.id)
+    step2 = await worker.process_task(step1.id)
+    completed = await worker.process_task(step2.id)
+
+    assert completed.status == TaskStatus.COMPLETED
+    assert len(completed.metadata["operator_history"]) == 2
+    assert all(entry["status"] == "succeeded" for entry in completed.metadata["operator_history"])
+    assert "2/2" in completed.metadata["synthesized_answer"]
+
+
+@pytest.mark.asyncio
+async def test_replay_plan_still_requires_approval_for_a_risky_step(tmp_path) -> None:
+    """Replay does not carry over the source task's authority - a step that
+    needed approval the first time needs it again, through the identical
+    approval gate a live task uses."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("replay: delete old logs")
+    repos.tasks.update_metadata(
+        task.id,
+        {
+            **task.metadata,
+            "replay_plan": [{"tool_name": "terminal", "tool_input": {}, "risk_level": "high"}],
+        },
+    )
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.TERMINAL_RUN: CapabilityPolicy(enabled=True, requires_approval=True, max_risk_level=RiskLevel.HIGH)},
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={"terminal": StaticToolAdapter()},
+        tool_definitions={"terminal": ToolDefinition(name="terminal", capability=Capability.TERMINAL_RUN, enabled=True, description="test")},
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=None)
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.AWAITING_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_replay_plan_blocks_on_a_permanently_failing_step(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("replay: a step that no longer works")
+    repos.tasks.update_metadata(
+        task.id,
+        {**task.metadata, "replay_plan": [{"tool_name": "llm", "tool_input": {}, "risk_level": "low"}]},
+    )
+    settings = _settings()
+    executor = _executor_with_adapter(settings, audit, repos, FailingAdapter())
+    worker = TaskWorker(repos, audit, executor=executor, operator=None)
+
+    first = await worker.process_task(task.id)
+    assert first.status == TaskStatus.RUNNING  # the failure is recorded; blocking happens on the next tick
+
+    result = await worker.process_task(first.id)
+
+    assert result.status == TaskStatus.BLOCKED
+    assert "1/1" in result.metadata["last_worker_error"]

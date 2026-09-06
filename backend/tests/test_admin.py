@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import sys
 from urllib.parse import quote
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 import yaml
 
 import agent_control.admin as admin_module
@@ -14,6 +17,7 @@ from agent_control.main import app
 from datetime import timedelta
 
 from agent_control.schemas import (
+    ApprovalGrant,
     ApprovalRequest,
     ApprovalStatus,
     Artifact,
@@ -29,6 +33,7 @@ from agent_control.schemas import (
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
+    ToolVerification,
     utc_now,
 )
 from agent_control.storage import AuditLogger, Database, Repositories
@@ -608,6 +613,95 @@ def test_admin_decide_approval_approve_for_task_creates_a_grant(monkeypatch, tmp
     assert repositories.approval_grants.find_matching(task.id, "filesystem.manage", Capability.FILESYSTEM_WRITE) is not None
 
 
+def test_admin_decide_approval_approve_for_task_inherits_scope_and_caps_operations(monkeypatch, tmp_path) -> None:
+    """docs/ROADMAP.md "scoped temporary authority": the grant should narrow
+    to the exact boundary already reviewed on the approved call, and should
+    never be unbounded for the rest of the task's TTL."""
+    monkeypatch.chdir(tmp_path)
+    from agent_control.admin import DEFAULT_GRANT_MAX_OPERATIONS
+
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("sort downloads")
+    approval = repositories.approvals.create(
+        ApprovalRequest(
+            task_id=task.id,
+            capability=Capability.FILESYSTEM_WRITE,
+            risk_level=RiskLevel.HIGH,
+            summary="move files",
+            action_payload={
+                "tool_name": "filesystem.manage",
+                "scope_target": "C:/Users/sam/Downloads",
+                "input": {},
+            },
+            expires_at=utc_now() + timedelta(minutes=15),
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/approvals/{approval.id}/decide", json={"decision": "approve_for_task"})
+
+    body = response.json()
+    assert body["grant"]["scope"] == "C:/Users/sam/Downloads"
+    assert body["grant"]["max_operations"] == DEFAULT_GRANT_MAX_OPERATIONS
+    assert body["grant"]["operations_used"] == 0
+    assert body["grant"]["revoked"] is False
+
+
+def test_admin_lists_active_grants_across_tasks(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("organize downloads")
+    repositories.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+            scope="C:/Downloads", max_operations=200,
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/grants")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert len(body["grants"]) == 1
+    entry = body["grants"][0]
+    assert entry["grant"]["tool_name"] == "filesystem.manage"
+    assert entry["grant"]["scope"] == "C:/Downloads"
+    assert entry["task_objective"] == "organize downloads"
+
+
+def test_admin_revokes_a_grant(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("t")
+    grant = repositories.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="terminal", capability=Capability.TERMINAL_RUN,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/grants/{grant.id}/revoke")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["revoked"] is True
+    assert body["grant"]["revoked"] is True
+    assert client.get("/admin/api/grants").json()["grants"] == []
+
+
+def test_admin_revoke_unknown_grant_404s(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/grants/grant_does_not_exist/revoke")
+
+    assert response.status_code == 404
+
+
 def test_admin_decide_approval_approve_updates_status_and_audits(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     database_url = f"sqlite:///{tmp_path / 'admin.db'}"
@@ -744,6 +838,46 @@ def test_admin_task_trace_includes_operator_history_tool_calls_and_audit(monkeyp
     assert body["tool_invocations"][0]["request"]["input"]["prompt"] == "build the app"
     assert body["tool_invocations"][0]["result"]["output"]["terminal_output"][0]["content"] == "created files"
     assert body["audit"][0]["details"]["action"] == "operator_decision"
+
+
+def test_admin_task_trace_joins_content_trust_onto_operator_history(monkeypatch, tmp_path) -> None:
+    """docs/THREAT_MODEL.md: a human reviewing a trace should be able to see
+    which steps observed content this machine does not control, the same
+    request_id join _enrich_operator_history already uses for duration_ms.
+    """
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    task = repositories.tasks.create("summarize a web page")
+    untrusted_request = ToolCallRequest(
+        task_id=task.id, tool_name="browser.open", capability=Capability.BROWSER_OPEN,
+        input={"operation": "open", "url": "https://example.com"},
+    )
+    local_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "read_file", "path": "notes.txt"},
+    )
+    repositories.tasks.update_metadata(
+        task.id,
+        {
+            "operator_history": [
+                {"tool_name": "browser.open", "status": "succeeded", "request_id": untrusted_request.id},
+                {"tool_name": "filesystem.manage", "status": "succeeded", "request_id": local_request.id},
+            ]
+        },
+    )
+    repositories.tool_invocations.create(untrusted_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=untrusted_request.id, status=ToolResultStatus.SUCCEEDED, output={}, content_trust="untrusted_external")
+    )
+    repositories.tool_invocations.create(local_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=local_request.id, status=ToolResultStatus.SUCCEEDED, output={})
+    )
+
+    response = client.get(f"/admin/api/tasks/{task.id}/trace")
+    body = response.json()
+
+    assert body["operator_history"][0]["content_trust"] == "untrusted_external"
+    assert body["operator_history"][1]["content_trust"] is None
 
 
 def test_admin_task_trace_operator_history_entry_without_request_id_has_no_duration(monkeypatch, tmp_path) -> None:
@@ -1133,6 +1267,68 @@ def test_admin_task_receipt_reports_no_egress_for_a_fully_local_task(monkeypatch
     assert body["uncertainties"] == []
 
 
+def test_admin_task_receipt_aggregates_verification_across_calls(monkeypatch, tmp_path) -> None:
+    """docs/ROADMAP.md "Proof": a receipt should say how many things were
+    actually re-checked on disk and how many came up missing, aggregated
+    across every call's own ToolVerification (schemas.py) - not just
+    whether the adapter reported "succeeded".
+    """
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    task = repositories.tasks.create("sort receipts by vendor")
+    repositories.tasks.update_metadata(task.id, {"synthesized_answer": "Sorted."}, TaskStatus.COMPLETED)
+
+    verified_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "apply_manifest"},
+    )
+    repositories.tool_invocations.create(verified_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(
+            request_id=verified_request.id,
+            status=ToolResultStatus.SUCCEEDED,
+            output={"changed_paths": ["a", "b"]},
+            verification=ToolVerification(checked=2, verified=2, missing=[]),
+        )
+    )
+    partial_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "apply_manifest"},
+    )
+    repositories.tool_invocations.create(partial_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(
+            request_id=partial_request.id,
+            status=ToolResultStatus.SUCCEEDED,
+            output={"changed_paths": ["c"]},
+            verification=ToolVerification(checked=1, verified=0, missing=["destination not found: c"]),
+        )
+    )
+    unverified_request = ToolCallRequest(
+        task_id=task.id, tool_name="web.search", capability=Capability.LLM_GENERATE, input={"query": "vendor names"},
+    )
+    repositories.tool_invocations.create(unverified_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=unverified_request.id, status=ToolResultStatus.SUCCEEDED, output={})
+    )
+    failing_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, input={"operation": "apply_manifest"},
+    )
+    repositories.tool_invocations.create(failing_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=failing_request.id, status=ToolResultStatus.FAILED, error_message="disk full")
+    )
+
+    response = client.get(f"/admin/api/tasks/{task.id}/receipt")
+    body = response.json()
+
+    assert body["verification"] == {"checked": 3, "verified": 2, "missing": ["destination not found: c"]}
+    # 4 calls total; none were needs_approval/denied/cancelled, so all 4
+    # were attempted - 3 succeeded (including the unverified web.search
+    # call, whose tool has no verify() hook), 1 failed.
+    assert body["execution"] == {"calls_attempted": 4, "calls_succeeded": 3, "calls_failed": 1}
+    assert any("1 verification issue" in item and "destination not found: c" in item for item in body["uncertainties"])
+
+
 def _settings_with_artifact_root(root: Path) -> AppSettings:
     return AppSettings(_env_file=None, storage={"artifact_dir": str(root)})
 
@@ -1480,6 +1676,337 @@ def test_admin_selects_llm_preset(monkeypatch, tmp_path) -> None:
     assert saved["llm"]["profiles"]["localdeploy_gemma3_12b"]["model"] == "gemma3_12b_ollama_safe"
     assert saved["llm"]["profiles"]["localdeploy_gemma3_12b"]["base_url"] == "http://127.0.0.1:8000/v1"
     assert saved["llm"]["profiles"]["localdeploy_gemma3_12b"]["timeout_seconds"] == 360
+
+
+def _settings_with_llm_profiles(**profiles: str) -> AppSettings:
+    from agent_control.config import LLMConfig, LLMProfileConfig
+
+    return AppSettings(
+        _env_file=None,
+        llm=LLMConfig(
+            default_profile="local",
+            profiles={
+                name: LLMProfileConfig(model=model, base_url="http://127.0.0.1:8000/v1")
+                for name, model in {"local": "local-model", **profiles}.items()
+            },
+        ),
+    )
+
+
+def test_admin_assigns_per_role_llm_profiles(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    settings = _settings_with_llm_profiles(strong="strong-model", cheap="cheap-model")
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.post(
+        "/admin/api/config/llm/roles",
+        json={"operator_profile": "strong", "auditor_profile": "cheap", "fallback_chain": ["local"]},
+    )
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert saved["llm"]["operator_profile"] == "strong"
+    assert saved["llm"]["auditor_profile"] == "cheap"
+    assert saved["llm"]["concierge_profile"] is None
+    assert saved["llm"]["fallback_chain"] == ["local"]
+
+
+def test_admin_rejects_an_unknown_profile_for_a_role(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories, settings=_settings_with_llm_profiles())
+
+    response = client.post("/admin/api/config/llm/roles", json={"operator_profile": "does-not-exist"})
+
+    assert response.status_code == 400
+    assert "does-not-exist" in response.json()["detail"]
+
+
+def test_admin_rejects_an_unknown_profile_in_fallback_chain(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories, settings=_settings_with_llm_profiles())
+
+    response = client.post("/admin/api/config/llm/roles", json={"fallback_chain": ["ghost"]})
+
+    assert response.status_code == 400
+    assert "ghost" in response.json()["detail"]
+
+
+# ---- docs/ROADMAP.md "integration control plane": MCP server admin -------
+
+def _fake_mcp_server_script(tmp_path) -> str:
+    server_path = tmp_path / "fake_mcp_server.py"
+    server_path.write_text(
+        """
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("fake")
+
+@mcp.tool()
+def echo(text: str) -> str:
+    return text
+
+if __name__ == "__main__":
+    mcp.run()
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return str(server_path)
+
+
+def test_admin_upserts_an_mcp_server_without_echoing_env_values(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post(
+        "/admin/api/config/mcp/servers",
+        json={
+            "name": "fake",
+            "command": "uv",
+            "args": ["run", "fake_server.py"],
+            "env": {"FAKE_API_KEY": "super-secret"},
+            "capability": "terminal.run",
+            "risk_level": "high",
+        },
+    )
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "super-secret" not in json.dumps(body)
+    assert body["mcp"]["servers"]["fake"]["env_keys"] == ["FAKE_API_KEY"]
+    assert saved["mcp"]["servers"]["fake"]["command"] == "uv"
+    assert saved["mcp"]["servers"]["fake"]["env"] == {"FAKE_API_KEY": "super-secret"}  # written to disk, just not echoed
+
+
+def test_admin_editing_an_mcp_server_with_blank_env_keeps_existing_values(monkeypatch, tmp_path) -> None:
+    """Env values never round-trip back to the client (same invariant as the
+    secret vault), so an edit's env field always starts blank - submitting
+    it blank must mean "keep what's there", not silently wipe it."""
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+    client.post(
+        "/admin/api/config/mcp/servers",
+        json={"name": "fake", "command": "uv", "env": {"FAKE_API_KEY": "super-secret"}},
+    )
+
+    response = client.post(
+        "/admin/api/config/mcp/servers",
+        json={"name": "fake", "command": "uv", "timeout_seconds": 60, "env": {}},
+    )
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert response.json()["mcp"]["servers"]["fake"]["env_keys"] == ["FAKE_API_KEY"]
+    assert saved["mcp"]["servers"]["fake"]["env"] == {"FAKE_API_KEY": "super-secret"}
+    assert saved["mcp"]["servers"]["fake"]["timeout_seconds"] == 60
+
+
+def test_admin_rejects_an_unknown_capability_for_an_mcp_server(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post(
+        "/admin/api/config/mcp/servers",
+        json={"name": "fake", "command": "uv", "capability": "not.a.real.capability"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_admin_deletes_an_mcp_server(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+    client.post("/admin/api/config/mcp/servers", json={"name": "fake", "command": "uv"})
+
+    response = client.delete("/admin/api/config/mcp/servers/fake")
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert "fake" not in saved["mcp"]["servers"]
+
+
+def test_admin_delete_unknown_mcp_server_404s(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.delete("/admin/api/config/mcp/servers/does-not-exist")
+
+    assert response.status_code == 404
+
+
+def test_admin_tests_a_real_mcp_server_connection(monkeypatch, tmp_path) -> None:
+    from agent_control.config import MCPConfig, MCPServerConfig
+
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    server_path = _fake_mcp_server_script(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        mcp=MCPConfig(
+            enabled=True,
+            servers={"fake": MCPServerConfig(command=sys.executable, args=[server_path], timeout_seconds=30)},
+        ),
+    )
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.post("/admin/api/config/mcp/servers/fake/test")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["healthy"] is True
+    assert body["tool_count"] == 1
+    assert body["tools"] == ["echo"]
+
+
+def test_admin_test_unknown_mcp_server_404s(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/config/mcp/servers/does-not-exist/test")
+
+    assert response.status_code == 404
+
+
+# ---- docs/ROADMAP.md "integration control plane": adapter review ---------
+
+@pytest.mark.asyncio
+async def test_admin_reviews_a_scaffolded_adapter(monkeypatch, tmp_path) -> None:
+    """docs/ROADMAP.md: approving `promote_after_approval` should not be a
+    decision made from the tool_input alone (just adapter_dir and
+    approved=true) - a human needs to see the actual generated source and
+    whether it passes its own sandbox test first.
+    """
+    from agent_control.config import AdapterFactoryConfig
+    from agent_control.tools.adapter_factory import AdapterFactoryAdapter
+
+    monkeypatch.chdir(tmp_path)
+    adapters_root = tmp_path / "adapters"
+    factory = AdapterFactoryAdapter(AdapterFactoryConfig(root_dir=str(adapters_root)))
+    scaffolded = await factory.execute(
+        ToolCallRequest(
+            task_id="task_adapter",
+            tool_name="adapter.factory",
+            capability=Capability.FILESYSTEM_WRITE,
+            input={"operation": "scaffold", "name": "weather_lookup", "objective": "Look up local weather."},
+        )
+    )
+    adapter_dir = scaffolded.output["adapter_dir"]
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    settings = AppSettings(_env_file=None, adapters={"adapter_factory": {"root_dir": str(adapters_root)}})
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.get("/admin/api/adapters/review", params={"adapter_dir": adapter_dir})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["manifest"]["name"] == "weather_lookup"
+    assert set(body["files"]) >= {"adapter.py", "test_adapter.py", "README.md"}
+    assert "class WeatherLookupAdapter" in body["files"]["adapter.py"]
+    assert "passed" in body["test"]
+
+
+def test_admin_review_adapter_rejects_a_path_outside_the_configured_root(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    settings = AppSettings(_env_file=None, adapters={"adapter_factory": {"root_dir": str(tmp_path / "adapters")}})
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.get("/admin/api/adapters/review", params={"adapter_dir": str(outside)})
+
+    assert response.status_code == 400
+
+
+def test_admin_dashboard_reports_task_counts_for_the_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("sort downloads")
+    repositories.tasks.update_metadata(task.id, task.metadata, TaskStatus.COMPLETED)
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/dashboard", params={"window_days": 7})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["window_days"] == 7
+    assert body["tasks_attempted"] == 1
+    assert body["completed"] == 1
+
+
+def test_admin_dashboard_rejects_an_out_of_range_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/dashboard", params={"window_days": 9000})
+
+    assert response.status_code == 422
+
+
+# ---- docs/ROADMAP.md "reusable verified workflows": replay ---------------
+
+def test_admin_replays_a_completed_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort receipts by vendor")
+    repositories.tasks.update_metadata(
+        source.id,
+        {
+            **source.metadata,
+            "operator_history": [
+                {"tool_name": "filesystem.manage", "input": {"operation": "move", "path": "a"}, "status": "succeeded"},
+                {"tool_name": "filesystem.manage", "input": {"operation": "move", "path": "b"}, "status": "rate_limited"},
+                {"tool_name": "filesystem.manage", "input": {"operation": "move", "path": "b"}, "status": "succeeded"},
+            ],
+        },
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/tasks/{source.id}/replay")
+    body = response.json()
+
+    assert response.status_code == 200
+    replay_task = repositories.tasks.get(body["task"]["id"])
+    assert replay_task is not None
+    assert replay_task.metadata["replay_of"] == source.id
+    assert replay_task.metadata["replay_plan"] == [
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "move", "path": "a"}},
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "move", "path": "b"}},
+    ]
+    assert replay_task.status == TaskStatus.RECEIVED
+
+
+def test_admin_replay_404s_for_an_unknown_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/tasks/task_does_not_exist/replay")
+
+    assert response.status_code == 404
+
+
+def test_admin_replay_rejects_a_task_with_nothing_to_replay(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("a task that never called a tool")
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/tasks/{source.id}/replay")
+
+    assert response.status_code == 400
 
 
 def test_admin_writes_telegram_runtime_config(monkeypatch, tmp_path) -> None:

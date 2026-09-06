@@ -1,4 +1,5 @@
 import { LLMSettingsCard } from "@/components/settings/LLMSettingsCard"
+import { LLMRolesCard } from "@/components/settings/LLMRolesCard"
 import { VoiceSettingsCard } from "@/components/settings/VoiceSettingsCard"
 import { TelegramSettingsCard } from "@/components/settings/TelegramSettingsCard"
 import { VSCodeSettingsCard } from "@/components/settings/VSCodeSettingsCard"
@@ -14,11 +15,11 @@ import { PageHeader } from "@/components/layout/PageHeader"
 
 /**
  * docs/UI_REWRITE_PLAN.md §14. Level 1: LLM + Telegram. Level 2/Advanced
- * adds every adapter field, MCP servers (read-only), diagnostics, and the
- * audit viewer. **A1/A2/A3 (per-role model, per-role prompt override,
- * delegate presets) and D4 (OpenTelemetry export) are not built** - see
- * the plan doc for why (real new backend machinery, same reasoning that
- * scoped D2 out of Phase 2).
+ * adds every adapter field, MCP servers (read-only), diagnostics, the audit
+ * viewer, and per-role model routing (LLMRolesCard). **A2/A3 (per-role
+ * prompt override, delegate presets) and D4 (OpenTelemetry export) are not
+ * built** - see the plan doc for why (real new backend machinery, same
+ * reasoning that scoped D2 out of Phase 2).
  */
 export function SettingsPage({ onRerunWizard }: { onRerunWizard: () => void }) {
   const { advanced } = useAdvancedMode()
@@ -38,6 +39,7 @@ export function SettingsPage({ onRerunWizard }: { onRerunWizard: () => void }) {
 
       {advanced && (
         <>
+          <LLMRolesCard />
           <VSCodeSettingsCard />
           <WorkspaceSettingsCard />
           <ComputerUseSettingsCard />

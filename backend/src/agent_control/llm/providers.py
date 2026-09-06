@@ -253,10 +253,16 @@ def _is_unavailability(exc: Exception) -> bool:
     if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
         return True
     # OpenAICompatibleProvider wraps HTTP errors in ValueError with the status
-    # in the message; 5xx means the endpoint itself is broken/overloaded.
+    # in the message. 5xx means the endpoint itself is broken/overloaded; 429
+    # means it is telling this client specifically to back off; 401/403 means
+    # this profile's own credential is bad - none of the three say the
+    # *request* is wrong, so all three are worth trying a different profile
+    # for. 400 (a genuine request bug) deliberately does not match - it would
+    # fail the same way against any profile, and silently switching models on
+    # it would mask the real problem.
     if isinstance(exc, ValueError):
         message = str(exc)
-        return "failed with HTTP 5" in message
+        return any(f"failed with HTTP {code}" in message for code in ("5", "429", "401", "403"))
     return False
 
 
@@ -287,6 +293,154 @@ def _build_profile_provider(settings: AppSettings, profile_name: str | None, rol
     return build_provider_for_profile(profile, role=role)
 
 
+class _ChainEntry:
+    __slots__ = ("name", "provider")
+
+    def __init__(self, name: str, provider: LLMProvider) -> None:
+        self.name = name
+        self.provider = provider
+
+
+class ChainLLMProvider:
+    """Tries an ordered list of named profiles in turn on unavailability.
+
+    Generalizes FailoverLLMProvider (kept as-is for its one existing call
+    shape - see build_default_llm_provider) to N entries, each with its own
+    cooldown: a profile that just failed is skipped on the *next* call for
+    `cooldown_seconds` rather than re-paying its timeout again immediately,
+    unless it is the only entry left to try. `last_model`/`last_usage`/etc.
+    always reflect whichever entry actually served the most recent call, so
+    a receipt's "model used" already shows the truth through a failover with
+    no extra plumbing; `last_fallback_used` is the one fact that needs it
+    (docs/ROADMAP.md 4.4: "an unexplained fallback is a silent quality
+    change").
+    """
+
+    def __init__(self, entries: list[_ChainEntry], *, cooldown_seconds: float = 30.0) -> None:
+        if not entries:
+            raise ValueError("ChainLLMProvider needs at least one entry")
+        self.entries = entries
+        self.cooldown_seconds = cooldown_seconds
+        self._cooldown_until: dict[str, float] = {}
+        self.last_usage: dict | None = None
+        self.last_request: list[dict] | None = None
+        self.last_response_text: str | None = None
+        self.last_model: str | None = None
+        self.last_started_at: datetime | None = None
+        self.last_latency_ms: float | None = None
+        self.last_profile_name: str | None = None
+        self.last_fallback_used: bool = False
+
+    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+        return await self._call("generate_text", system_prompt, user_prompt)
+
+    async def generate_multimodal_text(self, system_prompt: str, user_prompt: str, image_paths: list[str]) -> str:
+        return await self._call("generate_multimodal_text", system_prompt, user_prompt, image_paths)
+
+    async def generate_structured(
+        self,
+        system_prompt: str,
+        user_prompt: str,
+        output_model: type[T],
+        *,
+        temperature: float | None = None,
+    ) -> T:
+        return await self._call(
+            "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature
+        )
+
+    async def _call(self, method: str, *args, **kwargs):
+        now = time.monotonic()
+        last_exc: Exception | None = None
+        for index, entry in enumerate(self.entries):
+            is_last = index == len(self.entries) - 1
+            cooling_down = self._cooldown_until.get(entry.name, 0.0) > now
+            if cooling_down and not is_last:
+                continue
+            try:
+                result = await getattr(entry.provider, method)(*args, **kwargs)
+                self._cooldown_until.pop(entry.name, None)
+                self._copy_last_call_state(entry.provider, entry.name, fallback_used=index > 0)
+                return result
+            except Exception as exc:
+                if not _is_unavailability(exc):
+                    raise
+                last_exc = exc
+                self._cooldown_until[entry.name] = now + self.cooldown_seconds
+                logger.warning("LLM profile %r unavailable (%s); trying next in chain", entry.name, exc)
+        if last_exc is None:
+            # Unreachable given entries is non-empty and the last entry is
+            # never skipped - not an assert, which python -O strips, turning
+            # this into a bare "raise None" TypeError with no context.
+            raise RuntimeError("ChainLLMProvider exhausted its chain without a result or an error")
+        raise last_exc
+
+    def _copy_last_call_state(self, provider: LLMProvider, name: str, *, fallback_used: bool) -> None:
+        self.last_usage = getattr(provider, "last_usage", None)
+        self.last_request = getattr(provider, "last_request", None)
+        self.last_response_text = getattr(provider, "last_response_text", None)
+        self.last_model = getattr(provider, "last_model", None)
+        self.last_started_at = getattr(provider, "last_started_at", None)
+        self.last_latency_ms = getattr(provider, "last_latency_ms", None)
+        self.last_profile_name = name
+        self.last_fallback_used = fallback_used
+
+
+def _chain_profile_names(settings: AppSettings, primary_name: str) -> list[str]:
+    """The ordered fallback names after `primary_name`, deduplicated and with
+    the primary itself dropped if it's accidentally repeated. fallback_chain
+    takes priority when set; fallback_profile alone still works for a config
+    that predates fallback_chain."""
+    chain = list(settings.llm.fallback_chain)
+    if not chain and settings.llm.fallback_profile:
+        chain = [settings.llm.fallback_profile]
+    seen = {primary_name}
+    ordered: list[str] = []
+    for name in chain:
+        if name and name not in seen:
+            ordered.append(name)
+            seen.add(name)
+    return ordered
+
+
+def _build_chain_provider(settings: AppSettings, primary_name: str | None, *, role: str) -> LLMProvider | None:
+    if not primary_name:
+        return None
+    primary_profile = settings.llm.profiles.get(primary_name)
+    if primary_profile is None:
+        return None
+    entries = [_ChainEntry(primary_name, build_provider_for_profile(primary_profile, role=role))]
+    for name in _chain_profile_names(settings, primary_name):
+        profile = settings.llm.profiles.get(name)
+        if profile is not None:
+            entries.append(_ChainEntry(name, build_provider_for_profile(profile, role=f"{role}_fallback")))
+    if len(entries) == 1:
+        return entries[0].provider
+    return ChainLLMProvider(entries)
+
+
+_ROLE_PROFILE_FIELDS = {
+    "concierge": "concierge_profile",
+    "operator": "operator_profile",
+    "auditor": "auditor_profile",
+}
+
+
+def build_role_llm_provider(settings: AppSettings, role: str) -> LLMProvider | None:
+    """A dedicated provider for one of the three core roles (docs/ROADMAP.md
+    "per-role models"), or None when that role has no override configured -
+    callers fall back to build_default_llm_provider in that case, preserving
+    today's behavior (Concierge/Operator/Auditor sharing one model) for every
+    config that doesn't set concierge_profile/operator_profile/
+    auditor_profile.
+    """
+    field = _ROLE_PROFILE_FIELDS.get(role)
+    if field is None:
+        raise ValueError(f"unknown LLM role: {role}")
+    profile_name = getattr(settings.llm, field)
+    return _build_chain_provider(settings, profile_name, role=role)
+
+
 def _with_fallback(settings: AppSettings, provider: LLMProvider | None, primary_name: str | None) -> LLMProvider | None:
     if provider is None:
         return None
@@ -300,12 +454,21 @@ def _with_fallback(settings: AppSettings, provider: LLMProvider | None, primary_
 
 
 def build_default_llm_provider(settings: AppSettings) -> LLMProvider | None:
+    # fallback_chain is additive and opt-in: a config that only ever set
+    # fallback_profile keeps getting a plain FailoverLLMProvider back
+    # (test_build_default_provider_wraps_fallback_profile pins this), not a
+    # ChainLLMProvider with one fallback entry - only setting the new field
+    # switches to the N-entry path.
+    if settings.llm.fallback_chain:
+        return _build_chain_provider(settings, settings.llm.default_profile, role="default")
     provider = _build_profile_provider(settings, settings.llm.default_profile, "default")
     return _with_fallback(settings, provider, settings.llm.default_profile)
 
 
 def build_major_llm_provider(settings: AppSettings) -> LLMProvider | None:
     """Build the LLM provider for complex/major tasks, if a major_profile is configured."""
+    if settings.llm.fallback_chain:
+        return _build_chain_provider(settings, settings.llm.major_profile, role="major")
     provider = _build_profile_provider(settings, settings.llm.major_profile, "major")
     return _with_fallback(settings, provider, settings.llm.major_profile)
 

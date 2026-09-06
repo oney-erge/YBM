@@ -23,6 +23,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 from pathlib import Path
+import re
 import shutil
 import sys
 import tarfile
@@ -56,6 +57,27 @@ EXCLUDE_SUFFIXES = {".pyc", ".pyo"}
 # Needs the executable bit in the tarball, and in the zip for anyone who
 # unpacks it on a Unix machine.
 EXECUTABLE = {"ybm.sh"}
+
+_PYPROJECT_VERSION = re.compile(r'^version\s*=\s*"[^"]*"', re.MULTILINE)
+
+
+def _stamp_pyproject_version(path: Path, version: str) -> None:
+    """`ybm check-updates` reads the installed package's own metadata
+    (`importlib.metadata.version`), which `uv sync`/pip derive from this
+    file's `[project] version` at install time - not from the release tag
+    that named the archive. Left as committed (dev-time, bumped
+    infrequently), an install from this exact payload would forever report
+    that stale dev version instead of the tag a human just downloaded, so
+    `check-updates` would claim an update is available on the version it is
+    currently running. Stamp the packaged copy with the version this
+    archive is actually named after; the git-tracked source file is
+    untouched.
+    """
+    text = path.read_text(encoding="utf-8")
+    stamped, count = _PYPROJECT_VERSION.subn(f'version = "{version}"', text, count=1)
+    if count != 1:
+        raise ValueError(f"expected exactly one top-level version field in {path}, found {count}")
+    path.write_text(stamped, encoding="utf-8")
 
 
 def _ignore(_dir: str, names: list[str]) -> set[str]:
@@ -91,6 +113,10 @@ def stage(version: str, stage_dir: Path) -> None:
         target = stage_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, target)
+
+    pyproject = stage_dir / "backend/pyproject.toml"
+    if pyproject.exists():
+        _stamp_pyproject_version(pyproject, version)
 
     # Gives `ybm check-updates` a baseline in an installed copy that has no .git.
     (stage_dir / ".ybm-release-version").write_text(version, encoding="utf-8")

@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 import importlib.util
+import json
 import logging
 import mimetypes
 import os
@@ -20,6 +21,7 @@ from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import Field, SecretStr
 
+from agent_control.analytics import build_reliability_dashboard
 from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
@@ -32,6 +34,7 @@ from agent_control.llm import hardware as llm_hardware
 from agent_control.llm.providers import build_provider_for_profile
 from agent_control.observation.artifacts import ArtifactService
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
+from agent_control.orchestration.worker import build_replay_plan
 from agent_control.policy import apply_access_modes_to_config, summarize_access_modes
 from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
@@ -48,6 +51,7 @@ from agent_control.schemas import (
     ChannelType,
     MemoryFact,
     MemorySource,
+    RiskLevel,
     StrictBaseModel,
     TaskRecord,
     TaskStatus,
@@ -92,6 +96,36 @@ class AdminLLMConfigRequest(StrictBaseModel):
 
 class AdminLLMPresetRequest(StrictBaseModel):
     preset: str = Field(min_length=1, max_length=80)
+
+
+class AdminLLMRolesRequest(StrictBaseModel):
+    """Per-role model assignment (docs/ROADMAP.md "per-role models"). None
+    means "use default_profile" - the same meaning LLMConfig's own fields
+    carry, so clearing a role back to the shared default is just posting
+    None, not a separate unset endpoint."""
+    concierge_profile: str | None = Field(default=None, max_length=80)
+    operator_profile: str | None = Field(default=None, max_length=80)
+    auditor_profile: str | None = Field(default=None, max_length=80)
+    fallback_chain: list[str] = Field(default_factory=list, max_length=10)
+
+
+class AdminMCPServerRequest(StrictBaseModel):
+    """Add/edit one MCP server (docs/ROADMAP.md "integration control
+    plane"). Mirrors mcp_client.py's own _install_server validation - that
+    path exists for the model to propose a server (behind an approval);
+    this is the same shape for a human adding one directly through the
+    console, which is why MCPServersCard has been read-only until now.
+    """
+    name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]{1,80}$")
+    enabled: bool = True
+    command: str = Field(min_length=1, max_length=500)
+    args: list[str] = Field(default_factory=list, max_length=50)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = None
+    timeout_seconds: int = Field(default=30, ge=1, le=900)
+    capability: str = "terminal.run"
+    risk_level: str = "high"
+    disabled_tools: list[str] = Field(default_factory=list, max_length=200)
 
 
 class AdminVoiceConfigRequest(StrictBaseModel):
@@ -223,6 +257,14 @@ MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
 # personal, local-first, single-user system, not multi-tenant - one thread
 # is the right scope for v1, the same way there is one Telegram user.
 WEB_CHAT_ID = "local"
+
+# Every "Allow for this task" grant gets this cap (docs/ROADMAP.md "scoped
+# temporary authority") rather than being unbounded for the rest of the
+# task's TTL - generous enough that a real batch job never hits it, but not
+# "Always allow" either. Not user-configurable at grant-creation time (that
+# decision has to stay a single click, not a form) - the Active Grants page
+# is where a human can see and revoke one early instead.
+DEFAULT_GRANT_MAX_OPERATIONS = 200
 
 
 def _redact_admin_output(value: Any, settings: AppSettings) -> Any:
@@ -665,6 +707,18 @@ def create_admin_router(
             },
         }
 
+    @router.get("/api/dashboard")
+    def admin_reliability_dashboard(
+        request: Request,
+        window_days: int = Query(default=7, ge=1, le=90),
+    ) -> dict[str, Any]:
+        """Cross-task reliability dashboard (docs/ROADMAP.md) - success
+        rate, verified-success rate, retries, tool failures, token cost,
+        and per-tool/per-model/per-task-type breakdowns over the window.
+        """
+        require_admin(request)
+        return build_reliability_dashboard(repositories_loader(), window_days)
+
     @router.get("/api/doctor")
     def admin_doctor(request: Request) -> dict[str, Any]:
         """Runs the same checks `ybm doctor` runs (collect_checks - this
@@ -895,6 +949,13 @@ def create_admin_router(
                 capability=approval.capability,
                 granted_from_approval_id=approval_id,
                 expires_at=utc_now() + timedelta(seconds=loaded.limits.task_budget_seconds),
+                # Inherits the exact boundary the human already reviewed on
+                # this one call, rather than a blank "anything with this
+                # tool+capability" grant (docs/ROADMAP.md "scoped temporary
+                # authority") - no extra form field needed since the scope
+                # was already implicit in what was approved.
+                scope=_blank_to_none(str(approval.action_payload.get("scope_target") or "")),
+                max_operations=DEFAULT_GRANT_MAX_OPERATIONS,
             )
             repositories.approval_grants.create(grant)
             audit.append(
@@ -907,6 +968,8 @@ def create_admin_router(
                     "grant_id": grant.id,
                     "tool_name": tool_name,
                     "capability": approval.capability.value,
+                    "scope": grant.scope,
+                    "max_operations": grant.max_operations,
                 },
             )
 
@@ -914,6 +977,89 @@ def create_admin_router(
         return {
             "approval": updated.model_dump(mode="json") if updated else None,
             "grant": grant.model_dump(mode="json") if grant else None,
+        }
+
+    @router.get("/api/grants")
+    def admin_active_grants(request: Request) -> dict[str, Any]:
+        """Every currently-usable "Allow for this task" grant across every
+        task (docs/ROADMAP.md "scoped temporary authority") - the visibility
+        UI_UX_AUDIT.md's gap list named as missing: "there is still no way
+        to see or revoke a live one."
+        """
+        require_admin(request)
+        repositories = repositories_loader()
+        items = []
+        for grant in repositories.approval_grants.list_active():
+            task = repositories.tasks.get(grant.task_id)
+            items.append({
+                "grant": grant.model_dump(mode="json"),
+                "task_objective": task.objective if task is not None else None,
+                "task_status": task.status.value if task is not None else None,
+            })
+        return {"grants": items}
+
+    @router.post("/api/grants/{grant_id}/revoke")
+    def admin_revoke_grant(request: Request, grant_id: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        grant = repositories.approval_grants.get(grant_id)
+        if grant is None:
+            raise HTTPException(status_code=404, detail="grant not found")
+        revoked = repositories.approval_grants.revoke(grant_id)
+        if revoked:
+            AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+                AuditEventType.CONFIG_UPDATED,
+                actor="admin",
+                task_id=grant.task_id,
+                payload={"section": "approval_grant", "action": "revoke", "grant_id": grant_id},
+            )
+        updated = repositories.approval_grants.get(grant_id)
+        return {"grant": updated.model_dump(mode="json") if updated else None, "revoked": revoked}
+
+    @router.get("/api/adapters/review")
+    def admin_review_adapter(request: Request, adapter_dir: str = Query(...)) -> dict[str, Any]:
+        """"I generated a connector. Here is exactly what it will access.
+        Tests pass. Install it?" (docs/ROADMAP.md "integration control
+        plane") - the actual generated source and sandbox test result for
+        one proposed adapter, so approving its `promote_after_approval` call
+        isn't a decision made from the tool_input alone (just adapter_dir
+        and approved=true - see adapter_factory.py's own docstring on why
+        that call carries no code).
+        """
+        loaded = require_admin(request)
+        from agent_control.tools.adapter_factory import _require_adapter_dir_inside_root, _test_connector
+
+        try:
+            path = _require_adapter_dir_inside_root(adapter_dir, loaded.adapters.adapter_factory.root_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        manifest_path = path / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                manifest = {}
+        files = {}
+        for name in ("adapter.py", "test_adapter.py", "README.md"):
+            file_path = path / name
+            if file_path.exists():
+                try:
+                    files[name] = file_path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        test_result = _test_connector(path)
+        return {
+            "adapter_dir": str(path),
+            "manifest": manifest,
+            "files": files,
+            "test": {
+                "passed": test_result.returncode == 0,
+                "summary": test_result.summary,
+                "stdout": test_result.stdout,
+                "stderr": test_result.stderr,
+            },
         }
 
     @router.delete("/api/tasks")
@@ -1157,6 +1303,41 @@ def create_admin_router(
             "task": _redact_admin_output(updated.model_dump(mode="json"), loaded),
         }
 
+    @router.post("/api/tasks/{task_id}/replay")
+    def admin_replay_task(request: Request, task_id: str) -> dict[str, Any]:
+        """Re-issues a completed task's own succeeded tool calls as a new
+        task (docs/ROADMAP.md "reusable verified workflows") - not asking
+        the LLM to redo the objective from scratch, a literal replay of the
+        exact sequence that worked, through the identical approval/
+        verification pipeline a live task uses
+        (orchestration/worker.py's _next_replay_decision). Authority does
+        not carry over: a step that needed approval the first time needs
+        it again, and grants never outlive their own task.
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        source = repositories.tasks.get(task_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        history = source.metadata.get("operator_history") if isinstance(source.metadata, dict) else None
+        plan = build_replay_plan(history if isinstance(history, list) else [])
+        if not plan:
+            raise HTTPException(status_code=400, detail="this task has no succeeded tool calls to replay")
+
+        replay_task = repositories.tasks.create(
+            f"Replay: {source.objective}",
+            conversation_id=source.conversation_id,
+            metadata={"replay_of": source.id, "replay_plan": plan},
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            task_id=replay_task.id,
+            payload={"replay_of": source.id, "step_count": len(plan)},
+        )
+        return {"task": _redact_admin_output(replay_task.model_dump(mode="json"), loaded)}
+
     @router.post("/api/config/llm")
     def admin_update_llm_config(request: Request, payload: AdminLLMConfigRequest) -> dict[str, Any]:
         loaded = require_admin(request)
@@ -1210,6 +1391,112 @@ def create_admin_router(
         config_manager.remove_env_keys(["AGENT_LLM__DEFAULT_PROFILE", *_legacy_default_llm_env_keys(), *_llm_profile_env_keys(profile_name)])
         _audit_config_update(repositories_loader(), loaded, "llm_preset", {"preset": payload.preset, "profile": profile_name})
         return {"config_file": str(CONFIG_FILE_PATH), "preset": payload.preset, "llm": llm}
+
+    @router.post("/api/config/llm/roles")
+    def admin_update_llm_roles(request: Request, payload: AdminLLMRolesRequest) -> dict[str, Any]:
+        """Assigns an already-configured profile to Concierge/Operator/Auditor
+        and/or sets the ordered fallback chain (docs/ROADMAP.md "per-role
+        models"). Deliberately separate from admin_update_llm_config: that
+        endpoint creates/edits one profile's own connection details, this one
+        only points existing profile names at roles - the two forms shouldn't
+        fight over the same request shape.
+        """
+        loaded = require_admin(request)
+        known_profiles = set(loaded.llm.profiles)
+        for role, name in (
+            ("concierge_profile", payload.concierge_profile),
+            ("operator_profile", payload.operator_profile),
+            ("auditor_profile", payload.auditor_profile),
+        ):
+            if name and name not in known_profiles:
+                raise HTTPException(status_code=400, detail=f"unknown LLM profile for {role}: {name}")
+        for name in payload.fallback_chain:
+            if name not in known_profiles:
+                raise HTTPException(status_code=400, detail=f"unknown LLM profile in fallback_chain: {name}")
+
+        config = _read_config_file(config_manager)
+        llm = config.setdefault("llm", {})
+        llm["concierge_profile"] = payload.concierge_profile
+        llm["operator_profile"] = payload.operator_profile
+        llm["auditor_profile"] = payload.auditor_profile
+        llm["fallback_chain"] = payload.fallback_chain
+        _write_config_file(config_manager, config)
+        _audit_config_update(repositories_loader(), loaded, "llm_roles", payload.model_dump(mode="json"))
+        return {"config_file": str(CONFIG_FILE_PATH), "llm": llm}
+
+    @router.post("/api/config/mcp/servers")
+    def admin_upsert_mcp_server(request: Request, payload: AdminMCPServerRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        try:
+            capability = Capability(payload.capability)
+            risk_level = RiskLevel(payload.risk_level)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        config = _read_config_file(config_manager)
+        mcp = config.setdefault("mcp", {})
+        servers = mcp.setdefault("servers", {})
+        existing = servers.get(payload.name)
+        is_new = existing is None
+        # Env values never reach the client (same invariant as the secret
+        # vault), so an edit's env field always starts blank - submitting it
+        # blank has to mean "keep what's already there", not "clear it",
+        # or every edit that doesn't touch env would silently wipe it.
+        env = payload.env if payload.env else (existing or {}).get("env") or {}
+        servers[payload.name] = {
+            "enabled": payload.enabled,
+            "command": payload.command,
+            "args": payload.args,
+            "env": env,
+            "cwd": _blank_to_none(payload.cwd),
+            "timeout_seconds": payload.timeout_seconds,
+            "capability": capability.value,
+            "risk_level": risk_level.value,
+            "disabled_tools": payload.disabled_tools,
+        }
+        _write_config_file(config_manager, config)
+        _audit_config_update(
+            repositories_loader(), loaded, "mcp_server",
+            {"name": payload.name, "action": "create" if is_new else "update", "env_keys": sorted(env)},
+        )
+        return {"config_file": str(CONFIG_FILE_PATH), "mcp": _redacted_mcp_servers(mcp)}
+
+    @router.delete("/api/config/mcp/servers/{name}")
+    def admin_delete_mcp_server(request: Request, name: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        config = _read_config_file(config_manager)
+        mcp = config.setdefault("mcp", {})
+        servers = mcp.setdefault("servers", {})
+        if name not in servers:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+        del servers[name]
+        _write_config_file(config_manager, config)
+        _audit_config_update(repositories_loader(), loaded, "mcp_server", {"name": name, "action": "delete"})
+        return {"config_file": str(CONFIG_FILE_PATH), "mcp": _redacted_mcp_servers(mcp)}
+
+    @router.post("/api/config/mcp/servers/{name}/test")
+    async def admin_test_mcp_server(request: Request, name: str) -> dict[str, Any]:
+        """Real connectivity check (docs/ROADMAP.md "integration control
+        plane") - a full stdio MCP handshake against this one server,
+        reusing mcp_client.py's own _list_server_tools rather than a second
+        implementation of the protocol.
+        """
+        loaded = require_admin(request)
+        server = loaded.mcp.servers.get(name)
+        if server is None:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+        from agent_control.tools.mcp_client import _list_server_tools
+
+        try:
+            tools = await _list_server_tools(name, server)
+        except Exception as exc:
+            return {"healthy": False, "error": str(exc), "tool_count": 0, "tools": []}
+        return {
+            "healthy": True,
+            "error": None,
+            "tool_count": len(tools),
+            "tools": sorted(str(tool.get("tool") or "") for tool in tools),
+        }
 
     @router.post("/api/config/telegram")
     def admin_update_telegram_config(request: Request, payload: AdminTelegramConfigRequest) -> dict[str, Any]:
@@ -2153,6 +2440,26 @@ def _blank_to_none(value: str | None) -> str | None:
     return value or None
 
 
+def _redacted_mcp_servers(mcp: dict[str, Any]) -> dict[str, Any]:
+    """Same "list the key, never the value" invariant config.py's own
+    safe_summary() applies to MCP server env - the write endpoints (upsert/
+    delete) must not echo raw env values back in their response any more
+    than the read side (MCPServersCard) shows them.
+    """
+    servers = mcp.get("servers")
+    if not isinstance(servers, dict):
+        return mcp
+    return {
+        **mcp,
+        "servers": {
+            name: {**server, "env_keys": sorted((server or {}).get("env") or {}), "env": None}
+            if isinstance(server, dict)
+            else server
+            for name, server in servers.items()
+        },
+    }
+
+
 def _legacy_default_llm_env_keys() -> list[str]:
     return _llm_profile_env_keys("default")
 
@@ -2268,11 +2575,11 @@ async def _web_chat_reply(settings: AppSettings, objective: str) -> str | None:
     """
     from agent_control.channels.base import ChannelType as _ChannelType
     from agent_control.llm.classifier import LLMMessageClassifier
-    from agent_control.llm.providers import build_default_llm_provider
+    from agent_control.llm.providers import build_default_llm_provider, build_role_llm_provider
     from agent_control.schemas import InboundMessage, MessageKind
 
     try:
-        provider = build_default_llm_provider(settings)
+        provider = build_role_llm_provider(settings, "concierge") or build_default_llm_provider(settings)
         if provider is None:
             return None
         message = InboundMessage(
@@ -2418,6 +2725,8 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         if event.type == AuditEventType.EGRESS_CONTACTED
     ]
 
+    verification = _receipt_verification(tool_invocations)
+
     token_usage = metadata.get("token_usage") if isinstance(metadata.get("token_usage"), dict) else {}
     default_profile = settings.llm.profiles.get(settings.llm.default_profile)
     llm_left_machine = bool(
@@ -2434,6 +2743,10 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         uncertainties.append(str(metadata["fulfillment_gap"]))
     if task.status in {TaskStatus.FAILED, TaskStatus.BLOCKED} and metadata.get("last_worker_error"):
         uncertainties.append(str(metadata["last_worker_error"]))
+    if verification["missing"]:
+        shown = verification["missing"][:3]
+        more = f" (+{len(verification['missing']) - 3} more)" if len(verification["missing"]) > 3 else ""
+        uncertainties.append(f"{len(verification['missing'])} verification issue(s): " + "; ".join(shown) + more)
 
     duration_seconds = max(0.0, (task.updated_at - task.created_at).total_seconds())
 
@@ -2444,6 +2757,8 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         "result_summary": metadata.get("synthesized_answer") or metadata.get("document_summary"),
         "changes": _extract_evidence(tool_invocations),
         "tools_used": sorted(tools_used.values(), key=lambda entry: str(entry["tool_name"])),
+        "execution": _receipt_execution_counts(tool_invocations),
+        "verification": verification,
         "services_contacted": services_contacted,
         "data_left_machine": bool(services_contacted) or llm_left_machine,
         "llm_left_machine": llm_left_machine,
@@ -2458,6 +2773,62 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
     }
+
+
+# needs_approval never reached an adapter at all; denied/cancelled were
+# refused or withdrawn before one did either - none of the three were
+# "attempted" in any sense a receipt should claim.
+_NOT_ATTEMPTED_STATUSES = {"needs_approval", "denied", "cancelled"}
+_FAILED_STATUSES = {"failed", "timeout", "rate_limited"}
+
+
+def _receipt_execution_counts(tool_invocations: list[dict[str, Any]]) -> dict[str, int]:
+    """Call-level counts for the receipt (docs/ROADMAP.md "Proof") - one
+    entry per tool_invocations row, i.e. one per ToolCallRequest actually
+    issued this task, not per item a single call's manifest describes (see
+    _receipt_verification for that finer count).
+    """
+    attempted = 0
+    succeeded = 0
+    failed = 0
+    for invocation in tool_invocations:
+        status = str(invocation.get("status") or "")
+        if status in _NOT_ATTEMPTED_STATUSES:
+            continue
+        attempted += 1
+        if status == "succeeded":
+            succeeded += 1
+        elif status in _FAILED_STATUSES:
+            failed += 1
+    return {"calls_attempted": attempted, "calls_succeeded": succeeded, "calls_failed": failed}
+
+
+def _receipt_verification(tool_invocations: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregates every tool call's ToolVerification (schemas.py) across the
+    task - the mechanical "did it actually happen" proof a ToolDefinition's
+    verify() hook attaches on success (docs/ROADMAP.md "Proof": "34 files
+    are now under Documents; confirmed", not the model's word for it).
+
+    Granularity note: one ToolVerification can cover many items in a single
+    call (filesystem.manage's apply_manifest checks one manifest entry at a
+    time), so `checked`/`verified` here count items, not calls - a 128-file
+    move contributes 128, not 1, matching the receipt's own "43 destination
+    paths verified" framing rather than "1 tool call succeeded".
+    """
+    checked = 0
+    verified = 0
+    missing: list[str] = []
+    for invocation in tool_invocations:
+        result = invocation.get("result")
+        if not isinstance(result, dict):
+            continue
+        record = result.get("verification")
+        if not isinstance(record, dict):
+            continue
+        checked += int(record.get("checked") or 0)
+        verified += int(record.get("verified") or 0)
+        missing.extend(str(item) for item in (record.get("missing") or []))
+    return {"checked": checked, "verified": verified, "missing": missing}
 
 
 # What a completed task actually touched (docs/HISTORY.md N5's "evidence view").
@@ -2638,20 +3009,32 @@ def _trace_timeline(audit_events: list[dict[str, Any]], tool_invocations: list[d
 def _enrich_operator_history(
     history: list[dict[str, Any]], tool_invocations: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
-    """Attaches duration_ms to each Steps entry that names a real tool call
-    (docs/UI_UX_AUDIT.md Phase 14), joining on request_id - the same
+    """Attaches duration_ms and content_trust to each Steps entry that names
+    a real tool call (docs/UI_UX_AUDIT.md Phase 14; content_trust per
+    docs/THREAT_MODEL.md), joining on request_id - the same
     ToolCallRequest.id / ToolCallResult.request_id correlation the executor
     already uses (worker.py stamps it onto each history entry at the point
     where it has the real ToolCallResult in hand), not a new key. Entries
     with no request_id - pseudo-checks (audit/fulfillment gap), delegate
     summaries (span many tool calls, not one), unregistered-tool refusals -
-    get duration_ms=None rather than a fabricated number.
+    get both as None rather than a fabricated value.
     """
     duration_by_request_id = {
         invocation["id"]: _elapsed_ms(invocation.get("created_at"), invocation.get("completed_at"))
         for invocation in tool_invocations
     }
-    return [{**entry, "duration_ms": duration_by_request_id.get(entry.get("request_id"))} for entry in history]
+    trust_by_request_id = {
+        invocation["id"]: (invocation.get("result") or {}).get("content_trust")
+        for invocation in tool_invocations
+    }
+    return [
+        {
+            **entry,
+            "duration_ms": duration_by_request_id.get(entry.get("request_id")),
+            "content_trust": trust_by_request_id.get(entry.get("request_id")),
+        }
+        for entry in history
+    ]
 
 
 def _path_within_roots(path: Path, roots: list[Path]) -> bool:

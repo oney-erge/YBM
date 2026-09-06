@@ -40,6 +40,9 @@ def test_mcp_config_and_registry_expose_client_when_enabled(tmp_path) -> None:
     assert definitions["mcp.client"].enabled is True
     assert "mcp.client" in registry.adapters
     assert "call_tool" in definitions["mcp.client"].operations
+    # docs/THREAT_MODEL.md: a configured server's own reply is untrusted
+    # content, distinct from the discover/list_tools/health catalog calls.
+    assert definitions["mcp.client"].operation_content_trust == {"call_tool": "untrusted_external"}
 
 
 def test_registry_context_reads_mcp_catalog_dynamically(tmp_path) -> None:

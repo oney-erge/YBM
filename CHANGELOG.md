@@ -5,6 +5,115 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- `frontend`: resolved the `fast-uri` (high) and `qs` (moderate) advisories
+  flagged by the scheduled dependency audit (#32) via `npm audit fix`.
+- The version a released archive reports through `ybm check-updates` now
+  always matches the git tag it was built from. `scripts/package_release.py`
+  previously copied `backend/pyproject.toml` into the payload unchanged, so
+  the installed package's own metadata - what `check-updates` actually reads
+  - stayed on whatever version was last committed there rather than the tag
+  the release was named after; a release could ship in a way that reported
+  itself as an *older* version than the download it came from. The packaging
+  step now stamps the staged copy with the release version being built.
+  Also caught up the committed value itself, which had drifted a full
+  release behind (`0.1.2` while `v0.1.3` was already public).
+
+### Added
+
+- `frontend`: a vitest + Testing Library unit-test setup, seeded with
+  coverage for access-mode preset computation, task-status action gating,
+  and the chat/task API response schemas - the console had TypeScript and a
+  production build as its only automated gates until now.
+- `frontend`: Playwright coverage for approving/denying a pending action,
+  an expired approval disabling every decision button, and a failed task's
+  trace highlighting the step that failed.
+- Task receipts now report `execution` (calls attempted/succeeded/failed)
+  and `verification` (items mechanically re-checked/verified/missing),
+  surfaced in the chat receipt card and the plain-text export. Backed by a
+  new `ToolDefinition.verify` hook (currently implemented for
+  `filesystem.manage`'s `apply_manifest`, which re-reads the destination
+  and source paths on disk after every move/copy/rename instead of trusting
+  the adapter's own success claim) and a `ToolCallResult.verification`
+  field `ToolExecutor` attaches automatically on a succeeded call.
+- `ToolDefinition` gained a declarative `operation_egress` field:
+  `ToolExecutor` now records an operation's outbound host itself by reading
+  the call's own reported URL, so a tool needs no manual
+  `egress.record_egress()` call site to be covered. `http.request` moved
+  onto this from its old manual call; `browser.open` and `browser.control`
+  are now covered for the first time - previously only `http.request`
+  contacted egress, so browser traffic was invisible to receipts.
+- `ToolDefinition.operation_content_trust` labels which operations return
+  content this machine does not control - a web page, an HTTP response, an
+  MCP server's own reply, a document someone else authored
+  (`browser.open`, `browser.control`'s page-reading operations,
+  `http.request`, `web.search`, `mcp.client`'s `call_tool`,
+  `document.manage`). `ToolExecutor` stamps it onto
+  `ToolCallResult.content_trust`, and it now shows as an "untrusted
+  content" badge on the matching step in a task's trace. Does not yet
+  reach the Operator prompt itself - see `docs/GAPS.md`.
+- An automatically-retried TIMEOUT or transient failure on a risky write
+  (filesystem/terminal/desktop/browser-control/VS Code, or high/critical
+  risk) now records an explicit warning in the retry's history entry - it
+  may have already taken effect before the connection was lost, so verify
+  before repeating it - the same "silently retrying can do a thing twice"
+  reasoning `reconcile_orphaned_tasks` already applies to a crashed worker,
+  now reaching the ordinary in-process retry path the next `decide()` call
+  actually reads. A clean rejection (rate-limited, quota exhausted) still
+  gets no such warning - nothing ran yet in that case.
+- Per-role LLM models: `concierge_profile`, `operator_profile`, and
+  `auditor_profile` let Concierge, Operator, and Auditor use different
+  profiles instead of always sharing `default_profile` - configurable from
+  Settings' new "Per-role models" card (advanced mode) or directly in
+  `config.yaml`. A new `fallback_chain` (ordered list of profile names)
+  replaces single-fallback `fallback_profile` when set, and each entry gets
+  its own cooldown after failing so a subsequent call skips straight to the
+  next one instead of re-paying that entry's timeout. `_is_unavailability`
+  now also treats HTTP 429/401/403 as failover-worthy, alongside the
+  existing 5xx/timeout/connection-error handling (still not 400 - a request
+  bug fails the same way against any profile). A receipt now says when a
+  fallback model answered somewhere in the task.
+- Scoped, revocable "Allow for this task" grants: a grant now inherits the
+  exact path/target scope of the call it was approved from (so "allow this
+  move in Downloads" no longer silently covers a later move anywhere else),
+  carries a 200-operation cap so it's never unbounded for the rest of the
+  task's TTL, and can be revoked early. The Access page's new "Active
+  grants" card lists every currently-usable grant across every task -
+  scope, usage, time remaining - with a one-click revoke, closing the gap
+  `docs/UI_UX_AUDIT.md` named: "there is still no way to see or revoke a
+  live one."
+- MCP servers can now be added, edited, tested, and removed from Settings
+  instead of by hand-editing `config.yaml` - three new endpoints
+  (`POST`/`DELETE /api/config/mcp/servers[/…]`, `POST …/test`, the last
+  running a real stdio MCP handshake against the server). Env values are
+  write-only: the response never echoes them back, and leaving the env
+  field blank on an edit keeps the existing values instead of wiping them.
+- A pending `adapter.factory` `promote_after_approval` approval now shows
+  the actual generated adapter source and a real sandbox test result
+  (`GET /api/adapters/review`), not just `adapter_dir`/`approved=true` -
+  approving one used to be a decision made from the tool name alone.
+- A new Insights page (`GET /api/dashboard`) reports cross-task reliability
+  over a 7- or 30-day window: completion and *verified*-completion rate
+  (the same mechanical `ToolVerification` data a task receipt already
+  claims, not the model's word that it finished), failure/retry counts,
+  token spend, a per-tool failure-rate table with a least-reliable-tool
+  callout, and per-model/per-task-type breakdowns. Entirely computed on
+  read from existing task/tool-invocation data - nothing new persisted.
+- A completed task can now be replayed (`POST /api/tasks/{id}/replay`, a
+  new "Replay" button on its trace page): a new task is created whose
+  operator loop deterministically reissues that task's own succeeded tool
+  calls in order, through the exact same approval, retry, and verification
+  pipeline a live LLM-driven task uses - authority does not carry over, so
+  a step that needed approval the first time needs it again. Delegated and
+  parallel-batch calls are excluded from the replay plan for now, since
+  reissuing those needs different handling than a single call; a step that
+  fails or is denied on replay blocks the same way it would live, and a
+  timeout or rate-limit is reissued up to three times before giving up
+  rather than looping forever. Built as a thin scripted-decision layer over
+  the existing operator loop rather than a second execution engine, so it
+  needed no changes to `ToolExecutor`, `PolicyEngine`, or verification.
+
 ## [0.1.3] - 2026-08-11
 
 ### Fixed

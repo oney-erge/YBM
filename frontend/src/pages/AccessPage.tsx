@@ -8,6 +8,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { PageHeader } from "@/components/layout/PageHeader"
 import { ConfirmDialog } from "@/components/access/ConfirmDialog"
 import { AccessGroupCard } from "@/components/access/AccessGroupCard"
+import { ActiveGrantsCard } from "@/components/access/ActiveGrantsCard"
 import { SecretVaultCard } from "@/components/access/SecretVaultCard"
 import { ACCESS_PRESETS, computePreset, type AccessPresetKey } from "@/lib/access-presets"
 import { useAdvancedMode } from "@/lib/advanced-mode"
@@ -23,11 +24,10 @@ type PendingAction = {
 
 /**
  * The security control room (docs/UI_REWRITE_PLAN.md §13). Level 1: kill
- * switch, presets, per-group capability toggles, secret vault. Level 2
- * (Advanced): read-only risk ceiling/scope/allow-deny detail per
- * capability, rendered inside each AccessGroupCard. Active time-boxed
- * grants (D2) are not rendered here - deferred in Phase 2 for the same
- * reason as there, and nothing was ever built to list.
+ * switch, presets, per-group capability toggles, secret vault, and active
+ * time-boxed grants (ActiveGrantsCard). Level 2 (Advanced): read-only risk
+ * ceiling/scope/allow-deny detail per capability, rendered inside each
+ * AccessGroupCard.
  */
 export function AccessPage() {
   const { data, isPending, isError, error } = useEffectiveConfig()
@@ -213,6 +213,8 @@ export function AccessPage() {
         ))}
         </div>
       </section>
+
+      <ActiveGrantsCard />
 
       <SecretVaultCard />
 

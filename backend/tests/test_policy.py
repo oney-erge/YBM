@@ -196,6 +196,125 @@ async def test_executor_marks_a_grant_bypassed_call_as_approved_for_the_adapter(
     assert adapter.requests[0].input["approved"] is True
 
 
+# ---- docs/ROADMAP.md "scoped temporary authority": scope/cap/revoke -------
+
+@pytest.mark.asyncio
+async def test_grant_scope_covers_a_matching_target_but_not_an_unrelated_one(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Move files in Downloads")
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.FILESYSTEM_WRITE: CapabilityPolicy(enabled=True, requires_approval=True, max_risk_level=RiskLevel.HIGH)},
+    )
+    adapter = StaticToolAdapter({"done": True})
+    executor = ToolExecutor(PolicyEngine(settings, audit), repos, audit, adapters={"filesystem.manage": adapter})
+    repos.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+            scope="C:/Users/sam/Downloads",
+        )
+    )
+
+    inside = await executor.execute(
+        ToolCallRequest(
+            task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+            risk_level=RiskLevel.LOW, scope_target="C:/Users/sam/Downloads/report.pdf",
+        )
+    )
+    outside = await executor.execute(
+        ToolCallRequest(
+            task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+            risk_level=RiskLevel.LOW, scope_target="C:/Users/sam/Documents/report.pdf",
+        )
+    )
+
+    assert inside.status == ToolResultStatus.SUCCEEDED
+    # Outside the grant's scope: policy has no approval and no covering
+    # grant, so it must ask rather than silently deny or silently allow.
+    assert outside.status == ToolResultStatus.NEEDS_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_grant_stops_covering_calls_once_its_operation_cap_is_reached(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Run a few commands")
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.TERMINAL_RUN: CapabilityPolicy(enabled=True, requires_approval=True, max_risk_level=RiskLevel.HIGH)},
+    )
+    adapter = StaticToolAdapter({"done": True})
+    executor = ToolExecutor(PolicyEngine(settings, audit), repos, audit, adapters={"terminal": adapter})
+    grant = repos.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="terminal", capability=Capability.TERMINAL_RUN,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+            max_operations=2,
+        )
+    )
+
+    def request() -> ToolCallRequest:
+        return ToolCallRequest(task_id=task.id, tool_name="terminal", capability=Capability.TERMINAL_RUN, risk_level=RiskLevel.LOW)
+
+    first = await executor.execute(request())
+    second = await executor.execute(request())
+    third = await executor.execute(request())
+
+    assert first.status == ToolResultStatus.SUCCEEDED
+    assert second.status == ToolResultStatus.SUCCEEDED
+    assert third.status == ToolResultStatus.NEEDS_APPROVAL
+    assert len(adapter.requests) == 2
+    assert repos.approval_grants.get(grant.id).operations_used == 2
+
+
+def test_revoked_grant_no_longer_matches(tmp_path) -> None:
+    repos, _audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    grant = repos.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="terminal", capability=Capability.TERMINAL_RUN,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+        )
+    )
+    assert repos.approval_grants.find_matching(task.id, "terminal", Capability.TERMINAL_RUN) is not None
+
+    assert repos.approval_grants.revoke(grant.id) is True
+
+    assert repos.approval_grants.find_matching(task.id, "terminal", Capability.TERMINAL_RUN) is None
+    assert repos.approval_grants.revoke(grant.id) is False  # already revoked - no-op, not an error
+
+
+def test_list_active_returns_only_currently_usable_grants_across_tasks(tmp_path) -> None:
+    repos, _audit = make_repos(tmp_path)
+    task_a = repos.tasks.create("a")
+    task_b = repos.tasks.create("b")
+    active = repos.approval_grants.create(
+        ApprovalGrant(
+            task_id=task_a.id, tool_name="terminal", capability=Capability.TERMINAL_RUN,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+        )
+    )
+    expired = repos.approval_grants.create(
+        ApprovalGrant(
+            task_id=task_b.id, tool_name="terminal", capability=Capability.TERMINAL_RUN,
+            granted_from_approval_id="seed", expires_at=utc_now() - timedelta(minutes=1),
+        )
+    )
+    revoked = repos.approval_grants.create(
+        ApprovalGrant(
+            task_id=task_b.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+        )
+    )
+    repos.approval_grants.revoke(revoked.id)
+
+    active_ids = {grant.id for grant in repos.approval_grants.list_active()}
+
+    assert active_ids == {active.id}
+    assert expired.id not in active_ids
+    assert revoked.id not in active_ids
+
+
 def test_global_approval_floor_cannot_be_disabled_per_capability(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     task = repos.tasks.create("Send network request")
