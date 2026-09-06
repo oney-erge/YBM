@@ -747,6 +747,46 @@ def test_admin_task_trace_includes_operator_history_tool_calls_and_audit(monkeyp
     assert body["audit"][0]["details"]["action"] == "operator_decision"
 
 
+def test_admin_task_trace_joins_content_trust_onto_operator_history(monkeypatch, tmp_path) -> None:
+    """docs/THREAT_MODEL.md: a human reviewing a trace should be able to see
+    which steps observed content this machine does not control, the same
+    request_id join _enrich_operator_history already uses for duration_ms.
+    """
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    task = repositories.tasks.create("summarize a web page")
+    untrusted_request = ToolCallRequest(
+        task_id=task.id, tool_name="browser.open", capability=Capability.BROWSER_OPEN,
+        input={"operation": "open", "url": "https://example.com"},
+    )
+    local_request = ToolCallRequest(
+        task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "read_file", "path": "notes.txt"},
+    )
+    repositories.tasks.update_metadata(
+        task.id,
+        {
+            "operator_history": [
+                {"tool_name": "browser.open", "status": "succeeded", "request_id": untrusted_request.id},
+                {"tool_name": "filesystem.manage", "status": "succeeded", "request_id": local_request.id},
+            ]
+        },
+    )
+    repositories.tool_invocations.create(untrusted_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=untrusted_request.id, status=ToolResultStatus.SUCCEEDED, output={}, content_trust="untrusted_external")
+    )
+    repositories.tool_invocations.create(local_request)
+    repositories.tool_invocations.complete(
+        ToolCallResult(request_id=local_request.id, status=ToolResultStatus.SUCCEEDED, output={})
+    )
+
+    response = client.get(f"/admin/api/tasks/{task.id}/trace")
+    body = response.json()
+
+    assert body["operator_history"][0]["content_trust"] == "untrusted_external"
+    assert body["operator_history"][1]["content_trust"] is None
+
+
 def test_admin_task_trace_operator_history_entry_without_request_id_has_no_duration(monkeypatch, tmp_path) -> None:
     """docs/UI_UX_AUDIT.md Phase 14: pseudo-check entries (audit/fulfillment
     gap) and other non-tool-call steps carry no request_id, so they must not

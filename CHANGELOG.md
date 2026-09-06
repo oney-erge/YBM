@@ -44,6 +44,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   onto this from its old manual call; `browser.open` and `browser.control`
   are now covered for the first time - previously only `http.request`
   contacted egress, so browser traffic was invisible to receipts.
+- `ToolDefinition.operation_content_trust` labels which operations return
+  content this machine does not control - a web page, an HTTP response, an
+  MCP server's own reply, a document someone else authored
+  (`browser.open`, `browser.control`'s page-reading operations,
+  `http.request`, `web.search`, `mcp.client`'s `call_tool`,
+  `document.manage`). `ToolExecutor` stamps it onto
+  `ToolCallResult.content_trust`, and it now shows as an "untrusted
+  content" badge on the matching step in a task's trace. Does not yet
+  reach the Operator prompt itself - see `docs/GAPS.md`.
 
 ## [0.1.3] - 2026-08-11
 

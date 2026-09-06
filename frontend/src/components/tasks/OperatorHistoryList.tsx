@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { AlertCircle, CheckCircle2, Layers } from "lucide-react"
+import { AlertCircle, CheckCircle2, Globe, Layers } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { formatDurationMs } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -52,6 +52,15 @@ export function OperatorHistoryList({ entries }: { entries: OperatorHistoryEntry
               {entry.parallel && (
                 <Badge variant="secondary" className="flex items-center gap-1 text-[10px]">
                   <Layers className="size-3" /> parallel
+                </Badge>
+              )}
+              {entry.content_trust === "untrusted_external" && (
+                <Badge
+                  variant="outline"
+                  className="flex items-center gap-1 border-warning/40 text-[10px] text-warning"
+                  title="This step's output is content YBM does not control (a web page, a document, an external server) - not a claim that anything went wrong."
+                >
+                  <Globe className="size-3" /> untrusted content
                 </Badge>
               )}
             </div>

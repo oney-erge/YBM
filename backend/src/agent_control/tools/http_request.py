@@ -14,6 +14,7 @@ from agent_control.storage.redaction import redact_payload
 from agent_control.storage.secrets import SecretVault, SecretVaultError
 from agent_control.tools.contracts import HttpRequestInput, HttpRequestOutput
 from agent_control.tools.spec import (
+    UNTRUSTED_EXTERNAL,
     Adapters,
     Definitions,
     RegistryDeps,
@@ -295,6 +296,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_output_schemas=same_output_schema(("request",), HttpRequestOutput),
             default_operation="request",
             operation_egress=("request",),
+            operation_content_trust={"request": UNTRUSTED_EXTERNAL},
             risk_resolver=_http_required_risk,
             approval_resolver=lambda value: bool(value.get("secret_refs")),
             examples=(

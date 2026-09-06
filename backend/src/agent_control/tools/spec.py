@@ -46,6 +46,12 @@ def failed_result(request: ToolCallRequest, message: str) -> ToolCallResult:
     )
 
 
+# Shared label for ToolDefinition.operation_content_trust, so every tool
+# module marks untrusted content the same way instead of each inventing its
+# own string.
+UNTRUSTED_EXTERNAL = "untrusted_external"
+
+
 CAPABILITY_MINIMUM_RISKS: dict[Capability, RiskLevel] = {
     Capability.TELEGRAM_RECEIVE: RiskLevel.LOW,
     Capability.TELEGRAM_SEND: RiskLevel.LOW,
@@ -111,6 +117,17 @@ class ToolDefinition:
     # egress.extract_egress_hosts() does the actual URL/host scan over the
     # call's validated input and output.
     operation_egress: tuple[str, ...] = ()
+    # Operations whose SUCCEEDED output is content this machine does not
+    # control - a web page, an HTTP response, an MCP server's own reply, a
+    # document someone else authored (docs/THREAT_MODEL.md's untrusted-input
+    # boundary). Maps operation -> a trust label, currently only
+    # "untrusted_external"; an operation absent from this mapping is not
+    # thereby "trusted", just unclassified. ToolExecutor stamps
+    # ToolCallResult.content_trust from this so the trace/evidence views can
+    # show a human which observations came from outside YBM's control - it
+    # does not yet reach the Operator prompt itself (docs/GAPS.md: that
+    # needs a reviewed prompt change and re-recorded scenario fixtures).
+    operation_content_trust: dict[str, str] = field(default_factory=dict)
     # Optional mechanical proof hook (docs/ROADMAP.md "Proof"): given the
     # completed request and result, return a ToolVerification describing
     # what was actually re-checked on the machine, or None if this call has

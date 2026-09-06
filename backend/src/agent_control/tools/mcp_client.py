@@ -15,6 +15,7 @@ from agent_control.config_sync import ConfigManager
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus, utc_now
 from agent_control.tools.contracts import MCPClientInput, MCPClientOutput
 from agent_control.tools.spec import (
+    UNTRUSTED_EXTERNAL,
     Adapters,
     Definitions,
     RegistryDeps,
@@ -425,6 +426,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 MCPClientOutput,
             ),
             default_operation="list_tools",
+            # A configured MCP server still runs code YBM does not author -
+            # its tool's return value is not this machine's own content
+            # (docs/THREAT_MODEL.md). discover/list_tools/health describe the
+            # protocol/catalog itself, not a server's task-specific reply.
+            operation_content_trust={"call_tool": UNTRUSTED_EXTERNAL},
             risk_resolver=lambda value: _mcp_required_risk(settings.mcp, value),
             approval_required_operations=("install_server",),
             approval_reasons={

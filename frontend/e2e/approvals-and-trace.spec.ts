@@ -1,10 +1,12 @@
 import { expect, type Page, test } from "@playwright/test"
 
 /**
- * Covers three flows the committed suite (smoke.spec.ts, demo.spec.ts) does
- * not: deciding a pending approval (approve/deny), a review-dialog approval
- * that has expired, and a failed task's trace highlighting its failing step.
- * docs/UI_UX_AUDIT.md P0.1 names all of these explicitly as missing.
+ * Covers flows the committed suite (smoke.spec.ts, demo.spec.ts) does not:
+ * deciding a pending approval (approve/deny), a review-dialog approval that
+ * has expired, a failed task's trace highlighting its failing step, and a
+ * trace step flagged as having observed untrusted external content
+ * (docs/THREAT_MODEL.md). The first three are named explicitly as missing
+ * in docs/UI_UX_AUDIT.md P0.1.
  */
 
 const now = "2026-09-01T09:00:00Z"
@@ -163,7 +165,7 @@ test.describe("approval review dialog expiry", () => {
   })
 })
 
-test.describe("failed task trace", () => {
+test.describe("task trace", () => {
   test("shows the failed status and highlights the step that failed, with its error", async ({ page }) => {
     const failedTask = { ...chatTask("failed"), metadata: { last_worker_error: "filesystem.manage timed out" } }
 
@@ -195,6 +197,7 @@ test.describe("failed task trace", () => {
                 output_summary: "Found 12 receipts.",
                 error: null,
                 duration_ms: 340,
+                content_trust: null,
               },
               {
                 tool_name: "filesystem.manage",
@@ -203,6 +206,7 @@ test.describe("failed task trace", () => {
                 output_summary: null,
                 error: "filesystem.manage timed out",
                 duration_ms: 30_000,
+                content_trust: null,
               },
             ],
             timeline: [],
@@ -230,5 +234,73 @@ test.describe("failed task trace", () => {
     await expect(failedStep).toBeVisible()
     // The failed row, not the succeeded one, carries the destructive tint.
     await expect(failedStep.locator("xpath=ancestor::div[contains(@class,'border-destructive')]")).toHaveCount(1)
+  })
+
+  test("flags a step whose tool declared its output as untrusted external content", async ({ page }) => {
+    const completedTask = chatTask("completed")
+
+    await page.route("**/admin/api/**", async (route) => {
+      const url = new URL(route.request().url())
+      const path = url.pathname.replace(/^\/admin/, "")
+
+      if (path === "/api/bootstrap") {
+        return route.fulfill({
+          json: { token_required: false, onboarding_complete: true, llm_reachable: true, version: "0.1.0-e2e" },
+        })
+      }
+      if (path === "/api/approvals") {
+        return route.fulfill({ json: { approvals: [] } })
+      }
+      if (path === "/api/summary") {
+        return route.fulfill({ json: minimalSummary([completedTask]) })
+      }
+      if (path === `/api/tasks/${TASK_ID}/trace`) {
+        return route.fulfill({
+          json: {
+            task: completedTask,
+            context: {},
+            operator_history: [
+              {
+                tool_name: "browser.open",
+                input: { operation: "open", url: "https://example.com" },
+                status: "succeeded",
+                output_summary: "Loaded example.com.",
+                error: null,
+                duration_ms: 900,
+                content_trust: "untrusted_external",
+              },
+              {
+                tool_name: "filesystem.manage",
+                input: { operation: "read_file", path: "notes.txt" },
+                status: "succeeded",
+                output_summary: "Read notes.txt.",
+                error: null,
+                duration_ms: 50,
+                content_trust: null,
+              },
+            ],
+            timeline: [],
+            tool_invocations: [],
+            evidence: { files: [], urls: [], commands: [] },
+            llm_calls: [],
+            approvals: [],
+            artifacts: [],
+            signals: [],
+            audit: [],
+          },
+        })
+      }
+      return route.fulfill({ status: 404, json: { detail: `no e2e mock for ${path}` } })
+    })
+
+    await page.goto(`./tasks/${TASK_ID}`)
+
+    await expect(page.getByRole("heading", { name: OBJECTIVE })).toBeVisible()
+    const webStep = page.locator("text=Loaded example.com.")
+    const localStep = page.locator("text=Read notes.txt.")
+    await expect(webStep).toBeVisible()
+    await expect(localStep).toBeVisible()
+    await expect(webStep.locator("xpath=ancestor::div[contains(@class,'flex-col')][1]").getByText("untrusted content")).toBeVisible()
+    await expect(localStep.locator("xpath=ancestor::div[contains(@class,'flex-col')][1]").getByText("untrusted content")).toHaveCount(0)
   })
 })

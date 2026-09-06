@@ -38,6 +38,13 @@ def test_registry_exposes_document_manage_when_filesystem_write_is_enabled(tmp_p
     assert "summarize_pdf" in definitions["document.manage"].operations
     assert "create_presentation" in definitions["document.manage"].operations
     assert "document.manage" in registry.adapters
+    # docs/THREAT_MODEL.md: reading a document's content is untrusted input;
+    # writing a presentation is not inbound content.
+    assert definitions["document.manage"].operation_content_trust == {
+        "inspect_document": "untrusted_external",
+        "extract_text": "untrusted_external",
+        "summarize_pdf": "untrusted_external",
+    }
 
 @pytest.mark.asyncio
 async def test_document_manage_summarizes_pdf_text_and_records_artifact(tmp_path) -> None:

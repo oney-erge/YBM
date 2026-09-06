@@ -9,8 +9,23 @@ from agent_control.policy import PolicyEngine
 from agent_control.schemas import AuditEventType, Capability, RiskLevel, ToolCallRequest, ToolResultStatus
 from agent_control.storage.secrets import SecretVault
 from agent_control.tools.http_request import HttpRequestAdapter, _require_allowed_url
+from agent_control.tools.registry import build_tool_registry
 from agent_control.tools.spec import ToolDefinition
 from helpers import make_repos
+
+
+def test_http_request_declares_its_response_as_untrusted_content() -> None:
+    """docs/THREAT_MODEL.md: an HTTP response body is external, uncontrolled
+    content, same boundary as browser/document/MCP content."""
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+        adapters={"http_request": {"enabled": True, "allowed_hosts": ["api.example.com"]}},
+    )
+    registry = build_tool_registry(settings, "http://127.0.0.1:8765")
+    definition = next(d for d in registry.definitions if d.name == "http.request")
+
+    assert definition.operation_content_trust == {"request": "untrusted_external"}
 
 
 @pytest.mark.asyncio

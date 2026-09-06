@@ -8,10 +8,17 @@ operator documentation.
 
 - **Indirect prompt injection remains possible.** Tool results, web pages,
   documents, and MCP output are untrusted. Runtime capability policy,
-  allowlists, workspace boundaries, and one-shot approvals limit impact, but
-  the Operator prompt does not yet spotlight tool output with per-run
-  delimiters. That prompt change requires review and re-recording affected
-  scenario fixtures; see [THREAT_MODEL.md](THREAT_MODEL.md).
+  allowlists, workspace boundaries, and one-shot approvals limit impact.
+  `ToolDefinition.operation_content_trust` now labels which operations
+  return content this machine does not control (`browser.open`,
+  `browser.control`'s page-reading operations, `http.request`,
+  `web.search`, `mcp.client`'s `call_tool`, `document.manage`), and that
+  label is visible on the trace/evidence views - but it does not yet reach
+  the Operator prompt itself, which still has no per-run delimiters around
+  tool output. That prompt change requires review and re-recording every
+  affected scenario fixture (`tests/scenario/fixtures/*.json` are keyed on
+  exact prompt text - `agent_control.testing.scripted_llm.fixture_key`),
+  which needs a live LLM; see [THREAT_MODEL.md](THREAT_MODEL.md).
 - **Redaction is pattern-based.** Known secret fields, configured secret
   values, and provider-token shapes are redacted. A novel high-entropy secret
   with no recognizable name or prefix may pass through. Entropy scanning has

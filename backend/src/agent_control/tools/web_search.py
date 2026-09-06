@@ -34,6 +34,7 @@ from agent_control.config_sync import read_env_value
 from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools.contracts import WebSearchInput, WebSearchOutput
 from agent_control.tools.spec import (
+    UNTRUSTED_EXTERNAL,
     Adapters,
     Definitions,
     RegistryDeps,
@@ -217,6 +218,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_schemas={"search": WebSearchInput},
             output_schema=WebSearchOutput,
             operation_output_schemas=same_output_schema(("search",), WebSearchOutput),
+            operation_content_trust={"search": UNTRUSTED_EXTERNAL},
             examples=[{"operation": "search", "query": "site reliability engineering postmortem template", "max_results": 5}],
         )
     )

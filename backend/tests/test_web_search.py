@@ -119,4 +119,7 @@ def test_tool_follows_the_network_capability() -> None:
         },
     )
     on = build_tool_registry(settings, backend_base_url="http://127.0.0.1:8765")
-    assert next(d for d in on.definitions if d.name == "web.search").enabled is True
+    definition = next(d for d in on.definitions if d.name == "web.search")
+    assert definition.enabled is True
+    # docs/THREAT_MODEL.md: search results are external, uncontrolled content.
+    assert definition.operation_content_trust == {"search": "untrusted_external"}

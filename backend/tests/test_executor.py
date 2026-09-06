@@ -650,3 +650,58 @@ async def test_executor_never_calls_verify_on_a_failed_result(tmp_path) -> None:
     assert result.status == ToolResultStatus.FAILED
     assert result.verification is None
     assert calls == []
+
+
+# ---- docs/THREAT_MODEL.md: content-trust labeling ------------------------
+
+@pytest.mark.asyncio
+async def test_executor_stamps_content_trust_for_a_declared_operation(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+    definition = ToolDefinition(
+        name="web.tool",
+        capability=Capability.LLM_GENERATE,
+        enabled=True,
+        description="test tool for content-trust wiring",
+        operations=("fetch",),
+        default_operation="fetch",
+        operation_content_trust={"fetch": "untrusted_external"},
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"web.tool": StaticToolAdapter(output={"text": "page content"})},
+        tool_definitions=[definition],
+    )
+
+    result = await executor.execute(_tool_request(task.id, "web.tool", "fetch"))
+
+    assert result.content_trust == "untrusted_external"
+
+
+@pytest.mark.asyncio
+async def test_executor_leaves_content_trust_unset_for_an_undeclared_operation(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t")
+    settings = _settings_with(Capability.LLM_GENERATE)
+    definition = ToolDefinition(
+        name="local.tool",
+        capability=Capability.LLM_GENERATE,
+        enabled=True,
+        description="test tool with no declared content trust",
+        operations=("read",),
+        default_operation="read",
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit),
+        repos,
+        audit,
+        adapters={"local.tool": StaticToolAdapter()},
+        tool_definitions=[definition],
+    )
+
+    result = await executor.execute(_tool_request(task.id, "local.tool", "read"))
+
+    assert result.content_trust is None

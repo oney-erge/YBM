@@ -482,6 +482,10 @@ const OperatorHistoryEntrySchema = z.object({
   // .optional() because entries recorded before this shipped have no such
   // key at all, not a present-but-null one.
   step_id: z.string().nullable().optional(),
+  // "untrusted_external" when this step's tool declared its output as
+  // content YBM does not control (docs/THREAT_MODEL.md) - joined the same
+  // way as duration_ms, so always present but null when undeclared.
+  content_trust: z.string().nullable(),
 })
 export type OperatorHistoryEntry = z.infer<typeof OperatorHistoryEntrySchema>
 

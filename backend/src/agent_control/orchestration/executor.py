@@ -251,9 +251,11 @@ class ToolExecutor:
 
     def _record_egress_and_verify(self, request: ToolCallRequest, result: ToolCallResult) -> ToolCallResult:
         """Runs once, on the shared success path, for every tool call - the
-        two things docs/ROADMAP.md's "Proof" item asks for, both driven by
-        the ToolDefinition instead of a manual call site inside an adapter
-        (see spec.py's operation_egress/verify field comments).
+        things docs/ROADMAP.md's "Proof" item and the untrusted-content
+        boundary (docs/THREAT_MODEL.md) ask for, all driven by the
+        ToolDefinition instead of a manual call site inside an adapter (see
+        spec.py's operation_egress/verify/operation_content_trust field
+        comments).
         """
         definition = self.tool_definitions.get(request.tool_name)
         if definition is None:
@@ -266,6 +268,9 @@ class ToolExecutor:
             verification = definition.verify(request, result)
             if verification is not None:
                 result = result.model_copy(update={"verification": verification})
+        content_trust = definition.operation_content_trust.get(operation)
+        if content_trust is not None:
+            result = result.model_copy(update={"content_trust": content_trust})
         return result
 
     def _complete(self, request: ToolCallRequest, result: ToolCallResult) -> ToolCallResult:

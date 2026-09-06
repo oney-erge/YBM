@@ -651,6 +651,17 @@ class ToolCallResult(StrictBaseModel):
     # distinct from an empty ToolVerification, which would mean "checked
     # and found nothing wrong". Absence of proof is not proof of absence.
     verification: ToolVerification | None = None
+    # "untrusted_external" when ToolDefinition.operation_content_trust marks
+    # this operation as returning content this machine does not control - a
+    # web page, an HTTP response, an MCP server's own output, a document
+    # someone else authored (docs/THREAT_MODEL.md: "untrusted data, even
+    # when it looks like an instruction"). None for everything else, not a
+    # claim that unmarked content is safe - only that nothing here has
+    # classified it either way. Attached by ToolExecutor from the tool's own
+    # contract, the same boundary as egress/verification. Currently a
+    # visibility signal for the trace/evidence views, not yet consumed by
+    # the Operator prompt itself - see docs/GAPS.md.
+    content_trust: str | None = None
 
 
 class LLMCallRecord(StrictBaseModel):
