@@ -2075,6 +2075,211 @@ def test_admin_replay_rejects_a_task_with_nothing_to_replay(monkeypatch, tmp_pat
     assert response.status_code == 400
 
 
+# ---- Verified workflows (docs/ROADMAP.md "reusable verified workflows") -
+
+def test_admin_saves_a_workflow_from_a_completed_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort receipts by vendor")
+    repositories.tasks.update_metadata(
+        source.id,
+        {
+            **source.metadata,
+            "operator_history": [
+                {
+                    "tool_name": "filesystem.manage",
+                    "input": {"operation": "inspect_folder", "root": "C:/Users/sam/Downloads"},
+                    "status": "succeeded",
+                },
+            ],
+        },
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(
+        f"/admin/api/tasks/{source.id}/save_workflow",
+        json={"name": "Sort Downloads", "parameters": {"C:/Users/sam/Downloads": "folder"}},
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    workflow = repositories.workflows.get(body["workflow"]["id"])
+    assert workflow is not None
+    assert workflow.name == "Sort Downloads"
+    assert workflow.source_task_id == source.id
+    assert workflow.parameters == ["folder"]
+    assert workflow.plan == [
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "inspect_folder", "root": "{{folder}}"}}
+    ]
+
+
+def test_admin_save_workflow_404s_for_an_unknown_task(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/tasks/task_does_not_exist/save_workflow", json={"name": "x"})
+
+    assert response.status_code == 404
+
+
+def test_admin_save_workflow_rejects_a_task_with_nothing_to_replay(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("a task that never called a tool")
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/tasks/{source.id}/save_workflow", json={"name": "x"})
+
+    assert response.status_code == 400
+
+
+def test_admin_save_workflow_rejects_a_plan_with_a_delegated_gap(monkeypatch, tmp_path) -> None:
+    """A workflow silently missing a step the source task actually ran
+    would be worse than refusing outright - the same reasoning replay_plan_gaps
+    exists for."""
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("find and sort receipts")
+    repositories.tasks.update_metadata(
+        source.id,
+        {
+            **source.metadata,
+            "operator_history": [
+                {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder"}, "status": "succeeded"},
+                {"tool_name": "delegate", "input": {"objective": "find the vendor name"}, "status": "succeeded"},
+            ],
+        },
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/tasks/{source.id}/save_workflow", json={"name": "x"})
+
+    assert response.status_code == 400
+    assert "find the vendor name" in response.json()["detail"]
+    assert repositories.workflows.list_all() == []
+
+
+def test_admin_lists_and_gets_saved_workflows(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort receipts")
+    repositories.tasks.update_metadata(
+        source.id,
+        {**source.metadata, "operator_history": [{"tool_name": "filesystem.manage", "input": {}, "status": "succeeded"}]},
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+    saved = client.post(f"/admin/api/tasks/{source.id}/save_workflow", json={"name": "Sort receipts"}).json()["workflow"]
+
+    list_response = client.get("/admin/api/workflows")
+    get_response = client.get(f"/admin/api/workflows/{saved['id']}")
+    missing_response = client.get("/admin/api/workflows/workflow_does_not_exist")
+
+    assert list_response.status_code == 200
+    assert [w["id"] for w in list_response.json()["workflows"]] == [saved["id"]]
+    assert get_response.status_code == 200
+    assert get_response.json()["workflow"]["name"] == "Sort receipts"
+    assert missing_response.status_code == 404
+
+
+def test_admin_deletes_a_workflow(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort receipts")
+    repositories.tasks.update_metadata(
+        source.id,
+        {**source.metadata, "operator_history": [{"tool_name": "filesystem.manage", "input": {}, "status": "succeeded"}]},
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+    saved = client.post(f"/admin/api/tasks/{source.id}/save_workflow", json={"name": "x"}).json()["workflow"]
+
+    delete_response = client.delete(f"/admin/api/workflows/{saved['id']}")
+    second_delete_response = client.delete(f"/admin/api/workflows/{saved['id']}")
+
+    assert delete_response.status_code == 200
+    assert second_delete_response.status_code == 404
+    assert repositories.workflows.get(saved["id"]) is None
+
+
+def test_admin_runs_a_workflow_with_new_parameter_values(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort downloads")
+    repositories.tasks.update_metadata(
+        source.id,
+        {
+            **source.metadata,
+            "operator_history": [
+                {
+                    "tool_name": "filesystem.manage",
+                    "input": {"operation": "inspect_folder", "root": "C:/Users/sam/Downloads"},
+                    "status": "succeeded",
+                }
+            ],
+        },
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+    saved = client.post(
+        f"/admin/api/tasks/{source.id}/save_workflow",
+        json={"name": "Inspect a folder", "parameters": {"C:/Users/sam/Downloads": "folder"}},
+    ).json()["workflow"]
+
+    response = client.post(
+        f"/admin/api/workflows/{saved['id']}/run", json={"values": {"folder": "C:/Users/sam/Desktop"}}
+    )
+    body = response.json()
+
+    assert response.status_code == 200
+    run_task = repositories.tasks.get(body["task"]["id"])
+    assert run_task is not None
+    assert run_task.metadata["workflow_id"] == saved["id"]
+    assert run_task.metadata["replay_plan"] == [
+        {"tool_name": "filesystem.manage", "tool_input": {"operation": "inspect_folder", "root": "C:/Users/sam/Desktop"}}
+    ]
+    assert run_task.status == TaskStatus.RECEIVED
+
+
+def test_admin_run_workflow_400s_on_a_missing_parameter_value(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("sort downloads")
+    repositories.tasks.update_metadata(
+        source.id,
+        {
+            **source.metadata,
+            "operator_history": [
+                {"tool_name": "filesystem.manage", "input": {"root": "C:/Users/sam/Downloads"}, "status": "succeeded"}
+            ],
+        },
+        TaskStatus.COMPLETED,
+    )
+    client = _admin_client(repositories)
+    saved = client.post(
+        f"/admin/api/tasks/{source.id}/save_workflow",
+        json={"name": "x", "parameters": {"C:/Users/sam/Downloads": "folder"}},
+    ).json()["workflow"]
+
+    response = client.post(f"/admin/api/workflows/{saved['id']}/run", json={"values": {}})
+
+    assert response.status_code == 400
+    assert "folder" in response.json()["detail"]
+
+
+def test_admin_run_workflow_404s_for_an_unknown_workflow(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/workflows/workflow_does_not_exist/run", json={"values": {}})
+
+    assert response.status_code == 404
+
+
 def test_admin_writes_telegram_runtime_config(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")

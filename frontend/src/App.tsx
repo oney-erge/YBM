@@ -22,6 +22,7 @@ const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((m) => ({ defaul
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((m) => ({ default: m.SkillsPage })))
 const ToolsPage = lazy(() => import("@/pages/ToolsPage").then((m) => ({ default: m.ToolsPage })))
 const AgentHubPage = lazy(() => import("@/pages/AgentHubPage").then((m) => ({ default: m.AgentHubPage })))
+const WorkflowsPage = lazy(() => import("@/pages/WorkflowsPage").then((m) => ({ default: m.WorkflowsPage })))
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 )
@@ -122,6 +123,14 @@ function App() {
           element={
             <Suspense fallback={<PageFallback />}>
               <AgentHubPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="workflows"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <WorkflowsPage />
             </Suspense>
           }
         />

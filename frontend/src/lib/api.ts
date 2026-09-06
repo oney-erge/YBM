@@ -745,6 +745,56 @@ export function replayTask(taskId: string) {
   })
 }
 
+// A saved, named, parameterized replay plan (docs/ROADMAP.md "verified
+// workflows") - a snapshot of one task's own successful tool calls, with
+// specific literal values replaced by {{name}} placeholders. `plan` is
+// intentionally untyped here: it's opaque to the frontend, which never
+// constructs or edits it directly, only names values within it to
+// parameterize at save time and fills them back in at run time.
+export const TaskWorkflowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  source_task_id: z.string(),
+  objective_template: z.string(),
+  plan: z.array(z.unknown()),
+  parameters: z.array(z.string()),
+  created_at: z.string(),
+})
+export type TaskWorkflow = z.infer<typeof TaskWorkflowSchema>
+
+const SaveWorkflowResponseSchema = z.object({ workflow: TaskWorkflowSchema })
+const ListWorkflowsResponseSchema = z.object({ workflows: z.array(TaskWorkflowSchema) })
+const GetWorkflowResponseSchema = z.object({ workflow: TaskWorkflowSchema })
+const RunWorkflowResponseSchema = z.object({ task: TaskRecordSchema })
+
+export function saveWorkflow(taskId: string, name: string, parameters: Record<string, string>) {
+  return apiFetch(`/api/tasks/${taskId}/save_workflow`, SaveWorkflowResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({ name, parameters }),
+  })
+}
+
+export function listWorkflows() {
+  return apiFetch("/api/workflows", ListWorkflowsResponseSchema)
+}
+
+export function getWorkflow(workflowId: string) {
+  return apiFetch(`/api/workflows/${workflowId}`, GetWorkflowResponseSchema)
+}
+
+export function deleteWorkflow(workflowId: string) {
+  return apiFetch(`/api/workflows/${workflowId}`, z.object({ status: z.string() }), {
+    method: "DELETE",
+  })
+}
+
+export function runWorkflow(workflowId: string, values: Record<string, string>) {
+  return apiFetch(`/api/workflows/${workflowId}/run`, RunWorkflowResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({ values }),
+  })
+}
+
 function tokenUsageOf(task: TaskRecord): TokenUsage | null {
   const parsed = TokenUsageSchema.safeParse(task.metadata.token_usage)
   return parsed.success ? parsed.data : null

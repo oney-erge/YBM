@@ -31,7 +31,7 @@ const NAV_ITEMS = [
   { to: "/tasks", label: "Tasks", icon: ListTree, end: false, matchPaths: [] as string[] },
   { to: "/insights", label: "Insights", icon: ActivitySquare, end: false, matchPaths: [] as string[] },
   { to: "/access", label: "Access", icon: ShieldCheck, end: false, matchPaths: [] as string[] },
-  { to: "/agent", label: "Agent", icon: Bot, end: false, matchPaths: ["/memory", "/skills", "/tools"] },
+  { to: "/agent", label: "Agent", icon: Bot, end: false, matchPaths: ["/memory", "/skills", "/tools", "/workflows"] },
   { to: "/settings", label: "Settings", icon: Settings, end: false, matchPaths: [] as string[] },
 ] as const
 

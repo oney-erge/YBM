@@ -1,8 +1,8 @@
 import { Link } from "react-router"
-import { ArrowRight, BrainCircuit, Sparkles, Wrench } from "lucide-react"
+import { ArrowRight, BrainCircuit, Sparkles, Workflow, Wrench } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { PageHeader } from "@/components/layout/PageHeader"
-import { useMemoryFacts, useSettingsSummary, useSkills } from "@/lib/queries"
+import { useMemoryFacts, useSettingsSummary, useSkills, useWorkflows } from "@/lib/queries"
 
 /**
  * "What the agent is made of" in one place (docs/UI_UX_AUDIT.md Phase 11) -
@@ -17,6 +17,7 @@ export function AgentHubPage() {
   const memory = useMemoryFacts()
   const skills = useSkills()
   const settings = useSettingsSummary()
+  const workflows = useWorkflows()
 
   return (
     <div className="h-full overflow-y-auto">
@@ -27,7 +28,7 @@ export function AgentHubPage() {
           description="What YBM is made of: what it knows, what it can be told to do, and what it can act with."
         />
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
           <HubCard
             to="/memory"
             icon={BrainCircuit}
@@ -52,6 +53,13 @@ export function AgentHubPage() {
                 ? `${settings.data.tool_registry.enabled} of ${settings.data.tool_registry.total} enabled`
                 : undefined
             }
+          />
+          <HubCard
+            to="/workflows"
+            icon={Workflow}
+            title="Workflows"
+            description="Completed tasks saved as a reusable, re-runnable plan."
+            stat={workflows.data ? `${workflows.data.workflows.length} saved` : undefined}
           />
         </div>
       </div>

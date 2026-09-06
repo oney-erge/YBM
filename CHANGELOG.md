@@ -202,6 +202,24 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   old fixture entry and copying its response forward, since the fence
   changes the prompt's presentation but not the correct decision - no live
   LLM time was needed.
+- A completed task's replay plan can now be saved as a named, reusable
+  "workflow" (new "Save as workflow" button on the trace page, alongside
+  Replay) and run again later against different values, through the
+  identical approval/retry/verification pipeline replay already provides.
+  Saving lets specific literal values in the plan be named as parameters
+  (e.g. a folder path becomes `{{folder}}`); running fills them back in.
+  Not a workflow designer: the plan is always `build_replay_plan`'s real
+  output from one actual run, and the only editing surface is naming
+  values already present in it. Refuses to save (400, naming the exact
+  steps) when the plan can't be fully captured - a delegated sub-task or a
+  parallel-batch member `build_replay_plan` itself excludes - rather than
+  silently saving a workflow missing part of what the source task did.
+  New `workflows` table/repository, `TaskWorkflow` schema, and
+  `POST /api/tasks/{id}/save_workflow`, `GET/DELETE /api/workflows[/{id}]`,
+  `POST /api/workflows/{id}/run` endpoints. New Workflows page (reachable
+  from the Agent hub) lists, runs, and deletes saved workflows - no visual
+  workflow editor, matching this project's stated non-goal of a builder
+  over a pipeline that isn't graph-shaped.
 
 ## [0.1.3] - 2026-08-11
 

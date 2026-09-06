@@ -786,6 +786,32 @@ class ApprovalGrant(StrictBaseModel):
         return self.expires_at > utc_now()
 
 
+class TaskWorkflow(StrictBaseModel):
+    """A named, reusable replay plan (docs/ROADMAP.md "verified workflows") -
+    a snapshot of one completed task's own successful tool calls
+    (orchestration.worker.build_replay_plan's exact output), with specific
+    literal values replaced by ``{{name}}`` placeholders so the same plan
+    can run again against different inputs, through the identical
+    approval/retry/verification pipeline a live or replayed task already
+    uses. Deliberately not a general workflow-authoring system: `plan` is
+    always a real recorded run, parameterized after the fact - never
+    hand-assembled, and never containing a step build_replay_plan itself
+    would have excluded (delegate calls, parallel-batch members - see
+    orchestration/workflows.py's replay_plan_gaps).
+    """
+
+    id: str = Field(default_factory=lambda: new_id("workflow"))
+    name: str = Field(min_length=1)
+    source_task_id: str
+    objective_template: str
+    plan: list[dict[str, Any]]
+    # Distinct {{name}} placeholders actually present in `plan`, in
+    # first-seen order - the run form's field list, without having to
+    # re-scan `plan` on every read.
+    parameters: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
 class Artifact(StrictBaseModel):
     id: str = Field(default_factory=lambda: new_id("artifact"))
     task_id: str | None = None

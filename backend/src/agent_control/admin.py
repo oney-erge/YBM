@@ -35,6 +35,7 @@ from agent_control.llm.providers import build_provider_for_profile
 from agent_control.observation.artifacts import ArtifactService
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.orchestration.worker import build_replay_plan
+from agent_control.orchestration.workflows import instantiate_plan, parameterize_plan, replay_plan_gaps
 from agent_control.policy import apply_access_modes_to_config, summarize_access_modes
 from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
@@ -55,6 +56,7 @@ from agent_control.schemas import (
     StrictBaseModel,
     TaskRecord,
     TaskStatus,
+    TaskWorkflow,
     utc_now,
 )
 from agent_control.storage.audit import AuditLogger
@@ -79,6 +81,21 @@ class AdminTerminalCommandRequest(StrictBaseModel):
 
 class AdminTaskSignalRequest(StrictBaseModel):
     signal: str = Field(pattern="^(pause|resume|cancel)$")
+
+
+class AdminSaveWorkflowRequest(StrictBaseModel):
+    name: str = Field(min_length=1)
+    # Literal value (exactly as it appears in the source task's tool
+    # inputs) -> parameter name, e.g. {"C:/Users/sam/Downloads": "folder"}.
+    # A value offered here that never actually occurs in the plan is
+    # silently unused (orchestration/workflows.py's parameterize_plan) -
+    # not an error, since the caller cannot know in advance which values
+    # actually appear where.
+    parameters: dict[str, str] = Field(default_factory=dict)
+
+
+class AdminRunWorkflowRequest(StrictBaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class AdminLLMConfigRequest(StrictBaseModel):
@@ -1337,6 +1354,114 @@ def create_admin_router(
             payload={"replay_of": source.id, "step_count": len(plan)},
         )
         return {"task": _redact_admin_output(replay_task.model_dump(mode="json"), loaded)}
+
+    @router.post("/api/tasks/{task_id}/save_workflow")
+    def admin_save_workflow(request: Request, task_id: str, payload: AdminSaveWorkflowRequest) -> dict[str, Any]:
+        """Saves a completed task's own replay plan as a named, parameterized
+        TaskWorkflow (docs/ROADMAP.md "verified workflows") - not a new
+        execution engine, the same plan build_replay_plan already produces
+        for a one-shot replay, with `payload.parameters`' literal values
+        swapped for {{name}} placeholders so it can run again later against
+        different inputs.
+
+        Refuses (400) when the plan can't be fully captured: a delegated
+        sub-task or a parallel-batch member build_replay_plan itself would
+        drop, per replay_plan_gaps - a workflow silently missing steps the
+        source task actually ran is worse than no workflow at all.
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        source = repositories.tasks.get(task_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        history = source.metadata.get("operator_history") if isinstance(source.metadata, dict) else None
+        history = history if isinstance(history, list) else []
+        plan = build_replay_plan(history)
+        if not plan:
+            raise HTTPException(status_code=400, detail="this task has no succeeded tool calls to save as a workflow")
+        gaps = replay_plan_gaps(history)
+        if gaps:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "this task's plan can't be fully captured as a workflow - the following steps "
+                    f"would be missing on replay: {'; '.join(gaps)}"
+                ),
+            )
+
+        parameterized_plan, parameter_names = parameterize_plan(plan, payload.parameters)
+        workflow = repositories.workflows.create(
+            TaskWorkflow(
+                name=payload.name,
+                source_task_id=source.id,
+                objective_template=source.objective,
+                plan=parameterized_plan,
+                parameters=parameter_names,
+            )
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            task_id=source.id,
+            payload={"workflow_saved": workflow.id, "name": workflow.name, "parameters": parameter_names},
+        )
+        return {"workflow": _redact_admin_output(workflow.model_dump(mode="json"), loaded)}
+
+    @router.get("/api/workflows")
+    def admin_list_workflows(request: Request) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        workflows = repositories.workflows.list_all()
+        return {"workflows": [_redact_admin_output(w.model_dump(mode="json"), loaded) for w in workflows]}
+
+    @router.get("/api/workflows/{workflow_id}")
+    def admin_get_workflow(request: Request, workflow_id: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        workflow = repositories.workflows.get(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+        return {"workflow": _redact_admin_output(workflow.model_dump(mode="json"), loaded)}
+
+    @router.delete("/api/workflows/{workflow_id}")
+    def admin_delete_workflow(request: Request, workflow_id: str) -> dict[str, Any]:
+        require_admin(request)
+        repositories = repositories_loader()
+        if not repositories.workflows.delete(workflow_id):
+            raise HTTPException(status_code=404, detail="workflow not found")
+        return {"status": "deleted"}
+
+    @router.post("/api/workflows/{workflow_id}/run")
+    def admin_run_workflow(request: Request, workflow_id: str, payload: AdminRunWorkflowRequest) -> dict[str, Any]:
+        """Instantiates a saved workflow's plan against `payload.values` and
+        runs it as a new task through the identical replay pipeline a
+        one-shot task replay uses - approval and verification apply exactly
+        as they would to any other task; a workflow carries no authority of
+        its own from the run that produced it.
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        workflow = repositories.workflows.get(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+
+        try:
+            plan = instantiate_plan(workflow.plan, payload.values)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        run_task = repositories.tasks.create(
+            f"{workflow.name} (workflow run)",
+            metadata={"workflow_id": workflow.id, "workflow_run_values": payload.values, "replay_plan": plan},
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            task_id=run_task.id,
+            payload={"workflow_id": workflow.id, "values": payload.values, "step_count": len(plan)},
+        )
+        return {"task": _redact_admin_output(run_task.model_dump(mode="json"), loaded)}
 
     @router.post("/api/config/llm")
     def admin_update_llm_config(request: Request, payload: AdminLLMConfigRequest) -> dict[str, Any]:

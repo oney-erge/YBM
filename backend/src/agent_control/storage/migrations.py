@@ -173,6 +173,18 @@ SCHEMA_STATEMENTS = [
         FOREIGN KEY(task_id) REFERENCES tasks(id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS workflows (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        source_task_id TEXT NOT NULL,
+        objective_template TEXT NOT NULL,
+        plan_json TEXT NOT NULL,
+        parameters_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        FOREIGN KEY(source_task_id) REFERENCES tasks(id)
+    )
+    """,
 ]
 
 
