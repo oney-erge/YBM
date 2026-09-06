@@ -113,6 +113,25 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   rather than looping forever. Built as a thin scripted-decision layer over
   the existing operator loop rather than a second execution engine, so it
   needed no changes to `ToolExecutor`, `PolicyEngine`, or verification.
+- A task receipt and its trace steps now say plainly when nothing was
+  mechanically re-checked, instead of quietly showing nothing. Only one
+  tool (`filesystem.manage`'s `apply_manifest`) has a `verify()` hook
+  today, so a receipt whose calls all succeeded through some other tool
+  previously rendered identically to one where every check came back
+  clean - "checked, all good" and "never checked" looked the same because
+  the verification line only appeared when `checked > 0`. The receipt's
+  `verification` now also reports `not_checked` (succeeded calls whose
+  tool had no hook) and `unverified_tools`, rendered as a neutral "Not
+  verified - no automatic check yet for ..." line rather than the
+  destructive/success styling used for an actual check result. Each trace
+  step carries the same distinction (a new `verification` field, joined
+  onto `operator_history` the same way `content_trust` already is), shown
+  as a "not verified" badge next to a succeeded step whose tool has no
+  hook. The reliability dashboard gained matching fields -
+  `checked_completed`/`checked_completed_pct`/`verification_coverage_pct`
+  and a per-tool `not_checked` count - so `verified_completed_pct` no
+  longer has to be read without knowing whether its denominator was even
+  checkable.
 
 ## [0.1.3] - 2026-08-11
 

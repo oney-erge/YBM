@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { AlertTriangle, ShieldCheck } from "lucide-react"
+import { AlertTriangle, ShieldCheck, ShieldQuestion } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -79,9 +79,16 @@ export function InsightsPage() {
                   <StatTile
                     label="Verified completed"
                     value={`${data.verified_completed_pct}%`}
-                    sub={`${data.verified_completed}/${data.tasks_attempted}`}
+                    sub={`${data.verified_completed}/${data.tasks_attempted} of all attempts`}
                     tone="success"
                     icon={<ShieldCheck className="size-3.5" />}
+                  />
+                  <StatTile
+                    label="Verification coverage"
+                    value={`${data.verification_coverage_pct}%`}
+                    sub={`${data.checked_completed}/${data.completed} completions had any check run`}
+                    tone={data.completed > 0 && data.checked_completed === 0 ? "warning" : undefined}
+                    icon={<ShieldQuestion className="size-3.5" />}
                   />
                   <StatTile
                     label="Failed"
@@ -129,6 +136,7 @@ export function InsightsPage() {
                             <TableHead className="text-right">Calls</TableHead>
                             <TableHead className="text-right">Succeeded</TableHead>
                             <TableHead className="text-right">Failed</TableHead>
+                            <TableHead className="text-right">Not checked</TableHead>
                             <TableHead className="text-right">Failure rate</TableHead>
                           </TableRow>
                         </TableHeader>
@@ -139,6 +147,15 @@ export function InsightsPage() {
                               <TableCell className="text-right tabular-nums">{tool.calls}</TableCell>
                               <TableCell className="text-right tabular-nums">{tool.succeeded}</TableCell>
                               <TableCell className="text-right tabular-nums">{tool.failed}</TableCell>
+                              <TableCell
+                                className={cn(
+                                  "text-right tabular-nums",
+                                  tool.not_checked > 0 && tool.not_checked === tool.succeeded && "text-muted-foreground",
+                                )}
+                                title="Succeeded calls this tool has no mechanical verify() check for yet."
+                              >
+                                {tool.not_checked}
+                              </TableCell>
                               <TableCell
                                 className={cn(
                                   "text-right tabular-nums",

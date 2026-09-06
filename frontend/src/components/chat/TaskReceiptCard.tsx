@@ -1,6 +1,6 @@
 import { useState } from "react"
 import { Link } from "react-router"
-import { AlertTriangle, Download, ExternalLink, Globe, HardDrive, LoaderCircle, ShieldCheck } from "lucide-react"
+import { AlertTriangle, Download, ExternalLink, Globe, HardDrive, LoaderCircle, ShieldCheck, ShieldQuestion } from "lucide-react"
 import type { TaskReceipt, TaskStatus } from "@/lib/api"
 import { useTaskReceipt } from "@/lib/queries"
 import { cn } from "@/lib/utils"
@@ -57,6 +57,11 @@ function formatReceiptAsText(receipt: TaskReceipt): string {
         ? `Verified: ${receipt.verification.verified}/${receipt.verification.checked} - ${receipt.verification.missing.length} missing`
         : `Verified: ${receipt.verification.verified}/${receipt.verification.checked}, all confirmed on disk`,
     )
+  } else if (receipt.verification.not_checked > 0) {
+    // Silence here would read as "nothing to verify" - say plainly that
+    // nothing was actually re-checked, and name which tools have no
+    // mechanical check yet (docs/GAPS.md).
+    lines.push(`Not verified: no automatic check available yet for ${receipt.verification.unverified_tools.join(", ")}`)
   }
   if (receipt.approvals.length > 0) {
     lines.push("", "Approvals:")
@@ -211,7 +216,7 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
             "No external transfer was recorded"}
       </div>
 
-      {receipt.verification.checked > 0 && (
+      {receipt.verification.checked > 0 ? (
         <div
           className={cn(
             "flex items-center gap-1.5",
@@ -227,6 +232,16 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
             ? `Verified ${receipt.verification.verified}/${receipt.verification.checked} - ${receipt.verification.missing.length} missing`
             : `Verified ${receipt.verification.verified}/${receipt.verification.checked}, confirmed on disk`}
         </div>
+      ) : (
+        receipt.verification.not_checked > 0 && (
+          // Neutral, not destructive or success - this is not a warning,
+          // it's an admission: nothing here claims to have been checked at
+          // all, which must not look the same as "checked, all good".
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <ShieldQuestion className="size-3.5 shrink-0" />
+            {`Not verified - no automatic check yet for ${receipt.verification.unverified_tools.join(", ")}`}
+          </div>
+        )
       )}
 
       {receipt.token_usage.fallback_used && (

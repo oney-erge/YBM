@@ -198,6 +198,7 @@ test.describe("task trace", () => {
                 error: null,
                 duration_ms: 340,
                 content_trust: null,
+                verification: null,
               },
               {
                 tool_name: "filesystem.manage",
@@ -207,6 +208,7 @@ test.describe("task trace", () => {
                 error: "filesystem.manage timed out",
                 duration_ms: 30_000,
                 content_trust: null,
+                verification: null,
               },
             ],
             timeline: [],
@@ -268,6 +270,7 @@ test.describe("task trace", () => {
                 error: null,
                 duration_ms: 900,
                 content_trust: "untrusted_external",
+                verification: null,
               },
               {
                 tool_name: "filesystem.manage",
@@ -277,6 +280,7 @@ test.describe("task trace", () => {
                 error: null,
                 duration_ms: 50,
                 content_trust: null,
+                verification: null,
               },
             ],
             timeline: [],
@@ -361,6 +365,7 @@ test.describe("task trace", () => {
                 error: null,
                 duration_ms: 500,
                 content_trust: null,
+                verification: null,
               },
             ],
             timeline: [],
@@ -385,5 +390,118 @@ test.describe("task trace", () => {
     await expect.poll(() => replayRequested).toBe(true)
     await expect(page).toHaveURL(new RegExp(`/tasks/${REPLAY_TASK_ID}$`))
     await expect(page.getByRole("heading", { name: `Replay: ${OBJECTIVE}` })).toBeVisible()
+  })
+})
+
+test.describe("task receipt honesty", () => {
+  test("a completed task whose tool has no verifier says so, instead of staying silent", async ({ page }) => {
+    const completedTask = chatTask("completed")
+
+    await page.route("**/admin/api/**", async (route) => {
+      const url = new URL(route.request().url())
+      const path = url.pathname.replace(/^\/admin/, "")
+
+      if (path === "/api/bootstrap") {
+        return route.fulfill({
+          json: { token_required: false, onboarding_complete: true, llm_reachable: true, version: "0.1.0-e2e" },
+        })
+      }
+      if (path === "/api/approvals") {
+        return route.fulfill({ json: { approvals: [] } })
+      }
+      if (path === "/api/chat/messages") {
+        return route.fulfill({ json: { conversation_id: CONVERSATION, tasks: [completedTask] } })
+      }
+      if (path === "/api/summary") {
+        return route.fulfill({ json: minimalSummary([completedTask]) })
+      }
+      if (path === `/api/tasks/${TASK_ID}/receipt`) {
+        return route.fulfill({
+          json: {
+            task_id: TASK_ID,
+            objective: OBJECTIVE,
+            status: "completed",
+            result_summary: "Found the vendor names via a web search.",
+            changes: { files: [], urls: [], commands: [] },
+            tools_used: [{ tool_name: "web.search", calls: 1, succeeded: 1, failed: 0 }],
+            execution: { calls_attempted: 1, calls_succeeded: 1, calls_failed: 0 },
+            // Nothing was mechanically re-checked - web.search has no
+            // verify() hook - so `checked` stays 0. The point of this test
+            // is that the card must not go silent just because checked is 0.
+            verification: { checked: 0, verified: 0, missing: [], not_checked: 1, unverified_tools: ["web.search"] },
+            services_contacted: [],
+            data_left_machine: false,
+            llm_left_machine: false,
+            approvals: [],
+            artifacts: [],
+            token_usage: {},
+            duration_seconds: 4.2,
+            uncertainties: [],
+            created_at: now,
+            updated_at: now,
+          },
+        })
+      }
+      return route.fulfill({ status: 404, json: { detail: `no e2e mock for ${path}` } })
+    })
+
+    await page.goto("./")
+
+    await expect(page.getByText("Not verified - no automatic check yet for web.search")).toBeVisible()
+  })
+
+  test("a trace step whose tool succeeded but has no verifier is badged 'not verified'", async ({ page }) => {
+    const completedTask = chatTask("completed")
+
+    await page.route("**/admin/api/**", async (route) => {
+      const url = new URL(route.request().url())
+      const path = url.pathname.replace(/^\/admin/, "")
+
+      if (path === "/api/bootstrap") {
+        return route.fulfill({
+          json: { token_required: false, onboarding_complete: true, llm_reachable: true, version: "0.1.0-e2e" },
+        })
+      }
+      if (path === "/api/approvals") {
+        return route.fulfill({ json: { approvals: [] } })
+      }
+      if (path === "/api/summary") {
+        return route.fulfill({ json: minimalSummary([completedTask]) })
+      }
+      if (path === `/api/tasks/${TASK_ID}/trace`) {
+        return route.fulfill({
+          json: {
+            task: completedTask,
+            context: {},
+            operator_history: [
+              {
+                tool_name: "web.search",
+                input: { query: "vendor names" },
+                status: "succeeded",
+                output_summary: "Found 3 vendor names.",
+                error: null,
+                duration_ms: 620,
+                content_trust: "untrusted_external",
+                verification: null,
+              },
+            ],
+            timeline: [],
+            tool_invocations: [],
+            evidence: { files: [], urls: [], commands: [] },
+            llm_calls: [],
+            approvals: [],
+            artifacts: [],
+            signals: [],
+            audit: [],
+          },
+        })
+      }
+      return route.fulfill({ status: 404, json: { detail: `no e2e mock for ${path}` } })
+    })
+
+    await page.goto(`./tasks/${TASK_ID}`)
+
+    await expect(page.getByRole("heading", { name: OBJECTIVE })).toBeVisible()
+    await expect(page.getByText("not verified", { exact: true })).toBeVisible()
   })
 })

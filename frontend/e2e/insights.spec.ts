@@ -14,6 +14,9 @@ function dashboard(overrides: Record<string, unknown> = {}) {
     completed_pct: 80.0,
     verified_completed: 12,
     verified_completed_pct: 60.0,
+    checked_completed: 14,
+    checked_completed_pct: 70.0,
+    verification_coverage_pct: 87.5,
     failed: 2,
     failed_pct: 10.0,
     blocked: 1,
@@ -26,8 +29,8 @@ function dashboard(overrides: Record<string, unknown> = {}) {
     tool_call_failure_rate_pct: 4.2,
     most_unreliable_tool: "browser.control",
     tools: [
-      { tool_name: "browser.control", calls: 8, succeeded: 5, failed: 3, failure_rate_pct: 37.5 },
-      { tool_name: "filesystem.manage", calls: 30, succeeded: 30, failed: 0, failure_rate_pct: 0.0 },
+      { tool_name: "browser.control", calls: 8, succeeded: 5, failed: 3, not_checked: 4, failure_rate_pct: 37.5 },
+      { tool_name: "filesystem.manage", calls: 30, succeeded: 30, failed: 0, not_checked: 0, failure_rate_pct: 0.0 },
     ],
     by_model: [{ model: "qwen3:8b", tasks: 18, completed: 15, total_tokens: 40000 }],
     by_task_type: [{ task_type: "file_management", tasks: 10, completed: 9, failed: 1 }],
@@ -61,10 +64,16 @@ test("shows stat tiles, the least-reliable tool, and per-tool/model/type tables"
 
   await expect(page.getByText("80%")).toBeVisible()
   await expect(page.getByText("60%")).toBeVisible()
+  await expect(page.getByText("87.5%")).toBeVisible()
   await expect(page.getByText("Least reliable tool: browser.control")).toBeVisible()
   await expect(page.getByRole("cell", { name: "browser.control" })).toBeVisible()
   await expect(page.getByRole("cell", { name: "qwen3:8b" })).toBeVisible()
   await expect(page.getByRole("cell", { name: "file_management" })).toBeVisible()
+  // browser.control's row: 4 of its 5 succeeded calls were never
+  // mechanically checked - the "not checked" column exists precisely so
+  // this doesn't read the same as filesystem.manage's fully-covered row.
+  const browserRow = page.getByRole("row", { name: /browser\.control/ })
+  await expect(browserRow.getByRole("cell", { name: "4", exact: true })).toBeVisible()
 })
 
 test("switching the window re-fetches the dashboard for that range", async ({ page }) => {

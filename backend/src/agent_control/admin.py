@@ -2814,21 +2814,42 @@ def _receipt_verification(tool_invocations: list[dict[str, Any]]) -> dict[str, A
     time), so `checked`/`verified` here count items, not calls - a 128-file
     move contributes 128, not 1, matching the receipt's own "43 destination
     paths verified" framing rather than "1 tool call succeeded".
+
+    `not_checked`/`unverified_tools` are the other half of the same claim:
+    ToolCallResult.verification is None (schemas.py: "distinct from an
+    empty ToolVerification... absence of proof is not proof of absence")
+    for any succeeded call whose tool has no verify() hook for that
+    operation - most tools, and most operations even on the one tool that
+    has one (filesystem.manage's verify only fires for apply_manifest).
+    Without this, a receipt with checked=0 and one with checked=12,
+    verified=12 render identically once the UI only shows this block when
+    checked > 0 - "nothing was wrong" and "nothing was checked" must not
+    look the same.
     """
     checked = 0
     verified = 0
     missing: list[str] = []
+    not_checked = 0
+    unverified_tools: set[str] = set()
     for invocation in tool_invocations:
-        result = invocation.get("result")
-        if not isinstance(result, dict):
+        if str(invocation.get("status") or "") != "succeeded":
             continue
-        record = result.get("verification")
+        result = invocation.get("result")
+        record = result.get("verification") if isinstance(result, dict) else None
         if not isinstance(record, dict):
+            not_checked += 1
+            unverified_tools.add(str(invocation.get("tool_name") or "unknown"))
             continue
         checked += int(record.get("checked") or 0)
         verified += int(record.get("verified") or 0)
         missing.extend(str(item) for item in (record.get("missing") or []))
-    return {"checked": checked, "verified": verified, "missing": missing}
+    return {
+        "checked": checked,
+        "verified": verified,
+        "missing": missing,
+        "not_checked": not_checked,
+        "unverified_tools": sorted(unverified_tools),
+    }
 
 
 # What a completed task actually touched (docs/HISTORY.md N5's "evidence view").
@@ -3027,11 +3048,21 @@ def _enrich_operator_history(
         invocation["id"]: (invocation.get("result") or {}).get("content_trust")
         for invocation in tool_invocations
     }
+    # None here means "this step's tool has no verify() hook for that
+    # operation" (schemas.py ToolVerification), joined the same way as
+    # duration_ms/content_trust - only succeeded steps carry a real one,
+    # since a failed/denied/timed-out call never reaches its verify() hook.
+    verification_by_request_id = {
+        invocation["id"]: (invocation.get("result") or {}).get("verification")
+        for invocation in tool_invocations
+        if str(invocation.get("status") or "") == "succeeded"
+    }
     return [
         {
             **entry,
             "duration_ms": duration_by_request_id.get(entry.get("request_id")),
             "content_trust": trust_by_request_id.get(entry.get("request_id")),
+            "verification": verification_by_request_id.get(entry.get("request_id")),
         }
         for entry in history
     ]

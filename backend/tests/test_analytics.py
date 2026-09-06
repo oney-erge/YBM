@@ -59,6 +59,30 @@ def test_dashboard_only_counts_a_completed_task_as_verified_when_nothing_is_miss
     assert dashboard["completed"] == 3
     assert dashboard["verified_completed"] == 1
     assert dashboard["verified_completed_pct"] == round(100 / 3, 1)
+    # checked_completed counts both fully_verified and partially_verified -
+    # a mechanical check ran on each, one just came back clean and the
+    # other didn't. Only `unverified` (no verify() coverage at all) is
+    # outside that denominator, which is the distinction
+    # verification_coverage_pct exists to surface: "verified_completed_pct"
+    # alone can't say whether a low number means "checked and wrong" or
+    # "never checked".
+    assert dashboard["checked_completed"] == 2
+    assert dashboard["checked_completed_pct"] == round(200 / 3, 1)
+    assert dashboard["verification_coverage_pct"] == round(100 * 2 / 3, 1)
+
+
+def test_dashboard_reports_zero_coverage_when_nothing_was_ever_checked(tmp_path) -> None:
+    repos, _audit = make_repos(tmp_path)
+    unverified = repos.tasks.create("read a file")
+    _tool_call(repos, unverified.id, "filesystem.manage", ToolResultStatus.SUCCEEDED)
+    repos.tasks.update_metadata(unverified.id, unverified.metadata, TaskStatus.COMPLETED)
+
+    dashboard = build_reliability_dashboard(repos, window_days=7)
+
+    assert dashboard["completed"] == 1
+    assert dashboard["checked_completed"] == 0
+    assert dashboard["verification_coverage_pct"] == 0.0
+    assert dashboard["verified_completed_pct"] == 0.0
 
 
 def test_dashboard_ranks_the_tool_with_the_worst_failure_rate_above_the_minimum_call_count(tmp_path) -> None:
@@ -85,6 +109,12 @@ def test_dashboard_ranks_the_tool_with_the_worst_failure_rate_above_the_minimum_
     assert by_name["browser.control"]["failure_rate_pct"] == 50.0
     assert by_name["filesystem.manage"]["failure_rate_pct"] == 0.0
     assert by_name["flaky_once"]["calls"] == 1  # still reported, just not eligible for the ranking
+    # None of these calls declared a verification, but only succeeded ones
+    # count as "not_checked" - a failed call was never eligible to be
+    # checked in the first place, so it shouldn't inflate this count.
+    assert by_name["browser.control"]["not_checked"] == 2
+    assert by_name["filesystem.manage"]["not_checked"] == 4
+    assert by_name["flaky_once"]["not_checked"] == 0
 
 
 def test_dashboard_aggregates_retries_fallback_and_token_cost(tmp_path) -> None:

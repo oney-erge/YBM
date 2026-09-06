@@ -490,6 +490,15 @@ const ToolInvocationSchema = z.object({
 })
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>
 
+// A single tool call's own ToolVerification (schemas.py) - the per-step
+// counterpart to the task-wide aggregate in ReceiptVerificationSchema below.
+const ToolVerificationSchema = z.object({
+  checked: z.number().int(),
+  verified: z.number().int(),
+  missing: z.array(z.string()),
+  detail: z.string(),
+})
+
 // One operator_history entry (orchestration/worker.py) - the step-by-step
 // record of what the Operator loop decided and did. output_summary/error/
 // origin/parallel are all conditionally present depending on the step kind
@@ -518,6 +527,12 @@ const OperatorHistoryEntrySchema = z.object({
   // content YBM does not control (docs/THREAT_MODEL.md) - joined the same
   // way as duration_ms, so always present but null when undeclared.
   content_trust: z.string().nullable(),
+  // The step's own ToolVerification (schemas.py), joined the same way -
+  // null both when the step never succeeded and when it succeeded but its
+  // tool has no verify() hook for that operation. Never present-but-empty
+  // in the "no hook" case: an empty ToolVerification would mean "checked,
+  // found nothing wrong", which is a different, stronger claim.
+  verification: ToolVerificationSchema.nullable(),
 })
 export type OperatorHistoryEntry = z.infer<typeof OperatorHistoryEntrySchema>
 
@@ -666,6 +681,12 @@ const ReceiptVerificationSchema = z.object({
   checked: z.number().int(),
   verified: z.number().int(),
   missing: z.array(z.string()),
+  // Succeeded calls whose tool had no verify() hook for that operation -
+  // "absence of proof, not proof of absence" (schemas.py). Distinct from
+  // `checked`/`verified`/`missing`, which only ever describe calls that
+  // *did* get mechanically re-checked.
+  not_checked: z.number().int(),
+  unverified_tools: z.array(z.string()),
 })
 
 export const TaskReceiptSchema = z.object({
@@ -989,6 +1010,7 @@ const ToolReliabilityStatSchema = z.object({
   calls: z.number().int(),
   succeeded: z.number().int(),
   failed: z.number().int(),
+  not_checked: z.number().int(),
   failure_rate_pct: z.number(),
 })
 
@@ -1013,6 +1035,12 @@ const ReliabilityDashboardSchema = z.object({
   completed_pct: z.number(),
   verified_completed: z.number().int(),
   verified_completed_pct: z.number(),
+  // Of `completed`, how many had *any* mechanical check run at all - the
+  // denominator verified_completed_pct doesn't show. Distinguishes "we
+  // checked and it was wrong" from "nothing here is checkable yet".
+  checked_completed: z.number().int(),
+  checked_completed_pct: z.number(),
+  verification_coverage_pct: z.number(),
   failed: z.number().int(),
   failed_pct: z.number(),
   blocked: z.number().int(),
