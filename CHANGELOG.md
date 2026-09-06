@@ -83,6 +83,16 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   scope, usage, time remaining - with a one-click revoke, closing the gap
   `docs/UI_UX_AUDIT.md` named: "there is still no way to see or revoke a
   live one."
+- MCP servers can now be added, edited, tested, and removed from Settings
+  instead of by hand-editing `config.yaml` - three new endpoints
+  (`POST`/`DELETE /api/config/mcp/servers[/…]`, `POST …/test`, the last
+  running a real stdio MCP handshake against the server). Env values are
+  write-only: the response never echoes them back, and leaving the env
+  field blank on an edit keeps the existing values instead of wiping them.
+- A pending `adapter.factory` `promote_after_approval` approval now shows
+  the actual generated adapter source and a real sandbox test result
+  (`GET /api/adapters/review`), not just `adapter_dir`/`approved=true` -
+  approving one used to be a decision made from the tool name alone.
 
 ## [0.1.3] - 2026-08-11
 

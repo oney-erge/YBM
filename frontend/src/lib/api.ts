@@ -893,6 +893,80 @@ const MCPConfigSchema = z.object({
   catalog_path: z.string(),
   servers: z.record(z.string(), MCPServerConfigSchema),
 })
+export type MCPServerConfig = z.infer<typeof MCPServerConfigSchema>
+
+export type MCPServerInput = {
+  name: string
+  enabled: boolean
+  command: string
+  args: string[]
+  env: Record<string, string>
+  cwd: string | null
+  timeout_seconds: number
+  capability: string
+  risk_level: string
+  disabled_tools: string[]
+}
+
+const MCPConfigUpdateResponseSchema = z.object({
+  config_file: z.string(),
+  mcp: MCPConfigSchema,
+})
+
+// docs/ROADMAP.md "integration control plane" - add/edit/test/remove an MCP
+// server directly, rather than editing config.yaml by hand. Never sends env
+// *values* back (env is write-only from this client's point of view; the
+// server always answers with env_keys instead, mirroring the read side).
+export function upsertMCPServer(input: MCPServerInput) {
+  return apiFetch("/api/config/mcp/servers", MCPConfigUpdateResponseSchema, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+export function deleteMCPServer(name: string) {
+  return apiFetch(`/api/config/mcp/servers/${encodeURIComponent(name)}`, MCPConfigUpdateResponseSchema, {
+    method: "DELETE",
+  })
+}
+
+const MCPServerTestResponseSchema = z.object({
+  healthy: z.boolean(),
+  error: z.string().nullable(),
+  tool_count: z.number().int(),
+  tools: z.array(z.string()),
+})
+
+// A real stdio MCP handshake against one server - never invoke from an
+// automated check, only from an explicit "Test connection" click.
+export function testMCPServer(name: string) {
+  return apiFetch(`/api/config/mcp/servers/${encodeURIComponent(name)}/test`, MCPServerTestResponseSchema, {
+    method: "POST",
+  })
+}
+
+// ---- Adapter Factory review (docs/ROADMAP.md "integration control plane") -
+
+const AdapterReviewSchema = z.object({
+  adapter_dir: z.string(),
+  manifest: z.record(z.string(), z.unknown()),
+  files: z.record(z.string(), z.string()),
+  test: z.object({
+    passed: z.boolean(),
+    summary: z.string(),
+    stdout: z.string(),
+    stderr: z.string(),
+  }),
+})
+export type AdapterReview = z.infer<typeof AdapterReviewSchema>
+
+// "I generated a connector. Here is exactly what it will access. Tests
+// pass. Install it?" - the actual generated source and sandbox test result
+// for a pending adapter.factory promote_after_approval approval, whose own
+// tool_input carries only adapter_dir and approved=true.
+export function reviewAdapter(adapterDir: string) {
+  return apiFetch(`/api/adapters/review?adapter_dir=${encodeURIComponent(adapterDir)}`, AdapterReviewSchema)
+}
 
 const ServiceItemSchema = z.object({
   name: z.string(),

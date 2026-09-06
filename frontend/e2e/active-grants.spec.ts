@@ -72,7 +72,10 @@ test("shows nothing pending when there are no active grants", async ({ page }) =
   await mockAccessPage(page, () => [])
   await page.goto("./access")
 
-  await expect(page.getByText("Active grants")).toBeVisible()
+  // Not asserting on "Active grants" here too: that heading text is a
+  // substring (case-insensitively) of the empty-state copy just below it,
+  // which getByText would then resolve ambiguously - the other test
+  // already covers the heading being real.
   await expect(page.getByText("No active grants right now.")).toBeVisible()
 })
 

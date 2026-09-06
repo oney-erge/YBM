@@ -5,6 +5,7 @@ import { Badge } from "@/components/ui/badge"
 import type { PendingApprovalItem } from "@/lib/api"
 import { RISK_ORDER } from "@/lib/api"
 import { describeCapability } from "@/lib/capability"
+import { AdapterReviewPanel } from "@/components/approvals/AdapterReviewPanel"
 
 /**
  * The approval decision surface (docs/UI_REWRITE_PLAN.md §11.2), ordered
@@ -48,6 +49,10 @@ export function EvidencePack({
   ]
   const input = approval.action_payload.input ?? {}
   const inputKeys = Object.keys(input as Record<string, unknown>)
+  const adapterDir =
+    toolName === "adapter.factory" && operation === "promote_after_approval"
+      ? (input as { adapter_dir?: string }).adapter_dir
+      : undefined
 
   return (
     <div className="flex flex-col gap-4 text-sm">
@@ -133,6 +138,8 @@ export function EvidencePack({
           </Field>
         </div>
       </div>
+
+      {adapterDir && <AdapterReviewPanel adapterDir={adapterDir} />}
 
       {footer}
       {actions}

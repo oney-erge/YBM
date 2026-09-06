@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
+import sys
 from urllib.parse import quote
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+import pytest
 import yaml
 
 import agent_control.admin as admin_module
@@ -1729,6 +1732,200 @@ def test_admin_rejects_an_unknown_profile_in_fallback_chain(monkeypatch, tmp_pat
 
     assert response.status_code == 400
     assert "ghost" in response.json()["detail"]
+
+
+# ---- docs/ROADMAP.md "integration control plane": MCP server admin -------
+
+def _fake_mcp_server_script(tmp_path) -> str:
+    server_path = tmp_path / "fake_mcp_server.py"
+    server_path.write_text(
+        """
+from mcp.server.fastmcp import FastMCP
+
+mcp = FastMCP("fake")
+
+@mcp.tool()
+def echo(text: str) -> str:
+    return text
+
+if __name__ == "__main__":
+    mcp.run()
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    return str(server_path)
+
+
+def test_admin_upserts_an_mcp_server_without_echoing_env_values(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post(
+        "/admin/api/config/mcp/servers",
+        json={
+            "name": "fake",
+            "command": "uv",
+            "args": ["run", "fake_server.py"],
+            "env": {"FAKE_API_KEY": "super-secret"},
+            "capability": "terminal.run",
+            "risk_level": "high",
+        },
+    )
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    body = response.json()
+    assert "super-secret" not in json.dumps(body)
+    assert body["mcp"]["servers"]["fake"]["env_keys"] == ["FAKE_API_KEY"]
+    assert saved["mcp"]["servers"]["fake"]["command"] == "uv"
+    assert saved["mcp"]["servers"]["fake"]["env"] == {"FAKE_API_KEY": "super-secret"}  # written to disk, just not echoed
+
+
+def test_admin_editing_an_mcp_server_with_blank_env_keeps_existing_values(monkeypatch, tmp_path) -> None:
+    """Env values never round-trip back to the client (same invariant as the
+    secret vault), so an edit's env field always starts blank - submitting
+    it blank must mean "keep what's there", not silently wipe it."""
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+    client.post(
+        "/admin/api/config/mcp/servers",
+        json={"name": "fake", "command": "uv", "env": {"FAKE_API_KEY": "super-secret"}},
+    )
+
+    response = client.post(
+        "/admin/api/config/mcp/servers",
+        json={"name": "fake", "command": "uv", "timeout_seconds": 60, "env": {}},
+    )
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert response.json()["mcp"]["servers"]["fake"]["env_keys"] == ["FAKE_API_KEY"]
+    assert saved["mcp"]["servers"]["fake"]["env"] == {"FAKE_API_KEY": "super-secret"}
+    assert saved["mcp"]["servers"]["fake"]["timeout_seconds"] == 60
+
+
+def test_admin_rejects_an_unknown_capability_for_an_mcp_server(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post(
+        "/admin/api/config/mcp/servers",
+        json={"name": "fake", "command": "uv", "capability": "not.a.real.capability"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_admin_deletes_an_mcp_server(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+    client.post("/admin/api/config/mcp/servers", json={"name": "fake", "command": "uv"})
+
+    response = client.delete("/admin/api/config/mcp/servers/fake")
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert "fake" not in saved["mcp"]["servers"]
+
+
+def test_admin_delete_unknown_mcp_server_404s(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.delete("/admin/api/config/mcp/servers/does-not-exist")
+
+    assert response.status_code == 404
+
+
+def test_admin_tests_a_real_mcp_server_connection(monkeypatch, tmp_path) -> None:
+    from agent_control.config import MCPConfig, MCPServerConfig
+
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    server_path = _fake_mcp_server_script(tmp_path)
+    settings = AppSettings(
+        _env_file=None,
+        mcp=MCPConfig(
+            enabled=True,
+            servers={"fake": MCPServerConfig(command=sys.executable, args=[server_path], timeout_seconds=30)},
+        ),
+    )
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.post("/admin/api/config/mcp/servers/fake/test")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["healthy"] is True
+    assert body["tool_count"] == 1
+    assert body["tools"] == ["echo"]
+
+
+def test_admin_test_unknown_mcp_server_404s(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/config/mcp/servers/does-not-exist/test")
+
+    assert response.status_code == 404
+
+
+# ---- docs/ROADMAP.md "integration control plane": adapter review ---------
+
+@pytest.mark.asyncio
+async def test_admin_reviews_a_scaffolded_adapter(monkeypatch, tmp_path) -> None:
+    """docs/ROADMAP.md: approving `promote_after_approval` should not be a
+    decision made from the tool_input alone (just adapter_dir and
+    approved=true) - a human needs to see the actual generated source and
+    whether it passes its own sandbox test first.
+    """
+    from agent_control.config import AdapterFactoryConfig
+    from agent_control.tools.adapter_factory import AdapterFactoryAdapter
+
+    monkeypatch.chdir(tmp_path)
+    adapters_root = tmp_path / "adapters"
+    factory = AdapterFactoryAdapter(AdapterFactoryConfig(root_dir=str(adapters_root)))
+    scaffolded = await factory.execute(
+        ToolCallRequest(
+            task_id="task_adapter",
+            tool_name="adapter.factory",
+            capability=Capability.FILESYSTEM_WRITE,
+            input={"operation": "scaffold", "name": "weather_lookup", "objective": "Look up local weather."},
+        )
+    )
+    adapter_dir = scaffolded.output["adapter_dir"]
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    settings = AppSettings(_env_file=None, adapters={"adapter_factory": {"root_dir": str(adapters_root)}})
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.get("/admin/api/adapters/review", params={"adapter_dir": adapter_dir})
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["manifest"]["name"] == "weather_lookup"
+    assert set(body["files"]) >= {"adapter.py", "test_adapter.py", "README.md"}
+    assert "class WeatherLookupAdapter" in body["files"]["adapter.py"]
+    assert "passed" in body["test"]
+
+
+def test_admin_review_adapter_rejects_a_path_outside_the_configured_root(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    settings = AppSettings(_env_file=None, adapters={"adapter_factory": {"root_dir": str(tmp_path / "adapters")}})
+    client = _admin_client(repositories, settings=settings)
+
+    response = client.get("/admin/api/adapters/review", params={"adapter_dir": str(outside)})
+
+    assert response.status_code == 400
 
 
 def test_admin_writes_telegram_runtime_config(monkeypatch, tmp_path) -> None:

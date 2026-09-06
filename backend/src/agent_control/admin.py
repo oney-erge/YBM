@@ -4,6 +4,7 @@ from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 import importlib.util
+import json
 import logging
 import mimetypes
 import os
@@ -48,6 +49,7 @@ from agent_control.schemas import (
     ChannelType,
     MemoryFact,
     MemorySource,
+    RiskLevel,
     StrictBaseModel,
     TaskRecord,
     TaskStatus,
@@ -103,6 +105,25 @@ class AdminLLMRolesRequest(StrictBaseModel):
     operator_profile: str | None = Field(default=None, max_length=80)
     auditor_profile: str | None = Field(default=None, max_length=80)
     fallback_chain: list[str] = Field(default_factory=list, max_length=10)
+
+
+class AdminMCPServerRequest(StrictBaseModel):
+    """Add/edit one MCP server (docs/ROADMAP.md "integration control
+    plane"). Mirrors mcp_client.py's own _install_server validation - that
+    path exists for the model to propose a server (behind an approval);
+    this is the same shape for a human adding one directly through the
+    console, which is why MCPServersCard has been read-only until now.
+    """
+    name: str = Field(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.-]{1,80}$")
+    enabled: bool = True
+    command: str = Field(min_length=1, max_length=500)
+    args: list[str] = Field(default_factory=list, max_length=50)
+    env: dict[str, str] = Field(default_factory=dict)
+    cwd: str | None = None
+    timeout_seconds: int = Field(default=30, ge=1, le=900)
+    capability: str = "terminal.run"
+    risk_level: str = "high"
+    disabled_tools: list[str] = Field(default_factory=list, max_length=200)
 
 
 class AdminVoiceConfigRequest(StrictBaseModel):
@@ -981,6 +1002,52 @@ def create_admin_router(
         updated = repositories.approval_grants.get(grant_id)
         return {"grant": updated.model_dump(mode="json") if updated else None, "revoked": revoked}
 
+    @router.get("/api/adapters/review")
+    def admin_review_adapter(request: Request, adapter_dir: str = Query(...)) -> dict[str, Any]:
+        """"I generated a connector. Here is exactly what it will access.
+        Tests pass. Install it?" (docs/ROADMAP.md "integration control
+        plane") - the actual generated source and sandbox test result for
+        one proposed adapter, so approving its `promote_after_approval` call
+        isn't a decision made from the tool_input alone (just adapter_dir
+        and approved=true - see adapter_factory.py's own docstring on why
+        that call carries no code).
+        """
+        loaded = require_admin(request)
+        from agent_control.tools.adapter_factory import _require_adapter_dir_inside_root, _test_connector
+
+        try:
+            path = _require_adapter_dir_inside_root(adapter_dir, loaded.adapters.adapter_factory.root_dir)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        manifest_path = path / "manifest.json"
+        manifest: dict[str, Any] = {}
+        if manifest_path.exists():
+            try:
+                manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                manifest = {}
+        files = {}
+        for name in ("adapter.py", "test_adapter.py", "README.md"):
+            file_path = path / name
+            if file_path.exists():
+                try:
+                    files[name] = file_path.read_text(encoding="utf-8")
+                except OSError:
+                    pass
+        test_result = _test_connector(path)
+        return {
+            "adapter_dir": str(path),
+            "manifest": manifest,
+            "files": files,
+            "test": {
+                "passed": test_result.returncode == 0,
+                "summary": test_result.summary,
+                "stdout": test_result.stdout,
+                "stderr": test_result.stderr,
+            },
+        }
+
     @router.delete("/api/tasks")
     def admin_clear_tasks(
         request: Request,
@@ -1307,6 +1374,80 @@ def create_admin_router(
         _write_config_file(config_manager, config)
         _audit_config_update(repositories_loader(), loaded, "llm_roles", payload.model_dump(mode="json"))
         return {"config_file": str(CONFIG_FILE_PATH), "llm": llm}
+
+    @router.post("/api/config/mcp/servers")
+    def admin_upsert_mcp_server(request: Request, payload: AdminMCPServerRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        try:
+            capability = Capability(payload.capability)
+            risk_level = RiskLevel(payload.risk_level)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        config = _read_config_file(config_manager)
+        mcp = config.setdefault("mcp", {})
+        servers = mcp.setdefault("servers", {})
+        existing = servers.get(payload.name)
+        is_new = existing is None
+        # Env values never reach the client (same invariant as the secret
+        # vault), so an edit's env field always starts blank - submitting it
+        # blank has to mean "keep what's already there", not "clear it",
+        # or every edit that doesn't touch env would silently wipe it.
+        env = payload.env if payload.env else (existing or {}).get("env") or {}
+        servers[payload.name] = {
+            "enabled": payload.enabled,
+            "command": payload.command,
+            "args": payload.args,
+            "env": env,
+            "cwd": _blank_to_none(payload.cwd),
+            "timeout_seconds": payload.timeout_seconds,
+            "capability": capability.value,
+            "risk_level": risk_level.value,
+            "disabled_tools": payload.disabled_tools,
+        }
+        _write_config_file(config_manager, config)
+        _audit_config_update(
+            repositories_loader(), loaded, "mcp_server",
+            {"name": payload.name, "action": "create" if is_new else "update", "env_keys": sorted(env)},
+        )
+        return {"config_file": str(CONFIG_FILE_PATH), "mcp": _redacted_mcp_servers(mcp)}
+
+    @router.delete("/api/config/mcp/servers/{name}")
+    def admin_delete_mcp_server(request: Request, name: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        config = _read_config_file(config_manager)
+        mcp = config.setdefault("mcp", {})
+        servers = mcp.setdefault("servers", {})
+        if name not in servers:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+        del servers[name]
+        _write_config_file(config_manager, config)
+        _audit_config_update(repositories_loader(), loaded, "mcp_server", {"name": name, "action": "delete"})
+        return {"config_file": str(CONFIG_FILE_PATH), "mcp": _redacted_mcp_servers(mcp)}
+
+    @router.post("/api/config/mcp/servers/{name}/test")
+    async def admin_test_mcp_server(request: Request, name: str) -> dict[str, Any]:
+        """Real connectivity check (docs/ROADMAP.md "integration control
+        plane") - a full stdio MCP handshake against this one server,
+        reusing mcp_client.py's own _list_server_tools rather than a second
+        implementation of the protocol.
+        """
+        loaded = require_admin(request)
+        server = loaded.mcp.servers.get(name)
+        if server is None:
+            raise HTTPException(status_code=404, detail=f"MCP server not found: {name}")
+        from agent_control.tools.mcp_client import _list_server_tools
+
+        try:
+            tools = await _list_server_tools(name, server)
+        except Exception as exc:
+            return {"healthy": False, "error": str(exc), "tool_count": 0, "tools": []}
+        return {
+            "healthy": True,
+            "error": None,
+            "tool_count": len(tools),
+            "tools": sorted(str(tool.get("tool") or "") for tool in tools),
+        }
 
     @router.post("/api/config/telegram")
     def admin_update_telegram_config(request: Request, payload: AdminTelegramConfigRequest) -> dict[str, Any]:
@@ -2248,6 +2389,26 @@ def _blank_to_none(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
+
+
+def _redacted_mcp_servers(mcp: dict[str, Any]) -> dict[str, Any]:
+    """Same "list the key, never the value" invariant config.py's own
+    safe_summary() applies to MCP server env - the write endpoints (upsert/
+    delete) must not echo raw env values back in their response any more
+    than the read side (MCPServersCard) shows them.
+    """
+    servers = mcp.get("servers")
+    if not isinstance(servers, dict):
+        return mcp
+    return {
+        **mcp,
+        "servers": {
+            name: {**server, "env_keys": sorted((server or {}).get("env") or {}), "env": None}
+            if isinstance(server, dict)
+            else server
+            for name, server in servers.items()
+        },
+    }
 
 
 def _legacy_default_llm_env_keys() -> list[str]:

@@ -15,6 +15,7 @@ import {
   getSummary,
   getTaskReceipt,
   getTaskTrace,
+  deleteMCPServer,
   initSecretVault,
   installSkill,
   listActiveGrants,
@@ -27,6 +28,7 @@ import {
   listSkills,
   listSkillsCatalog,
   listTasks,
+  reviewAdapter,
   revokeGrant,
   runDoctor,
   selectLLMPreset,
@@ -34,6 +36,7 @@ import {
   sendTaskSignal,
   setSecret,
   testLLM,
+  testMCPServer,
   testTelegram,
   detectTelegramOperator,
   uninstallSkill,
@@ -46,11 +49,13 @@ import {
   updateVSCodeConfig,
   updateWorkspaceConfig,
   uploadChatAttachment,
+  upsertMCPServer,
   type ApprovalDecision,
   type CapabilityAccessMode,
   type ComputerUseConfigInput,
   type LLMConfigInput,
   type LLMRolesInput,
+  type MCPServerInput,
   type SkillInstallInput,
   type TelegramConfigInput,
   type VSCodeConfigInput,
@@ -363,6 +368,28 @@ export function useSelectLLMPreset() {
 
 export function useUpdateLLMRoles() {
   return useSettingsMutation((input: LLMRolesInput) => updateLLMRoles(input))
+}
+
+export function useUpsertMCPServer() {
+  return useSettingsMutation((input: MCPServerInput) => upsertMCPServer(input))
+}
+
+export function useDeleteMCPServer() {
+  return useSettingsMutation((name: string) => deleteMCPServer(name))
+}
+
+export function useTestMCPServer() {
+  // Never polled or invalidated automatically - a real subprocess handshake,
+  // triggered only by an explicit button click (see api.ts's testMCPServer).
+  return useMutation({ mutationFn: testMCPServer })
+}
+
+export function useAdapterReview(adapterDir: string | undefined) {
+  return useQuery({
+    queryKey: ["adapters", "review", adapterDir],
+    queryFn: () => reviewAdapter(adapterDir!),
+    enabled: adapterDir != null,
+  })
 }
 
 export function useTestLLM() {

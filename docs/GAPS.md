@@ -53,8 +53,13 @@ operator documentation.
   VS Code API; the bridge and CLI-based coding-agent flow are supported.
 - The Windows PowerShell supervisor and cross-platform `ybm` supervisor are
   separate implementations.
-- `mcp.client` supports configured servers, but the console does not yet offer
-  a full add/edit/test form for MCP server definitions.
+- ~~`mcp.client` supports configured servers, but the console does not yet
+  offer a full add/edit/test form for MCP server definitions~~ - shipped
+  (Settings' MCP servers card: add/edit/test/remove, env write-only and
+  never echoed back). A pending `adapter.factory` `promote_after_approval`
+  approval now also shows the actual generated source and sandbox test
+  result, not just `adapter_dir`/`approved` - approving it used to be a
+  decision made from the tool name alone.
 
 ## Maintainability
 
