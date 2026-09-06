@@ -74,6 +74,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   existing 5xx/timeout/connection-error handling (still not 400 - a request
   bug fails the same way against any profile). A receipt now says when a
   fallback model answered somewhere in the task.
+- Scoped, revocable "Allow for this task" grants: a grant now inherits the
+  exact path/target scope of the call it was approved from (so "allow this
+  move in Downloads" no longer silently covers a later move anywhere else),
+  carries a 200-operation cap so it's never unbounded for the rest of the
+  task's TTL, and can be revoked early. The Access page's new "Active
+  grants" card lists every currently-usable grant across every task -
+  scope, usage, time remaining - with a one-click revoke, closing the gap
+  `docs/UI_UX_AUDIT.md` named: "there is still no way to see or revoke a
+  live one."
 
 ## [0.1.3] - 2026-08-11
 

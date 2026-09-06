@@ -389,7 +389,15 @@ const ApprovalGrantSchema = z.object({
   granted_from_approval_id: z.string(),
   created_at: z.string(),
   expires_at: z.string(),
+  // docs/ROADMAP.md "scoped temporary authority" - all four absent on a
+  // grant created before this shipped, hence the defaults rather than
+  // required fields.
+  scope: z.string().nullable().default(null),
+  max_operations: z.number().int().nullable().default(null),
+  operations_used: z.number().int().default(0),
+  revoked: z.boolean().default(false),
 })
+export type ApprovalGrant = z.infer<typeof ApprovalGrantSchema>
 
 const DecideApprovalResponseSchema = z.object({
   approval: ApprovalRequestSchema.nullable(),
@@ -398,6 +406,30 @@ const DecideApprovalResponseSchema = z.object({
 
 export function listPendingApprovals() {
   return apiFetch("/api/approvals", PendingApprovalsResponseSchema)
+}
+
+const ActiveGrantItemSchema = z.object({
+  grant: ApprovalGrantSchema,
+  task_objective: z.string().nullable(),
+  task_status: TaskStatusSchema.nullable(),
+})
+export type ActiveGrantItem = z.infer<typeof ActiveGrantItemSchema>
+
+const ActiveGrantsResponseSchema = z.object({ grants: z.array(ActiveGrantItemSchema) })
+
+export function listActiveGrants() {
+  return apiFetch("/api/grants", ActiveGrantsResponseSchema)
+}
+
+const RevokeGrantResponseSchema = z.object({
+  grant: ApprovalGrantSchema.nullable(),
+  revoked: z.boolean(),
+})
+
+export function revokeGrant(grantId: string) {
+  return apiFetch(`/api/grants/${encodeURIComponent(grantId)}/revoke`, RevokeGrantResponseSchema, {
+    method: "POST",
+  })
 }
 
 export type ApprovalDecision = "approve" | "reject" | "approve_for_task"

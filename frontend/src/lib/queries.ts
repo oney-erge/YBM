@@ -17,6 +17,7 @@ import {
   getTaskTrace,
   initSecretVault,
   installSkill,
+  listActiveGrants,
   listAudit,
   listChatMessages,
   listFolders,
@@ -26,6 +27,7 @@ import {
   listSkills,
   listSkillsCatalog,
   listTasks,
+  revokeGrant,
   runDoctor,
   selectLLMPreset,
   sendChatMessage,
@@ -145,6 +147,27 @@ export function useDecideApproval() {
       void queryClient.invalidateQueries({ queryKey: ["approvals"] })
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
       void queryClient.invalidateQueries({ queryKey: ["summary"] })
+      // A fresh "approve_for_task" decision creates exactly the grant this
+      // list exists to show.
+      void queryClient.invalidateQueries({ queryKey: ["grants", "active"] })
+    },
+  })
+}
+
+export function useActiveGrants() {
+  return useQuery({
+    queryKey: ["grants", "active"],
+    queryFn: listActiveGrants,
+    refetchInterval: APPROVALS_POLL_MS,
+  })
+}
+
+export function useRevokeGrant() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (grantId: string) => revokeGrant(grantId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["grants", "active"] })
     },
   })
 }

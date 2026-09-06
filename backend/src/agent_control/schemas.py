@@ -720,8 +720,18 @@ class ApprovalGrant(StrictBaseModel):
     risk-ceiling checks still run before a grant is even consulted, so a
     grant only skips the "ask a human" step for a call that policy would
     have permitted anyway. Not "Always allow" - there is no grant that
-    outlives its task, and no revocation list yet (docs/UI_UX_AUDIT.md's
-    explicit scope-down for this pass).
+    outlives its task.
+
+    `scope` (docs/ROADMAP.md "scoped temporary authority") narrows further:
+    when set, a matching call's own `scope_target` must fall within it (the
+    same prefix containment PolicyEngine.scope_contains already applies to
+    a capability's configured scopes) - inherited automatically from the
+    approved action's own scope_target at grant creation, not a separate
+    field a human has to fill in. `max_operations` bounds the count of calls
+    a grant can cover regardless of how much time is left on its TTL;
+    `operations_used` is the running count ToolExecutor increments each time
+    the grant actually gates a call through. `revoked` is a human's early
+    "no more" - the previously-missing revocation list.
     """
 
     id: str = Field(default_factory=lambda: new_id("grant"))
@@ -731,6 +741,18 @@ class ApprovalGrant(StrictBaseModel):
     granted_from_approval_id: str
     created_at: datetime = Field(default_factory=utc_now)
     expires_at: datetime
+    scope: str | None = None
+    max_operations: int | None = Field(default=None, ge=1)
+    operations_used: int = Field(default=0, ge=0)
+    revoked: bool = False
+
+    @property
+    def active(self) -> bool:
+        if self.revoked:
+            return False
+        if self.max_operations is not None and self.operations_used >= self.max_operations:
+            return False
+        return self.expires_at > utc_now()
 
 
 class Artifact(StrictBaseModel):

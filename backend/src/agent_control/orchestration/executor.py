@@ -4,8 +4,9 @@ from collections.abc import Iterable
 from typing import Any, Protocol
 
 from agent_control.egress import extract_egress_hosts, record_egress
-from agent_control.policy import PolicyEngine
+from agent_control.policy import PolicyEngine, normalize_scope_target, scope_contains
 from agent_control.schemas import (
+    ApprovalGrant,
     AuditEventType,
     ErrorClass,
     RiskLevel,
@@ -91,9 +92,12 @@ class ToolExecutor:
                     error_message="approval_not_found",
                 ),
             )
-        has_grant = approval is None and self.repositories.approval_grants.find_matching(
-            request.task_id, request.tool_name, request.capability,
-        ) is not None
+        grant = (
+            self.repositories.approval_grants.find_matching(request.task_id, request.tool_name, request.capability)
+            if approval is None
+            else None
+        )
+        has_grant = grant is not None and self._grant_covers(grant, request)
         decision = self.policy.evaluate(request, approval=approval, has_grant=has_grant)
         if decision.needs_approval:
             definition = self.tool_definitions.get(request.tool_name)
@@ -149,6 +153,19 @@ class ToolExecutor:
                     error_message="approval_not_consumable",
                 ),
             )
+        if approval is None and has_grant and grant is not None and not self.repositories.approval_grants.record_usage(grant.id):
+            # The grant hit its cap (or was revoked/expired) between the
+            # check above and here - deny rather than let the call through
+            # uncounted. Same race-safety reasoning as consume_approved.
+            return self._complete(
+                request,
+                ToolCallResult(
+                    request_id=request.id,
+                    status=ToolResultStatus.DENIED,
+                    error_class=ErrorClass.POLICY_DENIED,
+                    error_message="grant_not_consumable",
+                ),
+            )
 
         try:
             dispatch_request = request
@@ -187,6 +204,23 @@ class ToolExecutor:
                     error_message=str(exc),
                 )
             )
+
+    @staticmethod
+    def _grant_covers(grant: ApprovalGrant, request: ToolCallRequest) -> bool:
+        """Whether a fetched ApprovalGrant actually covers this call.
+
+        find_matching already filtered on task/tool/capability plus every
+        unconditional criterion (not expired, not revoked, not at its
+        operation cap - see its own docstring); scope is the one condition
+        left, because it needs this specific request's scope_target, which
+        the repository layer does not have. No scope on the grant means no
+        narrowing beyond what find_matching already checked.
+        """
+        if grant.scope is None:
+            return True
+        if not request.scope_target:
+            return False
+        return scope_contains(normalize_scope_target(request.scope_target), grant.scope)
 
     def _validated_request(self, request: ToolCallRequest) -> tuple[ToolCallRequest, str | None]:
         definition = self.tool_definitions.get(request.tool_name)

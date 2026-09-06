@@ -134,6 +134,10 @@ SCHEMA_STATEMENTS = [
         granted_from_approval_id TEXT NOT NULL,
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
+        scope TEXT,
+        max_operations INTEGER,
+        operations_used INTEGER NOT NULL DEFAULT 0,
+        revoked INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(task_id) REFERENCES tasks(id)
     )
     """,

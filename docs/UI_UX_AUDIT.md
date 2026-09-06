@@ -130,11 +130,16 @@ numbered phase say so.
 
 ### P2 - Differentiating control-plane features
 
-1. Per-role models for Concierge, Operator, and Auditor, with estimated cost/latency impact.
+1. ~~Per-role models for Concierge, Operator, and Auditor~~ - shipped (`concierge_profile`/
+   `operator_profile`/`auditor_profile`, plus an ordered `fallback_chain` with per-profile
+   cooldown). Estimated cost/latency impact per role is not shown anywhere yet.
 2. Versioned prompt overrides with diff, reset, and an explicit scenario-fixture warning.
 3. Named delegate presets such as Researcher or Coder, restricted to selected tools.
-4. Time-boxed grants with exact tool/operation scope, capped TTL, visible expiry, and revocation.
-   Task-scoped grants exist; there is still no way to see or revoke a live one.
+4. ~~Time-boxed grants with capped TTL, visible expiry, and revocation~~ - shipped (Access page's
+   Active Grants card: path/target scope inherited from the approved call, `max_operations` cap,
+   live list across tasks, one-click revoke). Still tool+capability-wide, not per-operation within
+   one tool (e.g. a grant covering `filesystem.manage` covers every operation on it, not just the
+   one that was approved).
 5. Cross-task reliability and cost dashboards: failure reason, tool latency, retry count, token
    spend, model, and time window.
 6. SSE for task and approval events after measuring current polling load; keep polling fallback.

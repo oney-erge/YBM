@@ -235,6 +235,14 @@ MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
 # is the right scope for v1, the same way there is one Telegram user.
 WEB_CHAT_ID = "local"
 
+# Every "Allow for this task" grant gets this cap (docs/ROADMAP.md "scoped
+# temporary authority") rather than being unbounded for the rest of the
+# task's TTL - generous enough that a real batch job never hits it, but not
+# "Always allow" either. Not user-configurable at grant-creation time (that
+# decision has to stay a single click, not a form) - the Active Grants page
+# is where a human can see and revoke one early instead.
+DEFAULT_GRANT_MAX_OPERATIONS = 200
+
 
 def _redact_admin_output(value: Any, settings: AppSettings) -> Any:
     """Remove configured secret values from data returned by admin APIs.
@@ -906,6 +914,13 @@ def create_admin_router(
                 capability=approval.capability,
                 granted_from_approval_id=approval_id,
                 expires_at=utc_now() + timedelta(seconds=loaded.limits.task_budget_seconds),
+                # Inherits the exact boundary the human already reviewed on
+                # this one call, rather than a blank "anything with this
+                # tool+capability" grant (docs/ROADMAP.md "scoped temporary
+                # authority") - no extra form field needed since the scope
+                # was already implicit in what was approved.
+                scope=_blank_to_none(str(approval.action_payload.get("scope_target") or "")),
+                max_operations=DEFAULT_GRANT_MAX_OPERATIONS,
             )
             repositories.approval_grants.create(grant)
             audit.append(
@@ -918,6 +933,8 @@ def create_admin_router(
                     "grant_id": grant.id,
                     "tool_name": tool_name,
                     "capability": approval.capability.value,
+                    "scope": grant.scope,
+                    "max_operations": grant.max_operations,
                 },
             )
 
@@ -926,6 +943,43 @@ def create_admin_router(
             "approval": updated.model_dump(mode="json") if updated else None,
             "grant": grant.model_dump(mode="json") if grant else None,
         }
+
+    @router.get("/api/grants")
+    def admin_active_grants(request: Request) -> dict[str, Any]:
+        """Every currently-usable "Allow for this task" grant across every
+        task (docs/ROADMAP.md "scoped temporary authority") - the visibility
+        UI_UX_AUDIT.md's gap list named as missing: "there is still no way
+        to see or revoke a live one."
+        """
+        require_admin(request)
+        repositories = repositories_loader()
+        items = []
+        for grant in repositories.approval_grants.list_active():
+            task = repositories.tasks.get(grant.task_id)
+            items.append({
+                "grant": grant.model_dump(mode="json"),
+                "task_objective": task.objective if task is not None else None,
+                "task_status": task.status.value if task is not None else None,
+            })
+        return {"grants": items}
+
+    @router.post("/api/grants/{grant_id}/revoke")
+    def admin_revoke_grant(request: Request, grant_id: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        grant = repositories.approval_grants.get(grant_id)
+        if grant is None:
+            raise HTTPException(status_code=404, detail="grant not found")
+        revoked = repositories.approval_grants.revoke(grant_id)
+        if revoked:
+            AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+                AuditEventType.CONFIG_UPDATED,
+                actor="admin",
+                task_id=grant.task_id,
+                payload={"section": "approval_grant", "action": "revoke", "grant_id": grant_id},
+            )
+        updated = repositories.approval_grants.get(grant_id)
+        return {"grant": updated.model_dump(mode="json") if updated else None, "revoked": revoked}
 
     @router.delete("/api/tasks")
     def admin_clear_tasks(

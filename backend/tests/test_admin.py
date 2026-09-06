@@ -14,6 +14,7 @@ from agent_control.main import app
 from datetime import timedelta
 
 from agent_control.schemas import (
+    ApprovalGrant,
     ApprovalRequest,
     ApprovalStatus,
     Artifact,
@@ -607,6 +608,95 @@ def test_admin_decide_approval_approve_for_task_creates_a_grant(monkeypatch, tmp
     grants = repositories.approval_grants.list_for_task(task.id)
     assert len(grants) == 1
     assert repositories.approval_grants.find_matching(task.id, "filesystem.manage", Capability.FILESYSTEM_WRITE) is not None
+
+
+def test_admin_decide_approval_approve_for_task_inherits_scope_and_caps_operations(monkeypatch, tmp_path) -> None:
+    """docs/ROADMAP.md "scoped temporary authority": the grant should narrow
+    to the exact boundary already reviewed on the approved call, and should
+    never be unbounded for the rest of the task's TTL."""
+    monkeypatch.chdir(tmp_path)
+    from agent_control.admin import DEFAULT_GRANT_MAX_OPERATIONS
+
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("sort downloads")
+    approval = repositories.approvals.create(
+        ApprovalRequest(
+            task_id=task.id,
+            capability=Capability.FILESYSTEM_WRITE,
+            risk_level=RiskLevel.HIGH,
+            summary="move files",
+            action_payload={
+                "tool_name": "filesystem.manage",
+                "scope_target": "C:/Users/sam/Downloads",
+                "input": {},
+            },
+            expires_at=utc_now() + timedelta(minutes=15),
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/approvals/{approval.id}/decide", json={"decision": "approve_for_task"})
+
+    body = response.json()
+    assert body["grant"]["scope"] == "C:/Users/sam/Downloads"
+    assert body["grant"]["max_operations"] == DEFAULT_GRANT_MAX_OPERATIONS
+    assert body["grant"]["operations_used"] == 0
+    assert body["grant"]["revoked"] is False
+
+
+def test_admin_lists_active_grants_across_tasks(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("organize downloads")
+    repositories.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+            scope="C:/Downloads", max_operations=200,
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/grants")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert len(body["grants"]) == 1
+    entry = body["grants"][0]
+    assert entry["grant"]["tool_name"] == "filesystem.manage"
+    assert entry["grant"]["scope"] == "C:/Downloads"
+    assert entry["task_objective"] == "organize downloads"
+
+
+def test_admin_revokes_a_grant(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("t")
+    grant = repositories.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id, tool_name="terminal", capability=Capability.TERMINAL_RUN,
+            granted_from_approval_id="seed", expires_at=utc_now() + timedelta(minutes=10),
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(f"/admin/api/grants/{grant.id}/revoke")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["revoked"] is True
+    assert body["grant"]["revoked"] is True
+    assert client.get("/admin/api/grants").json()["grants"] == []
+
+
+def test_admin_revoke_unknown_grant_404s(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.post("/admin/api/grants/grant_does_not_exist/revoke")
+
+    assert response.status_code == 404
 
 
 def test_admin_decide_approval_approve_updates_status_and_audits(monkeypatch, tmp_path) -> None:

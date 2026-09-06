@@ -700,9 +700,9 @@ class ApprovalGrantRepository:
                 """
                 INSERT INTO approval_grants (
                     id, task_id, tool_name, capability, granted_from_approval_id,
-                    created_at, expires_at
+                    created_at, expires_at, scope, max_operations, operations_used, revoked
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     grant.id,
@@ -712,21 +712,74 @@ class ApprovalGrantRepository:
                     grant.granted_from_approval_id,
                     _dt(grant.created_at),
                     _dt(grant.expires_at),
+                    grant.scope,
+                    grant.max_operations,
+                    grant.operations_used,
+                    int(grant.revoked),
                 ),
             )
         return grant
 
     def find_matching(self, task_id: str, tool_name: str, capability: Capability) -> ApprovalGrant | None:
+        """The most recent grant for this (task, tool, capability) that is
+        still usable by every criterion except scope (scope containment
+        needs the calling request's own scope_target, which policy/engine.py
+        checks - see ToolExecutor._grant_covers). Not-yet-at-cap and
+        not-revoked are checked here since both are unconditional, unlike
+        scope which only applies when the grant declares one.
+        """
         now = _dt(utc_now())
         with self.database.connect() as connection:
             row = connection.execute(
                 """
                 SELECT * FROM approval_grants
                 WHERE task_id = ? AND tool_name = ? AND capability = ? AND expires_at > ?
+                    AND revoked = 0 AND (max_operations IS NULL OR operations_used < max_operations)
                 ORDER BY created_at DESC LIMIT 1
                 """,
                 (task_id, tool_name, capability.value, now),
             ).fetchone()
+        return self._row_to_grant(row) if row is not None else None
+
+    def record_usage(self, grant_id: str) -> bool:
+        """Atomically counts one call against a grant's max_operations,
+        mirroring ApprovalRepository.consume_approved's same
+        check-and-update-in-one-statement shape so a grant right at its cap
+        can't be raced past by two calls reading "still has room" before
+        either writes back. False means the grant could not be charged
+        (revoked, expired, or already at cap) - the caller must not let the
+        dispatch through uncounted when that happens.
+        """
+        now = _dt(utc_now())
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE approval_grants
+                SET operations_used = operations_used + 1
+                WHERE id = ? AND revoked = 0 AND expires_at > ?
+                    AND (max_operations IS NULL OR operations_used < max_operations)
+                """,
+                (grant_id, now),
+            )
+        return cursor.rowcount > 0
+
+    def revoke(self, grant_id: str) -> bool:
+        """A human's early "no more" (docs/ROADMAP.md "scoped temporary
+        authority") - the previously-missing revocation list. Only flips a
+        grant that is still live; revoking an already-expired/revoked one
+        is a no-op, not an error, since the end state is identical either
+        way.
+        """
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE approval_grants SET revoked = 1 WHERE id = ? AND revoked = 0",
+                (grant_id,),
+            )
+        return cursor.rowcount > 0
+
+    def get(self, grant_id: str) -> ApprovalGrant | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM approval_grants WHERE id = ?", (grant_id,)).fetchone()
         return self._row_to_grant(row) if row is not None else None
 
     def list_for_task(self, task_id: str) -> list[ApprovalGrant]:
@@ -737,11 +790,28 @@ class ApprovalGrantRepository:
             ).fetchall()
         return [self._row_to_grant(row) for row in rows]
 
+    def list_active(self, limit: int = 200) -> list[ApprovalGrant]:
+        """Every currently-usable grant across every task (docs/ROADMAP.md
+        "Active grants" page) - the cross-task view list_for_task cannot
+        give, since that one is scoped to a single task's own trace.
+        """
+        now = _dt(utc_now())
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM approval_grants
+                WHERE expires_at > ? AND revoked = 0 AND (max_operations IS NULL OR operations_used < max_operations)
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+        return [self._row_to_grant(row) for row in rows]
+
     def expire_for_task(self, task_id: str) -> int:
         """Revokes every still-active grant for a cancelled task by expiring
         it immediately - reuses find_matching's existing expires_at > now
-        check rather than adding a separate revoked column for what is,
-        functionally, the same "not valid anymore" state.
+        check rather than the revoked column, which is for an explicit
+        human action on one grant, not this bulk end-of-task sweep.
         """
         now = _dt(utc_now())
         with self.database.connect() as connection:
@@ -761,6 +831,10 @@ class ApprovalGrantRepository:
             granted_from_approval_id=row["granted_from_approval_id"],
             created_at=row["created_at"],
             expires_at=row["expires_at"],
+            scope=row["scope"],
+            max_operations=row["max_operations"],
+            operations_used=row["operations_used"],
+            revoked=bool(row["revoked"]),
         )
 
 
