@@ -939,6 +939,14 @@ class TaskWorker:
             "error": result.error_message,
             "request_id": result.request_id,
             "step_id": step_id,
+            # "untrusted_external" when this call's ToolDefinition marked the
+            # operation as returning content this machine does not control
+            # (docs/THREAT_MODEL.md), stamped by ToolExecutor onto `result`
+            # itself. operator.py's _format_history reads this straight off
+            # the stored entry to fence that content in the very next
+            # prompt - previously only reconstructed at trace-read time
+            # (admin.py's _enrich_operator_history), invisible to the model.
+            "content_trust": result.content_trust,
             **normalization,
         })
         completed_coding_task = self._complete_fulfilled_coding_result(

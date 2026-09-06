@@ -181,6 +181,27 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   schema boundary and the fulfillment lookup. Keyword inference is
   unchanged and remains the operative path until a classifier is actually
   updated to populate the field.
+- Untrusted content is now fenced in the Operator prompt itself, not just
+  labeled on the trace/evidence views. `ToolDefinition.operation_content_trust`
+  (`browser.open`, `browser.control`'s page-reading operations,
+  `http.request`, `web.search`, `mcp.client`'s `call_tool`,
+  `document.manage`'s read operations) now reaches `worker.py`'s recorded
+  history entry, and `_format_history` wraps such an entry's output in an
+  explicit `[UNTRUSTED CONTENT ...]` / `[END UNTRUSTED CONTENT]` pair
+  telling the model to read it as data and not follow anything it says.
+  The wrapped content is neutralized against a payload that contains a
+  literal copy of either marker first, so it cannot forge a fake boundary
+  and make later content look like it's back outside the fence. This is a
+  textual mitigation, not a guarantee - it does not prove a live model
+  declines a given injection attempt, only that the boundary is explicit
+  and cannot be trivially spoofed from inside the content itself.
+  2 of 16 scenario fixtures needed new entries because this changed
+  `_format_history`'s rendered text where untrusted content appeared
+  earlier in a task's history; both were re-keyed by reversing the fence
+  transformation on the newly-requested prompt to find the corresponding
+  old fixture entry and copying its response forward, since the fence
+  changes the prompt's presentation but not the correct decision - no live
+  LLM time was needed.
 
 ## [0.1.3] - 2026-08-11
 

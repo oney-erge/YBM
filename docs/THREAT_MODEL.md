@@ -65,7 +65,7 @@ push disabled. Network requests require explicit host allowlisting.
 
 | Threat | What limits it | What it does *not* do |
 |---|---|---|
-| **Indirect prompt injection** - untrusted content redirects the model | Runtime-owned capabilities, risk levels, scopes, approvals bound the blast radius | Does not make injected content safe, or guarantee the model ignores it |
+| **Indirect prompt injection** - untrusted content redirects the model | Runtime-owned capabilities, risk levels, scopes, approvals bound the blast radius; content labeled `operation_content_trust` is fenced and labeled data-not-instruction in the Operator prompt itself | Does not make injected content safe, or guarantee the model ignores it |
 | **Memory poisoning** - tool output persists into later context | Treat recalled content as untrusted; clear conversation state after processing known-bad content | Provenance tracking and automated poisoning detection remain open work |
 | **Excessive agency** | Capability policy, operation risk, bounded retries/steps, exact approvals, kill switch | You remain responsible for approving the exact operation shown |
 | **Generated / unsandboxed code** | Docker is the preferred boundary when enabled; local-subprocess fallback runs with the YBM account's authority and therefore requires approval | Docker is defense in depth, **not** equivalent to a separate host or VM |
