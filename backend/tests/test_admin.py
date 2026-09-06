@@ -12,7 +12,7 @@ import yaml
 
 import agent_control.admin as admin_module
 from agent_control.admin import create_admin_router
-from agent_control.config import AppSettings, default_capability_policies
+from agent_control.config import AppSettings, CapabilityPolicy, default_capability_policies
 from agent_control.main import app
 from datetime import timedelta
 
@@ -2016,6 +2016,56 @@ def test_admin_dashboard_rejects_an_out_of_range_window(monkeypatch, tmp_path) -
     client = _admin_client(repositories)
 
     response = client.get("/admin/api/dashboard", params={"window_days": 9000})
+
+    assert response.status_code == 422
+
+
+# ---- docs/ROADMAP.md "Finish the Proof": security review ------------------
+
+def test_admin_security_review_reports_network_and_grant_exposure(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("AGENT_ADMIN_TOKEN", raising=False)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("move files")
+    repositories.approval_grants.create(
+        ApprovalGrant(
+            task_id=task.id,
+            tool_name="filesystem.manage",
+            capability=Capability.FILESYSTEM_WRITE,
+            granted_from_approval_id="appr_1",
+            expires_at=utc_now() + timedelta(minutes=10),
+        )
+    )
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={
+            Capability.FILESYSTEM_WRITE: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH),
+        },
+    )
+    client = _admin_client(repositories, settings)
+
+    response = client.get("/admin/api/security-review")
+    body = response.json()
+
+    assert response.status_code == 200
+    assert body["network"] == {
+        "host": "127.0.0.1",
+        "port": 8765,
+        "reachable_beyond_this_machine": False,
+        "admin_enabled": True,
+        "admin_token_set": False,
+    }
+    assert len(body["active_grants"]) == 1
+    assert body["active_grants"][0]["tool_name"] == "filesystem.manage"
+    assert body["capability_access"]["no_approval_required"] == ["filesystem.write"]
+
+
+def test_admin_security_review_rejects_an_out_of_range_window(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+
+    response = client.get("/admin/api/security-review", params={"window_days": 9000})
 
     assert response.status_code == 422
 

@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import Field, SecretStr
 
 from agent_control.analytics import build_reliability_dashboard
+from agent_control.security_review import build_security_review
 from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
@@ -735,6 +736,23 @@ def create_admin_router(
         """
         require_admin(request)
         return build_reliability_dashboard(repositories_loader(), window_days)
+
+    @router.get("/api/security-review")
+    def admin_security_review(
+        request: Request,
+        window_days: int = Query(default=7, ge=1, le=90),
+    ) -> dict[str, Any]:
+        """This machine's actual exposure (docs/ROADMAP.md "Finish the
+        Proof"): network reachability, admin token presence, live approval
+        grants, capabilities that can act without asking first, configured
+        MCP servers, external hosts actually contacted, and how often code
+        execution actually ran unsandboxed - all read from configuration or
+        recorded rows, nothing probed live.
+        """
+        loaded = require_admin(request)
+        return _redact_admin_output(
+            build_security_review(repositories_loader(), loaded, window_days), loaded
+        )
 
     @router.get("/api/doctor")
     def admin_doctor(request: Request) -> dict[str, Any]:

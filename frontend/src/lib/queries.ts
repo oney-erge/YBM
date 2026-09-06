@@ -10,6 +10,7 @@ import {
   getBootstrap,
   getEffectiveConfig,
   getReliabilityDashboard,
+  getSecurityReview,
   getServiceLog,
   getSettingsSummary,
   getSetupDetect,
@@ -457,6 +458,13 @@ export function useReliabilityDashboard(windowDays: number) {
   return useQuery({
     queryKey: ["dashboard", "reliability", windowDays],
     queryFn: () => getReliabilityDashboard(windowDays),
+  })
+}
+
+export function useSecurityReview(windowDays: number) {
+  return useQuery({
+    queryKey: ["security-review", windowDays],
+    queryFn: () => getSecurityReview(windowDays),
   })
 }
 

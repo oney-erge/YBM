@@ -1112,6 +1112,46 @@ export function getReliabilityDashboard(windowDays: number) {
   return apiFetch(`/api/dashboard?window_days=${windowDays}`, ReliabilityDashboardSchema)
 }
 
+// This machine's actual exposure (docs/ROADMAP.md "Finish the Proof") -
+// every field here is read from configuration or a recorded audit/
+// invocation row, never a live network or Docker probe.
+const SecurityReviewSchema = z.object({
+  window_days: z.number().int(),
+  network: z.object({
+    host: z.string(),
+    port: z.number().int(),
+    reachable_beyond_this_machine: z.boolean(),
+    admin_enabled: z.boolean(),
+    admin_token_set: z.boolean(),
+  }),
+  active_grants: z.array(
+    z.object({
+      id: z.string(),
+      task_id: z.string(),
+      tool_name: z.string(),
+      capability: z.string(),
+      scope: z.string().nullable(),
+      expires_at: z.string(),
+      operations_used: z.number().int(),
+      max_operations: z.number().int().nullable(),
+    }),
+  ),
+  capability_access: z.object({
+    enabled: z.number().int(),
+    no_approval_required: z.array(z.string()),
+  }),
+  mcp_servers: z.array(
+    z.object({ name: z.string(), enabled: z.boolean(), command: z.string(), risk_level: z.string() }),
+  ),
+  external_hosts_contacted: z.array(z.string()),
+  code_execution: z.object({ sandboxed_runs: z.number().int(), unsandboxed_runs: z.number().int() }),
+})
+export type SecurityReview = z.infer<typeof SecurityReviewSchema>
+
+export function getSecurityReview(windowDays: number) {
+  return apiFetch(`/api/security-review?window_days=${windowDays}`, SecurityReviewSchema)
+}
+
 const ServiceItemSchema = z.object({
   name: z.string(),
   expected: z.boolean(),

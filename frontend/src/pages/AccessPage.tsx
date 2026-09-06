@@ -1,4 +1,5 @@
 import { useState } from "react"
+import { Link } from "react-router"
 import { toast } from "sonner"
 import { Eye, Power, ShieldCheck, UserCheck, Zap } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -104,10 +105,16 @@ export function AccessPage() {
         title="Access"
         description="Choose what YBM can observe, what requires your review, and what may run autonomously. Runtime approval gates still apply to critical operations."
         actions={
-          <Button variant="destructive" disabled={allOff || update.isPending} onClick={handleKillSwitch}>
-            <Power className="size-4" />
-            Disable all
-          </Button>
+          <div className="flex gap-2">
+            <Button variant="outline" render={<Link to="/security-review" />}>
+              <ShieldCheck className="size-4" />
+              Security review
+            </Button>
+            <Button variant="destructive" disabled={allOff || update.isPending} onClick={handleKillSwitch}>
+              <Power className="size-4" />
+              Disable all
+            </Button>
+          </div>
         }
       />
 

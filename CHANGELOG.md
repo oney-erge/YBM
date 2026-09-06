@@ -220,6 +220,22 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   from the Agent hub) lists, runs, and deletes saved workflows - no visual
   workflow editor, matching this project's stated non-goal of a builder
   over a pipeline that isn't graph-shaped.
+- A new Security review page (`GET /api/security-review`, linked from
+  Access) reports this machine's actual exposure: whether the server is
+  bound beyond loopback (`is_loopback_host`, the same test config.py's own
+  auth gate uses) and whether an admin token is actually set; every
+  currently-active "Allow for this task" grant across every task; which
+  enabled capabilities require no approval at all; configured MCP servers;
+  distinct external hosts contacted in the window (the same
+  `EGRESS_CONTACTED` audit events receipts already read, aggregated
+  across every task instead of one); and how many `code.interpreter` runs
+  actually executed unsandboxed versus sandboxed. Every fact is read from
+  configuration or a recorded row - nothing here probes the network or
+  spawns Docker to check live, so the page loads as fast as any other and
+  cannot hang waiting on either. A page, not a CLI flag, on the reasoning
+  that a first-time user already has this console open and a terminal
+  command they'd have to know exists reaches nobody who doesn't already
+  know to look.
 
 ## [0.1.3] - 2026-08-11
 
