@@ -12,7 +12,7 @@ import webbrowser
 from typing import Any
 
 from agent_control.config import WorkspaceAdapterConfig
-from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus, ToolVerification
 from agent_control.tools.contracts import (
     WorkspaceLaunchStaticInput,
     WorkspaceLaunchStaticOutput,
@@ -594,6 +594,38 @@ def _terminal_output(operation: str, output: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def _verify_local_workspace(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+    """Re-reads the workspace after a SUCCEEDED call to confirm every path
+    it claimed to have written actually exists (docs/ROADMAP.md "Finish
+    the Proof") - `files`/`changed_paths` are already absolute paths this
+    adapter itself resolved, not user input.
+
+    Prefers `changed_paths` (what this specific call wrote) when present;
+    falls back to `files` (the workspace's full accumulated listing) for
+    `prepare`, which has no `changed_paths` key, and for a call whose
+    `changed_paths` came back empty (e.g. materialize_static_app finding an
+    existing index.html and writing nothing new) - re-checking the full
+    claimed listing is a strictly stronger check in that case, not a
+    weaker one.
+    """
+    paths = result.output.get("changed_paths")
+    if not isinstance(paths, list) or not paths:
+        paths = result.output.get("files")
+    if not isinstance(paths, list) or not paths:
+        return None
+    checked = 0
+    missing: list[str] = []
+    for item in paths:
+        if not isinstance(item, str) or not item:
+            continue
+        checked += 1
+        if not Path(item).exists():
+            missing.append(f"file not found: {item}")
+    if checked == 0:
+        return None
+    return ToolVerification(checked=checked, verified=checked - len(missing), missing=missing)
+
+
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
     enabled = capability_enabled(settings, Capability.FILESYSTEM_WRITE) and settings.adapters.workspace.enabled
@@ -619,6 +651,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "web_app_preview": WorkspaceWebAppPreviewOutput,
             },
             default_operation="prepare",
+            verify=_verify_local_workspace,
         )
     )
     if settings.adapters.workspace.enabled:

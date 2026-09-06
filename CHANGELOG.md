@@ -149,6 +149,23 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   few times first. A tool no longer in the registry is treated the same
   fail-safe way. Reads and other low-risk calls are unaffected - a timeout
   there still reissues, bounded the same as before.
+- Three more tools mechanically re-check their own effect on success
+  instead of leaving `ToolCallResult.verification` as None
+  (`filesystem.manage`'s `apply_manifest` was previously the only one):
+  `code.interpreter` re-reads the workspace after `run_python`/
+  `generate_and_run`/`solve_once`/`build_temp_helper`/`repair_script` to
+  confirm every file the adapter's own before/after snapshot diff claimed
+  as created or modified actually exists, and every file it claimed
+  deleted does not; `document.manage` re-opens a `create_presentation`/
+  `update_presentation`'s output `.pptx` (a zip) and counts its real
+  `ppt/slides/slideN.xml` entries to confirm the claimed `slide_count`
+  matches what is actually in the file, not just that a file with that
+  name exists; `workspace.manage` re-reads the workspace after
+  `prepare`/`write_files`/`materialize_static_app`/`launch_static`/
+  `web_app_preview` the same way `code.interpreter` does. Chosen as the
+  next-highest-frequency previously-unverified tools after the receipt's
+  new `not_checked`/`unverified_tools` fields made that gap visible per
+  call instead of only in the aggregate.
 
 ## [0.1.3] - 2026-08-11
 

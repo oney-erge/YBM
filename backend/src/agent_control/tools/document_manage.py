@@ -16,6 +16,7 @@ from agent_control.schemas import (
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
+    ToolVerification,
 )
 from agent_control.storage.repositories import ArtifactRepository
 from agent_control.tools.contracts import DocumentManageInput, DocumentManageOutput
@@ -326,6 +327,43 @@ def _terminal_output(operation: str, output: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def _verify_document_manage(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+    """Re-reads a SUCCEEDED create_presentation/update_presentation's own
+    output .pptx to confirm it exists and its slide count actually matches
+    the adapter's claim (docs/ROADMAP.md "Finish the Proof") - a .pptx is a
+    zip, and _write_minimal_pptx writes exactly one ppt/slides/slideN.xml
+    per slide, so counting those entries re-derives the claim from the
+    file's own bytes rather than trusting `slide_count` back.
+
+    None for the read-only operations (inspect_document/extract_text/
+    summarize_pdf): `path` there names the *source* the call read, not
+    something it created - nothing to re-check.
+    """
+    operation = str(result.output.get("operation") or "")
+    if operation not in {"create_presentation", "update_presentation"}:
+        return None
+    path = result.output.get("path")
+    if not isinstance(path, str) or not path:
+        return None
+    file_path = Path(path)
+    if not file_path.exists():
+        return ToolVerification(checked=1, verified=0, missing=[f"presentation not found: {path}"])
+    try:
+        with ZipFile(file_path) as pptx:
+            actual_slides = sum(
+                1 for name in pptx.namelist() if name.startswith("ppt/slides/slide") and name.endswith(".xml")
+            )
+    except Exception:
+        return ToolVerification(checked=1, verified=0, missing=[f"could not read as a valid .pptx: {path}"])
+    claimed_slides = result.output.get("slide_count")
+    if isinstance(claimed_slides, int) and actual_slides != claimed_slides:
+        return ToolVerification(
+            checked=1, verified=0,
+            missing=[f"slide count mismatch in {path}: claimed {claimed_slides}, found {actual_slides}"],
+        )
+    return ToolVerification(checked=1, verified=1, missing=[])
+
+
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
     enabled = capability_enabled(settings, Capability.FILESYSTEM_WRITE)
@@ -359,6 +397,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "create_presentation": RiskLevel.HIGH,
                 "update_presentation": RiskLevel.HIGH,
             },
+            verify=_verify_document_manage,
             examples=(
                 {"operation": "summarize_pdf", "path": "{{last_entry_path}}"},
                 {"operation": "create_presentation",
