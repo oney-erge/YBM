@@ -8,9 +8,9 @@ import subprocess
 import pytest
 
 from agent_control.config import AdapterFactoryConfig, WorkspaceAdapterConfig
-from agent_control.schemas import Capability, ToolCallRequest, ToolResultStatus
+from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools.adapter_factory import AdapterFactoryAdapter
-from agent_control.tools.local_workspace import LocalWorkspaceAdapter, LocalWorkspaceWebAppAdapter
+from agent_control.tools.local_workspace import LocalWorkspaceAdapter, LocalWorkspaceWebAppAdapter, _verify_local_workspace
 
 @pytest.mark.asyncio
 async def test_local_workspace_web_app_creates_files_and_url(tmp_path) -> None:
@@ -284,3 +284,91 @@ def _stop_process(pid: int) -> None:
         subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], check=False, capture_output=True)
     else:
         os.kill(pid, signal.SIGTERM)
+
+
+# ---- _verify_local_workspace (docs/ROADMAP.md "Finish the Proof": re-read
+# the workspace, don't trust the adapter's own claim) ----------------------
+
+@pytest.mark.asyncio
+async def test_verify_local_workspace_confirms_written_files(tmp_path) -> None:
+    adapter = LocalWorkspaceAdapter(
+        WorkspaceAdapterConfig(root_dir=str(tmp_path / "workspaces"), web_port_start=8890, open_browser=False)
+    )
+    request = ToolCallRequest(
+        task_id="task_files",
+        tool_name="workspace.manage",
+        capability=Capability.FILESYSTEM_WRITE,
+        input={
+            "operation": "write_files",
+            "objective": "Create project files",
+            "files": [{"path": "src/app.py", "content": "print('hello')\n"}],
+        },
+        timeout_seconds=30,
+    )
+
+    result = await adapter.execute(request)
+    verification = _verify_local_workspace(request, result)
+
+    assert verification is not None
+    assert verification.checked == 1  # changed_paths - just src/app.py, not TASK.md too
+    assert verification.verified == 1
+    assert verification.missing == []
+    assert verification.ok is True
+
+
+@pytest.mark.asyncio
+async def test_verify_local_workspace_flags_a_written_file_missing_after_the_fact(tmp_path) -> None:
+    adapter = LocalWorkspaceAdapter(
+        WorkspaceAdapterConfig(root_dir=str(tmp_path / "workspaces"), web_port_start=8890, open_browser=False)
+    )
+    request = ToolCallRequest(
+        task_id="task_files",
+        tool_name="workspace.manage",
+        capability=Capability.FILESYSTEM_WRITE,
+        input={
+            "operation": "write_files",
+            "objective": "Create project files",
+            "files": [{"path": "src/app.py", "content": "print('hello')\n"}],
+        },
+        timeout_seconds=30,
+    )
+
+    result = await adapter.execute(request)
+    (tmp_path / "workspaces" / "task_files" / "src" / "app.py").unlink()
+    verification = _verify_local_workspace(request, result)
+
+    assert verification is not None
+    assert verification.verified == 0
+    assert "file not found" in verification.missing[0]
+    assert "app.py" in verification.missing[0]
+
+
+@pytest.mark.asyncio
+async def test_verify_local_workspace_falls_back_to_files_when_changed_paths_is_absent(tmp_path) -> None:
+    """`prepare` has no `changed_paths` key at all - falls back to the
+    full `files` listing (just TASK.md here) instead of returning None."""
+    adapter = LocalWorkspaceAdapter(WorkspaceAdapterConfig(root_dir=str(tmp_path / "workspaces"), open_browser=False))
+    request = ToolCallRequest(
+        task_id="task_prepare",
+        tool_name="workspace.manage",
+        capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "prepare", "objective": "Set up the workspace"},
+        timeout_seconds=30,
+    )
+
+    result = await adapter.execute(request)
+    assert "changed_paths" not in result.output
+    verification = _verify_local_workspace(request, result)
+
+    assert verification is not None
+    assert verification.checked == 1
+    assert verification.verified == 1
+
+
+def test_verify_local_workspace_returns_none_without_any_file_list() -> None:
+    request = ToolCallRequest(
+        task_id="task_x", tool_name="workspace.manage", capability=Capability.FILESYSTEM_WRITE, input={"operation": "prepare"}
+    )
+    result = ToolCallResult(request_id="toolres_ws", status=ToolResultStatus.SUCCEEDED, output={})
+
+    assert _verify_local_workspace(request, result) is None

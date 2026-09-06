@@ -30,6 +30,7 @@ def build_reliability_dashboard(repositories: Repositories, window_days: int = 7
     total = len(tasks)
     completed = 0
     verified_completed = 0
+    checked_completed = 0
     failed = 0
     blocked = 0
     cancelled = 0
@@ -89,7 +90,9 @@ def build_reliability_dashboard(repositories: Repositories, window_days: int = 7
         missing = 0
         for invocation in repositories.tool_invocations.list_for_task(task.id):
             tool_name = str(invocation.get("tool_name") or "unknown")
-            tool_entry = tool_stats.setdefault(tool_name, {"calls": 0, "succeeded": 0, "failed": 0})
+            tool_entry = tool_stats.setdefault(
+                tool_name, {"calls": 0, "succeeded": 0, "failed": 0, "not_checked": 0}
+            )
             tool_entry["calls"] += 1
             inv_status = str(invocation.get("status") or "")
             if inv_status == "succeeded":
@@ -101,10 +104,21 @@ def build_reliability_dashboard(repositories: Repositories, window_days: int = 7
             if isinstance(verification, dict):
                 checked += int(verification.get("checked") or 0)
                 missing += len(verification.get("missing") or [])
+            elif inv_status == "succeeded":
+                # Succeeded, but this tool (or this operation on it) has no
+                # verify() hook - admin.py's build_task_receipt calls the
+                # same gap "not_checked": absence of proof, not proof it
+                # went fine. Only counted for calls that actually ran; a
+                # failed/denied call was never eligible for verification in
+                # the first place.
+                tool_entry["not_checked"] += 1
         # "Verified" mirrors build_task_receipt's own definition exactly: at
         # least one mechanical check ran, and none of them came up missing.
-        if status == TaskStatus.COMPLETED and checked > 0 and missing == 0:
-            verified_completed += 1
+        if status == TaskStatus.COMPLETED:
+            if checked > 0:
+                checked_completed += 1
+                if missing == 0:
+                    verified_completed += 1
 
     total_tool_calls = sum(entry["calls"] for entry in tool_stats.values())
     total_tool_failures = sum(entry["failed"] for entry in tool_stats.values())
@@ -129,6 +143,17 @@ def build_reliability_dashboard(repositories: Repositories, window_days: int = 7
         "completed_pct": pct(completed),
         "verified_completed": verified_completed,
         "verified_completed_pct": pct(verified_completed),
+        # Of completed tasks, how many had *any* mechanical check run at
+        # all - the denominator "verified_completed_pct" is silently
+        # missing. A low verified_completed_pct reads very differently
+        # depending on whether coverage is high (things were checked and
+        # came up wrong) or low (most completions were simply never
+        # checkable yet, per docs/GAPS.md's one-tool verify() coverage).
+        "checked_completed": checked_completed,
+        "checked_completed_pct": pct(checked_completed),
+        "verification_coverage_pct": (
+            round(100 * checked_completed / completed, 1) if completed else 0.0
+        ),
         "failed": failed,
         "failed_pct": pct(failed),
         "blocked": blocked,

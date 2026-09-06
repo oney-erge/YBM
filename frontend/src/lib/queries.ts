@@ -10,6 +10,7 @@ import {
   getBootstrap,
   getEffectiveConfig,
   getReliabilityDashboard,
+  getSecurityReview,
   getServiceLog,
   getSettingsSummary,
   getSetupDetect,
@@ -17,6 +18,8 @@ import {
   getTaskReceipt,
   getTaskTrace,
   deleteMCPServer,
+  deleteWorkflow,
+  getWorkflow,
   initSecretVault,
   installSkill,
   listActiveGrants,
@@ -29,10 +32,13 @@ import {
   listSkills,
   listSkillsCatalog,
   listTasks,
+  listWorkflows,
   replayTask,
   reviewAdapter,
   revokeGrant,
   runDoctor,
+  runWorkflow,
+  saveWorkflow,
   selectLLMPreset,
   sendChatMessage,
   sendTaskSignal,
@@ -246,6 +252,50 @@ export function useReplayTask() {
   })
 }
 
+export function useSaveWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ taskId, name, parameters }: { taskId: string; name: string; parameters: Record<string, string> }) =>
+      saveWorkflow(taskId, name, parameters),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["workflows"] })
+    },
+  })
+}
+
+export function useWorkflows() {
+  return useQuery({ queryKey: ["workflows"], queryFn: listWorkflows })
+}
+
+export function useWorkflow(workflowId: string | undefined) {
+  return useQuery({
+    queryKey: ["workflows", workflowId],
+    queryFn: () => getWorkflow(workflowId as string),
+    enabled: Boolean(workflowId),
+  })
+}
+
+export function useDeleteWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (workflowId: string) => deleteWorkflow(workflowId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["workflows"] })
+    },
+  })
+}
+
+export function useRunWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ workflowId, values }: { workflowId: string; values: Record<string, string> }) =>
+      runWorkflow(workflowId, values),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] })
+    },
+  })
+}
+
 // ---- Access (docs/UI_REWRITE_PLAN.md §13) ----------------------------
 
 export function useEffectiveConfig() {
@@ -408,6 +458,13 @@ export function useReliabilityDashboard(windowDays: number) {
   return useQuery({
     queryKey: ["dashboard", "reliability", windowDays],
     queryFn: () => getReliabilityDashboard(windowDays),
+  })
+}
+
+export function useSecurityReview(windowDays: number) {
+  return useQuery({
+    queryKey: ["security-review", windowDays],
+    queryFn: () => getSecurityReview(windowDays),
   })
 }
 

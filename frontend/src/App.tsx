@@ -17,11 +17,15 @@ const TaskTracePage = lazy(() =>
   import("@/pages/TaskTracePage").then((m) => ({ default: m.TaskTracePage })),
 )
 const AccessPage = lazy(() => import("@/pages/AccessPage").then((m) => ({ default: m.AccessPage })))
+const SecurityReviewPage = lazy(() =>
+  import("@/pages/SecurityReviewPage").then((m) => ({ default: m.SecurityReviewPage })),
+)
 const InsightsPage = lazy(() => import("@/pages/InsightsPage").then((m) => ({ default: m.InsightsPage })))
 const MemoryPage = lazy(() => import("@/pages/MemoryPage").then((m) => ({ default: m.MemoryPage })))
 const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((m) => ({ default: m.SkillsPage })))
 const ToolsPage = lazy(() => import("@/pages/ToolsPage").then((m) => ({ default: m.ToolsPage })))
 const AgentHubPage = lazy(() => import("@/pages/AgentHubPage").then((m) => ({ default: m.AgentHubPage })))
+const WorkflowsPage = lazy(() => import("@/pages/WorkflowsPage").then((m) => ({ default: m.WorkflowsPage })))
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 )
@@ -110,6 +114,14 @@ function App() {
           }
         />
         <Route
+          path="security-review"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <SecurityReviewPage />
+            </Suspense>
+          }
+        />
+        <Route
           path="insights"
           element={
             <Suspense fallback={<PageFallback />}>
@@ -122,6 +134,14 @@ function App() {
           element={
             <Suspense fallback={<PageFallback />}>
               <AgentHubPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="workflows"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <WorkflowsPage />
             </Suspense>
           }
         />

@@ -23,24 +23,89 @@ class FulfillmentValidation:
         return _gap_reason(self.missing[0])
 
 
-def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
-    """Infer expected postconditions from what the user asked *and* the objective.
+# Mirrors every description string _postconditions_from_objective already
+# uses per type, so a MessageClassification.expected_postconditions
+# declaration (schemas.py) reads identically to the keyword-inferred
+# fallback it can override - the two are meant to look the same to
+# whatever consumes a PlanPostcondition, only their origin differs.
+_POSTCONDITION_DESCRIPTIONS: dict[PostconditionType, str] = {
+    PostconditionType.WORKSPACE_DIR: "A task workspace directory is reported.",
+    PostconditionType.WORKSPACE_FILES: "One or more requested project files were actually produced.",
+    PostconditionType.SOURCE_CONTENT: "Requested source-file contents were actually inspected.",
+    PostconditionType.PREVIEW_URL: "A local preview URL is reported.",
+    PostconditionType.ADAPTER_PROPOSAL: "A generated adapter proposal directory is reported.",
+    PostconditionType.ARTIFACT_DELIVERED: "The requested file or artifact was delivered to the user.",
+    PostconditionType.SCREENSHOT_DELIVERED: "The requested screenshot was delivered to the source channel.",
+    PostconditionType.DOCUMENT_SUMMARY: "A document summary is reported.",
+    PostconditionType.PRESENTATION_FILE: "A presentation file (.pptx) is reported.",
+    PostconditionType.CODING_AGENT_STEP: (
+        "The requested external coding provider reached a reported terminal or resumable state."
+    ),
+    PostconditionType.SCHEDULE_CREATED: "A schedule ID and next run timestamp are reported.",
+    PostconditionType.BROWSER_STATE: "Browser state or page observation is reported.",
+    PostconditionType.DESKTOP_OBSERVATION: "A desktop observation or screenshot is reported.",
+    PostconditionType.FILE_ORGANIZATION: "Changed, moved, or organized file paths are reported.",
+    PostconditionType.TASK_STATUS: "A task status summary is reported.",
+    PostconditionType.GITHUB_PR: "A GitHub pull request URL or number is reported.",
+    PostconditionType.EXTERNAL_COMMAND: "External command completion is reported.",
+}
 
-    There used to be a plan-derived path here that took priority (the LLM's own
-    declared `plan.postconditions`, then tool-name-derived rules). Both are gone
-    with the plan-once execution path (docs/HISTORY.md P3) - nothing creates a
-    PlanModel anymore, so `plan` was always None and those branches were
-    unreachable. See docs/HISTORY.md §1.1.
 
-    `task.objective` is the classifier's *paraphrase* of the request, so relying
-    on it alone made this safety net depend on the wording a model happened to
-    choose: "Create the real files" yields a WORKSPACE_DIR obligation, the
-    paraphrase "creating package.json" yielded none, and a run that wrote
-    nothing while claiming otherwise completed unchallenged (docs/E2E_FINDINGS.md
-    P0-2). The user's own message is the stable source of intent, so both are
-    read and the results unioned - a paraphrase can add an obligation it makes
-    explicit, but can no longer drop one the request already established.
+def _declared_postconditions(task: TaskRecord) -> list[PlanPostcondition]:
+    """MessageClassification.expected_postconditions (schemas.py), persisted
+    onto task.metadata at creation (channels/base.py) - a declaration made
+    by the classifier before any tool ran, from the request alone, the same
+    "independent of what actually happened" property _postconditions_from_
+    objective's keyword guess has. Not a model self-report about its own
+    work: this is set once, at intake, before the Operator loop starts.
     """
+    declared = task.metadata.get("expected_postconditions") if isinstance(task.metadata, dict) else None
+    if not isinstance(declared, list) or not declared:
+        return []
+    result: list[PlanPostcondition] = []
+    for value in declared:
+        try:
+            postcondition_type = PostconditionType(value)
+        except ValueError:
+            continue
+        result.append(
+            PlanPostcondition(type=postcondition_type, description=_POSTCONDITION_DESCRIPTIONS[postcondition_type])
+        )
+    return result
+
+
+def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
+    """What this task needs to show to count as done, preferring a
+    declaration the classifier made at intake (docs/ROADMAP.md "Finish the
+    Proof") over inferring it from keywords - explicit beats guessed, when
+    something explicit exists.
+
+    Falls back to keyword inference (unchanged) when nothing was declared,
+    which today is every task: no live classifier prompt has been changed
+    to encourage populating the field yet (see schemas.py's own comment on
+    why adding it didn't require one), and no scenario fixture predates it
+    either. This is the whole point of an additive, defaulted field - the
+    fallback path is not a stub, it is what every existing task still runs.
+
+    There used to be a plan-derived path here that took priority (the LLM's
+    own declared `plan.postconditions`, then tool-name-derived rules). Both
+    are gone with the plan-once execution path (docs/HISTORY.md P3) -
+    nothing creates a PlanModel anymore, so `plan` was always None and those
+    branches were unreachable. See docs/HISTORY.md §1.1.
+
+    `task.objective` is the classifier's *paraphrase* of the request, so
+    relying on it alone made the keyword fallback depend on the wording a
+    model happened to choose: "Create the real files" yields a
+    WORKSPACE_DIR obligation, the paraphrase "creating package.json"
+    yielded none, and a run that wrote nothing while claiming otherwise
+    completed unchallenged (docs/E2E_FINDINGS.md P0-2). The user's own
+    message is the stable source of intent, so both are read and the
+    results unioned - a paraphrase can add an obligation it makes explicit,
+    but can no longer drop one the request already established.
+    """
+    declared = _declared_postconditions(task)
+    if declared:
+        return tuple(_dedupe(declared))
     expected: list[PlanPostcondition] = list(_postconditions_from_objective(task.objective))
     original_message = task.metadata.get("original_message_text") if isinstance(task.metadata, dict) else None
     if isinstance(original_message, str) and original_message.strip():

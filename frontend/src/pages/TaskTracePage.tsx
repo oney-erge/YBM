@@ -1,7 +1,7 @@
 import { useState } from "react"
 import { useNavigate, useParams } from "react-router"
 import { toast } from "sonner"
-import { Repeat } from "lucide-react"
+import { Repeat, Save } from "lucide-react"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -10,6 +10,7 @@ import { StatusBadge } from "@/components/tasks/StatusBadge"
 import { CostPanel } from "@/components/tasks/CostPanel"
 import { DurationChart } from "@/components/tasks/DurationChart"
 import { OperatorHistoryList } from "@/components/tasks/OperatorHistoryList"
+import { SaveWorkflowDialog } from "@/components/tasks/SaveWorkflowDialog"
 import { TraceGraph } from "@/components/tasks/TraceGraph"
 import { TraceTimeline } from "@/components/tasks/TraceTimeline"
 import { useReplayTask, useTaskSignal, useTaskTrace } from "@/lib/queries"
@@ -30,6 +31,7 @@ export function TaskTracePage() {
   const replay = useReplayTask()
   const navigate = useNavigate()
   const [view, setView] = useState<TraceView>("steps")
+  const [savingWorkflow, setSavingWorkflow] = useState(false)
 
   if (isPending) {
     return (
@@ -117,7 +119,17 @@ export function TaskTracePage() {
             Replay
           </Button>
         )}
+        {task.status === "completed" && (
+          <Button variant="outline" size="sm" onClick={() => setSavingWorkflow(true)}>
+            <Save className="size-3.5" />
+            Save as workflow
+          </Button>
+        )}
       </div>
+
+      {taskId && (
+        <SaveWorkflowDialog taskId={taskId} open={savingWorkflow} onOpenChange={setSavingWorkflow} />
+      )}
 
       {typeof task.metadata.synthesized_answer === "string" && (
         <div className="whitespace-pre-wrap rounded-xl border border-primary/15 bg-primary/5 p-4 text-sm leading-6 [overflow-wrap:anywhere]">

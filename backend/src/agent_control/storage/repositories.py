@@ -24,6 +24,7 @@ from agent_control.schemas import (
     TaskRecord,
     TaskSignal,
     TaskStatus,
+    TaskWorkflow,
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
@@ -850,6 +851,61 @@ class ApprovalGrantRepository:
         )
 
 
+class WorkflowRepository:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, workflow: TaskWorkflow) -> TaskWorkflow:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO workflows (
+                    id, name, source_task_id, objective_template, plan_json, parameters_json, created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    workflow.id,
+                    workflow.name,
+                    workflow.source_task_id,
+                    workflow.objective_template,
+                    _dump(workflow.plan),
+                    _dump(workflow.parameters),
+                    _dt(workflow.created_at),
+                ),
+            )
+        return workflow
+
+    def get(self, workflow_id: str) -> TaskWorkflow | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM workflows WHERE id = ?", (workflow_id,)).fetchone()
+        return self._row_to_workflow(row) if row is not None else None
+
+    def list_all(self, limit: int = 200) -> list[TaskWorkflow]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM workflows ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
+        return [self._row_to_workflow(row) for row in rows]
+
+    def delete(self, workflow_id: str) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute("DELETE FROM workflows WHERE id = ?", (workflow_id,))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _row_to_workflow(row: sqlite3.Row) -> TaskWorkflow:
+        return TaskWorkflow(
+            id=row["id"],
+            name=row["name"],
+            source_task_id=row["source_task_id"],
+            objective_template=row["objective_template"],
+            plan=_load(row["plan_json"], []),
+            parameters=_load(row["parameters_json"], []),
+            created_at=row["created_at"],
+        )
+
+
 class ToolInvocationRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -1401,6 +1457,7 @@ class Repositories:
     schedules: ScheduleRepository
     audit: AuditRepository
     llm_calls: LLMCallRepository
+    workflows: WorkflowRepository
 
     @classmethod
     def for_database(cls, database: Database) -> "Repositories":
@@ -1418,4 +1475,5 @@ class Repositories:
             schedules=ScheduleRepository(database),
             audit=AuditRepository(database),
             llm_calls=LLMCallRepository(database),
+            workflows=WorkflowRepository(database),
         )

@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from agent_control.config import AppSettings, CapabilityPolicy, CodeInterpreterAdapterConfig
-from agent_control.schemas import Capability, RiskLevel, ToolCallRequest
+from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools import code_interpreter as code_interpreter_module
 from agent_control.tools.code_interpreter import (
     CodeExecutionPlan,
@@ -15,6 +15,7 @@ from agent_control.tools.code_interpreter import (
     CodeInterpreterAdapter,
     DockerPythonBackend,
     ProcessExecutionResult,
+    _verify_code_interpreter,
 )
 from agent_control.tools.registry import build_tool_registry
 
@@ -674,3 +675,83 @@ async def test_code_interpreter_preview_caps_large_file_content(tmp_path) -> Non
     preview = next(p for p in result.output["file_previews"] if p["path"] == "big.txt")
     assert len(preview["content"]) <= 601  # cap + ellipsis
     assert preview["content"].endswith("…")
+
+
+# ---- _verify_code_interpreter (docs/ROADMAP.md "Finish the Proof": re-read
+# the workspace, don't trust the adapter's own before/after diff) ----------
+
+def _run_result(workspace: Path, **output) -> ToolCallResult:
+    return ToolCallResult(
+        request_id="toolres_ci",
+        status=ToolResultStatus.SUCCEEDED,
+        output={"workspace_dir": str(workspace), **output},
+    )
+
+
+def test_verify_code_interpreter_confirms_created_and_modified_files(tmp_path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "report.csv").write_text("a,b\n1,2\n", encoding="utf-8")
+    (workspace / "notes.txt").write_text("updated", encoding="utf-8")
+    request = _request(tmp_path, "generate_and_run")
+    result = _run_result(workspace, files_created=["report.csv"], files_modified=["notes.txt"], files_deleted=[])
+
+    verification = _verify_code_interpreter(request, result)
+
+    assert verification is not None
+    assert verification.checked == 2
+    assert verification.verified == 2
+    assert verification.missing == []
+    assert verification.ok is True
+
+
+def test_verify_code_interpreter_flags_a_created_file_missing_after_the_fact(tmp_path) -> None:
+    """The adapter's own before/after snapshot claimed report.csv was
+    created, but it isn't actually there - verification must not take that
+    claim at face value (the exact scenario docs/ROADMAP.md's "Proof" item
+    exists to catch)."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    request = _request(tmp_path, "generate_and_run")
+    result = _run_result(workspace, files_created=["report.csv"], files_modified=[], files_deleted=[])
+
+    verification = _verify_code_interpreter(request, result)
+
+    assert verification is not None
+    assert verification.checked == 1
+    assert verification.verified == 0
+    assert verification.missing == ["created file not found: report.csv"]
+    assert verification.ok is False
+
+
+def test_verify_code_interpreter_flags_a_deleted_file_still_present(tmp_path) -> None:
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    (workspace / "old.txt").write_text("still here", encoding="utf-8")
+    request = _request(tmp_path, "generate_and_run")
+    result = _run_result(workspace, files_created=[], files_modified=[], files_deleted=["old.txt"])
+
+    verification = _verify_code_interpreter(request, result)
+
+    assert verification is not None
+    assert verification.verified == 0
+    assert verification.missing == ["deleted file still present: old.txt"]
+
+
+def test_verify_code_interpreter_returns_none_when_nothing_touched_files(tmp_path) -> None:
+    """inspect_state/health never claim to create, modify, or delete
+    anything - nothing to re-check, distinct from a claim that turned out
+    empty."""
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    request = _request(tmp_path, "inspect_state")
+    result = _run_result(workspace, files_created=[], files_modified=[], files_deleted=[])
+
+    assert _verify_code_interpreter(request, result) is None
+
+
+def test_verify_code_interpreter_returns_none_without_a_workspace_dir(tmp_path) -> None:
+    request = _request(tmp_path, "health")
+    result = ToolCallResult(request_id="toolres_ci", status=ToolResultStatus.SUCCEEDED, output={})
+
+    assert _verify_code_interpreter(request, result) is None

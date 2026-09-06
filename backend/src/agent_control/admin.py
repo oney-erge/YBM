@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import Field, SecretStr
 
 from agent_control.analytics import build_reliability_dashboard
+from agent_control.security_review import build_security_review
 from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
@@ -35,6 +36,7 @@ from agent_control.llm.providers import build_provider_for_profile
 from agent_control.observation.artifacts import ArtifactService
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.orchestration.worker import build_replay_plan
+from agent_control.orchestration.workflows import instantiate_plan, parameterize_plan, replay_plan_gaps
 from agent_control.policy import apply_access_modes_to_config, summarize_access_modes
 from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
@@ -55,6 +57,7 @@ from agent_control.schemas import (
     StrictBaseModel,
     TaskRecord,
     TaskStatus,
+    TaskWorkflow,
     utc_now,
 )
 from agent_control.storage.audit import AuditLogger
@@ -79,6 +82,21 @@ class AdminTerminalCommandRequest(StrictBaseModel):
 
 class AdminTaskSignalRequest(StrictBaseModel):
     signal: str = Field(pattern="^(pause|resume|cancel)$")
+
+
+class AdminSaveWorkflowRequest(StrictBaseModel):
+    name: str = Field(min_length=1)
+    # Literal value (exactly as it appears in the source task's tool
+    # inputs) -> parameter name, e.g. {"C:/Users/sam/Downloads": "folder"}.
+    # A value offered here that never actually occurs in the plan is
+    # silently unused (orchestration/workflows.py's parameterize_plan) -
+    # not an error, since the caller cannot know in advance which values
+    # actually appear where.
+    parameters: dict[str, str] = Field(default_factory=dict)
+
+
+class AdminRunWorkflowRequest(StrictBaseModel):
+    values: dict[str, str] = Field(default_factory=dict)
 
 
 class AdminLLMConfigRequest(StrictBaseModel):
@@ -719,6 +737,23 @@ def create_admin_router(
         require_admin(request)
         return build_reliability_dashboard(repositories_loader(), window_days)
 
+    @router.get("/api/security-review")
+    def admin_security_review(
+        request: Request,
+        window_days: int = Query(default=7, ge=1, le=90),
+    ) -> dict[str, Any]:
+        """This machine's actual exposure (docs/ROADMAP.md "Finish the
+        Proof"): network reachability, admin token presence, live approval
+        grants, capabilities that can act without asking first, configured
+        MCP servers, external hosts actually contacted, and how often code
+        execution actually ran unsandboxed - all read from configuration or
+        recorded rows, nothing probed live.
+        """
+        loaded = require_admin(request)
+        return _redact_admin_output(
+            build_security_review(repositories_loader(), loaded, window_days), loaded
+        )
+
     @router.get("/api/doctor")
     def admin_doctor(request: Request) -> dict[str, Any]:
         """Runs the same checks `ybm doctor` runs (collect_checks - this
@@ -1337,6 +1372,114 @@ def create_admin_router(
             payload={"replay_of": source.id, "step_count": len(plan)},
         )
         return {"task": _redact_admin_output(replay_task.model_dump(mode="json"), loaded)}
+
+    @router.post("/api/tasks/{task_id}/save_workflow")
+    def admin_save_workflow(request: Request, task_id: str, payload: AdminSaveWorkflowRequest) -> dict[str, Any]:
+        """Saves a completed task's own replay plan as a named, parameterized
+        TaskWorkflow (docs/ROADMAP.md "verified workflows") - not a new
+        execution engine, the same plan build_replay_plan already produces
+        for a one-shot replay, with `payload.parameters`' literal values
+        swapped for {{name}} placeholders so it can run again later against
+        different inputs.
+
+        Refuses (400) when the plan can't be fully captured: a delegated
+        sub-task or a parallel-batch member build_replay_plan itself would
+        drop, per replay_plan_gaps - a workflow silently missing steps the
+        source task actually ran is worse than no workflow at all.
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        source = repositories.tasks.get(task_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="task not found")
+
+        history = source.metadata.get("operator_history") if isinstance(source.metadata, dict) else None
+        history = history if isinstance(history, list) else []
+        plan = build_replay_plan(history)
+        if not plan:
+            raise HTTPException(status_code=400, detail="this task has no succeeded tool calls to save as a workflow")
+        gaps = replay_plan_gaps(history)
+        if gaps:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "this task's plan can't be fully captured as a workflow - the following steps "
+                    f"would be missing on replay: {'; '.join(gaps)}"
+                ),
+            )
+
+        parameterized_plan, parameter_names = parameterize_plan(plan, payload.parameters)
+        workflow = repositories.workflows.create(
+            TaskWorkflow(
+                name=payload.name,
+                source_task_id=source.id,
+                objective_template=source.objective,
+                plan=parameterized_plan,
+                parameters=parameter_names,
+            )
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            task_id=source.id,
+            payload={"workflow_saved": workflow.id, "name": workflow.name, "parameters": parameter_names},
+        )
+        return {"workflow": _redact_admin_output(workflow.model_dump(mode="json"), loaded)}
+
+    @router.get("/api/workflows")
+    def admin_list_workflows(request: Request) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        workflows = repositories.workflows.list_all()
+        return {"workflows": [_redact_admin_output(w.model_dump(mode="json"), loaded) for w in workflows]}
+
+    @router.get("/api/workflows/{workflow_id}")
+    def admin_get_workflow(request: Request, workflow_id: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        workflow = repositories.workflows.get(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+        return {"workflow": _redact_admin_output(workflow.model_dump(mode="json"), loaded)}
+
+    @router.delete("/api/workflows/{workflow_id}")
+    def admin_delete_workflow(request: Request, workflow_id: str) -> dict[str, Any]:
+        require_admin(request)
+        repositories = repositories_loader()
+        if not repositories.workflows.delete(workflow_id):
+            raise HTTPException(status_code=404, detail="workflow not found")
+        return {"status": "deleted"}
+
+    @router.post("/api/workflows/{workflow_id}/run")
+    def admin_run_workflow(request: Request, workflow_id: str, payload: AdminRunWorkflowRequest) -> dict[str, Any]:
+        """Instantiates a saved workflow's plan against `payload.values` and
+        runs it as a new task through the identical replay pipeline a
+        one-shot task replay uses - approval and verification apply exactly
+        as they would to any other task; a workflow carries no authority of
+        its own from the run that produced it.
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        workflow = repositories.workflows.get(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+
+        try:
+            plan = instantiate_plan(workflow.plan, payload.values)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        run_task = repositories.tasks.create(
+            f"{workflow.name} (workflow run)",
+            metadata={"workflow_id": workflow.id, "workflow_run_values": payload.values, "replay_plan": plan},
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            task_id=run_task.id,
+            payload={"workflow_id": workflow.id, "values": payload.values, "step_count": len(plan)},
+        )
+        return {"task": _redact_admin_output(run_task.model_dump(mode="json"), loaded)}
 
     @router.post("/api/config/llm")
     def admin_update_llm_config(request: Request, payload: AdminLLMConfigRequest) -> dict[str, Any]:
@@ -2814,21 +2957,42 @@ def _receipt_verification(tool_invocations: list[dict[str, Any]]) -> dict[str, A
     time), so `checked`/`verified` here count items, not calls - a 128-file
     move contributes 128, not 1, matching the receipt's own "43 destination
     paths verified" framing rather than "1 tool call succeeded".
+
+    `not_checked`/`unverified_tools` are the other half of the same claim:
+    ToolCallResult.verification is None (schemas.py: "distinct from an
+    empty ToolVerification... absence of proof is not proof of absence")
+    for any succeeded call whose tool has no verify() hook for that
+    operation - most tools, and most operations even on the one tool that
+    has one (filesystem.manage's verify only fires for apply_manifest).
+    Without this, a receipt with checked=0 and one with checked=12,
+    verified=12 render identically once the UI only shows this block when
+    checked > 0 - "nothing was wrong" and "nothing was checked" must not
+    look the same.
     """
     checked = 0
     verified = 0
     missing: list[str] = []
+    not_checked = 0
+    unverified_tools: set[str] = set()
     for invocation in tool_invocations:
-        result = invocation.get("result")
-        if not isinstance(result, dict):
+        if str(invocation.get("status") or "") != "succeeded":
             continue
-        record = result.get("verification")
+        result = invocation.get("result")
+        record = result.get("verification") if isinstance(result, dict) else None
         if not isinstance(record, dict):
+            not_checked += 1
+            unverified_tools.add(str(invocation.get("tool_name") or "unknown"))
             continue
         checked += int(record.get("checked") or 0)
         verified += int(record.get("verified") or 0)
         missing.extend(str(item) for item in (record.get("missing") or []))
-    return {"checked": checked, "verified": verified, "missing": missing}
+    return {
+        "checked": checked,
+        "verified": verified,
+        "missing": missing,
+        "not_checked": not_checked,
+        "unverified_tools": sorted(unverified_tools),
+    }
 
 
 # What a completed task actually touched (docs/HISTORY.md N5's "evidence view").
@@ -3027,11 +3191,21 @@ def _enrich_operator_history(
         invocation["id"]: (invocation.get("result") or {}).get("content_trust")
         for invocation in tool_invocations
     }
+    # None here means "this step's tool has no verify() hook for that
+    # operation" (schemas.py ToolVerification), joined the same way as
+    # duration_ms/content_trust - only succeeded steps carry a real one,
+    # since a failed/denied/timed-out call never reaches its verify() hook.
+    verification_by_request_id = {
+        invocation["id"]: (invocation.get("result") or {}).get("verification")
+        for invocation in tool_invocations
+        if str(invocation.get("status") or "") == "succeeded"
+    }
     return [
         {
             **entry,
             "duration_ms": duration_by_request_id.get(entry.get("request_id")),
             "content_trust": trust_by_request_id.get(entry.get("request_id")),
+            "verification": verification_by_request_id.get(entry.get("request_id")),
         }
         for entry in history
     ]

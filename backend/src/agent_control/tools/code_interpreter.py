@@ -30,6 +30,7 @@ from agent_control.schemas import (
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
+    ToolVerification,
 )
 from agent_control.tools.contracts import (
     CodeInterpreterBuildTempHelperInput,
@@ -1271,6 +1272,48 @@ def _terminal_output(operation: str, output: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _verify_code_interpreter(request: ToolCallRequest, result: ToolCallResult) -> ToolVerification | None:
+    """Re-reads the workspace after a SUCCEEDED run to confirm every file
+    the adapter's own before/after snapshot diff claimed as created or
+    modified now actually exists, and every file it claimed deleted does
+    not (docs/ROADMAP.md "Finish the Proof"). files_created/files_modified/
+    files_deleted are workspace-relative names computed by _file_snapshot's
+    own diff, not user input, and workspace_dir is the adapter's own
+    resolved absolute path - both already trustworthy by the time a
+    SUCCEEDED result carries them.
+
+    Operations that never touch files (inspect_state, health) report empty
+    lists, so this returns None for those - nothing was claimed, so there
+    is nothing to re-check, the same "no verification possible" as a dry
+    run in filesystem_manage's verifier.
+    """
+    workspace_dir = result.output.get("workspace_dir")
+    if not isinstance(workspace_dir, str) or not workspace_dir:
+        return None
+    workspace = Path(workspace_dir)
+    checked = 0
+    missing: list[str] = []
+    for name in result.output.get("files_created") or []:
+        if not isinstance(name, str) or not name:
+            continue
+        checked += 1
+        if not (workspace / name).exists():
+            missing.append(f"created file not found: {name}")
+    for name in result.output.get("files_modified") or []:
+        if not isinstance(name, str) or not name:
+            continue
+        checked += 1
+        if not (workspace / name).exists():
+            missing.append(f"modified file not found: {name}")
+    for name in result.output.get("files_deleted") or []:
+        if not isinstance(name, str) or not name:
+            continue
+        checked += 1
+        if (workspace / name).exists():
+            missing.append(f"deleted file still present: {name}")
+    if checked == 0:
+        return None
+    return ToolVerification(checked=checked, verified=checked - len(missing), missing=missing)
 
 
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
@@ -1339,6 +1382,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "build_temp_helper": "generates and runs a helper Python script",
                 "repair_script": "generates and runs a modified version of a previously failing script",
             },
+            verify=_verify_code_interpreter,
             examples=(
                 {"operation": "generate_and_run",
                  "objective": "compute the 20th Fibonacci number and print it"},

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react"
-import { AlertCircle, CheckCircle2, Globe, Layers } from "lucide-react"
+import { AlertCircle, CheckCircle2, Globe, Layers, ShieldAlert, ShieldCheck, ShieldQuestion } from "lucide-react"
 import { Badge } from "@/components/ui/badge"
 import { formatDurationMs } from "@/lib/time"
 import { cn } from "@/lib/utils"
@@ -62,6 +62,47 @@ export function OperatorHistoryList({ entries }: { entries: OperatorHistoryEntry
                 >
                   <Globe className="size-3" /> untrusted content
                 </Badge>
+              )}
+              {entry.verification ? (
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "flex items-center gap-1 text-[10px]",
+                    entry.verification.missing.length > 0
+                      ? "border-destructive/40 text-destructive"
+                      : "border-success/40 text-success",
+                  )}
+                  title={
+                    entry.verification.missing.length > 0
+                      ? `Mechanically re-checked: ${entry.verification.verified}/${entry.verification.checked}, ${entry.verification.missing.length} missing.`
+                      : `Mechanically re-checked: ${entry.verification.verified}/${entry.verification.checked} confirmed.`
+                  }
+                >
+                  {entry.verification.missing.length > 0 ? (
+                    <ShieldAlert className="size-3" />
+                  ) : (
+                    <ShieldCheck className="size-3" />
+                  )}
+                  {entry.verification.missing.length > 0
+                    ? `${entry.verification.verified}/${entry.verification.checked} verified`
+                    : "verified"}
+                </Badge>
+              ) : (
+                // Only for a real, succeeded tool call (duration_ms is null
+                // for pseudo-checks, delegate summaries, and refusals,
+                // which were never eligible for a verify() hook at all) -
+                // says plainly that nothing mechanically confirmed this
+                // step's effect, rather than staying silent.
+                entry.status === "succeeded" &&
+                entry.duration_ms != null && (
+                  <Badge
+                    variant="outline"
+                    className="flex items-center gap-1 text-[10px] text-muted-foreground"
+                    title="No mechanical check exists yet for this tool - the model's report that it succeeded was not independently confirmed."
+                  >
+                    <ShieldQuestion className="size-3" /> not verified
+                  </Badge>
+                )
               )}
             </div>
             {entry.output_summary && (

@@ -378,6 +378,37 @@ class MessageClassification(StrictBaseModel):
     # back to TelegramIntakeService's separate `responder` if one is configured
     # (see channels/responder.py) - kept for classifiers that don't populate this.
     reply: str | None = None
+    # Optional: which fixed outcome type(s) (docs/ROADMAP.md "Finish the
+    # Proof") this specific request objectively requires to count as done,
+    # when that's plain from the request itself - e.g. "make me a slide
+    # deck" implies presentation_file. This is transmitted via the
+    # structured-output JSON schema (LLMProvider.generate_structured's
+    # response_format), not embedded in system_prompt/user_prompt text, so
+    # adding it changes no fixture_key and needed no scenario re-record.
+    # orchestration/fulfillment.py's expected_postconditions() prefers this
+    # over its own keyword-matched guess when non-empty, but never requires
+    # it - every recorded fixture predates this field and simply omits it,
+    # which is indistinguishable from "the classifier chose not to declare
+    # anything", the documented safe default.
+    expected_postconditions: list[PostconditionType] = Field(
+        default_factory=list,
+        description=(
+            "Which of these fixed outcome types this specific request objectively requires "
+            "to count as done, only when that is plain from the request itself (e.g. "
+            "'make me a slide deck' implies presentation_file). Leave empty when it is not "
+            "obvious - an empty list is the safe default, not a wrong answer."
+        ),
+    )
+
+    @field_validator("expected_postconditions", mode="before")
+    @classmethod
+    def _drop_unrecognized_postcondition_types(cls, value: Any) -> Any:
+        # Same defensive posture as task_type_accepts_route_aliases below:
+        # one hallucinated value must not fail the whole classification.
+        if not isinstance(value, list):
+            return []
+        valid = {item.value for item in PostconditionType}
+        return [item for item in value if isinstance(item, str) and item in valid]
 
     @field_validator("task_type", mode="before")
     @classmethod
@@ -753,6 +784,32 @@ class ApprovalGrant(StrictBaseModel):
         if self.max_operations is not None and self.operations_used >= self.max_operations:
             return False
         return self.expires_at > utc_now()
+
+
+class TaskWorkflow(StrictBaseModel):
+    """A named, reusable replay plan (docs/ROADMAP.md "verified workflows") -
+    a snapshot of one completed task's own successful tool calls
+    (orchestration.worker.build_replay_plan's exact output), with specific
+    literal values replaced by ``{{name}}`` placeholders so the same plan
+    can run again against different inputs, through the identical
+    approval/retry/verification pipeline a live or replayed task already
+    uses. Deliberately not a general workflow-authoring system: `plan` is
+    always a real recorded run, parameterized after the fact - never
+    hand-assembled, and never containing a step build_replay_plan itself
+    would have excluded (delegate calls, parallel-batch members - see
+    orchestration/workflows.py's replay_plan_gaps).
+    """
+
+    id: str = Field(default_factory=lambda: new_id("workflow"))
+    name: str = Field(min_length=1)
+    source_task_id: str
+    objective_template: str
+    plan: list[dict[str, Any]]
+    # Distinct {{name}} placeholders actually present in `plan`, in
+    # first-seen order - the run form's field list, without having to
+    # re-scan `plan` on every read.
+    parameters: list[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
 
 
 class Artifact(StrictBaseModel):

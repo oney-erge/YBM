@@ -176,7 +176,7 @@ Node.js sidecar over loopback HTTP with a per-run shared secret. See
 | Tool executor | `orchestration/executor.py` | Policy enforcement, input/output contract validation, dispatch |
 | Policy engine | `policy/engine.py` | Capability enabled? scope? risk ceiling? approval? |
 | Auditor | `orchestration/auditor.py` | Sufficiency check + grounded answer |
-| Fulfillment | `orchestration/fulfillment.py` | Deterministic postconditions inferred from objective text |
+| Fulfillment | `orchestration/fulfillment.py` | Deterministic postconditions: the Concierge's declared `expected_postconditions` when present, else inferred from objective text |
 | Notifications | `channels/task_notify.py` | `format_task_message()`, shared across channels |
 | Persona | `persona.py` | One global preference doc injected into every Operator prompt |
 | Knowledge base | `knowledge_base.py` | Local keyword-overlap search over your documents - not embeddings |

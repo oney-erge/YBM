@@ -490,6 +490,15 @@ const ToolInvocationSchema = z.object({
 })
 export type ToolInvocation = z.infer<typeof ToolInvocationSchema>
 
+// A single tool call's own ToolVerification (schemas.py) - the per-step
+// counterpart to the task-wide aggregate in ReceiptVerificationSchema below.
+const ToolVerificationSchema = z.object({
+  checked: z.number().int(),
+  verified: z.number().int(),
+  missing: z.array(z.string()),
+  detail: z.string(),
+})
+
 // One operator_history entry (orchestration/worker.py) - the step-by-step
 // record of what the Operator loop decided and did. output_summary/error/
 // origin/parallel are all conditionally present depending on the step kind
@@ -518,6 +527,12 @@ const OperatorHistoryEntrySchema = z.object({
   // content YBM does not control (docs/THREAT_MODEL.md) - joined the same
   // way as duration_ms, so always present but null when undeclared.
   content_trust: z.string().nullable(),
+  // The step's own ToolVerification (schemas.py), joined the same way -
+  // null both when the step never succeeded and when it succeeded but its
+  // tool has no verify() hook for that operation. Never present-but-empty
+  // in the "no hook" case: an empty ToolVerification would mean "checked,
+  // found nothing wrong", which is a different, stronger claim.
+  verification: ToolVerificationSchema.nullable(),
 })
 export type OperatorHistoryEntry = z.infer<typeof OperatorHistoryEntrySchema>
 
@@ -666,6 +681,12 @@ const ReceiptVerificationSchema = z.object({
   checked: z.number().int(),
   verified: z.number().int(),
   missing: z.array(z.string()),
+  // Succeeded calls whose tool had no verify() hook for that operation -
+  // "absence of proof, not proof of absence" (schemas.py). Distinct from
+  // `checked`/`verified`/`missing`, which only ever describe calls that
+  // *did* get mechanically re-checked.
+  not_checked: z.number().int(),
+  unverified_tools: z.array(z.string()),
 })
 
 export const TaskReceiptSchema = z.object({
@@ -721,6 +742,56 @@ const ReplayTaskResponseSchema = z.object({ task: TaskRecordSchema })
 export function replayTask(taskId: string) {
   return apiFetch(`/api/tasks/${taskId}/replay`, ReplayTaskResponseSchema, {
     method: "POST",
+  })
+}
+
+// A saved, named, parameterized replay plan (docs/ROADMAP.md "verified
+// workflows") - a snapshot of one task's own successful tool calls, with
+// specific literal values replaced by {{name}} placeholders. `plan` is
+// intentionally untyped here: it's opaque to the frontend, which never
+// constructs or edits it directly, only names values within it to
+// parameterize at save time and fills them back in at run time.
+export const TaskWorkflowSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  source_task_id: z.string(),
+  objective_template: z.string(),
+  plan: z.array(z.unknown()),
+  parameters: z.array(z.string()),
+  created_at: z.string(),
+})
+export type TaskWorkflow = z.infer<typeof TaskWorkflowSchema>
+
+const SaveWorkflowResponseSchema = z.object({ workflow: TaskWorkflowSchema })
+const ListWorkflowsResponseSchema = z.object({ workflows: z.array(TaskWorkflowSchema) })
+const GetWorkflowResponseSchema = z.object({ workflow: TaskWorkflowSchema })
+const RunWorkflowResponseSchema = z.object({ task: TaskRecordSchema })
+
+export function saveWorkflow(taskId: string, name: string, parameters: Record<string, string>) {
+  return apiFetch(`/api/tasks/${taskId}/save_workflow`, SaveWorkflowResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({ name, parameters }),
+  })
+}
+
+export function listWorkflows() {
+  return apiFetch("/api/workflows", ListWorkflowsResponseSchema)
+}
+
+export function getWorkflow(workflowId: string) {
+  return apiFetch(`/api/workflows/${workflowId}`, GetWorkflowResponseSchema)
+}
+
+export function deleteWorkflow(workflowId: string) {
+  return apiFetch(`/api/workflows/${workflowId}`, z.object({ status: z.string() }), {
+    method: "DELETE",
+  })
+}
+
+export function runWorkflow(workflowId: string, values: Record<string, string>) {
+  return apiFetch(`/api/workflows/${workflowId}/run`, RunWorkflowResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({ values }),
   })
 }
 
@@ -989,6 +1060,7 @@ const ToolReliabilityStatSchema = z.object({
   calls: z.number().int(),
   succeeded: z.number().int(),
   failed: z.number().int(),
+  not_checked: z.number().int(),
   failure_rate_pct: z.number(),
 })
 
@@ -1013,6 +1085,12 @@ const ReliabilityDashboardSchema = z.object({
   completed_pct: z.number(),
   verified_completed: z.number().int(),
   verified_completed_pct: z.number(),
+  // Of `completed`, how many had *any* mechanical check run at all - the
+  // denominator verified_completed_pct doesn't show. Distinguishes "we
+  // checked and it was wrong" from "nothing here is checkable yet".
+  checked_completed: z.number().int(),
+  checked_completed_pct: z.number(),
+  verification_coverage_pct: z.number(),
   failed: z.number().int(),
   failed_pct: z.number(),
   blocked: z.number().int(),
@@ -1032,6 +1110,46 @@ export type ReliabilityDashboard = z.infer<typeof ReliabilityDashboardSchema>
 
 export function getReliabilityDashboard(windowDays: number) {
   return apiFetch(`/api/dashboard?window_days=${windowDays}`, ReliabilityDashboardSchema)
+}
+
+// This machine's actual exposure (docs/ROADMAP.md "Finish the Proof") -
+// every field here is read from configuration or a recorded audit/
+// invocation row, never a live network or Docker probe.
+const SecurityReviewSchema = z.object({
+  window_days: z.number().int(),
+  network: z.object({
+    host: z.string(),
+    port: z.number().int(),
+    reachable_beyond_this_machine: z.boolean(),
+    admin_enabled: z.boolean(),
+    admin_token_set: z.boolean(),
+  }),
+  active_grants: z.array(
+    z.object({
+      id: z.string(),
+      task_id: z.string(),
+      tool_name: z.string(),
+      capability: z.string(),
+      scope: z.string().nullable(),
+      expires_at: z.string(),
+      operations_used: z.number().int(),
+      max_operations: z.number().int().nullable(),
+    }),
+  ),
+  capability_access: z.object({
+    enabled: z.number().int(),
+    no_approval_required: z.array(z.string()),
+  }),
+  mcp_servers: z.array(
+    z.object({ name: z.string(), enabled: z.boolean(), command: z.string(), risk_level: z.string() }),
+  ),
+  external_hosts_contacted: z.array(z.string()),
+  code_execution: z.object({ sandboxed_runs: z.number().int(), unsandboxed_runs: z.number().int() }),
+})
+export type SecurityReview = z.infer<typeof SecurityReviewSchema>
+
+export function getSecurityReview(windowDays: number) {
+  return apiFetch(`/api/security-review?window_days=${windowDays}`, SecurityReviewSchema)
 }
 
 const ServiceItemSchema = z.object({
