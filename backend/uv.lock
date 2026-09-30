@@ -67,7 +67,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "json-repair", specifier = ">=0.59" },
     { name = "kokoro-onnx", marker = "extra == 'voice'", specifier = ">=0.5" },
-    { name = "mcp", specifier = ">=1.2" },
+    { name = "mcp", specifier = ">=1.2,<2" },
     { name = "mss", marker = "extra == 'desktop'", specifier = ">=10.0" },
     { name = "numpy", marker = "extra == 'voice'", specifier = ">=2.0.2" },
     { name = "pandas", specifier = ">=2.2" },
