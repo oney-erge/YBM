@@ -70,7 +70,7 @@ class PolicyEngine:
         still runs unconditionally, so a grant can never let through a call
         policy would otherwise reject.
         """
-        policy = self.settings.capabilities.get(request.capability)
+        policy = self.settings.capability_policy(request.capability)
         if policy is None or not policy.enabled:
             return self._decision(False, False, "capability_disabled", request)
 

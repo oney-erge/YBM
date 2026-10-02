@@ -7,6 +7,31 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Switching **File system** access on in the console did not make the file tool
+  available, because `filesystem.manage` also required `adapters.computer_use.enabled`,
+  a desktop-control flag that setting never touched. "Organize my Downloads" stayed
+  blocked with the access switched on. The file tools now follow the file-access
+  setting alone.
+- **Read-only** file access enabled `filesystem.read`, a capability no tool used, so
+  the agent had no file tool at all. The read operations of `filesystem.manage` and
+  `document.manage` now run under `filesystem.read` (`ToolDefinition.operation_capabilities`),
+  so Read-only lets it look and never change anything. A config that enables only
+  `filesystem.write` keeps working: writing implies reading, in memory only.
+- A running worker never noticed changes to `config.yaml` or `.env`: access, folders
+  and the chosen model only took effect after restarting the whole stack (the console
+  even said "Restart long-running processes to pick it up"). The worker now rebuilds
+  its policy, tools and model when either file changes, keeps the previous runtime if
+  an edit is invalid, and reports it.
+- A task blocked because access is off said "No available tool or capability can
+  complete the request with the current configuration". It now names the access that
+  is off (and records it in `metadata.blocked_access`), evidence-based and never from
+  the wording of the request.
+- The first-run wizard said "You're set" after skipping the model choice, and listed
+  five "Not built yet" channels. It is honest about a missing model and shows only
+  channels that exist. The Access page no longer says "Full autonomy" means no
+  approval prompts: installing servers, promoting generated code, running unsandboxed
+  code and sending secrets still ask.
+
 - Windows first run: `run.bat` and `run.ps1` failed on every default start (an
   array was passed to a `[string]` parameter), and a successful start was
   reported as "startup failed" because the "is WhatsApp enabled" probe's exit
@@ -42,6 +67,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- "Where may YBM work?": one step that grants folders and a file-access mode together
+  (`GET /admin/api/setup/folders`, `POST /admin/api/setup/work-folders`), shown in the
+  empty chat and offered from a blocked task with a one-click "Try again". Only real
+  folders are accepted - never a whole drive, the home folder, or an operating-system
+  directory - and only Read-only or Write-with-approval, never full autonomy.
+- A blocked task that needs access shows what is off and a button to turn it on
+  (`Turn on Browser`, `Choose folders for YBM`), then retries the same request.
 - First run needs no input. A model is chosen from what is already on the machine
   (your own LocalDeploy via `YBM_LOCALDEPLOY_ROOT`, a running Ollama, then a
   provider API key already in your environment or `.env`), without calling a paid

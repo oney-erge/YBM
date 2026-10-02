@@ -1841,3 +1841,55 @@ export function listFolders(path?: string) {
   const query = path ? `?path=${encodeURIComponent(path)}` : ""
   return apiFetch(`/api/folders${query}`, FolderListingSchema)
 }
+
+// ---- Work folders (first-run "let YBM work on a folder") ----------------------
+
+export const FileAccessModeSchema = z.enum(["off", "read_only", "write_access", "full_access"])
+export type FileAccessMode = z.infer<typeof FileAccessModeSchema>
+
+export const SetupFoldersSchema = z.object({
+  // The usual places that actually exist on this machine (Downloads, ...).
+  suggested: z.array(z.object({ name: z.string(), path: z.string() })),
+  file_access: FileAccessModeSchema,
+  allowed_roots: z.array(z.string()),
+  // Granted folders beyond YBM's own scratch workspace.
+  work_folders: z.array(z.string()),
+})
+export type SetupFolders = z.infer<typeof SetupFoldersSchema>
+
+export function getSetupFolders() {
+  return apiFetch("/api/setup/folders", SetupFoldersSchema)
+}
+
+/** Grant folders and a file-access mode in one step. Only the two gentle modes
+ * exist here by design: full autonomy is a deliberate choice on the Access page. */
+export function saveWorkFolders(folders: string[], mode: "read_only" | "write_access") {
+  return apiFetch("/api/setup/work-folders", SetupFoldersSchema, {
+    method: "POST",
+    body: JSON.stringify({ folders, mode }),
+  })
+}
+
+// ---- Why a blocked task was blocked -------------------------------------------
+
+// Written by the worker (backend policy/access_hints.py) when a task could not
+// proceed because access is off. `evidence` is "denied" when a call was refused
+// for it (certain) and "off" when the agent gave up with tools switched off and
+// nothing attempted (probable).
+export const BlockedAccessSchema = z.object({
+  evidence: z.enum(["denied", "off"]),
+  groups: z.array(
+    z.object({
+      group: z.string(),
+      label: z.string(),
+      recommended_mode: z.string(),
+    }),
+  ),
+})
+export type BlockedAccess = z.infer<typeof BlockedAccessSchema>
+
+export function blockedAccessOf(task: { status: string; metadata: Record<string, unknown> }): BlockedAccess | null {
+  if (task.status !== "blocked") return null
+  const parsed = BlockedAccessSchema.safeParse(task.metadata.blocked_access)
+  return parsed.success && parsed.data.groups.length > 0 ? parsed.data : null
+}

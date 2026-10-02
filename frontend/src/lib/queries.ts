@@ -68,6 +68,8 @@ import {
   type TelegramConfigInput,
   type VSCodeConfigInput,
   type WorkspaceConfigInput,
+  getSetupFolders,
+  saveWorkFolders,
 } from "@/lib/api"
 import { isTerminal } from "@/lib/chat"
 
@@ -607,5 +609,31 @@ export function useFolders(path: string | undefined, enabled: boolean) {
     queryFn: () => listFolders(path),
     enabled,
     staleTime: 10_000,
+  })
+}
+
+// ---- Work folders ---------------------------------------------------------
+
+export function useSetupFolders() {
+  return useQuery({
+    queryKey: ["setup", "folders"],
+    queryFn: getSetupFolders,
+    staleTime: 15_000,
+  })
+}
+
+export function useSaveWorkFolders() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ folders, mode }: { folders: string[]; mode: "read_only" | "write_access" }) =>
+      saveWorkFolders(folders, mode),
+    onSuccess: () => {
+      // The same grant shows up in the folder list, the Access page, the Tools
+      // page and the composer's folder picker.
+      void queryClient.invalidateQueries({ queryKey: ["setup", "folders"] })
+      void queryClient.invalidateQueries({ queryKey: ["config", "effective"] })
+      void queryClient.invalidateQueries({ queryKey: ["folders"] })
+      void queryClient.invalidateQueries({ queryKey: ["tools"] })
+    },
   })
 }

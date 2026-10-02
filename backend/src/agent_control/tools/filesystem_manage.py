@@ -859,16 +859,38 @@ def _verify_filesystem_manage(request: ToolCallRequest, result: ToolCallResult) 
     return _verify_apply_manifest(request, result)
 
 
+# Operations that only look. They run under filesystem.read, so the "Read-only"
+# access mode (which enables exactly that capability) gives the agent a file tool
+# that can inspect, search and read but cannot change anything. Everything not
+# listed - including open_file, which launches a program - stays under
+# filesystem.write.
+READ_OPERATIONS = (
+    "inspect_folder",
+    "search",
+    "resolve_desktop_item",
+    "find_by_description",
+    "read_file",
+    "collect_folder_snapshot",
+    "describe_folder",
+    "organize_plan",
+)
+
+
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
+    # Availability follows the file-access setting and nothing else. It used to
+    # also require adapters.computer_use.enabled, a flag the File system access
+    # mode never sets, so switching file access on in the console still left the
+    # tool off and the very first "organize my files" task blocked.
     enabled = (
-        settings.adapters.computer_use.enabled
-        and capability_enabled(settings, Capability.FILESYSTEM_WRITE)
+        capability_enabled(settings, Capability.FILESYSTEM_READ)
+        or capability_enabled(settings, Capability.FILESYSTEM_WRITE)
     )
     definitions.append(
         ToolDefinition(
             name="filesystem.manage",
             capability=Capability.FILESYSTEM_WRITE,
+            operation_capabilities={operation: Capability.FILESYSTEM_READ for operation in READ_OPERATIONS},
             enabled=enabled,
             description=(
                 "inspect, search, plan organization, and apply move/copy manifests inside configured "
@@ -944,7 +966,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             ),
         )
     )
-    if settings.adapters.computer_use.enabled:
+    if enabled:
         adapters["filesystem.manage"] = FilesystemManageAdapter(
             settings.adapters.computer_use.allowed_roots,
             provider=deps.provider,  # type: ignore[arg-type]

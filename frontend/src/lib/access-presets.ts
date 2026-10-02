@@ -42,7 +42,7 @@ export const ACCESS_PRESETS: {
   {
     key: "full_autonomy",
     label: "Full autonomy",
-    description: "Every capability runs at its highest access with no approval prompts.",
+    description: "Every capability runs without per-action approval prompts. Installing servers, promoting generated code, running unsandboxed code and sending secrets still ask first.",
     destructive: true,
   },
 ]

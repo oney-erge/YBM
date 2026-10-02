@@ -58,7 +58,7 @@ export function LLMSettingsCard() {
   function handlePreset(key: string) {
     selectPreset.mutate(key, {
       onSuccess: () => {
-        toast.success("LLM preset saved. Restart long-running processes to pick it up.")
+        toast.success("Model saved. New tasks and chat replies use it right away.")
         resetDraft()
       },
       onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not apply the preset."),
@@ -173,7 +173,7 @@ export function LLMSettingsCard() {
             event.preventDefault()
             updateLLM.mutate(input, {
               onSuccess: () => {
-                toast.success("LLM config saved. Restart long-running processes to pick it up.")
+                toast.success("Model saved. New tasks and chat replies use it right away.")
                 resetDraft()
               },
               onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save the LLM config."),

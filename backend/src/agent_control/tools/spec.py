@@ -95,6 +95,17 @@ class ToolDefinition:
     minimum_risk: RiskLevel | None = None
     operation_risks: dict[str, RiskLevel] = field(default_factory=dict)
     approval_required_operations: tuple[str, ...] = ()
+    # Operations that run under a different capability than `capability`.
+    #
+    # A tool that both looks and changes things (the file system tools) used to
+    # sit entirely under its write capability, so an access mode of "Read-only"
+    # enabled `filesystem.read` - a capability no tool used - and gave the agent
+    # no file tool at all. Mapping the read operations to the read capability
+    # lets Read-only mean what it says: look, never touch. Like `capability`,
+    # this is owned by the runtime definition and never by the model; the
+    # executor refuses a request that names any other capability for the
+    # operation it is calling.
+    operation_capabilities: dict[str, Capability] = field(default_factory=dict)
     # Human-readable "why" for an approval_required_operations entry, shown
     # on the ApprovalRequest a human actually sees. Restores the specific
     # reasoning that ToolAdapter-raised exceptions used to carry before the
@@ -137,13 +148,18 @@ class ToolDefinition:
     # result already reports SUCCEEDED.
     verify: Callable[[ToolCallRequest, ToolCallResult], ToolVerification | None] | None = None
 
+    def capability_for(self, value: dict | None) -> Capability:
+        """The capability this particular call runs under."""
+        operation = str((value or {}).get("operation") or self.default_operation or "")
+        return self.operation_capabilities.get(operation, self.capability)
+
     def required_risk(self, value: dict) -> RiskLevel:
         if self.risk_resolver is not None:
             return self.risk_resolver(value)
         operation = str(value.get("operation") or self.default_operation or "")
         return self.operation_risks.get(
             operation,
-            self.minimum_risk or CAPABILITY_MINIMUM_RISKS[self.capability],
+            self.minimum_risk or CAPABILITY_MINIMUM_RISKS[self.capability_for(value)],
         )
 
     def requires_approval(self, value: dict) -> bool:
@@ -284,7 +300,7 @@ Registrar = Callable[[RegistryDeps, Definitions, Adapters], None]
 
 
 def capability_enabled(settings: AppSettings, capability: Capability) -> bool:
-    policy = settings.capabilities.get(capability)
+    policy = settings.capability_policy(capability)
     return bool(policy and policy.enabled)
 
 

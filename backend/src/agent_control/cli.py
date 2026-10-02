@@ -4,14 +4,16 @@ import argparse
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 import os
 from pathlib import Path
 import sys
+from typing import Any
 
 from agent_control.backup import run_backup
 from agent_control.bootstrap import admin_console_url, run_doctor, run_setup
 from agent_control.updates import check_for_updates
-from agent_control.config_sync import set_config_path
+from agent_control.config_sync import CONFIG_FILE_PATH, ENV_FILE_PATH, set_config_path
 from agent_control.onboarding import run_onboard
 from agent_control.db_tools import db_clean, db_inspect, db_reset
 from agent_control.logging_setup import configure_logging
@@ -331,12 +333,12 @@ async def poll_whatsapp() -> None:
         bridge.stop()
 
 
-async def run_worker() -> None:
-    settings = load_settings()
-    repositories, audit = build_repositories()
-    reconciled = reconcile_orphaned_tasks(repositories, audit)
-    if reconciled:
-        print(f"reconciled {reconciled} task(s) left running/interpreting by a previous worker (failed explicitly)")
+def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: AuditLogger) -> dict[str, Any]:
+    """Everything a TaskWorker derives from settings, built in one place.
+
+    The initial worker and every rebuild after a config change go through here,
+    so they cannot drift apart.
+    """
     provider = build_default_llm_provider(settings)
     policy = PolicyEngine(settings, audit)
     registry = build_tool_registry(
@@ -353,8 +355,6 @@ async def run_worker() -> None:
     major_provider = build_major_llm_provider(settings)
     operator_provider = build_role_llm_provider(settings, "operator") or provider
     auditor_provider = build_role_llm_provider(settings, "auditor") or provider
-    operator = OperatorLoopService(operator_provider, major_provider=major_provider) if operator_provider else None
-    auditor = AuditorService(auditor_provider) if auditor_provider else None
     executor = ToolExecutor(
         policy,
         repositories,
@@ -362,31 +362,97 @@ async def run_worker() -> None:
         adapters=registry.adapters,
         tool_definitions=registry.definition_index,
     )
-    notifier = RoutingNotificationSink(settings, audit, approvals=repositories.approvals)
+    return {
+        "executor": executor,
+        "retry_policy": RetryPolicy(settings.limits),
+        "config_context": _worker_config_context(registry, settings),
+        "config_context_factory": lambda registry=registry, settings=settings: _worker_config_context(registry, settings),
+        "notification_sink": RoutingNotificationSink(settings, audit, approvals=repositories.approvals),
+        "task_budget_seconds": float(settings.limits.task_budget_seconds),
+        "operator": OperatorLoopService(operator_provider, major_provider=major_provider) if operator_provider else None,
+        "operator_max_steps": settings.operator.max_steps,
+        "fulfillment_mode": settings.operator.fulfillment_mode,
+        "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
+        "persona_config": settings.adapters.persona,
+        "skills_config": settings.adapters.skills,
+        "auditor": AuditorService(auditor_provider) if auditor_provider else None,
+        "persist_llm_calls": settings.storage.persist_llm_calls,
+        "llm_call_max_chars": settings.storage.llm_call_max_chars,
+        "redact_patterns": settings.logging.redact_patterns,
+    }
+
+
+class WorkerRuntimeReloader:
+    """Keeps a running worker in step with config.yaml and .env.
+
+    The worker built its policy, tools and model clients once, at startup. So
+    switching file access on, or choosing a model, in the console changed the
+    files and nothing else: the worker went on refusing, or having nothing to
+    think with, until the whole stack was restarted - and the console said "Restart
+    long-running processes to pick it up", which a person who just installed
+    YBM cannot act on. This is called before every claim; when either file has
+    changed it rebuilds the settings-derived state, and each worker adopts it
+    the next time it is between tasks. A bad edit is reported and the previous
+    runtime keeps working.
+    """
+
+    def __init__(
+        self,
+        build: Callable[[], dict[str, Any]],
+        audit: AuditLogger,
+        watched: tuple[Path, ...] = (CONFIG_FILE_PATH, ENV_FILE_PATH),
+    ) -> None:
+        self._build = build
+        self._audit = audit
+        self._watched = watched
+        self._fingerprint = self._current()
+        self.kwargs = build()
+        self.version = 0
+
+    def _current(self) -> tuple[tuple[int, int] | None, ...]:
+        state: list[tuple[int, int] | None] = []
+        for path in self._watched:
+            try:
+                stat = path.stat()
+            except OSError:
+                state.append(None)
+            else:
+                state.append((stat.st_mtime_ns, stat.st_size))
+        return tuple(state)
+
+    def __call__(self, worker: TaskWorker) -> None:
+        current = self._current()
+        if current != self._fingerprint:
+            self._fingerprint = current
+            try:
+                self.kwargs = self._build()
+            except Exception as exc:  # noqa: BLE001 - a bad edit must not stop the worker
+                self._audit.append(
+                    AuditEventType.ERROR,
+                    actor="worker",
+                    payload={"error": "config_reload_failed", "reason": str(exc)},
+                )
+            else:
+                self.version += 1
+                logger.info("worker runtime rebuilt after a config change")
+        if worker.runtime_version != self.version:
+            worker.reconfigure(**self.kwargs)
+            worker.runtime_version = self.version
+
+
+async def run_worker() -> None:
+    settings = load_settings()
+    repositories, audit = build_repositories()
+    reconciled = reconcile_orphaned_tasks(repositories, audit)
+    if reconciled:
+        print(f"reconciled {reconciled} task(s) left running/interpreting by a previous worker (failed explicitly)")
+    reloader = WorkerRuntimeReloader(lambda: _worker_kwargs(load_settings(), repositories, audit), audit)
+    notifier = reloader.kwargs["notification_sink"]
     # Run max_parallel_tasks worker loops in one process. claim_next() claims
     # atomically per worker_id, so quick tasks (status, delivery) are not
     # starved behind a long-running coding or browser task.
     workers = [
-        TaskWorker(
-            repositories,
-            audit,
-            executor=executor,
-            retry_policy=RetryPolicy(settings.limits),
-            config_context=_worker_config_context(registry, settings),
-            config_context_factory=lambda registry=registry, settings=settings: _worker_config_context(registry, settings),
-            notification_sink=notifier,
-            task_budget_seconds=float(settings.limits.task_budget_seconds),
-            operator=operator,
-            operator_max_steps=settings.operator.max_steps,
-            fulfillment_mode=settings.operator.fulfillment_mode,
-            audit_min_tool_calls=settings.operator.audit_min_tool_calls,
-            persona_config=settings.adapters.persona,
-            skills_config=settings.adapters.skills,
-            auditor=auditor,
-            persist_llm_calls=settings.storage.persist_llm_calls,
-            llm_call_max_chars=settings.storage.llm_call_max_chars,
-            redact_patterns=settings.logging.redact_patterns,
-        )
+        TaskWorker(repositories, audit, **reloader.kwargs, runtime_refresh=reloader)
         for _ in range(max(settings.limits.max_parallel_tasks, 1))
     ]
     loops = [worker.run_forever() for worker in workers]
