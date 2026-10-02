@@ -109,4 +109,7 @@ Windows wrapper command for your install.
 | Anything else | `ybm trace-task <task_id>` and `ybm logs worker --follow`, then `ybm doctor`. |
 
 `ybm doctor` checks the runtime, ports, model, and the capability configuration and says what to fix.
-Stop everything with `ybm stop` (or `run.bat stop` / `./run.sh stop` from a checkout).
+Stop everything with the command for how you started it: `run.bat stop` or `./run.sh stop` from a checkout,
+`.\scripts\ybm.ps1 stop` in the install folder for a Windows installer copy (the MSI and `Install-YBM.bat`),
+or `ybm stop` on macOS and Linux. The two Windows and cross-platform supervisors are separate, so
+`ybm stop` does not see services the PowerShell wrapper started.

@@ -180,5 +180,5 @@ if ($Verify) {
 }
 
 Write-Host ""
-Write-Host "Pick a model and (optionally) Telegram in the admin console that just opened." -ForegroundColor Cyan
+Write-Host "The console just opened. If YBM found a model it says which one; otherwise pick one there. Telegram is optional." -ForegroundColor Cyan
 Write-Host "Next time, just double-click YBM.bat in $RepoDir - no terminal needed." -ForegroundColor Cyan

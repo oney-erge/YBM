@@ -131,4 +131,4 @@ if [ "$VERIFY" = "1" ]; then
 fi
 
 echo ""
-log "Pick a model and (optionally) Telegram in the admin console that just opened."
+log "The console just opened. If YBM found a model it says which one; otherwise pick one there. Telegram is optional."
