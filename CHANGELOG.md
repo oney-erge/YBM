@@ -5,6 +5,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-10-02
+
 ### Fixed
 
 - A model chosen or changed after the Telegram or WhatsApp intake started did not reach its first-line
