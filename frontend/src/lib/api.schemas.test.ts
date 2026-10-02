@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 import {
   ArtifactSchema,
+  BootstrapResponseSchema,
   TaskRecordSchema,
   TaskStatusSchema,
 } from "@/lib/api"
@@ -78,5 +79,21 @@ describe("TaskStatusSchema", () => {
     for (const status of ["received", "running", "paused", "blocked", "completed", "failed", "cancelled"]) {
       expect(TaskStatusSchema.safeParse(status).success, status).toBe(true)
     }
+  })
+})
+
+describe("BootstrapResponseSchema", () => {
+  const base = { token_required: true, onboarding_complete: true, llm_reachable: true, version: "0.1.4" }
+
+  it("reads whether this browser is already signed in", () => {
+    const result = BootstrapResponseSchema.parse({ ...base, authenticated: false })
+    expect(result.authenticated).toBe(false)
+  })
+
+  it("treats a backend that predates the field as signed in, never as locked out", () => {
+    // Defaulting to false here would put the token screen in front of everyone
+    // who runs a console newer than their backend.
+    const result = BootstrapResponseSchema.parse(base)
+    expect(result.authenticated).toBe(true)
   })
 })

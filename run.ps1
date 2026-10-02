@@ -66,34 +66,28 @@ function Wait-Ready {
   }
   return $false
 }
-function Initialize-Environment {
-  if (Test-Path -LiteralPath .\.env) { return }
-  $bytes = New-Object byte[] 32
-  $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
-  try { $rng.GetBytes($bytes) } finally { $rng.Dispose() }
-  $token = -join ($bytes | ForEach-Object { $_.ToString("x2") })
-  $found = $false
-  $lines = foreach ($line in Get-Content -LiteralPath .\.env.example) {
-    if ($line -match '^AGENT_ADMIN_TOKEN=') { $found = $true; "AGENT_ADMIN_TOKEN=$token" } else { $line }
-  }
-  if (-not $found) { $lines += "AGENT_ADMIN_TOKEN=$token" }
-  $path = Join-Path $PSScriptRoot ".env"
-  [System.IO.File]::WriteAllLines($path, [string[]]$lines, (New-Object System.Text.UTF8Encoding($false)))
-  Write-Host "Created .env with a unique local admin token."
-}
 
 if ($Action -eq "docker") {
   if (-not (Get-Command docker -ErrorAction SilentlyContinue)) { throw "Docker is not installed." }
   if (-not (Test-DockerEngine)) { throw "Docker is installed but its engine is not running. Start Docker Desktop and try again." }
   Enter-InstallLock
   Assert-InstallFreeSpace -Path $PSScriptRoot -RequiredGB 3
-  Initialize-Environment
+  # No .env step: the container generates its own admin token and keeps it in its
+  # state volume (scripts/docker-entrypoint.sh). Ask it for a signed-in link
+  # rather than leaving the browser to prompt for a token.
   Invoke-DockerCompose @("up", "--detach", "--build")
   if ($LASTEXITCODE -ne 0) { throw "Docker Compose build or startup failed." }
   if (-not (Wait-Ready)) { Invoke-DockerCompose @("logs", "ybm"); throw "YBM did not become ready at $url." }
   Complete-Install
   Write-Host "YBM is ready at $url/admin" -ForegroundColor Green
-  if (-not $NoBrowser) { Start-Process "$url/admin" }
+  if (-not $NoBrowser) {
+    $link = $null
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try { $link = (docker compose exec -T ybm ybm admin-url 2>$null | Select-Object -First 1) } catch { $link = $null } finally { $ErrorActionPreference = $previous }
+    if ($link) { $link = "$link".Trim() }
+    Start-Process $(if ($link) { $link } else { "$url/admin" })
+  }
   exit 0
 }
 if ($Action -eq "stop") {

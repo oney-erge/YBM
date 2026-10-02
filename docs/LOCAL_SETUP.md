@@ -90,15 +90,18 @@ console and WhatsApp dependencies, but it cannot attach to the host desktop, Chr
 VS Code session.
 
 ```bash
-cp .env.example .env
-# Edit .env and set AGENT_ADMIN_TOKEN to a long random value.
 docker compose pull
 docker compose up -d
+docker compose exec ybm ybm admin-url
 ```
 
-Open `http://127.0.0.1:8765/admin` and enter the admin token. The first-run wizard writes settings
-to the host's ignored `config/config.yaml`. Store cloud API keys in the host `.env` so they survive
-container recreation.
+`./run.sh docker` (or `.\run.ps1 docker`) does all of this and opens the console for you. Nothing
+needs configuring first: the container generates its admin token and vault key on first start and
+keeps them in the `ybm-state` volume, and `ybm admin-url` prints a link that opens the console
+already signed in. The first-run setup writes `config/config.yaml` on the host. To use a cloud
+model, put its key in a `.env` next to `docker-compose.yml` (for example `OPENAI_API_KEY=...`); it is
+picked up on the next start. A key saved through the console is kept in the same volume, so it
+survives recreating the container. Needs Docker Compose 2.24 or newer.
 
 Compose publishes the console only on host loopback, keeps runtime state in the `ybm-state` volume,
 and exposes `./workspace` as the allowed host workspace. To add the optional Ollama service:
@@ -127,7 +130,10 @@ require Node.js 22.22 or newer and `ybm ui-build`; release installs do not.
 
 ## First-run configuration
 
-The browser wizard is shown when no reachable model has been configured. It lets you:
+First run picks a model for you from what is already on the machine (your own LocalDeploy, a
+running Ollama, or a provider API key in your environment or `.env`), without asking and without
+calling a paid API, and says which one it chose. The browser wizard is shown only when none of those
+exist. It lets you:
 
 1. Select Ollama, LM Studio, LocalDeploy, a cloud provider, or another OpenAI-compatible endpoint.
 2. Verify the key or endpoint, select a model, and run one small completion before saving.

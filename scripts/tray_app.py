@@ -13,11 +13,13 @@ Run directly: backend/.venv/Scripts/python.exe scripts/tray_app.py
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import threading
 import webbrowser
 from pathlib import Path
+from urllib.parse import quote
 
 import yaml
 from PIL import Image, ImageDraw
@@ -110,8 +112,32 @@ def _run_ybm_async(icon: "pystray.Icon", verb: str, *args: str) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
+def _admin_token() -> str | None:
+    """The generated admin token, read from the environment or ``.env``.
+
+    Read here rather than through agent_control because the tray runs as a bare
+    script with no package path set up; it only needs one value.
+    """
+    token = os.environ.get("AGENT_ADMIN_TOKEN")
+    if token:
+        return token
+    env_path = REPO_ROOT / ".env"
+    try:
+        for line in env_path.read_text(encoding="utf-8").splitlines():
+            key, sep, value = line.partition("=")
+            if sep and key.strip() == "AGENT_ADMIN_TOKEN":
+                return value.strip().strip('"').strip("'") or None
+    except OSError:
+        pass
+    return None
+
+
 def _open_admin_console(icon: "pystray.Icon" = None, item: object = None) -> None:
-    webbrowser.open(f"http://127.0.0.1:{_admin_port()}/admin")
+    # Signed in, like every other way of opening the console: without the token
+    # a closed-and-reopened browser lands on a "paste your admin token" screen.
+    url = f"http://127.0.0.1:{_admin_port()}/admin"
+    token = _admin_token()
+    webbrowser.open(f"{url}?token={quote(token, safe='')}" if token else url)
 
 
 def _show_status(icon: "pystray.Icon", item: object) -> None:

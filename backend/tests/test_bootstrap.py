@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from agent_control import bootstrap
 from agent_control.config import AppSettings
 from agent_control.config_sync import read_env_value
+from agent_control.llm import autodetect, catalog
 
 
 REPO_EXAMPLE_CONFIG = Path(__file__).resolve().parents[2] / "config" / "config.example.yaml"
@@ -18,6 +19,13 @@ def _isolate(monkeypatch, tmp_path) -> None:
     monkeypatch.delenv("AGENT_SECRET_VAULT_KEY", raising=False)
     monkeypatch.delenv("TELEGRAM_BOT_TOKEN", raising=False)
     monkeypatch.delenv("YBM_LOCALDEPLOY_ROOT", raising=False)
+    # Setup now picks a model from what is on the machine. Without this, these
+    # tests would depend on whether the machine running them has a provider key
+    # exported or an Ollama server up.
+    for spec in catalog.PROVIDERS:
+        if spec.api_key_env:
+            monkeypatch.delenv(spec.api_key_env, raising=False)
+    monkeypatch.setattr(autodetect, "_installed_ollama_models", lambda timeout=2.0: [])
 
 
 def test_setup_creates_config_from_example(monkeypatch, tmp_path) -> None:
@@ -401,4 +409,5 @@ def test_install_whatsapp_bridge_deps_runs_npm_install_when_available(monkeypatc
 
     bootstrap._install_whatsapp_bridge_deps()
 
-    assert calls == [["npm", "install"]]
+    # Quiet flags: no audit/fund banners in front of someone who only enabled WhatsApp.
+    assert calls == [["npm", "install", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"]]

@@ -18,10 +18,12 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 from urllib.error import URLError
+from urllib.parse import quote
 from urllib.request import urlopen
 
-from agent_control.config import AppSettings, is_loopback_host, load_settings
+from agent_control.config import AppSettings, backend_base_url, is_loopback_host, load_settings
 from agent_control.config_sync import ConfigManager, read_env_value
 from agent_control.schemas import Capability
 from agent_control.storage.database import Database
@@ -43,6 +45,59 @@ class Check:
     name: str
     status: str  # "ok" | "warn" | "fail"
     detail: str = ""
+
+
+def admin_console_url(settings: AppSettings | None = None, *, with_token: bool = True) -> str:
+    """The address to open the console at, already signed in when a token exists.
+
+    The admin token is generated for you and kept in ``.env``; nobody should
+    have to find it and paste it. Every way of opening the console (the
+    launchers, the tray icon, ``ybm admin-url``) goes through here so they all
+    hand the browser the same one-time ``?token=`` link, which the console
+    exchanges for a long-lived session cookie and strips from the address bar.
+    """
+    settings = settings or load_settings()
+    url = backend_base_url(settings).rstrip("/") + "/admin"
+    token = read_env_value(settings.server.admin_token_env) if with_token else None
+    return f"{url}?token={quote(token, safe='')}" if token else url
+
+
+def describe_active_model(settings: AppSettings, *, configured: bool) -> dict[str, Any]:
+    """What the console should say the model is, with nothing secret in it.
+
+    First run now picks a model without asking, so the console owes the person a
+    plain statement of what it picked: the model, who provides it, and - when a
+    key from their environment is being used - the variable's *name* (never its
+    value). ``configured`` is whether that model is actually usable, computed
+    once by the caller.
+    """
+    from agent_control.llm import catalog
+
+    profile = settings.llm.profiles.get(settings.llm.default_profile)
+    if profile is None:
+        return {"configured": False, "model": None, "provider": None, "local": False, "key_env": None}
+    base_url = (profile.base_url or "").rstrip("/")
+    local = any(host in base_url for host in ("127.0.0.1", "localhost", "host.docker.internal"))
+    spec = next(
+        (
+            candidate for candidate in catalog.PROVIDERS
+            if candidate.key != "custom" and candidate.kind == profile.provider
+            and (candidate.base_url or "").rstrip("/") == base_url
+        ),
+        None,
+    )
+    if spec is not None:
+        provider = spec.label
+    else:
+        provider = "A model on this computer" if local else "Custom endpoint"
+    key_env = profile.api_key_env if profile.api_key_env and read_env_value(profile.api_key_env) else None
+    return {
+        "configured": configured,
+        "model": profile.model,
+        "provider": provider,
+        "local": local,
+        "key_env": key_env,
+    }
 
 
 def _check_python() -> Check:
@@ -179,15 +234,31 @@ def _port_listening(port: int, host: str = "127.0.0.1", timeout: float = 0.5) ->
             return False
 
 
-def _check_ports() -> list[Check]:
-    checks = []
-    for name, port in (("LocalDeploy", 8000), ("Backend", 8765)):
-        listening = _port_listening(port)
-        checks.append(Check(
-            f"Port {port} ({name})", "ok" if listening else "warn",
-            "listening" if listening else "free - not running yet",
-        ))
-    return checks
+def _localdeploy_expected(settings: AppSettings | None) -> bool:
+    """Whether this install is meant to be running LocalDeploy at all.
+
+    Most installs are not - the default model is detected from what is on the
+    machine - so its port is not worth a line in every doctor report.
+    """
+    if read_env_value("YBM_LOCALDEPLOY_ROOT"):
+        return True
+    if settings is None:
+        return False
+    profile = settings.llm.profiles.get(settings.llm.default_profile)
+    base_url = (profile.base_url or "") if profile else ""
+    return "127.0.0.1:8000" in base_url or "localhost:8000" in base_url
+
+
+def _check_ports(settings: AppSettings | None = None) -> list[Check]:
+    # A free port is the normal state before `ybm start`, not a warning: this
+    # used to print "[WARN] ... free - not running yet" on every first run.
+    ports = [("Backend", 8765)]
+    if _localdeploy_expected(settings):
+        ports.insert(0, ("LocalDeploy", 8000))
+    return [
+        Check(f"Port {port} ({name})", "ok", "listening" if _port_listening(port) else "free - not running yet")
+        for name, port in ports
+    ]
 
 
 def _http_ok(url: str, timeout: float = 6.0) -> bool:
@@ -278,7 +349,21 @@ def _check_telegram(settings: AppSettings) -> Check:
     return Check("Telegram", "fail", f"enabled but {settings.channels.telegram.token_env} is not set")
 
 
-def _check_node() -> Check:
+def _node_needed(settings: AppSettings | None) -> bool:
+    """Node.js is a contributor tool unless WhatsApp is on or the console is unbuilt.
+
+    Release installs ship the console prebuilt, so telling a person with the
+    default setup that "the admin console requires Node.js 22.22+" was a
+    warning about a requirement they do not have.
+    """
+    if settings is not None and settings.channels.whatsapp.enabled:
+        return True
+    return not (Path("backend/src/agent_control/static/admin") / "index.html").exists()
+
+
+def _check_node(settings: AppSettings | None = None, *, assume_needed: bool = True) -> Check:
+    if not assume_needed and not _node_needed(settings):
+        return Check("Node.js", "ok", "not needed - the admin console is prebuilt and WhatsApp is off")
     node = shutil.which("node")
     if node:
         version = _node_version(node)
@@ -384,10 +469,11 @@ def _check_vault(settings: AppSettings) -> Check:
 
 
 def collect_checks() -> list[Check]:
-    checks: list[Check] = [
-        _check_python(), _check_venv(), *_check_modules(), _check_node(), _check_admin_console(),
-    ]
     config_check, settings = _load_settings_checked()
+    checks: list[Check] = [
+        _check_python(), _check_venv(), *_check_modules(),
+        _check_node(settings, assume_needed=False), _check_admin_console(),
+    ]
     checks.append(config_check)
     if settings is not None:
         checks.extend(_check_desktop_modules(settings))
@@ -398,33 +484,54 @@ def collect_checks() -> list[Check]:
         checks.append(_check_whatsapp(settings))
         checks.append(_check_admin_token(settings))
         checks.append(_check_vault(settings))
-    checks.extend(_check_ports())
+    checks.extend(_check_ports(settings))
     return checks
 
 
-def run_doctor() -> int:
+def run_doctor(*, quiet: bool = False) -> int:
+    """Print the preflight report.
+
+    ``quiet`` is what the launchers use: a person starting YBM does not need 25
+    lines saying everything is fine, only the ones that need attention and a
+    one-line verdict. The full list is one ``ybm doctor`` away.
+    """
     checks = collect_checks()
-    width = max(len(c.name) for c in checks)
-    for check in checks:
+    fails = [c for c in checks if c.status == "fail"]
+    warns = [c for c in checks if c.status == "warn"]
+    oks = len(checks) - len(fails) - len(warns)
+    shown = [c for c in checks if c.status != "ok"] if quiet else checks
+    width = max((len(c.name) for c in shown), default=0)
+    for check in shown:
         line = f"{STATUS_SYMBOL[check.status]} {check.name.ljust(width)}"
         if check.detail:
             line += f"  {check.detail}"
         print(line)
 
-    fails = [c for c in checks if c.status == "fail"]
-    warns = [c for c in checks if c.status == "warn"]
-    oks = len(checks) - len(fails) - len(warns)
-    print()
-    print(f"{oks} ok, {len(warns)} warning(s), {len(fails)} failure(s)")
+    if quiet and not fails and not warns:
+        print(f"All {oks} checks passed.")
+    else:
+        if shown:
+            print()
+        print(f"{oks} ok, {len(warns)} warning(s), {len(fails)} failure(s)")
     if fails:
         print("Fix the failures above (or run `ybm setup`) before starting the stack.")
         return 1
     return 0
 
 
-def run_setup(*, telegram_token: str | None = None) -> int:
-    print("YBM setup")
-    print("=========")
+def run_setup(*, telegram_token: str | None = None, quiet: bool = False) -> int:
+    """Create config, secrets and the database, and pick a model.
+
+    Everything here is automatic: the admin token and vault key are generated,
+    a model is chosen from what is already on the machine (see
+    llm/autodetect.py), and nothing is asked. ``quiet`` is what the launchers
+    pass - it drops the developer hints ("Next: ybm doctor ...", "TELEGRAM_BOT_TOKEN
+    not set ...") that mean nothing to someone who just wanted YBM to start, and
+    keeps the lines that report a decision made on their behalf.
+    """
+    if not quiet:
+        print("YBM setup")
+        print("=========")
 
     config_manager = ConfigManager()
     config_path = Path("config/config.yaml")
@@ -435,70 +542,90 @@ def run_setup(*, telegram_token: str | None = None) -> int:
             return 1
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(example_path.read_text(encoding="utf-8"), encoding="utf-8")
-        print(f"created {config_path} from config.example.yaml (every capability starts disabled)")
-    else:
+        if not quiet:
+            print(f"created {config_path} from config.example.yaml (every capability starts disabled)")
+    elif not quiet:
         print(f"{config_path} already exists - leaving it as is")
 
     env_updates: dict[str, str] = {}
     if not read_env_value("AGENT_ADMIN_TOKEN"):
         env_updates["AGENT_ADMIN_TOKEN"] = secrets_module.token_urlsafe(32)
-        print("generated AGENT_ADMIN_TOKEN")
-    else:
+        if not quiet:
+            print("generated AGENT_ADMIN_TOKEN")
+    elif not quiet:
         print("AGENT_ADMIN_TOKEN already set")
 
     if not read_env_value("AGENT_SECRET_VAULT_KEY"):
         env_updates["AGENT_SECRET_VAULT_KEY"] = SecretVault.generate_key()
-        print("generated AGENT_SECRET_VAULT_KEY")
-    else:
+        if not quiet:
+            print("generated AGENT_SECRET_VAULT_KEY")
+    elif not quiet:
         print("AGENT_SECRET_VAULT_KEY already set")
 
     if telegram_token:
         env_updates["TELEGRAM_BOT_TOKEN"] = telegram_token
         print("saved TELEGRAM_BOT_TOKEN")
-    elif not read_env_value("TELEGRAM_BOT_TOKEN"):
+    elif not quiet and not read_env_value("TELEGRAM_BOT_TOKEN"):
         print("NOTE: TELEGRAM_BOT_TOKEN not set - pass `ybm setup --telegram-token <token>` "
               "or set it in .env, then enable channels.telegram in config/config.yaml")
 
     if env_updates:
         config_manager.upsert_env(env_updates)
 
-    if not read_env_value("YBM_LOCALDEPLOY_ROOT"):
-        print("NOTE: YBM_LOCALDEPLOY_ROOT is not set - set it in .env if you run a local "
-              "LocalDeploy checkout, otherwise point llm.profiles at a reachable "
-              "OpenAI-compatible endpoint in config/config.yaml.")
+    # Pick the model from what is already here instead of leaving the choice to
+    # a wizard that asks about things the machine can answer. Free and
+    # read-only: it never calls a paid API (llm/autodetect.py).
+    from agent_control.llm.autodetect import auto_configure_llm
 
-    database = Database(load_settings().storage.database_url)
+    detected = auto_configure_llm(config_manager)
+    if detected is not None:
+        print(f"model: using {detected.label}")
+    elif not quiet:
+        print("model: none found yet - choose one in the console, or set a provider API key "
+              "(for example OPENAI_API_KEY) in .env and run setup again.")
+
+    settings = load_settings()
+    database = Database(settings.storage.database_url)
     database.initialize()
-    print(f"database ready at {load_settings().storage.database_url}")
+    if not quiet:
+        print(f"database ready at {settings.storage.database_url}")
 
-    _build_admin_console()
-    _install_whatsapp_bridge_deps()
+    _build_admin_console(quiet=quiet)
+    # Only when WhatsApp is switched on: the sidecar's Node dependencies are
+    # otherwise ~90 packages (and an `npm audit` warning) for a channel most
+    # installs never use. Turning it on later installs them on first start.
+    if settings.channels.whatsapp.enabled:
+        _install_whatsapp_bridge_deps()
 
-    print()
-    print("Next: `ybm doctor` to verify the environment, then `ybm start`.")
+    if not quiet:
+        print()
+        print("Next: `ybm doctor` to verify the environment, then `ybm start`.")
     return 0
 
 
 def _install_whatsapp_bridge_deps() -> None:
-    """`npm install` only (no build step - whatsapp-bridge/ is a standalone
-    sidecar process, not bundled into anything) so `poll-whatsapp` has its
-    dependencies the first time someone enables channels.whatsapp.
-    Best-effort: mirrors _build_admin_console's non-fatal handling of a
-    missing npm, since the rest of YBM works without the WhatsApp channel."""
-    bridge_dir = Path("whatsapp-bridge")
-    if not bridge_dir.exists() or (bridge_dir / "node_modules").exists():
+    """Install the WhatsApp sidecar's Node dependencies (``whatsapp-bridge/``
+    is a standalone process, not bundled into anything).
+
+    Best-effort: a missing npm warns rather than fails, since the rest of YBM
+    works without the WhatsApp channel. The bridge also installs these itself
+    on first start (channels/whatsapp_bridge_process.py), so this is a
+    convenience for ``ybm setup`` on a machine where WhatsApp is already on.
+    """
+    from agent_control.channels.whatsapp_bridge_process import BRIDGE_DIR, install_bridge_dependencies
+
+    if not BRIDGE_DIR.exists() or (BRIDGE_DIR / "node_modules").exists():
         return
-    npm = shutil.which("npm")
-    if npm is None:
+    if shutil.which("npm") is None:
         print("\nNOTE: npm not found - skipping whatsapp-bridge dependency install. Install "
               "Node.js 22.22+ (https://nodejs.org), then run `npm install` in whatsapp-bridge/ "
               "if you plan to use the WhatsApp channel.")
         return
     print("\n-- Installing whatsapp-bridge dependencies --")
-    use_shell = sys.platform == "win32"
-    install_result = subprocess.run(["npm", "install"], cwd=bridge_dir, shell=use_shell, check=False)
-    if install_result.returncode != 0:
-        print("WARN: `npm install` failed in whatsapp-bridge/ - run it manually if you plan to use WhatsApp.")
+    installed, detail = install_bridge_dependencies()
+    if not installed:
+        print(f"WARN: installing whatsapp-bridge dependencies failed ({detail}) - run `npm install` "
+              "in whatsapp-bridge/ if you plan to use WhatsApp.")
 
 
 _ADMIN_CONSOLE_SOURCE_GLOBS = ("src/**/*", "public/**/*", "index.html", "package.json", "package-lock.json", "vite.config.ts", "tsconfig*.json")
@@ -518,7 +645,7 @@ def _admin_console_fingerprint(frontend_dir: Path) -> str:
     return hashlib.sha256("\n".join(entries).encode("utf-8")).hexdigest()
 
 
-def _build_admin_console() -> None:
+def _build_admin_console(*, quiet: bool = False) -> None:
     """Build the React admin console so `/admin` serves the real app instead
     of the "no build yet, run `ybm ui-build`" fallback page - without this,
     a fresh install runs fine but silently shows an unfinished-looking admin
@@ -546,10 +673,17 @@ def _build_admin_console() -> None:
     static_dir = Path("backend/src/agent_control/static/admin")
     fingerprint_path = static_dir / ".ybm_build_fingerprint"
     current_fingerprint = _admin_console_fingerprint(frontend_dir)
-    if (static_dir / "index.html").exists() and fingerprint_path.exists():
-        if fingerprint_path.read_text(encoding="utf-8").strip() == current_fingerprint:
+    built = (static_dir / "index.html").exists()
+    if built and not fingerprint_path.exists():
+        # A console with no build fingerprint did not come from this machine's
+        # `ybm ui-build`: it is the prebuilt one a release archive or the
+        # container image ships. There is nothing to build, and the Node.js
+        # toolchain it would need is exactly what these installs avoid.
+        return
+    if built and fingerprint_path.read_text(encoding="utf-8").strip() == current_fingerprint:
+        if not quiet:
             print("\nadmin console up to date - skipping build.")
-            return
+        return
 
     print("\n-- Building the admin console --")
     npm = shutil.which("npm")

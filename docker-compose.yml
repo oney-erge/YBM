@@ -1,8 +1,13 @@
 # YBM, headless profile.
 #
-#   cp .env.example .env      # set AGENT_ADMIN_TOKEN at minimum
 #   docker compose up -d
-#   open http://127.0.0.1:8765/admin
+#   docker compose exec ybm ybm admin-url     # a signed-in link to the console
+#
+# Nothing needs configuring first: the admin token is generated on first start
+# and kept in the ybm-state volume. To use a cloud model, put its key in a .env
+# next to this file (OPENAI_API_KEY=..., ANTHROPIC_API_KEY=..., and so on) and it
+# is picked up automatically. `./run.sh docker` (or `.\run.ps1 docker`) does all
+# of this and opens the console for you.
 #
 # Bring a local model along too:
 #   docker compose --profile ollama up -d
@@ -25,8 +30,12 @@ services:
     # 0.0.0.0 would still expose it to the LAN - so scope it here.
     ports:
       - "127.0.0.1:8765:8765"
+    # Optional: a .env beside this file is passed in when it exists (provider API
+    # keys, a token of your own), and nothing breaks when it does not. Needs
+    # Docker Compose 2.24 or newer.
     env_file:
-      - .env
+      - path: .env
+        required: false
     environment:
       YBM_HEADLESS: "1"
       # Reach a model running on the host (Ollama, LocalDeploy) rather than in

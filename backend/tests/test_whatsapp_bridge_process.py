@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 
 import pytest
 
+from agent_control.channels import whatsapp_bridge_process as bridge_module
 from agent_control.channels.whatsapp_bridge_process import STATE_PATH, WhatsAppBridgeProcess, find_node_binary
 from agent_control.config import WhatsAppConfig
 
@@ -154,21 +156,108 @@ async def test_bridge_process_leaves_the_handle_reachable_after_a_failed_health_
 
 
 @pytest.mark.asyncio
-async def test_bridge_process_fails_fast_when_node_modules_is_missing(tmp_path, monkeypatch) -> None:
-    """`npm install` never having run is the single most likely reason the
-    bridge won't start. Detect it before spawning, so the operator gets the
-    exact fix instead of a 60s health-check timeout."""
+async def test_bridge_process_fails_fast_when_node_modules_is_missing_and_cannot_be_installed(tmp_path, monkeypatch) -> None:
+    """Dependencies that are missing and cannot be installed are the single most
+    likely reason the bridge won't start. Say so before spawning, with the exact
+    fix, instead of a 60s health-check timeout."""
     monkeypatch.chdir(tmp_path)
     (tmp_path / "whatsapp-bridge").mkdir()  # present, but dependencies not installed
     node = tmp_path / "node.exe"
     node.write_text("", encoding="utf-8")
+    monkeypatch.setattr(bridge_module, "install_bridge_dependencies", lambda: (False, "npm was not found on PATH"))
     spawner = FakeSpawner()
     bridge = WhatsAppBridgeProcess(WhatsAppConfig(enabled=True, node_path=str(node)), spawner=spawner)
 
-    with pytest.raises(RuntimeError, match="node_modules is missing"):
+    with pytest.raises(RuntimeError, match="node_modules is missing") as raised:
         await bridge.start(ready_timeout_seconds=5)
 
+    assert "npm was not found on PATH" in str(raised.value)  # the reason is surfaced, not swallowed
     assert spawner.calls == []  # nothing spawned, so nothing to leak
+
+
+@pytest.mark.asyncio
+async def test_bridge_process_installs_its_own_dependencies_the_first_time_it_starts(tmp_path, monkeypatch) -> None:
+    """Setup no longer installs the sidecar's packages for people who never use
+    WhatsApp, so turning the channel on later has to just work."""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "whatsapp-bridge").mkdir()
+    node = tmp_path / "node.exe"
+    node.write_text("", encoding="utf-8")
+    installs: list[str] = []
+
+    def fake_install() -> tuple[bool, str]:
+        installs.append("npm ci")
+        (tmp_path / "whatsapp-bridge" / "node_modules").mkdir()
+        return True, "installed"
+
+    monkeypatch.setattr(bridge_module, "install_bridge_dependencies", fake_install)
+    monkeypatch.setattr("agent_control.channels.whatsapp_bridge_process.httpx.AsyncClient", FakeHealthyHttpClient)
+    spawner = FakeSpawner()
+    bridge = WhatsAppBridgeProcess(WhatsAppConfig(enabled=True, node_path=str(node)), spawner=spawner)
+
+    await bridge.start(ready_timeout_seconds=5)
+
+    assert installs == ["npm ci"]
+    assert len(spawner.calls) == 1
+    bridge.stop()
+
+
+@pytest.mark.asyncio
+async def test_bridge_process_does_not_reinstall_when_dependencies_are_present(tmp_path, monkeypatch) -> None:
+    node = _installed_bridge(tmp_path, monkeypatch)
+    monkeypatch.setattr(bridge_module, "install_bridge_dependencies", lambda: pytest.fail("must not reinstall"))
+    monkeypatch.setattr("agent_control.channels.whatsapp_bridge_process.httpx.AsyncClient", FakeHealthyHttpClient)
+    bridge = WhatsAppBridgeProcess(WhatsAppConfig(enabled=True, node_path=str(node)), spawner=FakeSpawner())
+
+    await bridge.start(ready_timeout_seconds=5)
+
+    bridge.stop()
+
+
+def test_install_bridge_dependencies_uses_the_lockfile_and_stays_quiet(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "whatsapp-bridge").mkdir()
+    (tmp_path / "whatsapp-bridge" / "package-lock.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(bridge_module.shutil, "which", lambda name: "/usr/bin/npm")
+    seen: dict = {}
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["cwd"] = kwargs.get("cwd")
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(bridge_module.subprocess, "run", fake_run)
+
+    ok, detail = bridge_module.install_bridge_dependencies()
+
+    assert ok is True and detail == "installed"
+    assert seen["command"][:2] == ["npm", "ci"]  # reproducible, not "whatever is newest"
+    assert {"--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"} <= set(seen["command"])
+
+
+def test_install_bridge_dependencies_reports_npm_failures_instead_of_raising(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "whatsapp-bridge").mkdir()
+    monkeypatch.setattr(bridge_module.shutil, "which", lambda name: "/usr/bin/npm")
+    monkeypatch.setattr(
+        bridge_module.subprocess, "run",
+        lambda command, **kwargs: SimpleNamespace(returncode=1, stdout="", stderr="E404 not found: baileys"),
+    )
+
+    ok, detail = bridge_module.install_bridge_dependencies()
+
+    assert ok is False
+    assert "E404" in detail
+
+
+def test_install_bridge_dependencies_says_what_to_install_when_npm_is_missing(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(bridge_module.shutil, "which", lambda name: None)
+
+    ok, detail = bridge_module.install_bridge_dependencies()
+
+    assert ok is False
+    assert "Node.js" in detail
 
 
 @pytest.mark.asyncio

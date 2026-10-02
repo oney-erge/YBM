@@ -8,6 +8,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ArtifactCard } from "@/components/chat/ArtifactCard"
 import { ChatMarkdown } from "@/components/chat/ChatMarkdown"
 import { ComposerModeChips, ComposerTools } from "@/components/chat/ComposerTools"
+import { ModelChip } from "@/components/chat/ModelChip"
 import { VoiceRecorder } from "@/components/chat/VoiceRecorder"
 import { FolderPicker } from "@/components/chat/FolderPicker"
 import { InlineApproval } from "@/components/chat/InlineApproval"
@@ -15,6 +16,7 @@ import { TaskReceiptCard } from "@/components/chat/TaskReceiptCard"
 import { chatAnswerText, displayedObjective, isTerminal } from "@/lib/chat"
 import { chatWidthClass, readChatWidth, writeChatWidth, type ChatWidth } from "@/lib/chat-width"
 import {
+  useBootstrap,
   useChatMessages,
   usePendingApprovals,
   useSendChatMessage,
@@ -62,6 +64,7 @@ const STARTER_PROMPTS = [
 
 export function ChatPage() {
   const { data, isPending, isError, error } = useChatMessages()
+  const { data: bootstrap } = useBootstrap()
   const { data: voice } = useVoiceConfig()
   const sendMessage = useSendChatMessage()
   const uploadAttachment = useUploadChatAttachment()
@@ -160,6 +163,7 @@ ${instructions}` : trimmed
                 </Button>
               ))}
             </div>
+            <ModelChip model={bootstrap?.model} />
             <div className="flex items-center gap-1.5 rounded-full bg-success/10 px-2.5 py-1 text-xs font-medium text-success">
               <ShieldCheck className="size-3.5" />
               Policy protected
