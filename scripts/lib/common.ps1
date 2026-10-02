@@ -132,7 +132,9 @@ function Stop-YbmProcessTree {
   }
   $process = Get-Process -Id $ProcessId -ErrorAction SilentlyContinue
   if ($process) {
-    Stop-Process -Id $ProcessId -Force
+    # Stopping a parent often ends its child first, so the process can be gone
+    # between the check above and this call; that is the goal, not an error.
+    Stop-Process -Id $ProcessId -Force -ErrorAction SilentlyContinue
   }
 }
 

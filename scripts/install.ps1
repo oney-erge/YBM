@@ -33,6 +33,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1 started from a PowerShell 7 terminal inherits that
+# terminal's PSModulePath, whose PowerShell 7 entries shadow the built-in
+# modules and make cmdlets such as Get-FileHash disappear mid-install. Drop
+# those entries so 5.1 resolves its own. A no-op everywhere else.
+if ($PSVersionTable.PSEdition -eq "Desktop" -and $env:PSModulePath) {
+  # -like, not -match: backslashes are literal in a wildcard, so there is nothing to escape.
+  $env:PSModulePath = (($env:PSModulePath -split ";") | Where-Object {
+    $_ -and $_ -notlike "*\PowerShell\Modules" -and $_ -notlike "*\PowerShell\7\Modules"
+  }) -join ";"
+}
 
 $ReleaseZipUrl = "https://github.com/oney-erge/YBM/releases/latest/download/YBM-windows.zip"
 $ChecksumsUrl = "https://github.com/oney-erge/YBM/releases/latest/download/SHA256SUMS.txt"

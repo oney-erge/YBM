@@ -33,6 +33,49 @@ jobs:
           [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path run.ps1), [ref]$null, [ref]$errors)
           if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }
 
+  # Parsing a launcher proves it is valid syntax, not that it starts YBM. A
+  # launcher that failed on every default start (and one that reported success
+  # as failure) both passed the syntax job above, so run each one for real:
+  # fresh checkout, default action, exit code, health check, stop.
+  launcher-smoke:
+    name: Launcher smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Run the launcher (Windows PowerShell 5.1, as a double-click does)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          .\run.ps1 -NoBrowser
+          if ($LASTEXITCODE -ne 0) { throw "run.ps1 exited $LASTEXITCODE" }
+          $health = Invoke-RestMethod -Uri http://127.0.0.1:8765/health -TimeoutSec 10
+          if ($health.status -ne "ok") { throw "health check returned: $($health | ConvertTo-Json -Compress)" }
+          .\run.ps1 stop
+          if ($LASTEXITCODE -ne 0) { throw "run.ps1 stop exited $LASTEXITCODE" }
+      - name: Run the launcher (bash)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Put the system bash first on PATH so the `#!/usr/bin/env bash`
+          # scripts that run.sh execs get macOS's stock bash 3.2 (the one a user
+          # actually has), not whatever newer bash the runner image added.
+          mkdir -p "$RUNNER_TEMP/system-bash"
+          ln -sf /bin/bash "$RUNNER_TEMP/system-bash/bash"
+          export PATH="$RUNNER_TEMP/system-bash:$PATH"
+          bash --version | head -1
+          ./run.sh --no-browser
+          curl -fsS --max-time 10 http://127.0.0.1:8765/health
+          echo
+          ./run.sh stop
+
   backend-tests:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
