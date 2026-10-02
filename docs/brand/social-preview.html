@@ -1,0 +1,45 @@
+<!doctype html>
+<!--
+  Source for docs/brand/social-preview.png, the 1280x640 card GitHub shows when the repo
+  is linked. Render it with any Chromium at a 1280x640 viewport, for example:
+    npx playwright screenshot --viewport-size=1280,640 docs/brand/social-preview.html docs/brand/social-preview.png
+  The words are claims about the product. Keep them in line with the README.
+-->
+<html lang="en"><head><meta charset="utf-8"><title>YBM</title>
+<style>
+  html, body { margin: 0; width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    background: #0f1222;
+    color: #eef0fb;
+    font-family: "Segoe UI", system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+    display: flex; align-items: center; justify-content: center; gap: 64px;
+  }
+  .mark { width: 230px; height: 230px; flex: none; }
+  .mark svg { width: 100%; height: 100%; display: block; }
+  .copy { width: 720px; }
+  h1 { margin: 0; font-size: 120px; font-weight: 800; letter-spacing: 2px; line-height: 1; }
+  p { margin: 20px 0 30px; font-size: 32px; line-height: 1.3; color: #a9b0d6; }
+  .stages { display: flex; align-items: center; gap: 10px; flex-wrap: nowrap; }
+  .stage { font-size: 22px; color: #dfe3fb; padding: 9px 18px; border-radius: 10px;
+           border: 1px solid #343b6b; background: #171b34; }
+  .arrow { color: #6274e8; font-size: 22px; font-weight: 700; }
+</style></head>
+<body>
+  <div class="mark">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="YBM">
+      <path d="M 150 150 L 256 256 L 362 150 M 256 256 V 366" fill="none" stroke="#6274e8"
+            stroke-linecap="round" stroke-linejoin="round" stroke-width="100"/>
+    </svg>
+  </div>
+  <div class="copy">
+    <h1>YBM</h1>
+    <p>A local AI agent you can reach from the web, Telegram, and WhatsApp.</p>
+    <div class="stages">
+      <div class="stage">Plan</div><div class="arrow">&rarr;</div>
+      <div class="stage">Approve</div><div class="arrow">&rarr;</div>
+      <div class="stage">Execute</div><div class="arrow">&rarr;</div>
+      <div class="stage">Verify</div><div class="arrow">&rarr;</div>
+      <div class="stage">Receipt</div>
+    </div>
+  </div>
+</body></html>
