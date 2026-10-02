@@ -48,8 +48,14 @@ function Install-YbmUv {
   $installerFile = Join-Path ([IO.Path]::GetTempPath()) "ybm-uv-$Script:YbmUvVersion.ps1"
   try {
     Save-InstallDownload -Url $installer -Destination $installerFile -Label "uv download"
-    & powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installerFile
-    if ($LASTEXITCODE -ne 0) { throw "uv installer exited with code $LASTEXITCODE" }
+    # Captured, not left in the pipeline: anything this function emits becomes
+    # part of its return value, so the installer's console chatter used to be
+    # returned together with the path ("& $uv sync" then failed with 'The term
+    # "Downloading uv ... everything's installed!" is not recognized'). It is
+    # also noise - "restart your shell to update PATH" means nothing to someone
+    # who only wanted YBM to start - so it is shown only when the install fails.
+    $installerOutput = @(& powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File $installerFile 2>&1 | ForEach-Object { "$_" })
+    if ($LASTEXITCODE -ne 0) { throw "uv installer exited with code $LASTEXITCODE. $($installerOutput -join ' ')" }
   } catch {
     throw "Could not install uv from $installer ($($_.Exception.Message)). Check your internet connection and try again - uv is the only thing YBM needs to bootstrap."
   } finally {
@@ -61,7 +67,7 @@ function Install-YbmUv {
     throw "uv installed but could not be located. Looked in ~\.local\bin and %LOCALAPPDATA%\Programs\uv. Set YBM_UV_PATH and try again."
   }
   Write-Host "uv at $uv" -ForegroundColor Green
-  return $uv
+  return [string]$uv
 }
 
 function Get-YbmPython {

@@ -64,10 +64,15 @@ ensure_uv() {
   if [ -n "$uv" ]; then printf '%s' "$uv"; return 0; fi
   log "Installing uv ${UV_VERSION} (standalone; no Python needed)" >&2
   installer="$(mktemp)"
+  # The installer's own output ("restart your shell to update PATH" and the
+  # like) means nothing to someone who only wanted YBM to start, so it is shown
+  # only when the install fails.
+  local uv_log
   install_download "$UV_INSTALLER" "$installer" "uv download" &&
-  sh "$installer" >&2 \
-    || fail "could not install uv from $UV_INSTALLER" \
-            "Check your internet connection, then try again. uv is the only thing YBM needs to bootstrap."
+  uv_log="$(sh "$installer" 2>&1)" \
+    || { [ -n "${uv_log:-}" ] && printf '%s\n' "$uv_log" >&2
+         fail "could not install uv from $UV_INSTALLER" \
+              "Check your internet connection, then try again. uv is the only thing YBM needs to bootstrap."; }
   rm -f -- "$installer"
   uv="$(find_uv || true)"
   [ -n "$uv" ] || fail "uv installed but could not be located" \
