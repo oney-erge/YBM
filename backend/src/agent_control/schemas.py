@@ -199,7 +199,7 @@ class AuditEventType(StrEnum):
     MESSAGE_SENT = "message_sent"
     CONFIG_UPDATED = "config_updated"
     TELEGRAM_ACCESS_DECISION = "telegram_access_decision"
-    # Generic form of the above (docs/UI_UX_AUDIT.md Phase 16) - Telegram
+    # Generic form of the above (docs/archive/UI_UX_AUDIT.md Phase 16) - Telegram
     # keeps its own named event (existing historical rows, existing code),
     # WhatsApp and any future channel use this one rather than borrowing
     # Telegram's name for an event that isn't about Telegram.
@@ -224,7 +224,7 @@ class AuditEventType(StrEnum):
     ERROR = "error"
     # What a task cancellation cleaned up - pending approvals rejected,
     # task-scoped grants revoked, stuck tool invocations closed out, an
-    # awaiting-external session stopped (docs/UI_UX_AUDIT.md Phase 8).
+    # awaiting-external session stopped (docs/archive/UI_UX_AUDIT.md Phase 8).
     TASK_CANCELLED = "task_cancelled"
 
 
@@ -500,10 +500,10 @@ class PlanPostcondition(StrictBaseModel):
 class OperatorAction(StrEnum):
     """What the Operator loop's decide() call chose to do next.
 
-    See docs/HISTORY.md P3 / orchestration/operator.py - the additive
+    See docs/archive/HISTORY.md P3 / orchestration/operator.py - the additive
     observe/decide/act alternative to plan-once-then-replan.
 
-    CALL_TOOLS_PARALLEL and DELEGATE (docs/HISTORY.md Part 4 T1.1/T1.2) are
+    CALL_TOOLS_PARALLEL and DELEGATE (docs/archive/HISTORY.md Part 4 T1.1/T1.2) are
     both narrowly scoped, not general replacements for CALL_TOOL: parallel
     calls skip the approval/retry/background-wait machinery entirely (see
     worker.py's _run_parallel_calls), and a delegated sub-task cannot itself
@@ -573,7 +573,7 @@ class TaskRecord(StrictBaseModel):
 
 
 def channel_chat_id(task: TaskRecord, channel: ChannelType) -> str | None:
-    """Which `channel` chat a task's output belongs to (docs/UI_UX_AUDIT.md
+    """Which `channel` chat a task's output belongs to (docs/archive/UI_UX_AUDIT.md
     Phase 16 - generalized from the original Telegram-only `task_chat_id`
     once a second channel, WhatsApp, existed to validate the seam against).
 
@@ -637,7 +637,7 @@ class ToolCallRequest(StrictBaseModel):
     idempotency_key: str = Field(default_factory=lambda: new_id("idem"))
     requires_approval: bool = False
     created_at: datetime = Field(default_factory=utc_now)
-    # Trace-graph correlation (docs/UI_REWRITE_PLAN.md §7/§9 Phase 0.6): which
+    # Trace-graph correlation (docs/archive/UI_REWRITE_PLAN.md §7/§9 Phase 0.6): which
     # execution context issued this call - "operator" (the parent's own
     # direct call, the default), "parallel_batch:<id>" (one of N concurrent
     # calls from one call_tools_parallel), or "subagent:<id>" (a delegated
@@ -697,12 +697,12 @@ class ToolCallResult(StrictBaseModel):
     # classified it either way. Attached by ToolExecutor from the tool's own
     # contract, the same boundary as egress/verification. Currently a
     # visibility signal for the trace/evidence views, not yet consumed by
-    # the Operator prompt itself - see docs/GAPS.md.
+    # the Operator prompt itself - see docs/ROADMAP.md.
     content_trust: str | None = None
 
 
 class LLMCallRecord(StrictBaseModel):
-    """One LLM API call, persisted for the trace (docs/UI_UX_AUDIT.md Phase
+    """One LLM API call, persisted for the trace (docs/archive/UI_UX_AUDIT.md Phase
     14d) - the receipts that turn the Duration view's inferred "operator
     thinking" gaps into measured latency. `source` is "concierge", "operator",
     "auditor", or "subagent". The Concierge's call is recorded against the task
@@ -712,7 +712,7 @@ class LLMCallRecord(StrictBaseModel):
     `messages`/`response_text` are redacted and size-capped by the caller
     before construction, not here - this model just carries the result.
 
-    `step_id` (docs/UI_UX_AUDIT.md Phase 14e) is the same id stamped onto the
+    `step_id` (docs/archive/UI_UX_AUDIT.md Phase 14e) is the same id stamped onto the
     operator_history entry for this step and any ToolCallRequest.parent_step_id
     it led to - the real parent-child link Graph v2 is built on, not another
     inferred correlation.
@@ -746,7 +746,7 @@ class ApprovalRequest(StrictBaseModel):
 
 
 class ApprovalGrant(StrictBaseModel):
-    """"Allow for this task" (docs/UI_UX_AUDIT.md Phase 1): a human approved
+    """"Allow for this task" (docs/archive/UI_UX_AUDIT.md Phase 1): a human approved
     one call and chose to pre-approve the same tool+capability for the rest
     of this task, instead of being asked again for every subsequent call.
 
@@ -835,7 +835,7 @@ class MemorySource(StrEnum):
 
 
 class MemoryFact(StrictBaseModel):
-    """One durable, structured fact (docs/UI_UX_AUDIT.md Phase 4) - the
+    """One durable, structured fact (docs/archive/UI_UX_AUDIT.md Phase 4) - the
     replacement for treating the rolling conversation summary as the only
     memory. Deliberately flat and inspectable: a person can read
     `category: content` and understand exactly what the agent believes,

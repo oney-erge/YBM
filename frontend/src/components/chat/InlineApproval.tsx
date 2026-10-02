@@ -9,14 +9,14 @@ import { useDecideApproval } from "@/lib/queries"
 
 /**
  * Approvals directly in Chat instead of only behind the Review dialog
- * (docs/UI_UX_AUDIT.md Phase 1): most decisions should take under ten
+ * (docs/archive/UI_UX_AUDIT.md Phase 1): most decisions should take under ten
  * seconds - Deny / Allow for this task / Approve once, right where the
  * task already is. "Review details" expands the same EvidencePack used in
  * the full dialog for the rare case that needs it; nothing about the
  * decision logic is duplicated.
  *
  * No "Always allow" here on purpose - that needs a revocation list to be
- * safe, which doesn't exist yet (docs/UI_UX_AUDIT.md's explicit scope-down).
+ * safe, which doesn't exist yet (docs/archive/UI_UX_AUDIT.md's explicit scope-down).
  */
 export function InlineApproval({ item }: { item: PendingApprovalItem }) {
   const [expanded, setExpanded] = useState(false)

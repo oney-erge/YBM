@@ -1,7 +1,7 @@
 # YBM Admin Console
 
 React + Vite + TypeScript SPA for YBM's admin console, served by the backend at `/admin`. See
-[docs/UI_REWRITE_PLAN.md](../docs/UI_REWRITE_PLAN.md) for the full design and phase-by-phase
+[docs/archive/UI_REWRITE_PLAN.md](../docs/archive/UI_REWRITE_PLAN.md) for the full design and phase-by-phase
 build record.
 
 ## Development
@@ -34,4 +34,4 @@ The backend deliberately has no `CORSMiddleware` (see `admin.py`'s `_origin_is_t
 same-origin check exists specifically to stop a malicious local page from driving the agent.
 `vite.config.ts`'s dev proxy rewrites both `Host` and `Origin` on the way to the backend so the
 request is *actually* same-origin, not a bypass of that check. See
-[docs/UI_REWRITE_PLAN.md §4](../docs/UI_REWRITE_PLAN.md) before touching the proxy config.
+[docs/archive/UI_REWRITE_PLAN.md §4](../docs/archive/UI_REWRITE_PLAN.md) before touching the proxy config.

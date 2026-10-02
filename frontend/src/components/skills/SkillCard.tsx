@@ -9,7 +9,7 @@ import { useUninstallSkill } from "@/lib/queries"
 import { formatRelativeTime } from "@/lib/time"
 
 /**
- * One installed skill (docs/UI_UX_AUDIT.md Phase 5): what it's for, which
+ * One installed skill (docs/archive/UI_UX_AUDIT.md Phase 5): what it's for, which
  * tools its instructions reference, and uninstall.
  *
  * Deliberately NOT called a "permission label" anywhere in this UI

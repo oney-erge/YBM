@@ -2,7 +2,7 @@
   "name": "ybm-whatsapp-bridge",
   "private": true,
   "version": "1.0.0",
-  "description": "Local WhatsApp sidecar for YBM (docs/UI_UX_AUDIT.md Phase 16) - a thin Baileys wrapper exposing health/updates/send over localhost HTTP. Owned and spawned by the Python backend (agent_control.channels.whatsapp_bridge_process); not a standalone service.",
+  "description": "Local WhatsApp sidecar for YBM (docs/archive/UI_UX_AUDIT.md Phase 16) - a thin Baileys wrapper exposing health/updates/send over localhost HTTP. Owned and spawned by the Python backend (agent_control.channels.whatsapp_bridge_process); not a standalone service.",
   "license": "MIT",
   "type": "module",
   "engines": {

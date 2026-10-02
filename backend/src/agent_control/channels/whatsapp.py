@@ -1,4 +1,4 @@
-"""WhatsApp channel (docs/UI_UX_AUDIT.md Phase 16) - the second real
+"""WhatsApp channel (docs/archive/UI_UX_AUDIT.md Phase 16) - the second real
 consumer of `channels/base.py`'s channel-agnostic core, and deliberately
 thin because of it: no `/command` slash syntax, no inline buttons, no voice
 transcription - plain text only, going through the exact same
@@ -223,7 +223,7 @@ class WhatsAppIntakeService:
         )
 
     def _plain_text_command_response(self, inbound: InboundMessage) -> OutboundMessage | None:
-        # "Remember that ..." (docs/UI_UX_AUDIT.md Phase 15) is checked here,
+        # "Remember that ..." (docs/archive/UI_UX_AUDIT.md Phase 15) is checked here,
         # at the runtime level, before the LLM classifier ever sees the
         # message - same precedence and provenance guarantee Telegram's own
         # plain-text layer already established.
@@ -245,7 +245,7 @@ class WhatsAppIntakeService:
             return
         if text == ACKNOWLEDGMENT_TEXT:
             # Skip the pre-classification "got your message" filler
-            # specifically (docs/UI_UX_AUDIT.md Phase 16 review) - it has
+            # specifically (docs/archive/UI_UX_AUDIT.md Phase 16 review) - it has
             # no lasting information: the real chat reply, or the
             # task-started message that follows it, arrives within the
             # same handling of this update regardless. WhatsApp's own

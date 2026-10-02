@@ -23,7 +23,7 @@ const SOURCE_TONE: Record<MemoryFact["source"], "outline" | "secondary" | "defau
 }
 
 /**
- * One remembered fact (docs/UI_UX_AUDIT.md Phase 4): category, content,
+ * One remembered fact (docs/archive/UI_UX_AUDIT.md Phase 4): category, content,
  * where it came from, edit-in-place, forget. Source is read-only - it's
  * provenance the backend stamped (memory_manage.py never accepts one from
  * the model, admin.py always stamps operator_admin), not something a

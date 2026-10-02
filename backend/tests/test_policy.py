@@ -82,7 +82,7 @@ def test_scope_check_does_not_allow_prefix_escape(tmp_path) -> None:
 
 
 def test_has_grant_skips_approval_but_not_risk_ceiling(tmp_path) -> None:
-    """"Allow for this task" (docs/UI_UX_AUDIT.md Phase 1): has_grant=True
+    """"Allow for this task" (docs/archive/UI_UX_AUDIT.md Phase 1): has_grant=True
     only bypasses the "ask a human" step. It must never let a call through
     that fails the capability's own risk ceiling - a grant recorded while
     the ceiling allowed HIGH must not survive a config change that later

@@ -1,7 +1,7 @@
 """Scenario: "normalize this inline task list into JSON" through the real
 Operator loop -> code.interpreter generate_and_run -> real local Python
 execution. Ports e2e/all_cases.json's `code_interpreter_json_transform`
-case down to the deterministic tier (docs/HISTORY.md P2) - data-in-the-
+case down to the deterministic tier (docs/archive/HISTORY.md P2) - data-in-the-
 objective (no CSV/PDF fixture file needed), normalized-JSON-out; also
 asserts `coding.agent`/`vscode.copilot_terminal` are never selected, the
 same routing guard as test_implicit_code_interpreter_numbers_report.py.

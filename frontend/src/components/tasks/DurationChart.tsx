@@ -8,7 +8,7 @@ const MIN_BAR_PERCENT = 0.6
 const TICK_COUNT = 5
 
 /**
- * "Where did the time go" (docs/UI_UX_AUDIT.md Phase 14) - the requested
+ * "Where did the time go" (docs/archive/UI_UX_AUDIT.md Phase 14) - the requested
  * horizontal bar / Gantt view, one row per segment in chronological order,
  * bar length proportional to real elapsed wall-clock time. Deliberately not
  * a charting library: plain positioned divs over a shared percentage track,

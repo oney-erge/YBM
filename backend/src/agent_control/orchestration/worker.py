@@ -86,7 +86,7 @@ NOTIFIABLE_STATUSES = {
 # re-claimed and re-run from a status that assumes in-flight state which no
 # longer exists - re-running from the top could duplicate side effects (a
 # second Telegram send, a second file write), and there's no checkpoint to
-# resume from mid-flight. See docs/HISTORY.md P6.
+# resume from mid-flight. See docs/archive/HISTORY.md P6.
 ORPHANABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.INTERPRETING)
 
 # Pseudo-entries the fulfillment/audit gap paths append to operator_history so
@@ -223,7 +223,7 @@ class TaskWorker:
     # Override globally via ``settings.limits.task_budget_seconds`` (config) or
     # per-task via ``task.metadata["task_budget_seconds"]``.
     DEFAULT_TASK_BUDGET_SECONDS: float = 600.0
-    # A delegated sub-task (docs/HISTORY.md Part 4 T1.2) gets its own small,
+    # A delegated sub-task (docs/archive/HISTORY.md Part 4 T1.2) gets its own small,
     # fixed step budget, independent of operator_max_steps - the whole point
     # of delegation is bounding how much a sub-task can explore before it
     # must report back, not inheriting the parent's full budget.
@@ -263,11 +263,11 @@ class TaskWorker:
             if task_budget_seconds is not None
             else self.DEFAULT_TASK_BUDGET_SECONDS
         )
-        # The observe/decide/act loop (docs/HISTORY.md P3 §2.2) - the sole
+        # The observe/decide/act loop (docs/archive/HISTORY.md P3 §2.2) - the sole
         # execution path. See orchestration/operator.py.
         self.operator = operator
         self.operator_max_steps = operator_max_steps
-        # The Auditor (docs/HISTORY.md P3 §2.1) - grounds a `done` decision
+        # The Auditor (docs/archive/HISTORY.md P3 §2.1) - grounds a `done` decision
         # against raw tool output before letting it complete. Optional: a
         # worker with no auditor configured skips straight to the
         # fulfillment-gap check, same as before this existed.
@@ -280,7 +280,7 @@ class TaskWorker:
         # embedder that never configured a persona file).
         self.persona_config = persona_config
         self.skills_config = skills_config
-        # LLM-call persistence (docs/UI_UX_AUDIT.md Phase 14d) - the receipts
+        # LLM-call persistence (docs/archive/UI_UX_AUDIT.md Phase 14d) - the receipts
         # behind the Duration view's real (non-inferred) segments. See
         # _record_llm_call below.
         self.persist_llm_calls = persist_llm_calls
@@ -422,7 +422,7 @@ class TaskWorker:
                 await asyncio.sleep(min(poll_interval_seconds * consecutive_poll_failures, 30.0))
                 continue
             # AWAITING_APPROVAL is deliberately NOT in WORKABLE_STATUSES
-            # (docs/UI_UX_AUDIT.md Phase 8, second pass) - claim_next never
+            # (docs/archive/UI_UX_AUDIT.md Phase 8, second pass) - claim_next never
             # re-selects it, the same way it already never re-selected
             # AWAITING_EXTERNAL. A task landing there has its claim released
             # in process_next above, freeing this worker to claim a
@@ -449,7 +449,7 @@ class TaskWorker:
     async def process_task(self, task_id: str) -> TaskRecord:
         # Rebind (not merge) so every log line for this tick is greppable by
         # task_id alone - one grep, the whole story, instead of correlating
-        # timestamps across an unstructured stdout capture (docs/HISTORY.md §2.1).
+        # timestamps across an unstructured stdout capture (docs/archive/HISTORY.md §2.1).
         # Rebinding fresh each call matters: this worker's asyncio Task is
         # long-lived (run_forever() polls it repeatedly), so a stale task_id
         # from a previous tick would otherwise leak into this one's logs.
@@ -607,14 +607,14 @@ class TaskWorker:
             )
 
         memory_context = str(latest.metadata.get("memory_context") or "")
-        # docs/HISTORY.md Part 4 T2.6: a done that was already rejected once
+        # docs/archive/HISTORY.md Part 4 T2.6: a done that was already rejected once
         # (audit-gap or fulfillment-gap retry marker in history) is a
         # concrete, local, zero-cost-to-check sign the default model is
         # struggling on this task - worth the stronger model if one is
         # configured, same reasoning as the existing parse-failure escalation
         # in operator.py, just reacting to an earlier signal.
         prefer_major = any(entry.get("tool_name") in CHECK_ENTRY_NAMES for entry in history)
-        # A stable id for this one observe/decide/act tick (docs/UI_UX_AUDIT.md
+        # A stable id for this one observe/decide/act tick (docs/archive/UI_UX_AUDIT.md
         # Phase 14e) - stamped onto the operator's own LLM call, the resulting
         # operator_history entry, and any ToolCallRequest.parent_step_id it
         # leads to, so the graph can be built from a real parent-child link
@@ -696,7 +696,7 @@ class TaskWorker:
                     # count/section sufficiency ("are all 5 episodes here?") -
                     # judging a truncation produces false INSUFFICIENT verdicts
                     # on exactly the long-content objectives it exists for.
-                    # See docs/HISTORY.md §3.2.
+                    # See docs/archive/HISTORY.md §3.2.
                     full_content_request_id = latest.metadata.get("last_content_tool_request_id")
                     raw_output = str(
                         latest.metadata.get("last_content_tool_output_text")
@@ -765,7 +765,7 @@ class TaskWorker:
             # different kind of check - a narrow, deterministic claim-vs-
             # evidence regex, not an intent-inference heuristic - so it still
             # runs in both modes; it is what caught "The following files were
-            # created:" against an empty workspace (docs/E2E_FINDINGS.md P0-2).
+            # created:" against an empty workspace (docs/archive/E2E_FINDINGS.md P0-2).
             gap = (
                 None
                 if self._auditor_owns_fulfillment
@@ -1191,12 +1191,12 @@ class TaskWorker:
         step_id: str,
         approvals_by_call: dict[tuple[str, str], str] | None = None,
     ) -> list[dict[str, Any]]:
-        """Execute independent tool calls concurrently (docs/HISTORY.md Part 3
+        """Execute independent tool calls concurrently (docs/archive/HISTORY.md Part 3
         T1.1) and return one history-entry dict per call, same shape as a
         normal call_tool entry plus ``"parallel": True``.
 
         Every call in one batch shares a single ``parallel_batch:<id>``
-        ``ToolCallRequest.origin`` (docs/UI_REWRITE_PLAN.md §7/§9 Phase 0.6),
+        ``ToolCallRequest.origin`` (docs/archive/UI_REWRITE_PLAN.md §7/§9 Phase 0.6),
         so a trace UI can render them as siblings that ran at once instead of
         indistinguishable sequential calls. ``origin_prefix`` lets
         ``_run_delegate`` nest this correctly when a sub-task itself fans
@@ -1294,7 +1294,7 @@ class TaskWorker:
     async def _run_delegate(
         self, task: TaskRecord, decision: OperatorDecision, *, step_id: str
     ) -> tuple[TaskRecord, dict[str, Any]]:
-        """Run a delegated sub-task in an isolated context (docs/HISTORY.md
+        """Run a delegated sub-task in an isolated context (docs/archive/HISTORY.md
         Part 3 T1.2): its own operator loop, its own history starting from
         nothing, its own fixed step budget - only a compact summary crosses
         back into the parent's history. That's the entire value: a
@@ -1322,7 +1322,7 @@ class TaskWorker:
         "delegate" summary entry returned to the parent's history. Each
         sub-decision inside the loop below is its own step, with its own
         freshly generated step_id, the same way the parent's own tick loop
-        works (docs/UI_UX_AUDIT.md Phase 14e).
+        works (docs/archive/UI_UX_AUDIT.md Phase 14e).
         """
         delegate_origin = f"subagent:{uuid4().hex[:12]}"
         objective = decision.delegate_objective or ""
@@ -1494,7 +1494,7 @@ class TaskWorker:
         every ~3s poll tick. Returns None to fall through to the normal "log
         it and let the next decide() call see it in context" handling for
         every other kind of failure - that in-context recovery is deliberate
-        (docs/HISTORY.md P3 §2.2); this is narrowly about pacing, not
+        (docs/archive/HISTORY.md P3 §2.2); this is narrowly about pacing, not
         diagnosis, the same split the plan-based path draws.
         """
         if self.retry_policy is None:
@@ -1582,7 +1582,7 @@ class TaskWorker:
             # step_id survives the background wait here, read back by
             # _resume_operator_pending_external below so the eventual
             # completion entry links to the same step as the "running" one
-            # above (docs/UI_UX_AUDIT.md Phase 14e).
+            # above (docs/archive/UI_UX_AUDIT.md Phase 14e).
             "operator_pending_call": {"tool_name": decision.tool_name, "tool_input": decision.tool_input, "step_id": step_id},
             "awaiting_external": {
                 "tool_name": decision.tool_name,
@@ -1726,7 +1726,7 @@ class TaskWorker:
                 # Survives the approval wait, read back by
                 # _process_operator_awaiting_approval below so the resumed
                 # call's ToolCallRequest.parent_step_id and history entry
-                # link to the same step that requested it (docs/UI_UX_AUDIT.md
+                # link to the same step that requested it (docs/archive/UI_UX_AUDIT.md
                 # Phase 14e).
                 "step_id": step_id,
             },
@@ -1984,7 +1984,7 @@ class TaskWorker:
             # and then silence. This used to key on metadata["attempt_history"]
             # + current_step_id - both plan-era fields with zero writers since
             # P3, which collapsed the key to the constant "running" and killed
-            # progress reporting entirely. See docs/HISTORY.md §3.3.
+            # progress reporting entirely. See docs/archive/HISTORY.md §3.3.
             history = task.metadata.get("operator_history")
             if isinstance(history, list) and history:
                 status_key = f"{task.status.value}:steps:{len(history)}"
@@ -2023,7 +2023,7 @@ class TaskWorker:
         """Accumulate one LLM call's token usage into task.metadata["token_usage"].
 
         `source` is "operator" or "auditor" - the two LLM calls the worker
-        itself makes per step (docs/HISTORY.md Part 4 T1.4). The Concierge's
+        itself makes per step (docs/archive/HISTORY.md Part 4 T1.4). The Concierge's
         call is added by llm/call_log.py once its task exists. Deliberately
         does NOT cover coding-agent-reported usage (already tracked
         separately as last_tool_usage/last_copilot_usage in
@@ -2045,7 +2045,7 @@ class TaskWorker:
     def _record_llm_call(
         self, task_id: str, source: str, step_index: int, service: Any, *, step_id: str
     ) -> None:
-        """Persist one LLM call's request/response/timing (docs/UI_UX_AUDIT.md
+        """Persist one LLM call's request/response/timing (docs/archive/UI_UX_AUDIT.md
         Phase 14d) - a sibling to _record_llm_usage's running token totals
         above, not a replacement: that stays the cheap, always-on counter;
         this is the full per-call record that turns the Duration view's
@@ -2060,7 +2060,7 @@ class TaskWorker:
         provider raised before setting them). Best-effort: a persistence
         failure is logged, not raised - it must never block the task itself.
 
-        `step_id` (docs/UI_UX_AUDIT.md Phase 14e) is the same id stamped onto
+        `step_id` (docs/archive/UI_UX_AUDIT.md Phase 14e) is the same id stamped onto
         this step's operator_history entry and any ToolCallRequest.parent_step_id
         it leads to - the real parent-child link Graph v2 is built on.
         """
@@ -2799,7 +2799,7 @@ def _tool_call_count(history: list[dict[str, Any]]) -> int:
     stole a slot from the tool calls the model needs to actually close the
     gap - with the default budget of 8, two fulfillment plus two audit gaps
     burned half of it, and a task could exhaust its budget having called zero
-    tools. See docs/HISTORY.md §3.1.
+    tools. See docs/archive/HISTORY.md §3.1.
     """
     return len([entry for entry in history if entry.get("tool_name") not in CHECK_ENTRY_NAMES])
 
@@ -3111,7 +3111,7 @@ def _unsupported_write_claim(
 
     A single unsupported-operation failure was enough for the operator to stop
     and synthesize "The following files were created:" for an empty workspace,
-    and the task completed (docs/E2E_FINDINGS.md P0-2). Objective-derived
+    and the task completed (docs/archive/E2E_FINDINGS.md P0-2). Objective-derived
     postconditions are the other guard, but they are inferred from wording; this
     one reads the claim the answer actually makes and demands matching evidence.
 

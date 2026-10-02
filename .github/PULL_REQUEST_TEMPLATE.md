@@ -5,7 +5,7 @@
 - [ ] `uv sync --frozen --extra test --extra dev` then `uv run --frozen pytest` (from `backend/`)
 - [ ] `uv run --frozen ruff check .` (from `backend/`)
 - [ ] `npm run compile` (from `vscode-extension/`, if touched)
-- [ ] Scenario fixtures re-recorded if this touches prompts, tool schemas, or workspace layout (see `docs/HISTORY.md`)
+- [ ] Scenario fixtures re-recorded if this touches prompts, tool schemas, or workspace layout (see `docs/archive/HISTORY.md`)
 
 ## Does this touch a security-sensitive area?
 

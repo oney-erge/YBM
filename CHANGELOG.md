@@ -142,7 +142,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   `document.manage`). `ToolExecutor` stamps it onto
   `ToolCallResult.content_trust`, and it now shows as an "untrusted
   content" badge on the matching step in a task's trace. Does not yet
-  reach the Operator prompt itself - see `docs/GAPS.md`.
+  reach the Operator prompt itself - see `docs/ROADMAP.md`.
 - An automatically-retried TIMEOUT or transient failure on a risky write
   (filesystem/terminal/desktop/browser-control/VS Code, or high/critical
   risk) now records an explicit warning in the retry's history entry - it
@@ -171,7 +171,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   task's TTL, and can be revoked early. The Access page's new "Active
   grants" card lists every currently-usable grant across every task -
   scope, usage, time remaining - with a one-click revoke, closing the gap
-  `docs/UI_UX_AUDIT.md` named: "there is still no way to see or revoke a
+  `docs/archive/UI_UX_AUDIT.md` named: "there is still no way to see or revoke a
   live one."
 - MCP servers can now be added, edited, tested, and removed from Settings
   instead of by hand-editing `config.yaml` - three new endpoints
@@ -327,6 +327,26 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   command they'd have to know exists reaches nobody who doesn't already
   know to look.
 
+### Changed
+
+- Documentation consolidated. The README is now a short front door (install, the first ten
+  minutes, the five-stage promise stated without over-claiming). `docs/LOCAL_SETUP.md` became
+  `docs/INSTALL.md`, a new `docs/USING.md` tours the console and absorbs the old end-to-end
+  check, `docs/ROLES.md` folded into `docs/ARCHITECTURE.md`, and `docs/GAPS.md` into
+  `docs/ROADMAP.md` ("Known limits"). The history, UI plan, UI audit, and E2E findings moved to
+  `docs/archive/`, and every reference to them in code comments was repointed.
+- Corrected statements that did not match the code: Architecture said parallel batches could not
+  ask for approval (they ask once, for the whole list), counted the live E2E suite as 11 cases
+  (there are 28), omitted `web.search` and `dependencies.install`, and linked a heading that did not
+  exist; the console and README said WhatsApp could be connected from Settings, which has no
+  WhatsApp card (it is configured in `config/config.yaml`, and the channel note now says so).
+- `docs/THREAT_MODEL.md`'s pre-publication checklist is now a status table of the repository's
+  actual protections.
+- The Markdown link check also validates `#heading` anchors, which found and fixed six dead
+  table-of-contents links in the archived history.
+- Release archives now include the top-level docs, `SECURITY.md`, and `CONTRIBUTING.md`, so the
+  README's links work in an installed copy.
+
 ## [0.1.3] - 2026-08-11
 
 ### Fixed
@@ -477,4 +497,4 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Known issues
 
-See `docs/GAPS.md`.
+See `docs/ROADMAP.md`.

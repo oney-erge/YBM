@@ -1,7 +1,7 @@
 """`ybm db inspect|clean|reset` implementation.
 
 Exists because the DB accumulates task/audit history with no retention and
-no visibility short of opening it in a SQLite browser (see docs/HISTORY.md P6).
+no visibility short of opening it in a SQLite browser (see docs/archive/HISTORY.md P6).
 """
 
 from __future__ import annotations
@@ -64,7 +64,7 @@ def db_inspect() -> int:
             if schedule_count:
                 print()
                 print(f"schedules: {schedule_count} active (run `ybm db inspect` again after "
-                      f"changes; stale schedules keep spawning tasks - see docs/HISTORY.md P6)")
+                      f"changes; stale schedules keep spawning tasks - see docs/archive/HISTORY.md P6)")
     return 0
 
 
@@ -97,7 +97,7 @@ def _clean_tables(connection: sqlite3.Connection, tables: set[str], cutoff: str)
     # decisions, and any message logged before a task existed carry no
     # task_id) - the task-anchored cascade above never reaches these, so
     # without this they accumulate forever regardless of retention settings
-    # (docs/HISTORY.md N5's retention gap).
+    # (docs/archive/HISTORY.md N5's retention gap).
     deleted_orphan_audit = 0
     if "audit_events" in tables:
         deleted_orphan_audit = connection.execute(

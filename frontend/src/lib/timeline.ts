@@ -36,7 +36,7 @@ const CATEGORY_DISPLAY: Record<string, { icon: LucideIcon; className: string }> 
 }
 
 /**
- * Icon + color for one timeline row (docs/UI_UX_AUDIT.md Phase 14) -
+ * Icon + color for one timeline row (docs/archive/UI_UX_AUDIT.md Phase 14) -
  * replacing the earlier two-kind ("tool" blue wrench / "audit" grey
  * shield) system with a real vocabulary. Category picks the base
  * treatment; a failed tool call always overrides to danger regardless of

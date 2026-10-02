@@ -41,7 +41,7 @@ function deriveDraft(data: SettingsSummary): Draft {
 }
 
 /**
- * Level 1 (docs/UI_REWRITE_PLAN.md §14): model picker via presets + a
+ * Level 1 (docs/archive/UI_REWRITE_PLAN.md §14): model picker via presets + a
  * "Test connection" button, plus the full manual profile form. Ports
  * Streamlit's `_render_llm_config`.
  */

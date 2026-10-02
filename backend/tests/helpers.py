@@ -2,7 +2,7 @@
 
 Eight test files each carried a byte-identical private `_repos(tmp_path)`
 before 2026-07-29 - flagged as friction in the original audit
-(docs/HISTORY.md Part 2 §2.5) and left open until now. One definition here
+(docs/archive/HISTORY.md Part 2 §2.5) and left open until now. One definition here
 means a change to how a test database is built (a new repository, a
 migration, different redaction settings) is a one-line edit rather than
 eight, with no risk of the copies drifting apart.

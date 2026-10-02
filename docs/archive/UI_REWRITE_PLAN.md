@@ -288,7 +288,7 @@ that, and A2 must never silently break the deterministic test tier.
 ## 9–14. Phases 0–5 - backend readiness through Settings - ✅ all done
 
 All six build phases shipped; the day-by-day build log (what was found, what broke, what was
-verified at each step) lives in `docs/HISTORY.md` Part 5, not duplicated here. This section keeps
+verified at each step) lives in `docs/archive/HISTORY.md` Part 5, not duplicated here. This section keeps
 only what a future reader needs that isn't obvious from the code:
 
 - **Phase 0 (backend readiness):** the Vite dev proxy needed an explicit `Origin` rewrite to pass
@@ -345,7 +345,7 @@ shipped bugs a curl/API-contract-only verification pass could never have caught:
 several pages' `flex h-full flex-col ... overflow-y-auto` containers let their children shrink
 below content size (flexbox's default `flex-shrink: 1`) instead of scrolling, silently collapsing
 the least "greedy" cards (Access's Kill switch/Presets) to a couple of pixels tall whenever a
-page's content exceeded the viewport. Both fixed; see `docs/HISTORY.md` for the full account.
+page's content exceeded the viewport. Both fixed; see `docs/archive/HISTORY.md` for the full account.
 **What's still open** is a committed, CI-running spec suite - the list below is unchanged from the
 original plan:
 
@@ -453,13 +453,13 @@ now-pointless `-NoAdminUi` flag; `streamlit` and the `playwright` (Python) test 
 `pyproject.toml`; every "Admin UI" URL across supervisors/docs/onboarding repointed at
 `http://127.0.0.1:8765/admin`. Full mechanics and the parity-check process (a real audit against
 every Streamlit `_render_*` function, not just this section's own checklist - it found four
-undisclosed gaps, closed before deleting anything) are in `docs/HISTORY.md` Part 5.
+undisclosed gaps, closed before deleting anything) are in `docs/archive/HISTORY.md` Part 5.
 
 ---
 
 ## 20. Open questions
 
-- **Dark mode** - implemented after parity with semantic light/dark tokens and a persisted system-aware toggle; see `docs/UI_UX_AUDIT.md`.
+- **Dark mode** - implemented after parity with semantic light/dark tokens and a persisted system-aware toggle; see `docs/archive/UI_UX_AUDIT.md`.
 - **Mobile/responsive** - implemented after parity with a mobile header, bottom navigation, responsive page widths, and overflow checks at 390px.
 - **SSE vs polling** - deferred by design (0.4); decide from real usage.
 - **Storybook** - likely overkill at this size; MSW + Vitest should cover it. Revisit if the

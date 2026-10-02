@@ -40,7 +40,7 @@ Set access from the admin console's **Access** page, which groups capabilities i
 Changes to access, folders and the model take effect on the next task: the worker follows
 `config/config.yaml` and `.env` while it runs, so nothing needs restarting. (Telegram and
 WhatsApp intake keep the model they started with; restart after changing it. See
-[GAPS.md](GAPS.md).) A config that enables only `filesystem.write` keeps working: being
+[Known limits](ROADMAP.md#known-limits).) A config that enables only `filesystem.write` keeps working: being
 allowed to change files implies being allowed to look at them.
 
 > "Full access" still does **not** bypass approvals that a tool declares for a specific
@@ -64,6 +64,8 @@ allowed to change files implies being allowed to look at them.
 | `vscode.copilot_terminal` | `vscode.write_files` | Queue a Copilot prompt into the VS Code terminal, with a local Copilot CLI fallback. |
 | `vscode.terminal_command` | `vscode.write_files` | Queue a shell command into the VS Code terminal. |
 | `http.request` | `network.http` | Call allowlisted HTTP APIs, injecting vault secrets at call time without logging them. |
+| `web.search` | `network.http` | Search the web and get title/URL/snippet results back as data; the Operator follows up with `http.request` to read a page. Results are treated as untrusted content. |
+| `dependencies.install` | `dependencies.install` | Install allowlisted Python packages into a per-task directory, never the system environment. Installing always asks for approval, whatever the access mode. |
 | `schedule.manage` | `schedule.manage` | Create, list, pause, resume, delete, and run recurring schedules. |
 | `memory.manage` | `memory.manage` | Remember, list, and forget structured facts. |
 | `tts.synthesize` | `tts.synthesize` | Text to speech. |

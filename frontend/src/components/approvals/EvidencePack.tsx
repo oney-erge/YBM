@@ -8,7 +8,7 @@ import { describeCapability } from "@/lib/capability"
 import { AdapterReviewPanel } from "@/components/approvals/AdapterReviewPanel"
 
 /**
- * The approval decision surface (docs/UI_REWRITE_PLAN.md §11.2), ordered
+ * The approval decision surface (docs/archive/UI_REWRITE_PLAN.md §11.2), ordered
  * for a sub-15-second decision per the 2026 human-in-the-loop research this
  * plan cites: Why -> What -> Exactly what -> Blast radius -> Capability
  * -> Authority. Never a bare "Approve?" button.

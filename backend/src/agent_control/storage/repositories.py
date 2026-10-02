@@ -233,7 +233,7 @@ class TaskRepository:
     def list_for_conversation(self, conversation_id: str, limit: int = 50) -> list[TaskRecord]:
         """Oldest-first (a chat transcript reads top-to-bottom), unlike
         list_recent's newest-first - used by the local web chat channel
-        (docs/HISTORY.md Part 4 T2.8) to render one conversation's history.
+        (docs/archive/HISTORY.md Part 4 T2.8) to render one conversation's history.
         """
         with self.database.connect() as connection:
             rows = connection.execute(
@@ -625,7 +625,7 @@ class ApprovalRepository:
 
     def list_pending(self, limit: int = 100) -> list[ApprovalRequest]:
         """Sweeps stale rows before listing, and orders by soonest expiry
-        (docs/UI_UX_AUDIT.md Phase 12) - previously ordered by created_at
+        (docs/archive/UI_UX_AUDIT.md Phase 12) - previously ordered by created_at
         ASC with no expiry filter at all, so an approval that had already
         expired stayed PENDING (only decide_pending's own expiry check
         ever caught it) and, being the oldest, permanently led the list -
@@ -669,7 +669,7 @@ class ApprovalRepository:
         return cursor.rowcount
 
     def cancel_pending_for_task(self, task_id: str) -> int:
-        """Called when a task is cancelled (docs/UI_UX_AUDIT.md Phase 8) - a
+        """Called when a task is cancelled (docs/archive/UI_UX_AUDIT.md Phase 8) - a
         pending approval whose task is already dead must not keep sitting in
         the pending list looking actionable. Mirrors decide_pending's exact
         live-vs-already-expired split, just scoped to every pending approval

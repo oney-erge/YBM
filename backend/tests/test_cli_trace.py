@@ -1,5 +1,5 @@
 """ybm trace <task_id> - a one-command task post-mortem that reads the DB
-directly, no running backend required (docs/HISTORY.md §2.4)."""
+directly, no running backend required (docs/archive/HISTORY.md §2.4)."""
 
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ def test_trace_task_prints_operator_history_and_error(patched_repositories, caps
 
 
 def test_trace_task_prints_token_usage_breakdown(patched_repositories, capsys) -> None:
-    """docs/HISTORY.md Part 4 T1.4: ybm trace is the no-running-backend
+    """docs/archive/HISTORY.md Part 4 T1.4: ybm trace is the no-running-backend
     post-mortem tool, so this is where cost visibility matters most."""
     task = patched_repositories.tasks.create("what is the invoice total?")
     patched_repositories.tasks.update_metadata(

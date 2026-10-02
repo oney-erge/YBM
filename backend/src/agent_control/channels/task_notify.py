@@ -1,4 +1,4 @@
-"""Shared "what happened" text for a task's notification (docs/UI_UX_AUDIT.md
+"""Shared "what happened" text for a task's notification (docs/archive/UI_UX_AUDIT.md
 Phase 16) - pure formatting over `TaskRecord.metadata`, no channel API calls
 anywhere in this file. Extracted out of `telegram_notifications.py` once
 WhatsApp existed as a real second consumer to validate the extraction
@@ -26,7 +26,7 @@ def format_task_message(task: TaskRecord) -> str:
 
     Every channel's notifier renders this, so it is the one place that can
     guarantee a credential read out of a user's file does not leave the system
-    in a chat message (docs/E2E_FINDINGS.md P0-1). The audit sink is covered
+    in a chat message (docs/archive/E2E_FINDINGS.md P0-1). The audit sink is covered
     separately by `AuditLogger.append`; a task's answer reaches the user through
     here regardless of which tool produced it.
     """
@@ -374,7 +374,7 @@ def _latest_attempt_summary(task: TaskRecord) -> str | None:
 
     Reads operator_history. This used to read metadata["attempt_history"], a
     plan-era field with zero writers since P3 - so it silently returned None
-    and every failure message lost its explanation. See docs/HISTORY.md §3.3.
+    and every failure message lost its explanation. See docs/archive/HISTORY.md §3.3.
     """
     history = task.metadata.get("operator_history")
     if not isinstance(history, list) or not history:
@@ -449,7 +449,7 @@ def _last_output(task: TaskRecord) -> str | None:
 def _last_error(task: TaskRecord) -> str | None:
     # `planning_error` / `last_replan_reason` used to be chained in here as
     # further fallbacks; both were plan-era keys with zero writers left after
-    # P3, so they could only ever contribute None (docs/HISTORY.md Part 2 §4
+    # P3, so they could only ever contribute None (docs/archive/HISTORY.md Part 2 §4
     # item 10). Same for `intervention_summary` in _failure_lines() above.
     fallback = task.metadata.get("last_worker_error")
     result = task.metadata.get("last_tool_result")

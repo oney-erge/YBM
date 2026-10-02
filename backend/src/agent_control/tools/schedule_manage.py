@@ -163,7 +163,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             # go on and reliably invents a nonexistent shape (a "frequency"
             # field, a nested "task" object) instead of using "objective" +
             # "cadence" - confirmed empirically while recording a scenario
-            # test fixture for this exact tool (docs/HISTORY.md P2).
+            # test fixture for this exact tool (docs/archive/HISTORY.md P2).
             examples=(
                 {"operation": "create", "objective": "Check https://example.com/status for updates", "cadence": "daily"},
                 {"operation": "list"},

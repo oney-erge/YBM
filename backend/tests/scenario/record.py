@@ -1,5 +1,5 @@
 """ybm scenario record <name> - re-record a scenario fixture against a live
-LLM (docs/HISTORY.md N3).
+LLM (docs/archive/HISTORY.md N3).
 
 Not a pytest test module (doesn't match the ``test_*.py`` discovery pattern),
 so it's never auto-collected or run by ``ybm test`` / plain ``pytest``.

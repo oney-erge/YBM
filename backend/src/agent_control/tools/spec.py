@@ -6,7 +6,7 @@ own register() function without importing registry.py itself - registry.py is
 the one importing *them*, and a two-way import would be a cycle. New tool =
 new adapter module with a register() function, one import line added to
 registry.py's _REGISTRARS - no editing this file or any other tool's code
-(docs/HISTORY.md P3).
+(docs/archive/HISTORY.md P3).
 """
 
 from __future__ import annotations
@@ -110,7 +110,7 @@ class ToolDefinition:
     # Human-readable "why" for an approval_required_operations entry, shown
     # on the ApprovalRequest a human actually sees. Restores the specific
     # reasoning that ToolAdapter-raised exceptions used to carry before the
-    # runtime-owned approval gate replaced them (docs/HISTORY.md Part 4's
+    # runtime-owned approval gate replaced them (docs/archive/HISTORY.md Part 4's
     # concurrent-hardening note) - optional; operations not listed here still
     # get PolicyEngine.approval_request()'s generic "Approve X using Y".
     approval_reasons: dict[str, str] = field(default_factory=dict)
@@ -122,7 +122,7 @@ class ToolDefinition:
     # descriptions.
     examples: tuple[dict, ...] = ()
     # Operations whose SUCCEEDED result can carry a real destination this
-    # machine contacted (docs/GAPS.md: "only http.request calls
+    # machine contacted (docs/ROADMAP.md: "only http.request calls
     # record_egress... browser, MCP, coding-agent, and Telegram traffic is
     # invisible to receipts"). ToolExecutor consults this - a tool needs
     # zero manual record_egress() call sites of its own to be covered;
@@ -137,7 +137,7 @@ class ToolDefinition:
     # thereby "trusted", just unclassified. ToolExecutor stamps
     # ToolCallResult.content_trust from this so the trace/evidence views can
     # show a human which observations came from outside YBM's control - it
-    # does not yet reach the Operator prompt itself (docs/GAPS.md: that
+    # does not yet reach the Operator prompt itself (docs/ROADMAP.md: that
     # needs a reviewed prompt change and re-recorded scenario fixtures).
     operation_content_trust: dict[str, str] = field(default_factory=dict)
     # Optional mechanical proof hook (docs/ROADMAP.md "Proof"): given the

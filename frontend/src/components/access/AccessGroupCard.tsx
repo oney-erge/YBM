@@ -8,7 +8,7 @@ import { cn } from "@/lib/utils"
 import type { CapabilityAccessMode, CapabilityAccessSummary, CapabilityPolicy } from "@/lib/api"
 
 /**
- * One access-mode group (docs/UI_REWRITE_PLAN.md §13 Level 1) - a Select
+ * One access-mode group (docs/archive/UI_REWRITE_PLAN.md §13 Level 1) - a Select
  * bound directly to the group's own `options` (never a hardcoded mode
  * list, since not every group supports every mode: desktop_screenshot has
  * no write_access/full_access at all). Selecting Full access always drops

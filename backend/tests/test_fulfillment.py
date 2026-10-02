@@ -2,7 +2,7 @@
 
 Expectations come from objective text only - the plan-derived path
 (`plan.postconditions` and tool-name inference) went away with the plan-once
-execution path, since nothing creates a PlanModel anymore (docs/HISTORY.md §1.1).
+execution path, since nothing creates a PlanModel anymore (docs/archive/HISTORY.md §1.1).
 
 Tests are split accordingly:
 - `validate_fulfillment()` for the end-to-end path, driven by objective wording.
@@ -203,7 +203,7 @@ def test_inflected_verb_still_infers_the_postcondition() -> None:
     """The classifier paraphrases the request into `objective`, and exact-token
     matching meant "creating" did not count as "create" - the WORKSPACE_DIR
     obligation silently vanished and a run that wrote nothing while claiming
-    otherwise completed unchallenged (docs/E2E_FINDINGS.md P0-2)."""
+    otherwise completed unchallenged (docs/archive/E2E_FINDINGS.md P0-2)."""
     paraphrased = TaskRecord(
         objective=(
             "Scaffold a minimal VS Code extension called ybm-dog-facts, creating package.json, "
@@ -331,7 +331,7 @@ def test_inflection_expansion_does_not_match_unrelated_words() -> None:
 
 
 def test_embedded_filesystem_path_does_not_fabricate_a_postcondition() -> None:
-    """Regression guard (docs/HISTORY.md): objectives routinely embed a literal
+    """Regression guard (docs/archive/HISTORY.md): objectives routinely embed a literal
     path whose last segment contains a trigger word. A folder named
     '..._search' must not infer a BROWSER_STATE expectation nothing can
     satisfy - that produced a gap the loop could never close."""

@@ -67,7 +67,7 @@ def test_db_clean_removes_old_orphaned_audit_events_keeps_recent(tmp_path, monke
     """audit_events.task_id is nullable (config changes, Telegram access
     decisions, pre-task messages) - the task-anchored cascade in db_clean
     never reaches these, so without an explicit pass they accumulate forever
-    regardless of --days (docs/HISTORY.md N5)."""
+    regardless of --days (docs/archive/HISTORY.md N5)."""
     repositories, database = _repositories(tmp_path, monkeypatch)
     audit = AuditLogger(repositories.audit)
     old_event = audit.append(AuditEventType.CONFIG_UPDATED, actor="admin", payload={"section": "llm"})

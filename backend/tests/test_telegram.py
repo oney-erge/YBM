@@ -339,7 +339,7 @@ def test_telegram_non_task_falls_back_to_responder_when_concierge_reply_is_empty
     instructs the Concierge to always populate it for is_task=false, but
     nothing enforces that at the schema level, and a weaker/local model can
     still return it empty. This is the safety net that keeps the fallback
-    responder path (docs/HISTORY.md Part 1 P3 item 4) genuinely load-bearing
+    responder path (docs/archive/HISTORY.md Part 1 P3 item 4) genuinely load-bearing
     rather than dead code - confirmed by inspection, this test proves it by
     execution."""
     responder = StaticChatResponder("Fallback answer from the separate responder call.")
@@ -521,14 +521,14 @@ def test_telegram_plain_approve_approves_latest_pending_task(tmp_path) -> None:
     assert updated.id == approval.id
     assert updated.status == ApprovalStatus.APPROVED
     assert result.outbound_message is not None
-    # docs/UI_UX_AUDIT.md Phase 8, second review: a decided approval must
+    # docs/archive/UI_UX_AUDIT.md Phase 8, second review: a decided approval must
     # make the task claimable again, not leave it stuck in a status
     # claim_next no longer re-selects.
     assert repos.tasks.get(task.id).status == TaskStatus.RUNNING
 
 
 def test_telegram_remember_that_stores_a_user_stated_fact_without_the_llm(tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 15: provenance must be decided by the
+    """docs/archive/UI_UX_AUDIT.md Phase 15: provenance must be decided by the
     runtime, never selectable by the model - no classifier is configured
     here at all, proving the detection and storage happen before any LLM
     would even be reachable."""
@@ -649,7 +649,7 @@ def test_telegram_inline_keyboard_reject_denies_approval_and_answers_callback(tm
     assert updated.status == ApprovalStatus.REJECTED
     assert bot_api.answered == [("cbq1", "Rejected.")]
     assert result.authorized is True
-    # docs/UI_UX_AUDIT.md Phase 8, second review: a rejection must requeue
+    # docs/archive/UI_UX_AUDIT.md Phase 8, second review: a rejection must requeue
     # the task too, not just an approval - it's the worker's next
     # process_task() call (separately tested) that turns a rejected
     # decision into BLOCKED; this layer's job is only to make the task

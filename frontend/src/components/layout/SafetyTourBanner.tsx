@@ -4,7 +4,7 @@ import { Link } from "react-router"
 import { readSafetyTourDismissed, writeSafetyTourDismissed } from "@/lib/safety-tour"
 
 /**
- * One-time safety tour (docs/UI_REWRITE_PLAN.md §14) - dismissible,
+ * One-time safety tour (docs/archive/UI_REWRITE_PLAN.md §14) - dismissible,
  * shown once ever (localStorage), independent of the onboarding wizard
  * (which only appears until config.yaml exists at all).
  */

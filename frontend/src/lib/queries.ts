@@ -74,7 +74,7 @@ import {
 import { isTerminal } from "@/lib/chat"
 
 // Polling intervals - deliberately simple (plain TanStack Query polling,
-// not SSE) per docs/UI_REWRITE_PLAN.md §9 (Phase 0.4): matches Streamlit's
+// not SSE) per docs/archive/UI_REWRITE_PLAN.md §9 (Phase 0.4): matches Streamlit's
 // prior 3s whole-page rerun behavior with per-query granularity instead,
 // and SSE is added later only if this proves visibly laggy in real use.
 const CHAT_POLL_MS = 2_000
@@ -298,7 +298,7 @@ export function useRunWorkflow() {
   })
 }
 
-// ---- Access (docs/UI_REWRITE_PLAN.md §13) ----------------------------
+// ---- Access (docs/archive/UI_REWRITE_PLAN.md §13) ----------------------------
 
 export function useEffectiveConfig() {
   return useQuery({
@@ -360,7 +360,7 @@ export function useInitSecretVault() {
   })
 }
 
-// ---- Settings (docs/UI_REWRITE_PLAN.md §14) ----------------------------
+// ---- Settings (docs/archive/UI_REWRITE_PLAN.md §14) ----------------------------
 
 export function useSettingsSummary() {
   return useQuery({
@@ -395,7 +395,7 @@ export function useVoiceConfig() {
 
 /** Modeled as a mutation, not a query: doctor takes a couple of seconds
  * (it probes ports/DB/LocalDeploy for real) and is explicitly
- * operator-triggered, never polled (docs/UI_UX_AUDIT.md Phase 9). */
+ * operator-triggered, never polled (docs/archive/UI_UX_AUDIT.md Phase 9). */
 export function useRunDoctor() {
   return useMutation({ mutationFn: runDoctor })
 }
@@ -501,7 +501,7 @@ export function useUpdateComputerUseConfig() {
   return useSettingsMutation((input: ComputerUseConfigInput) => updateComputerUseConfig(input))
 }
 
-// ---- Audit (docs/UI_REWRITE_PLAN.md §14 Level 2) ------------------------
+// ---- Audit (docs/archive/UI_REWRITE_PLAN.md §14 Level 2) ------------------------
 
 export function useAudit(params: { category?: string; q?: string; limit?: number }) {
   return useQuery({
@@ -521,7 +521,7 @@ export function useClearAudit() {
   })
 }
 
-// ---- Memory (docs/UI_UX_AUDIT.md Phase 4) --------------------------------
+// ---- Memory (docs/archive/UI_UX_AUDIT.md Phase 4) --------------------------------
 
 export function useMemoryFacts(params: { q?: string; category?: string } = {}) {
   return useQuery({
@@ -563,7 +563,7 @@ export function useDeleteMemoryFact() {
   })
 }
 
-// ---- Skills (docs/UI_UX_AUDIT.md Phase 5) --------------------------------
+// ---- Skills (docs/archive/UI_UX_AUDIT.md Phase 5) --------------------------------
 
 export function useSkills() {
   return useQuery({
@@ -601,7 +601,7 @@ export function useUninstallSkill() {
   })
 }
 
-// ---- Folders (docs/UI_UX_AUDIT.md Phase 13) ------------------------------
+// ---- Folders (docs/archive/UI_UX_AUDIT.md Phase 13) ------------------------------
 
 export function useFolders(path: string | undefined, enabled: boolean) {
   return useQuery({

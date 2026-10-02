@@ -74,7 +74,7 @@ def test_admin_page_points_to_build_instructions_before_a_react_build_exists(mon
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AGENT_ADMIN_TOKEN", raising=False)
     monkeypatch.setenv("AGENT_STORAGE__DATABASE_URL", f"sqlite:///{tmp_path / 'admin.db'}")
-    # Explicitly force the "no build yet" precondition (docs/UI_REWRITE_PLAN.md
+    # Explicitly force the "no build yet" precondition (docs/archive/UI_REWRITE_PLAN.md
     # §9 Phase 0.2's case 3) rather than relying on whatever
     # backend/src/agent_control/static/admin/ happens to contain on this
     # machine - that directory is a gitignored, locally-generated build
@@ -87,7 +87,7 @@ def test_admin_page_points_to_build_instructions_before_a_react_build_exists(mon
     page = client.get("/admin")
 
     # The React console is the only admin UI now (Streamlit was removed at
-    # cutover, docs/UI_REWRITE_PLAN.md §19) - /admin falls back to a small
+    # cutover, docs/archive/UI_REWRITE_PLAN.md §19) - /admin falls back to a small
     # pointer telling the operator to build it, rather than 404ing or
     # crashing when no build is present at this checkout.
     assert page.status_code == 200
@@ -157,7 +157,7 @@ def test_admin_allows_same_origin_request_without_token(monkeypatch, tmp_path) -
 
 
 def test_admin_bootstrap_reports_onboarding_incomplete_without_config(monkeypatch, tmp_path) -> None:
-    # docs/UI_REWRITE_PLAN.md §9 Phase 0.3: the SPA shell's very first call,
+    # docs/archive/UI_REWRITE_PLAN.md §9 Phase 0.3: the SPA shell's very first call,
     # before it knows whether a token is even needed - deliberately NOT
     # behind require_admin (a token-required client can't learn it needs a
     # token from an endpoint that itself demands one).
@@ -321,7 +321,7 @@ def test_recommended_ollama_model_prefers_a_known_good_tag() -> None:
 
 
 def test_admin_serves_built_index_html_when_a_build_exists(monkeypatch, tmp_path) -> None:
-    # docs/UI_REWRITE_PLAN.md §9 Phase 0.2: once frontend/ is actually built,
+    # docs/archive/UI_REWRITE_PLAN.md §9 Phase 0.2: once frontend/ is actually built,
     # /admin should serve the real SPA shell instead of the Streamlit pointer.
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("AGENT_ADMIN_TOKEN", raising=False)
@@ -486,7 +486,7 @@ def test_admin_pending_approvals_lists_only_pending(monkeypatch, tmp_path) -> No
 
 
 def test_admin_pending_approvals_includes_capability_ceiling_and_blast_radius(monkeypatch, tmp_path) -> None:
-    # docs/UI_REWRITE_PLAN.md §11.2 - the Evidence Pack's "Authority" (risk
+    # docs/archive/UI_REWRITE_PLAN.md §11.2 - the Evidence Pack's "Authority" (risk
     # vs. the configured ceiling) and "Blast radius" (what this would
     # actually touch) fields, both derived from data the existing
     # ApprovalRequest doesn't expose on its own.
@@ -548,7 +548,7 @@ def test_admin_pending_approvals_blast_radius_is_empty_for_unrelated_input(monke
 
 
 def test_admin_pending_approvals_excludes_expired_and_orders_by_soonest_expiry(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 12: an approval whose expiry already
+    """docs/archive/UI_UX_AUDIT.md Phase 12: an approval whose expiry already
     passed must not appear in the list at all (it used to stay PENDING
     forever and, being the oldest by created_at, permanently led the
     list) - and among what remains, the most urgent (soonest to expire)
@@ -580,7 +580,7 @@ def test_admin_pending_approvals_excludes_expired_and_orders_by_soonest_expiry(m
 
 
 def test_admin_decide_approval_approve_for_task_creates_a_grant(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 1's "Allow for this task" - approves the
+    """docs/archive/UI_UX_AUDIT.md Phase 1's "Allow for this task" - approves the
     current call exactly like "approve" and additionally creates an
     ApprovalGrant (task_id, tool_name, capability) so the executor won't
     ask again for the same tool+capability within this task."""
@@ -735,7 +735,7 @@ def test_admin_decide_approval_reject_updates_status(monkeypatch, tmp_path) -> N
 
 
 def test_admin_decide_approval_requeues_a_task_stuck_awaiting_approval(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 8, second review: deciding an approval must
+    """docs/archive/UI_UX_AUDIT.md Phase 8, second review: deciding an approval must
     make the task claimable again (AWAITING_APPROVAL isn't in
     WORKABLE_STATUSES), not just flip the ApprovalRequest's own status -
     otherwise a decided approval is never revisited and the task hangs
@@ -781,7 +781,7 @@ def test_admin_decide_approval_409_when_already_decided(monkeypatch, tmp_path) -
 
 def test_admin_task_trace_includes_operator_history_tool_calls_and_audit(monkeypatch, tmp_path) -> None:
     """The trace endpoint's execution record is operator_history + real
-    tool_invocations now - PlanModel is dead (docs/HISTORY.md \u00a71.1), nothing
+    tool_invocations now - PlanModel is dead (docs/archive/HISTORY.md \u00a71.1), nothing
     creates one anymore."""
     monkeypatch.chdir(tmp_path)  # see test_admin_page_and_summary for why chdir, not just delenv
     database_url = f"sqlite:///{tmp_path / 'admin.db'}"
@@ -938,7 +938,7 @@ def test_admin_task_trace_joins_verification_onto_operator_history(monkeypatch, 
 
 
 def test_admin_task_trace_operator_history_entry_without_request_id_has_no_duration(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 14: pseudo-check entries (audit/fulfillment
+    """docs/archive/UI_UX_AUDIT.md Phase 14: pseudo-check entries (audit/fulfillment
     gap) and other non-tool-call steps carry no request_id, so they must not
     be given a fabricated duration by matching against an unrelated
     tool_invocations row."""
@@ -962,7 +962,7 @@ def test_admin_task_trace_operator_history_entry_without_request_id_has_no_durat
 
 
 def test_admin_task_trace_timeline_includes_category_and_duration(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 14: the timeline used to render every row
+    """docs/archive/UI_UX_AUDIT.md Phase 14: the timeline used to render every row
     as either "tool" or "audit" with no further distinction. category
     reuses format_audit_event's own CATEGORY_BY_TYPE (already computed,
     just not included here before); duration_ms is exact for a completed
@@ -999,7 +999,7 @@ def test_admin_task_trace_timeline_includes_category_and_duration(monkeypatch, t
 
 
 def test_admin_task_trace_evidence_aggregates_files_urls_and_commands(monkeypatch, tmp_path) -> None:
-    """The evidence view (docs/HISTORY.md N5): what a completed task actually
+    """The evidence view (docs/archive/HISTORY.md N5): what a completed task actually
     touched, pulled from real tool_invocations rather than a new repository -
     files/urls/commands are found by known field name across every tool's
     input/output, deduplicated, so a task that wrote two files and visited
@@ -1052,7 +1052,7 @@ def test_admin_task_trace_evidence_aggregates_files_urls_and_commands(monkeypatc
 
 
 def test_admin_task_trace_evidence_includes_a_real_effect_label_per_item(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 14: evidence items say what actually
+    """docs/archive/UI_UX_AUDIT.md Phase 14: evidence items say what actually
     happened (read/modified/moved/...), not just that something was
     touched - Phase 8's "Touched during this task" wording fix was
     explicitly a stopgap for this."""
@@ -1089,7 +1089,7 @@ def test_admin_task_trace_evidence_includes_a_real_effect_label_per_item(monkeyp
 
 
 def test_admin_task_trace_includes_llm_calls(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 14d: the trace endpoint surfaces the
+    """docs/archive/UI_UX_AUDIT.md Phase 14d: the trace endpoint surfaces the
     persisted LLM-call receipts (worker.py's _record_llm_call), not just
     tool_invocations - this is what the Duration view uses for its real,
     measured (non-inferred) segments."""
@@ -1123,7 +1123,7 @@ def test_admin_task_trace_includes_llm_calls(monkeypatch, tmp_path) -> None:
 
 
 def test_admin_skills_catalog_lists_the_real_bundled_starters(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 11: skills/starter/ is committed (unlike
+    """docs/archive/UI_UX_AUDIT.md Phase 11: skills/starter/ is committed (unlike
     adapters.skills.root_dir, which is generated), so there's something to
     browse and install on a fresh checkout with zero skills installed yet.
     Reads the real directory - this is the actual bundled catalog, not a
@@ -1146,7 +1146,7 @@ def test_admin_skills_catalog_lists_the_real_bundled_starters(monkeypatch, tmp_p
 
 
 def test_admin_skill_install_list_and_uninstall(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 5: install a skill (writing its manifest
+    """docs/archive/UI_UX_AUDIT.md Phase 5: install a skill (writing its manifest
     file), see it in the catalog with inferred permission labels, remove it
     - entirely through the console, no manual filesystem access."""
     client, repositories = _chat_client(monkeypatch, tmp_path)
@@ -1198,7 +1198,7 @@ def test_admin_skill_uninstall_404s_for_an_unknown_skill(monkeypatch, tmp_path) 
 
 
 def test_admin_memory_create_list_update_and_forget(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 4: remember/edit/forget over a real,
+    """docs/archive/UI_UX_AUDIT.md Phase 4: remember/edit/forget over a real,
     inspectable table - not a black box deciding on its own what to keep."""
     client, repositories = _chat_client(monkeypatch, tmp_path)
 
@@ -1253,7 +1253,7 @@ def test_admin_task_receipt_404s_for_an_unknown_task(monkeypatch, tmp_path) -> N
 
 
 def test_admin_task_receipt_summarizes_a_completed_task(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 2: what was asked, what changed, what was
+    """docs/archive/UI_UX_AUDIT.md Phase 2: what was asked, what changed, what was
     contacted outside this machine, what was approved, how long it took."""
     monkeypatch.chdir(tmp_path)
     database_url = f"sqlite:///{tmp_path / 'admin.db'}"
@@ -1400,7 +1400,7 @@ def _settings_with_artifact_root(root: Path) -> AppSettings:
 
 
 def test_admin_artifact_download_serves_a_registered_file(tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 8: a generated file previously showed only
+    """docs/archive/UI_UX_AUDIT.md Phase 8: a generated file previously showed only
     its path in Chat - not actionable from a browser."""
     database_url = f"sqlite:///{tmp_path / 'admin.db'}"
     repositories = _repositories(database_url)
@@ -1531,7 +1531,7 @@ def test_admin_artifact_download_404s_when_the_file_was_deleted_after_registrati
 
 
 def test_admin_doctor_reuses_collect_checks_and_summarizes_ok(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 9: same checks `ybm doctor` runs, from the
+    """docs/archive/UI_UX_AUDIT.md Phase 9: same checks `ybm doctor` runs, from the
     console - never a second implementation, just collect_checks() itself."""
     from agent_control.bootstrap import Check
 
@@ -1566,7 +1566,7 @@ def test_admin_doctor_reports_not_ok_when_any_check_fails(monkeypatch, tmp_path)
 
 
 def test_admin_service_log_returns_the_tail_of_a_real_log_file(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 9: a per-service log link from the console
+    """docs/archive/UI_UX_AUDIT.md Phase 9: a per-service log link from the console
     instead of needing `ybm logs <service>` in a terminal."""
     monkeypatch.setattr("agent_control.supervisor._repo_root", lambda: tmp_path)
     log_dir = tmp_path / ".agent_control" / "logs"
@@ -2525,7 +2525,7 @@ def test_admin_summary_includes_database_and_schedule_data(monkeypatch, tmp_path
     /api/summary, not a separate route - GET /api/database/summary and
     GET /api/schedules were exact duplicates of data /api/summary already
     returns, and the Streamlit UI never called either, so both were deleted
-    rather than kept as dead routes (docs/HISTORY.md redundancy pass)."""
+    rather than kept as dead routes (docs/archive/HISTORY.md redundancy pass)."""
     monkeypatch.chdir(tmp_path)  # see test_admin_page_and_summary for why chdir, not just delenv
     database_url = f"sqlite:///{tmp_path / 'admin.db'}"
     repositories = _repositories(database_url)
@@ -2572,7 +2572,7 @@ def test_admin_secrets_unavailable_without_vault_key(monkeypatch, tmp_path) -> N
 
 
 def test_admin_secrets_init_generates_a_key_and_the_vault_becomes_usable(monkeypatch, tmp_path) -> None:
-    # The "Vault not initialized" dead end (docs/HISTORY.md's P2 UX pass) -
+    # The "Vault not initialized" dead end (docs/archive/HISTORY.md's P2 UX pass) -
     # a real fix, not a link to a terminal command: generate the key, and
     # the vault must be immediately usable with no restart (read_env_value
     # re-reads .env live).
@@ -2712,7 +2712,7 @@ def test_admin_chat_send_folds_an_attached_artifact_into_the_objective(monkeypat
 
 
 def test_admin_list_folders_with_no_path_returns_configured_roots(monkeypatch, tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 13: the folder picker's starting point is
+    """docs/archive/UI_UX_AUDIT.md Phase 13: the folder picker's starting point is
     the same computer_use.allowed_roots filesystem.manage itself is scoped
     to - a folder this picker can reach is a folder the agent can actually
     act on, not a second boundary to keep in sync."""
@@ -2809,7 +2809,7 @@ def test_admin_list_folders_returns_empty_when_no_roots_configured(monkeypatch, 
 
 
 def test_admin_chat_send_creates_a_task_and_list_returns_it_oldest_first(monkeypatch, tmp_path) -> None:
-    """docs/HISTORY.md Part 4 T2.8: the local web chat channel - a message
+    """docs/archive/HISTORY.md Part 4 T2.8: the local web chat channel - a message
     becomes a normal task, going through the exact same worker/policy
     pipeline as any other channel, with no Telegram dependency."""
     client, repositories = _chat_client(monkeypatch, tmp_path)

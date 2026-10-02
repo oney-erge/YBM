@@ -246,7 +246,7 @@ class AdminWorkFoldersRequest(StrictBaseModel):
 
 
 class AdminApprovalDecisionRequest(StrictBaseModel):
-    # approve_for_task (docs/UI_UX_AUDIT.md Phase 1's "Allow for this task"):
+    # approve_for_task (docs/archive/UI_UX_AUDIT.md Phase 1's "Allow for this task"):
     # approves this one call exactly like "approve", and additionally
     # creates an ApprovalGrant so the same tool+capability doesn't need
     # re-approval for the rest of this task (ApprovalGrantRepository.
@@ -281,7 +281,7 @@ class AdminSkillInstallRequest(StrictBaseModel):
 class AdminChatMessageRequest(StrictBaseModel):
     text: str = Field(min_length=1, max_length=4000)
     # Artifact ids from a prior POST /api/chat/attachments upload
-    # (docs/UI_UX_AUDIT.md Phase 1). Folded into the objective as a plain
+    # (docs/archive/UI_UX_AUDIT.md Phase 1). Folded into the objective as a plain
     # note, same technique as clarification.py's answer-folding - the
     # operator still needs FILESYSTEM_READ (or whichever capability the
     # tool it picks requires) enabled and in scope to actually read the
@@ -292,7 +292,7 @@ class AdminChatMessageRequest(StrictBaseModel):
 MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
 
 
-# Single fixed local chat "chat_id" (docs/HISTORY.md Part 4 T2.8): this is a
+# Single fixed local chat "chat_id" (docs/archive/HISTORY.md Part 4 T2.8): this is a
 # personal, local-first, single-user system, not multi-tenant - one thread
 # is the right scope for v1, the same way there is one Telegram user.
 WEB_CHAT_ID = "local"
@@ -334,7 +334,7 @@ def _redact_admin_output(value: Any, settings: AppSettings) -> Any:
 
 
 def _task_with_artifacts(task: TaskRecord, repositories: Repositories, settings: AppSettings) -> dict[str, Any]:
-    """A task dict plus its artifacts inline (docs/UI_UX_AUDIT.md Phase 1's
+    """A task dict plus its artifacts inline (docs/archive/UI_UX_AUDIT.md Phase 1's
     "artifact cards") - the trace endpoint already does this
     (repositories.artifacts.list_for_task); chat never had, so a file a task
     produced was invisible unless you opened its trace.
@@ -355,13 +355,13 @@ except PackageNotFoundError:
     # crash either; the bootstrap endpoint's caller only displays this.
     _APP_VERSION = "dev"
 
-# React console build output (docs/UI_REWRITE_PLAN.md §9 Phase 0.2/0.5,
+# React console build output (docs/archive/UI_REWRITE_PLAN.md §9 Phase 0.2/0.5,
 # frontend/vite.config.ts's build.outDir). Resolved relative to this file,
 # not cwd, so it works the same whether the backend is started from the
 # repo root (ybm start) or as an installed package.
 _STATIC_ADMIN_DIR = Path(__file__).parent / "static" / "admin"
 
-# Bundled starter skills (docs/UI_UX_AUDIT.md Phase 11) - committed, unlike
+# Bundled starter skills (docs/archive/UI_UX_AUDIT.md Phase 11) - committed, unlike
 # adapters.skills.root_dir which is generated/gitignored, so a starter
 # catalog has somewhere to actually ship from. Same file-based-not-cwd-based
 # resolution as _STATIC_ADMIN_DIR above, four parents up from
@@ -457,7 +457,7 @@ def _has_valid_credentials(request: Request, settings: AppSettings, expected: st
 
 
 def _serve_admin_app(request: Request, sub_path: str) -> FileResponse | HTMLResponse:
-    """Serve the React console (docs/UI_REWRITE_PLAN.md §4/§9 Phase 0.2).
+    """Serve the React console (docs/archive/UI_REWRITE_PLAN.md §4/§9 Phase 0.2).
 
     Deliberately NOT behind require_admin, same reasoning as
     admin_bootstrap: the app shell (HTML/JS/CSS) is what shows the
@@ -622,7 +622,7 @@ def create_admin_router(
 
     @router.get("/api/bootstrap")
     def admin_bootstrap(request: Request) -> dict[str, Any]:
-        """What the SPA shell needs before its first real paint (docs/UI_REWRITE_PLAN.md
+        """What the SPA shell needs before its first real paint (docs/archive/UI_REWRITE_PLAN.md
         §9 Phase 0.3) - whether to show a token-entry screen, the onboarding
         wizard, or the console directly. Deliberately NOT behind require_admin:
         a token-required client cannot know it needs a token without calling
@@ -826,7 +826,7 @@ def create_admin_router(
     def admin_doctor(request: Request) -> dict[str, Any]:
         """Runs the same checks `ybm doctor` runs (collect_checks - this
         endpoint never duplicates that logic, just calls it) from the
-        console (docs/UI_UX_AUDIT.md Phase 9), since a person diagnosing a
+        console (docs/archive/UI_UX_AUDIT.md Phase 9), since a person diagnosing a
         problem from the admin UI shouldn't have to drop to a terminal to
         run it. Takes a couple of seconds - it probes ports, the DB, and
         LocalDeploy for real - so it's operator-triggered, not polled.
@@ -936,7 +936,7 @@ def create_admin_router(
         grant: str | None = None,
     ) -> FileResponse:
         """A generated file previously showed only its path in Chat - not
-        actionable from a browser (docs/UI_UX_AUDIT.md Phase 8: "generated
+        actionable from a browser (docs/archive/UI_UX_AUDIT.md Phase 8: "generated
         files still are not conveniently usable"). Serves only artifacts
         registered in the database whose resolved path stays inside the
         same allowed roots artifact.deliver itself enforces - reuses that
@@ -996,7 +996,7 @@ def create_admin_router(
                     "approval": approval.model_dump(mode="json"),
                     "task_objective": task.objective if task is not None else None,
                     "task_status": task.status.value if task is not None else None,
-                    # Evidence Pack fields (docs/UI_REWRITE_PLAN.md §11.2) the
+                    # Evidence Pack fields (docs/archive/UI_REWRITE_PLAN.md §11.2) the
                     # existing ApprovalRequest alone doesn't carry: the
                     # configured ceiling this risk level is measured
                     # against, and what the pending action would actually
@@ -1236,7 +1236,7 @@ def create_admin_router(
 
     @router.post("/api/memory")
     def admin_create_memory_fact(request: Request, payload: AdminMemoryFactCreateRequest) -> dict[str, Any]:
-        """"Remember" (docs/UI_UX_AUDIT.md Phase 4): an operator-entered fact,
+        """"Remember" (docs/archive/UI_UX_AUDIT.md Phase 4): an operator-entered fact,
         distinct from anything a task inferred - MemorySource.OPERATOR_ADMIN
         so a Memory page reader can always tell "I told it this" apart from
         "it figured this out itself".
@@ -1286,7 +1286,7 @@ def create_admin_router(
 
     @router.get("/api/skills/catalog")
     def admin_skills_catalog(request: Request) -> dict[str, Any]:
-        """Bundled starter skills (docs/UI_UX_AUDIT.md Phase 11) - read-only
+        """Bundled starter skills (docs/archive/UI_UX_AUDIT.md Phase 11) - read-only
         browsing of skills/starter/, distinct from the installed catalog
         above. Installing one goes through the existing POST /api/skills
         with this entry's own fields, not a separate install-from-catalog
@@ -1298,7 +1298,7 @@ def create_admin_router(
 
     @router.post("/api/skills")
     def admin_install_skill(request: Request, payload: AdminSkillInstallRequest) -> dict[str, Any]:
-        """Installs (creates or overwrites by name) a skill - docs/UI_UX_AUDIT.md
+        """Installs (creates or overwrites by name) a skill - docs/archive/UI_UX_AUDIT.md
         Phase 5's "install ... entirely from the console", writing straight
         to adapters.skills.root_dir the same way a hand-dropped file would
         (skills.py's own docstring: there is no separate database record).
@@ -2408,7 +2408,7 @@ def create_admin_router(
         request: Request,
         limit: int = Query(default=50, ge=1, le=200),
     ) -> dict[str, Any]:
-        """docs/HISTORY.md Part 4 T2.8: the local web chat channel - lets the
+        """docs/archive/HISTORY.md Part 4 T2.8: the local web chat channel - lets the
         admin console drive a task the same way Telegram does, without
         needing Telegram configured or reachable. One fixed conversation
         (WEB_CHAT_ID); each message is a normal task, so it goes through the
@@ -2484,7 +2484,7 @@ def create_admin_router(
         # including "hi" and questions the model could simply answer. Asking
         # "what is the capital of France?" sent the Operator to knowledge.search,
         # which returned no matches, three times, until the no-progress guard
-        # blocked it (docs/GAPS.md G8). Telegram has always classified first;
+        # blocked it (docs/ROADMAP.md G8). Telegram has always classified first;
         # web chat is a channel too and should behave like one.
         #
         # It also has to remember things like one. "Remember that ..." is handled
@@ -2492,7 +2492,7 @@ def create_admin_router(
         # Telegram and WhatsApp; and a standing rule stated in passing ("always
         # answer in three bullets") is stored before the reply says it was
         # learned. On web chat neither was wired up, so YBM acknowledged a
-        # preference and kept nothing (docs/E2E_FINDINGS.md P1-3).
+        # preference and kept nothing (docs/archive/E2E_FINDINGS.md P1-3).
         concierge_provider = None
         remember_content = detect_remember_request(text) if not attached else None
         if remember_content is not None:
@@ -2556,7 +2556,7 @@ def create_admin_router(
     @router.post("/api/chat/attachments")
     async def admin_upload_chat_attachment(request: Request, file: UploadFile = File(...)) -> dict[str, Any]:
         """Backs Chat's attachment button with a real Artifact
-        (docs/UI_UX_AUDIT.md Phase 1) instead of a client-side-only file
+        (docs/archive/UI_UX_AUDIT.md Phase 1) instead of a client-side-only file
         picker. Storage is ArtifactService.write_bytes() - the same
         mechanism code.interpreter and document_manage already use - into
         the configured artifact_dir, never an arbitrary caller-chosen path.
@@ -2591,7 +2591,7 @@ def create_admin_router(
     @router.get("/api/folders")
     def admin_list_folders(request: Request, path: str | None = None) -> dict[str, Any]:
         """Server-side folder browsing for the Chat composer's folder picker
-        (docs/UI_UX_AUDIT.md Phase 13) - a browser directory picker cannot
+        (docs/archive/UI_UX_AUDIT.md Phase 13) - a browser directory picker cannot
         yield a usable absolute path, and hand-typing one is the exact gap
         Phase 1 deferred. Scoped to the same `computer_use.allowed_roots`
         filesystem.manage itself is scoped to, on purpose: a folder this
@@ -2965,7 +2965,7 @@ def build_task_trace(repositories: Repositories, task_id: str) -> dict[str, Any]
     tool_invocations = repositories.tool_invocations.list_for_task(task_id)
     formatted_audit = [format_audit_event(event).model_dump(mode="json") for event in raw_audit_events]
     raw_audit = [event.model_dump(mode="json") for event in raw_audit_events]
-    # PlanModel is dead (docs/HISTORY.md §1.1 - the Operator loop never creates
+    # PlanModel is dead (docs/archive/HISTORY.md §1.1 - the Operator loop never creates
     # one); operator_history in task metadata is the real step-by-step
     # execution record now.
     trace_context = _trace_context(task.model_dump(mode="json"), raw_audit)
@@ -2986,7 +2986,7 @@ def build_task_trace(repositories: Repositories, task_id: str) -> dict[str, Any]
 
 
 def build_task_receipt(repositories: Repositories, settings: AppSettings, task_id: str) -> dict[str, Any] | None:
-    """A human-readable "what happened" summary (docs/UI_UX_AUDIT.md Phase 2)
+    """A human-readable "what happened" summary (docs/archive/UI_UX_AUDIT.md Phase 2)
     - what was asked, what changed, what was contacted outside this
     machine, what was approved, how long it took, and what's uncertain.
     Entirely derived from data build_task_trace already assembles plus
@@ -3146,7 +3146,7 @@ def _receipt_verification(tool_invocations: list[dict[str, Any]]) -> dict[str, A
     }
 
 
-# What a completed task actually touched (docs/HISTORY.md N5's "evidence view").
+# What a completed task actually touched (docs/archive/HISTORY.md N5's "evidence view").
 # Deliberately key-based, not a per-tool_name dispatch table: every tool's
 # input/output dict already uses one of these field names for a path/URL/
 # command whenever it has one (confirmed across filesystem, browser, http,
@@ -3177,7 +3177,7 @@ def _collect_evidence_values(source: dict[str, Any], keys: tuple[str, ...]) -> l
 def _approval_blast_radius(action_payload: dict[str, Any]) -> dict[str, list[str]]:
     """Files/URLs/commands a PENDING approval's action would touch if
     approved - the Evidence Pack's "blast radius" field
-    (docs/UI_REWRITE_PLAN.md §11.2). Reuses the same key-matching approach
+    (docs/archive/UI_REWRITE_PLAN.md §11.2). Reuses the same key-matching approach
     as _extract_evidence() below (the task-trace "what did this touch"
     view), just over one action's input instead of a whole task's
     completed tool_invocations.
@@ -3282,8 +3282,8 @@ def _elapsed_ms(start: Any, end: Any) -> float | None:
 
 
 def _trace_timeline(audit_events: list[dict[str, Any]], tool_invocations: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """The full chronological record (docs/HISTORY.md N5, categories and
-    durations added in docs/UI_UX_AUDIT.md Phase 14). `category` reuses
+    """The full chronological record (docs/archive/HISTORY.md N5, categories and
+    durations added in docs/archive/UI_UX_AUDIT.md Phase 14). `category` reuses
     format_audit_event's own CATEGORY_BY_TYPE for audit rows - it was
     already computed, just not included here - and "tool" for every tool
     row, matching the category tool-originated audit events already use.
@@ -3325,7 +3325,7 @@ def _enrich_operator_history(
     history: list[dict[str, Any]], tool_invocations: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Attaches duration_ms and content_trust to each Steps entry that names
-    a real tool call (docs/UI_UX_AUDIT.md Phase 14; content_trust per
+    a real tool call (docs/archive/UI_UX_AUDIT.md Phase 14; content_trust per
     docs/THREAT_MODEL.md), joining on request_id - the same
     ToolCallRequest.id / ToolCallResult.request_id correlation the executor
     already uses (worker.py stamps it onto each history entry at the point
@@ -3498,7 +3498,7 @@ def _tool_registry_summary(settings: AppSettings, repositories: Repositories, au
                 "default_operation": definition.default_operation,
                 # The tool's own required_risk() for its default operation -
                 # a representative risk level for the Tools page
-                # (docs/UI_UX_AUDIT.md Phase 11), not every operation's
+                # (docs/archive/UI_UX_AUDIT.md Phase 11), not every operation's
                 # individual risk (operation_risks, already in
                 # operation_schemas' sibling data if a caller needs that
                 # detail).
@@ -3543,7 +3543,7 @@ def _tool_group(name: str) -> str:
     return "other"
 
 
-# The React console (docs/UI_REWRITE_PLAN.md) is the one real admin UI,
+# The React console (docs/archive/UI_REWRITE_PLAN.md) is the one real admin UI,
 # built from frontend/ into static/admin/ and served by _serve_admin_app
 # above. This is only the case-3 fallback: no build exists yet at this
 # checkout (a fresh clone/CI, or before `ybm ui-build` has ever run) - a

@@ -11,7 +11,7 @@ import {
 
 /**
  * A consistent "where am I, and how do I get back" for every sub-page
- * (docs/UI_UX_AUDIT.md Phase 12) - Memory/Skills/Tools under the Agent hub
+ * (docs/archive/UI_UX_AUDIT.md Phase 12) - Memory/Skills/Tools under the Agent hub
  * and a task's trace under Tasks previously had either no way back or an
  * ad hoc, one-off link. The last item is always the current page (no
  * link); every item before it links up the hierarchy.

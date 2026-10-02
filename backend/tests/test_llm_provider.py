@@ -184,7 +184,7 @@ def _fake_client_returning(payload: dict):
 
 @pytest.mark.asyncio
 async def test_openai_compatible_provider_captures_usage_from_response(monkeypatch) -> None:
-    """docs/HISTORY.md Part 4 T1.4: every OpenAI-compatible response reports
+    """docs/archive/HISTORY.md Part 4 T1.4: every OpenAI-compatible response reports
     a `usage` object and it used to be silently discarded - there was no way
     to see what a task actually cost. `last_usage` must reflect it after a
     successful call."""
@@ -256,7 +256,7 @@ async def test_openai_compatible_provider_usage_is_none_when_server_omits_it(mon
 
 @pytest.mark.asyncio
 async def test_openai_compatible_provider_captures_request_response_and_latency(monkeypatch) -> None:
-    """docs/UI_UX_AUDIT.md Phase 14d: LLM-call persistence needs the actual
+    """docs/archive/UI_UX_AUDIT.md Phase 14d: LLM-call persistence needs the actual
     messages sent, the response text, the model, and real timing - last_usage
     alone (token counts only) isn't enough. These are siblings to last_usage,
     same "set on success" contract."""
@@ -320,7 +320,7 @@ async def test_failover_provider_proxies_usage_from_whichever_provider_served_th
 
 @pytest.mark.asyncio
 async def test_failover_provider_proxies_llm_call_persistence_fields_too() -> None:
-    """docs/UI_UX_AUDIT.md Phase 14d: the failover wrapper must proxy the new
+    """docs/archive/UI_UX_AUDIT.md Phase 14d: the failover wrapper must proxy the new
     last_request/last_response_text/last_model/last_started_at/last_latency_ms
     fields the same way it already proxies last_usage, or a call served by
     the fallback profile would silently have nothing to persist."""

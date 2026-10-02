@@ -13,7 +13,7 @@ import {
 import type { EvidenceEffect } from "@/lib/api"
 
 /**
- * Display metadata for each real per-item effect (docs/UI_UX_AUDIT.md
+ * Display metadata for each real per-item effect (docs/archive/UI_UX_AUDIT.md
  * Phase 14) - shared between the Receipt card and the trace's Evidence
  * section so the same effect always looks the same everywhere. Colors
  * reuse the existing semantic roles (success/warning/info/danger), no new

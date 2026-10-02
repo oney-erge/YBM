@@ -1,4 +1,4 @@
-"""User-droppable capability packs (docs/HISTORY.md Part 4 T1.3).
+"""User-droppable capability packs (docs/archive/HISTORY.md Part 4 T1.3).
 
 A skill is one markdown file with YAML frontmatter (`name`, `description`)
 and a body of instructions - a runbook, a house style guide, "how our
@@ -186,7 +186,7 @@ def detect_referenced_tools(body: str, known_tool_names: list[str]) -> list[str]
     """Which registered tool names this skill's instructions mention, so an
     operator can see what it's likely to steer the model toward using
     before installing it - informational only, never call this a
-    "permission" in UI copy (docs/UI_UX_AUDIT.md Phase 8): it's a literal
+    "permission" in UI copy (docs/archive/UI_UX_AUDIT.md Phase 8): it's a literal
     substring scan, so "use the shell to do this" registers nothing even
     though it clearly steers behavior. A skill is inert text (this
     module's own docstring), so there is nothing here to actually gate.

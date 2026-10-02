@@ -197,7 +197,7 @@ ADDITIVE_MIGRATIONS = [
     # symptoms we hit earlier).
     ("tasks", "claimed_by",        "ALTER TABLE tasks ADD COLUMN claimed_by TEXT"),
     ("tasks", "claim_expires_at",  "ALTER TABLE tasks ADD COLUMN claim_expires_at TEXT"),
-    # step_id (docs/UI_UX_AUDIT.md Phase 14e) landed one commit after
+    # step_id (docs/archive/UI_UX_AUDIT.md Phase 14e) landed one commit after
     # llm_calls itself - a database created between those two commits (this
     # machine's own included) has the table but not the column yet.
     ("llm_calls", "step_id",       "ALTER TABLE llm_calls ADD COLUMN step_id TEXT"),

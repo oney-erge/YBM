@@ -1,4 +1,4 @@
-"""The Concierge (docs/HISTORY.md P3 §2.1): classify chat-vs-task AND, when
+"""The Concierge (docs/archive/HISTORY.md P3 §2.1): classify chat-vs-task AND, when
 it's chat, compose the reply - one LLM call, not two. Class names below stay
 "classifier"-shaped since that's still an accurate description of the
 Protocol/return type (MessageClassification, now carrying an optional

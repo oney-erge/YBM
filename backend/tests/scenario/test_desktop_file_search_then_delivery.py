@@ -2,7 +2,7 @@
 real Operator loop - filesystem.manage search then artifact.deliver, chosen
 one at a time -> the fake Telegram client. Ports e2e/all_cases.json's
 `desktop_file_search_then_delivery` case down to the deterministic tier
-(docs/HISTORY.md P2) - combines test_file_find_and_read.py's search step
+(docs/archive/HISTORY.md P2) - combines test_file_find_and_read.py's search step
 with test_send_found_pdf.py's delivery step, this time chained from a name
 only (no literal path given). Fixture re-recorded 2026-07-28
 (`ybm scenario record desktop_file_search_then_delivery`,

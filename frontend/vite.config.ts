@@ -4,7 +4,7 @@ import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 
 // base: "/admin/" so built asset paths match where FastAPI mounts the SPA in
-// production (docs/UI_REWRITE_PLAN.md §4), and so the dev server mirrors that
+// production (docs/archive/UI_REWRITE_PLAN.md §4), and so the dev server mirrors that
 // same URL shape - requests the app makes to "/admin/api/*" work identically
 // in both dev (proxied below) and prod (same-origin, no proxy involved).
 export default defineConfig({
@@ -21,7 +21,7 @@ export default defineConfig({
         target: "http://127.0.0.1:8765",
         // changeOrigin rewrites the outgoing Host header to match the
         // target, but NOT the Origin header - verified empirically
-        // (docs/UI_REWRITE_PLAN.md §4/§9 Phase 0.1): with changeOrigin
+        // (docs/archive/UI_REWRITE_PLAN.md §4/§9 Phase 0.1): with changeOrigin
         // alone, the backend received Origin: http://localhost:5173 but
         // Host: 127.0.0.1:8765, a genuine mismatch, and
         // _origin_is_trusted() correctly 403'd it - the check working

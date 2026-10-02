@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_SUMMARY = "No durable conversation memory yet."
 
-# "Remember that ..." (docs/UI_UX_AUDIT.md Phase 15) - shared by every
+# "Remember that ..." (docs/archive/UI_UX_AUDIT.md Phase 15) - shared by every
 # channel (Telegram, web chat) so provenance is decided identically
 # everywhere: at the runtime level, before any LLM sees the message, never
 # selectable by the model. Matched against the ORIGINAL-case text so the
@@ -55,7 +55,7 @@ def _keywords(text: str) -> set[str]:
 
 
 def score_facts(facts: list[MemoryFact], objective: str, *, limit: int = 15) -> list[MemoryFact]:
-    """Deterministic relevance selection (docs/UI_UX_AUDIT.md Phase 15) -
+    """Deterministic relevance selection (docs/archive/UI_UX_AUDIT.md Phase 15) -
     replaces "inject every fact into every task," which is fine at five
     facts and actively harmful at a thousand. No vector database: a scorer
     built from word overlap, category match, and recency is fully
@@ -171,7 +171,7 @@ def memory_context(
     remembered_facts: list[Any] | None = None,
     objective: str = "",
 ) -> str:
-    """``remembered_facts`` (docs/UI_UX_AUDIT.md Phase 4): structured
+    """``remembered_facts`` (docs/archive/UI_UX_AUDIT.md Phase 4): structured
     MemoryFact rows, distinct from the rolling summary below - a fact the
     user or a task explicitly recorded, not a model's compressed guess at
     what mattered in recent turns. Rendered first and not subject to
@@ -179,7 +179,7 @@ def memory_context(
     silently dropping one because the summary ran long would defeat the
     point of "remember".
 
-    ``objective`` (docs/UI_UX_AUDIT.md Phase 15) scores and caps
+    ``objective`` (docs/archive/UI_UX_AUDIT.md Phase 15) scores and caps
     ``remembered_facts`` via score_facts before rendering - callers still
     pass the full, unfiltered fact list; the selection happens here, once,
     rather than duplicated at every call site.

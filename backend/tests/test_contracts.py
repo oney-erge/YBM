@@ -259,7 +259,7 @@ def test_mcp_client_call_tool_requires_server_and_tool() -> None:
 
 
 def test_mcp_client_dict_args_rejected_with_actionable_message() -> None:
-    # docs/HISTORY.md Part 4's re-recording note: 'args' (install_server's
+    # docs/archive/HISTORY.md Part 4's re-recording note: 'args' (install_server's
     # list[str] of command-line arguments) and 'arguments' (call_tool's
     # dict of tool arguments) are easy to conflate - reproduced live across
     # three independent recordings of a local 8B model repeating the

@@ -14,7 +14,7 @@ import { ApiError } from "@/lib/api"
 import { useCreateMemoryFact, useMemoryFacts } from "@/lib/queries"
 
 /**
- * Structured memory (docs/UI_UX_AUDIT.md Phase 4): every durable fact YBM
+ * Structured memory (docs/archive/UI_UX_AUDIT.md Phase 4): every durable fact YBM
  * currently believes, where it came from, and remember/edit/forget
  * controls - replacing "trust the rolling summary blob" with something
  * inspectable and correctable. Distinct from the rolling per-conversation

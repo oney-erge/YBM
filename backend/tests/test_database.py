@@ -1,4 +1,4 @@
-"""Tests for Database's one-time legacy-location migration (docs/HISTORY.md
+"""Tests for Database's one-time legacy-location migration (docs/archive/HISTORY.md
 P6): the default database_url moved from the repo root to .agent_control/,
 matching where every other piece of runtime state already lives.
 

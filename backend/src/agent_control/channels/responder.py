@@ -12,7 +12,7 @@ from agent_control.storage.repositories import Repositories
 
 class ChatResponder(Protocol):
     """Channel-agnostic despite the pre-Phase-16 Telegram-flavored name this
-    replaced (docs/UI_UX_AUDIT.md Phase 16) - nothing in this Protocol or
+    replaced (docs/archive/UI_UX_AUDIT.md Phase 16) - nothing in this Protocol or
     its implementations below ever referenced Telegram; only the name did.
     """
 

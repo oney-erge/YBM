@@ -45,7 +45,7 @@ function parseIds(value: string): number[] {
     .filter((n) => Number.isFinite(n))
 }
 
-/** Level 1 (docs/UI_REWRITE_PLAN.md §14). Ports Streamlit's `_render_telegram_config`. */
+/** Level 1 (docs/archive/UI_REWRITE_PLAN.md §14). Ports Streamlit's `_render_telegram_config`. */
 export function TelegramSettingsCard() {
   const { data, isPending } = useSettingsSummary()
   const [draft, setDraft, resetDraft] = useServerForm(data, deriveDraft)

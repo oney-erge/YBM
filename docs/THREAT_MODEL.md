@@ -84,19 +84,26 @@ everything under `.agent_control/`.
 A Gitleaks finding requires **credential revocation and history cleanup** - not just deleting the
 current file.
 
-## Before making the repo public
+## Repository hardening
 
-- [ ] Add an explicit open-source license
-- [ ] Run the full deterministic test and quality suites
-- [ ] Full-history secret scan; revoke and rewrite any finding
-- [ ] Review tracked files and release artifacts for private data
-- [ ] Resolve failing dependency-update PRs
-- [ ] Enable private vulnerability reporting
-- [ ] Protect `main` with required review and CI
-- [ ] Restrict branch deletion and force pushes
+The repository is public. This is the state of its protections, checked against the GitHub API on
+2026-10-02; re-check it after changing repository settings.
 
-Visibility must not change as a side effect of this checklist - it takes an explicit decision by
-the owner.
+| Item | Status |
+|---|---|
+| Open-source license | MIT, in `LICENSE` |
+| Deterministic test and quality suites | Run on every pull request: backend on Linux, Windows, and macOS, backend quality, frontend, WhatsApp bridge, VS Code extension, container, and launcher checks |
+| Secret scanning | Gitleaks scans the full history in CI (`secrets` job) |
+| Private vulnerability reporting | Enabled; see [SECURITY.md](../SECURITY.md) |
+| `main` protection | Pull requests only; the nine core CI jobs are required and the branch must be up to date; no force pushes; no deletions; applies to administrators. No approving review is required, because there is one maintainer |
+| Dependency updates | Dependabot opens pull requests; each is merged only when CI is green on its exact head |
+| Private data in tracked files and release artifacts | Not automated beyond the secret scan; review release artifacts before publishing |
+
+The launcher smoke jobs (`Launcher smoke`, `Launcher contract`) run on every pull request but are not yet
+in the required list, so a failure there would not block a merge until they are added.
+
+Visibility and release publication each take an explicit decision by the owner and are never a side
+effect of a settings change.
 
 ## References
 

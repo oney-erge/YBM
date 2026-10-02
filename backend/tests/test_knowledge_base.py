@@ -1,4 +1,4 @@
-"""docs/HISTORY.md Part 4 T2.7: local, personal document search - keyword
+"""docs/archive/HISTORY.md Part 4 T2.7: local, personal document search - keyword
 overlap over a folder of the user's own reference material, not embeddings.
 See knowledge_base.py's module docstring for why.
 """

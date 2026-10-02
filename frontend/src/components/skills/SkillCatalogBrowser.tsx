@@ -8,7 +8,7 @@ import { ApiError, type Skill } from "@/lib/api"
 import { useInstallSkill, useSkillsCatalog } from "@/lib/queries"
 
 /**
- * The bundled starter catalog (docs/UI_UX_AUDIT.md Phase 11) -
+ * The bundled starter catalog (docs/archive/UI_UX_AUDIT.md Phase 11) -
  * skills/starter/ in the repo, committed (unlike adapters.skills.root_dir,
  * which is generated and starts empty on every fresh checkout). Installing
  * a catalog entry reuses the exact same installSkill() call the manual

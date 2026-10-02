@@ -15,7 +15,7 @@ regexes = [
   # rather than each literal means a future redaction test does not need a
   # matching change here to keep the history scan green.
   '''NOTAREALKEY''',
-  # sk-live-EVOLEAK-9931-DO-NOT-ECHO and friends (docs/E2E_FINDINGS.md P0-1).
+  # sk-live-EVOLEAK-9931-DO-NOT-ECHO and friends (docs/archive/E2E_FINDINGS.md P0-1).
   '''EVOLEAK''',
   '''CONFIGCANARY''',
   # The RFC 7519 example JWT, used to prove the jwt shape is redacted.

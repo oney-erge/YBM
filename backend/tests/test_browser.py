@@ -49,7 +49,7 @@ def test_registry_exposes_browser_tools_when_enabled() -> None:
 
 
 def test_browser_tools_declare_which_operations_can_leave_the_machine() -> None:
-    """docs/GAPS.md: browser traffic was invisible to receipts because only
+    """docs/ROADMAP.md: browser traffic was invisible to receipts because only
     http.request called record_egress. ToolExecutor now drives that off
     each ToolDefinition's operation_egress instead of a manual call site -
     this pins exactly which operations these two tools declare, so a future

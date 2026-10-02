@@ -2,7 +2,7 @@
 real Operator loop -> a single code.interpreter generate_and_run call -> real
 local Python execution -> Auditor. Ports e2e/all_cases.json's
 `code_interpreter_generate_file` case down to the deterministic tier
-(docs/HISTORY.md P2) - the single-step, no-delivery counterpart to
+(docs/archive/HISTORY.md P2) - the single-step, no-delivery counterpart to
 test_code_interpreter_csv_summary.py's two-step, delivery-ending case (the
 objective only asks to be told the file's location, not for it to be sent).
 Fixture re-recorded 2026-07-28 (`ybm scenario record

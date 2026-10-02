@@ -6,7 +6,7 @@ import { Check, Copy } from "lucide-react"
 import { cn } from "@/lib/utils"
 
 /**
- * Renders an assistant answer as sanitized Markdown (docs/UI_UX_AUDIT.md
+ * Renders an assistant answer as sanitized Markdown (docs/archive/UI_UX_AUDIT.md
  * Phase 1 "safe Markdown" item). rehype-sanitize's default schema strips
  * script tags, event handlers, and javascript: URIs - answer text can
  * embed tool output (file contents, command stdout, web page text), which

@@ -1,5 +1,10 @@
 # E2E Findings - Autonomy and Evolution Suites
 
+> **Archive, not reference.** A snapshot of one live run (2026-08-09). Several findings below
+> were fixed afterwards; for current behavior see [ARCHITECTURE.md](../ARCHITECTURE.md) and
+> [ROADMAP.md](../ROADMAP.md), and for how to run the live suites see the repository's
+> [e2e/README.md](../../e2e/README.md).
+
 Evidence-backed status of YBM against the "does anything I ask" goal, from a live
 Telegram run on 2026-08-09. Raw per-case evidence lives under
 `.agent_control/e2e_results/run_20260809_104418/` (timeline, audit, decision trace

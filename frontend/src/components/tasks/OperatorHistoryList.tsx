@@ -7,7 +7,7 @@ import type { OperatorHistoryEntry } from "@/lib/api"
 
 const FAILED_STATUSES = new Set(["failed", "denied", "timeout"])
 
-/** Level 1 default trace view (docs/UI_REWRITE_PLAN.md §12.2) - the
+/** Level 1 default trace view (docs/archive/UI_REWRITE_PLAN.md §12.2) - the
  * step-by-step narrative of what the Operator decided and did, in order.
  * Scrolls to and highlights the first failed step on mount ("3.4
  * Failure-first affordance" - a debugging UI should open where it broke). */

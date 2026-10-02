@@ -3,7 +3,7 @@
 This is built to run UNATTENDED. Goals:
 
 * Load every case from ``e2e/all_cases.json`` (trimmed 2026-07-28 to 11 smoke cases, one
-  per major capability - see docs/HISTORY.md P2).
+  per major capability - see docs/archive/HISTORY.md P2).
 * Use the same fixture setup as ``e2e/live_telegram_e2e.py`` so ``{{documents_folder}}``
   / ``{{episode_url}}`` template variables resolve to real paths/URLs.
 * Send each message from your real Telegram user account; poll the admin API for

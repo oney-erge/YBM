@@ -1,4 +1,4 @@
-"""Lets the agent itself save a durable fact mid-task (docs/UI_UX_AUDIT.md
+"""Lets the agent itself save a durable fact mid-task (docs/archive/UI_UX_AUDIT.md
 Phase 4), not just an operator typing into the Memory page.
 
 Every fact this tool creates is stamped MemorySource.TASK_DERIVED and
@@ -99,7 +99,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             output_schema=MemoryManageOutput,
             operation_output_schemas=same_output_schema(("remember", "list", "forget"), MemoryManageOutput),
             default_operation="remember",
-            # docs/UI_UX_AUDIT.md Phase 15: remember/list stay low-risk,
+            # docs/archive/UI_UX_AUDIT.md Phase 15: remember/list stay low-risk,
             # no-approval - forgetting a durable fact is the one operation
             # that erases something a human may have relied on the agent
             # to keep, so it gets a real gate, the same pattern

@@ -1,4 +1,4 @@
-"""TaskWorker._record_llm_call (docs/UI_UX_AUDIT.md Phase 14d) - the
+"""TaskWorker._record_llm_call (docs/archive/UI_UX_AUDIT.md Phase 14d) - the
 receipts that turn the Duration view's inferred "operator thinking" gaps
 into measured latency. Uses the same QueueOperator-style fakes as
 test_worker_operator_loop.py, extended to also set the new

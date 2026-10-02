@@ -24,7 +24,7 @@ def _migrate_legacy_database_file(current_path: str) -> None:
     Only acts when ``current_path`` is exactly today's default location, the
     legacy file exists, and nothing already sits at the new location -
     never touches a database_url a caller explicitly customized, and never
-    overwrites an existing file at the destination (docs/HISTORY.md P6)."""
+    overwrites an existing file at the destination (docs/archive/HISTORY.md P6)."""
     if Path(current_path) != Path(_CURRENT_DEFAULT_PATH):
         return
     legacy = Path(_LEGACY_DEFAULT_PATH)

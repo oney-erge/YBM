@@ -1,4 +1,4 @@
-"""A local, personal document index (docs/HISTORY.md Part 4 T2.7): lexical
+"""A local, personal document index (docs/archive/HISTORY.md Part 4 T2.7): lexical
 search over a folder of the user's own reference material, so the Operator
 can answer from what the user already has on disk instead of only from
 tool output gathered mid-task.

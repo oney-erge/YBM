@@ -342,7 +342,7 @@ def mcp_catalog_summary(config: MCPConfig, *, max_tools: int = 20) -> str:
     # "server.tool" string. The dotted form reads naturally but is actively
     # misleading here: MCPClientInput requires `server` and `tool` as separate
     # fields, and a model shown "- fake.echo: ..." copies that whole string
-    # into one of them - observed reproducibly (docs/HISTORY.md Part 2 §4
+    # into one of them - observed reproducibly (docs/archive/HISTORY.md Part 2 §4
     # item 8), landing on `server="fake.echo"` one run and `tool="fake.echo"`
     # with `server` missing the next. Labelling the fields the same way the
     # schema names them removes the ambiguity at the source.
@@ -441,7 +441,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 # `server` and `tool` are separate fields - never a single
                 # dotted "server.tool" string. The catalog summary prints them
                 # as server="..." tool="..." for the same reason; see
-                # mcp_catalog_summary() and docs/HISTORY.md Part 2 §4 item 8.
+                # mcp_catalog_summary() and docs/archive/HISTORY.md Part 2 §4 item 8.
                 {"operation": "call_tool", "server": "filesystem", "tool": "read_file", "arguments": {"path": "notes.txt"}},
                 {
                     "operation": "install_server",

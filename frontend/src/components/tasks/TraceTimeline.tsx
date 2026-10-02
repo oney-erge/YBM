@@ -8,7 +8,7 @@ import { formatDurationMs } from "@/lib/time"
  * The full chronological record - audit events (policy decisions,
  * approvals, classification) and tool calls, merged and time-sorted -
  * rendering build_task_trace's own already-computed `timeline`
- * (docs/UI_UX_AUDIT.md Phase 9). Richer than the Steps list: that view
+ * (docs/archive/UI_UX_AUDIT.md Phase 9). Richer than the Steps list: that view
  * only shows tool decisions, this shows everything the runtime logged
  * about the task, in the order it actually happened, starting from
  * whatever triggered the task in the first place.

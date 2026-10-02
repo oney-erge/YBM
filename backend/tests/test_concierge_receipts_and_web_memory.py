@@ -4,7 +4,7 @@ Two claims the product made that were only true on some channels:
 
 * "Remember that ..." and standing rules are stored, not just acknowledged. Telegram
   and WhatsApp did; web chat, the default front door, said "understood" and kept
-  nothing (docs/E2E_FINDINGS.md P1-3, fixed there for the other channels only).
+  nothing (docs/archive/E2E_FINDINGS.md P1-3, fixed there for the other channels only).
 * Receipts show model cost. The Concierge's call - often the largest of a task, and
   the only call of a chat-only reply - was left off because it "runs before a task
   exists", so receipts understated cost.

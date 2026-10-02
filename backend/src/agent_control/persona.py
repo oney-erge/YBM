@@ -1,4 +1,4 @@
-"""A single stable identity/preference document (docs/HISTORY.md Part 3
+"""A single stable identity/preference document (docs/archive/HISTORY.md Part 3
 T2.5): "answer concisely", "my timezone is CST", "never ask for confirmation
 on read-only filesystem searches" - things true across every task and every
 conversation, not scoped to one chat thread.

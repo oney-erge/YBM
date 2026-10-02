@@ -16,7 +16,7 @@ SERVICE_STALE_SECONDS = 30
 # The complete set of names ybm.ps1/supervisor.py ever supervise - static
 # regardless of config (whether each is currently *expected* to run does
 # vary, via _expected_services below). The admin log-viewer endpoint
-# (docs/UI_UX_AUDIT.md Phase 9) validates against this before turning a
+# (docs/archive/UI_UX_AUDIT.md Phase 9) validates against this before turning a
 # name into a file path, since a log for a now-disabled service (e.g.
 # telegram_polling) should still be viewable from a past run.
 KNOWN_SERVICE_NAMES = frozenset(
@@ -39,7 +39,7 @@ def service_summary(settings: AppSettings) -> dict[str, Any]:
 def _expected_services(settings: AppSettings) -> dict[str, bool]:
     # No separate "admin_ui" entry: that used to be the Streamlit process
     # (its own supervised service, own status.json). The React admin
-    # console removed at cutover (docs/UI_REWRITE_PLAN.md §19) is served by
+    # console removed at cutover (docs/archive/UI_REWRITE_PLAN.md §19) is served by
     # this same backend process - server.admin_enabled gates the /admin
     # router directly, with nothing extra to supervise or health-check.
     return {

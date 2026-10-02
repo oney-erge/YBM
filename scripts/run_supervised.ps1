@@ -6,7 +6,7 @@ param(
   # $CrashLoopMaxRestarts times inside a $CrashLoopWindowSeconds window, stop
   # restarting and mark the service "failed" instead of looping forever.
   # Without this a missing package produces a silent infinite restart loop
-  # behind a green `ybm start` (see docs/HISTORY.md P0).
+  # behind a green `ybm start` (see docs/archive/HISTORY.md P0).
   [int]$CrashLoopWindowSeconds = 60,
   [int]$CrashLoopMaxRestarts = 3,
   [int]$MinHealthySeconds = 20

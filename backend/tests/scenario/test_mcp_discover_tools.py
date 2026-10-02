@@ -1,7 +1,7 @@
 """Scenario: "check what MCP tools are available" through the real Operator
 loop -> mcp.client list_tools -> a real fake MCP server subprocess over
 stdio. Ports e2e/all_cases.json's `mcp_discover_tools` case down to the
-deterministic tier (docs/HISTORY.md P2) - the list_tools counterpart to
+deterministic tier (docs/archive/HISTORY.md P2) - the list_tools counterpart to
 test_mcp_call_fake_echo.py's call_tool case.
 
 Originally documented a real fulfillment-gap bug: the deleted plan-based

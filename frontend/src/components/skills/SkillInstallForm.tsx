@@ -8,7 +8,7 @@ import { ApiError } from "@/lib/api"
 import { useInstallSkill } from "@/lib/queries"
 
 /**
- * Install a skill straight from the console (docs/UI_UX_AUDIT.md Phase 5) -
+ * Install a skill straight from the console (docs/archive/UI_UX_AUDIT.md Phase 5) -
  * no more "find adapters.skills.root_dir and hand-write YAML frontmatter".
  * Declaring tools here is optional; when left blank the backend infers
  * which tools the instructions reference by scanning the body against the

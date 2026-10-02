@@ -71,7 +71,7 @@ async def test_http_request_injects_and_redacts_secret(monkeypatch, tmp_path) ->
 
 @pytest.mark.asyncio
 async def test_http_request_records_egress_for_the_receipt(tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 2: a real, non-loopback call must show up
+    """docs/archive/UI_UX_AUDIT.md Phase 2: a real, non-loopback call must show up
     as an EGRESS_CONTACTED audit event so Task Receipts can say what left
     the machine.
 

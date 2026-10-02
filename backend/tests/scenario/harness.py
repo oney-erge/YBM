@@ -1,7 +1,7 @@
 """Scenario-test harness: the real worker/planner/policy/registry/executor
 stack wired against a temp DB and temp filesystem, with a ScriptedLLMProvider
 standing in for the LLM. Mirrors agent_control.cli.run_worker()'s production
-wiring - see docs/HISTORY.md P2 for why this tier exists (nothing between
+wiring - see docs/archive/HISTORY.md P2 for why this tier exists (nothing between
 mocked unit tests and a live Telegram+LLM+desktop E2E run previously did).
 """
 
@@ -35,7 +35,7 @@ from agent_control.storage import AuditLogger, Database, Repositories
 from agent_control.testing.scripted_llm import RecordingLLMProvider, ScriptedLLMProvider
 from agent_control.tools.registry import build_tool_registry
 
-# Env var read by `ybm scenario record <name>` (docs/HISTORY.md N3). Recording
+# Env var read by `ybm scenario record <name>` (docs/archive/HISTORY.md N3). Recording
 # is opt-in and never happens by default - a scenario test run with this
 # unset always replays fixtures, same as before this existed.
 RECORD_ENV_VAR = "YBM_SCENARIO_RECORD"
@@ -56,7 +56,7 @@ _REPO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "config.yam
 # on every run, so it can't use pytest's tmp_path (randomized per run) -
 # use this instead. Stable across repeated runs *on this machine*; not yet
 # portable across machines/clone paths (the objective text embeds an
-# absolute path) - a real limitation, tracked in docs/HISTORY.md P2, not one
+# absolute path) - a real limitation, tracked in docs/archive/HISTORY.md P2, not one
 # to design around today.
 SCENARIO_SCRATCH_ROOT = Path(tempfile.gettempdir()) / "ybm_scenario_scratch"
 
@@ -76,7 +76,7 @@ class FakeTelegramClient:
     default (mirroring what the production message handler sets) - without
     it, ``artifact.deliver`` raises "chat_id is required" for any plan that
     delivers a created file, which the planner does routinely (see
-    docs/HISTORY.md P2 - discovered while recording the
+    docs/archive/HISTORY.md P2 - discovered while recording the
     code_interpreter_csv_summary fixture)."""
 
     def __init__(self) -> None:
@@ -374,7 +374,7 @@ def filesystem_settings(monkeypatch, tmp_path, allowed_root: str) -> AppSettings
     one allowed root.
 
     Four scenario tests carried a byte-identical private `_settings` doing
-    exactly this (docs/HISTORY.md Part 2 §4 item 16).
+    exactly this (docs/archive/HISTORY.md Part 2 §4 item 16).
     """
     caps = default_capability_policies()
     caps[Capability.FILESYSTEM_WRITE] = CapabilityPolicy(

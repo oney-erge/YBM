@@ -129,8 +129,8 @@ function stepDuration(g: StepGroup): number | null {
 }
 
 /**
- * Graph v2 (docs/UI_UX_AUDIT.md Phase 14f): rooted at the actual query,
- * one node per real step (docs/UI_UX_AUDIT.md Phase 14e's step_id groups
+ * Graph v2 (docs/archive/UI_UX_AUDIT.md Phase 14f): rooted at the actual query,
+ * one node per real step (docs/archive/UI_UX_AUDIT.md Phase 14e's step_id groups
  * that step's LLM decision, tool call(s), and approval gate together, since
  * they're one unit of "why did it do that"), chained chronologically within
  * a lane, with distinct lanes for parallel batches and delegated sub-tasks

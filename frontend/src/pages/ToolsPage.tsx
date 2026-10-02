@@ -30,7 +30,7 @@ const GROUP_LABEL: Record<string, string> = {
 }
 
 /**
- * What YBM can do, and whether it's currently allowed to (docs/UI_UX_AUDIT.md
+ * What YBM can do, and whether it's currently allowed to (docs/archive/UI_UX_AUDIT.md
  * Phase 11) - _tool_registry_summary already computed this (every
  * registered tool's group, capability, enabled state, operations, and
  * effective risk); it just had no page of its own, only internal use by

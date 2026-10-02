@@ -6,7 +6,7 @@ import { expect, type Page, test } from "@playwright/test"
  * has expired, a failed task's trace highlighting its failing step, and a
  * trace step flagged as having observed untrusted external content
  * (docs/THREAT_MODEL.md). The first three are named explicitly as missing
- * in docs/UI_UX_AUDIT.md P0.1.
+ * in docs/archive/UI_UX_AUDIT.md P0.1.
  */
 
 const now = "2026-09-01T09:00:00Z"

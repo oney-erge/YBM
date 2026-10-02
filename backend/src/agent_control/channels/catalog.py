@@ -56,7 +56,7 @@ CHANNELS: tuple[ChannelSpec, ...] = (
         label="WhatsApp",
         status="manual",
         blurb="Message YBM from WhatsApp.",
-        note="Needs the sidecar running and a QR scan; connect it from Settings.",
+        note="Turn it on in config/config.yaml, then scan a QR code. Steps are in docs/INSTALL.md.",
     ),
     ChannelSpec(
         key="discord",

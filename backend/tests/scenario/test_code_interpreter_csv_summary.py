@@ -3,7 +3,7 @@ JSON" through the real Operator loop -> code.interpreter (which generates its
 own script via a second structured-output call), called TWICE - once to
 create expenses.csv, once to read that same file back off disk and compute
 the total. Ports e2e/all_cases.json's `code_interpreter_csv_summary` case
-down to the deterministic tier (docs/HISTORY.md P2). This is the suite's
+down to the deterministic tier (docs/archive/HISTORY.md P2). This is the suite's
 only coverage of **multi-call file chaining**: two separate tool calls in
 one task sharing one workspace, where call 2 depends on call 1's output.
 That is what makes it worth keeping distinct from
@@ -18,7 +18,7 @@ multi-step file workflow: step 2 landed in an empty directory and could
 never see the file step 1 wrote. Reproduced identically on three independent
 live recording attempts. Fixed by making the workspace stable per task
 (`root / f"task_{task_id}"`); see that function's docstring, the three
-regression tests in test_code_interpreter.py, and docs/HISTORY.md Part 2 §4
+regression tests in test_code_interpreter.py, and docs/archive/HISTORY.md Part 2 §4
 item 7.
 
 The objective now spells out both steps explicitly. Its earlier phrasing

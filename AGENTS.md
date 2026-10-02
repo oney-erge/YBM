@@ -10,9 +10,13 @@ provides the editor bridge.
 Use these as the durable sources of truth:
 
 - `docs/ARCHITECTURE.md` for current components and message flow.
-- `docs/HISTORY.md` for design rationale and completed phases.
+- `docs/CAPABILITIES.md` for the tool catalog and the access each tool needs.
+- `docs/ROADMAP.md` for what is built, what is next, and the known limits.
 - `config/config.example.yaml` for supported configuration.
-- `README.md` for operator-facing setup and commands.
+- `docs/INSTALL.md` and `docs/USING.md` for operator-facing setup, commands, and the console tour.
+  `README.md` is a short front door; keep detail in the docs and link to it rather than repeating it.
+- `docs/archive/` (design rationale, finished plans, review snapshots) is a historical record, never
+  evidence that behavior exists. Code comments may cite it for the reasoning behind a decision.
 
 Do not describe planned behavior as implemented. Keep documentation, schemas, and
 configuration examples aligned with the code that exists.
@@ -118,7 +122,7 @@ Choose checks in proportion to the change:
 - VS Code extension: from `vscode-extension`, run `npm run compile`.
 - WhatsApp sidecar: from `whatsapp-bridge`, run `npm run check`. Use this, not
   `node --check` - the latter only parses syntax and will pass a file whose imports
-  cannot resolve at all (see docs/HISTORY.md Part 6's review pass).
+  cannot resolve at all (see docs/archive/HISTORY.md Part 6's review pass).
 - Full runtime or integration changes: run `doctor`, then the narrowest relevant
   live or E2E flow only when its prerequisites and external effects are understood.
 

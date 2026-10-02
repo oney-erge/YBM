@@ -2,7 +2,7 @@
 
 New tool = new adapter module with a register(deps, definitions, adapters)
 function (see spec.py for the shared types) + one import line added to
-_REGISTRARS below. No other file needs to change (docs/HISTORY.md P3).
+_REGISTRARS below. No other file needs to change (docs/archive/HISTORY.md P3).
 """
 
 from __future__ import annotations

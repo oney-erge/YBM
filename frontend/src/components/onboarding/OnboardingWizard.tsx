@@ -27,7 +27,7 @@ import {
 type Step = "brain" | "face" | "done"
 
 /**
- * First-run wizard (docs/UI_REWRITE_PLAN.md §14) - shown when
+ * First-run wizard (docs/archive/UI_REWRITE_PLAN.md §14) - shown when
  * `bootstrap.onboarding_complete` is false (backend: no LLM profile is
  * actually configured yet - `ybm setup` always creates config.yaml now, so
  * that alone can't be the signal), or when re-triggered manually from

@@ -18,11 +18,11 @@ import { ApprovalActions } from "@/components/approvals/ApprovalActions"
 import { formatCountdown, useCountdown } from "@/lib/time"
 
 /**
- * Persistent, unmissable, on every route (docs/UI_REWRITE_PLAN.md §11.1) -
+ * Persistent, unmissable, on every route (docs/archive/UI_REWRITE_PLAN.md §11.1) -
  * mounted once in AppShell above the router outlet. Renders nothing when
  * there is nothing pending; that's the common case and it should be silent.
  *
- * Phase 8 rework (docs/UI_UX_AUDIT.md): the dialog previously stacked every
+ * Phase 8 rework (docs/archive/UI_UX_AUDIT.md): the dialog previously stacked every
  * pending approval vertically inside one narrow scroll container, so with
  * more than one pending item the decision buttons were reliably below the
  * fold. Now it reviews one at a time with a pager, a risk-tinted header, and

@@ -16,7 +16,7 @@ import { useClearTaskHistory } from "@/lib/queries"
 
 /**
  * DELETE /api/tasks already existed, audit-logged, with an include_active
- * flag - no UI called it (docs/UI_UX_AUDIT.md Phase 9). Two distinct
+ * flag - no UI called it (docs/archive/UI_UX_AUDIT.md Phase 9). Two distinct
  * destructive choices, not one generic "confirm", because completed-only
  * is the safe default and including active tasks is a meaningfully bigger
  * ask (it also cancels whatever is still running - see admin.py's

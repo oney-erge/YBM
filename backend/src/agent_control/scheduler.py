@@ -110,7 +110,7 @@ def _record_previous_run_outcome(
     track consecutive failures - auto-pausing the schedule once the streak
     hits the configured limit, rather than letting it keep firing and
     failing unnoticed (the motivating case: 7 real schedules whose target
-    had gone away, still firing daily for weeks - docs/HISTORY.md P6).
+    had gone away, still firing daily for weeks - docs/archive/HISTORY.md P6).
     Returns the schedule record, refreshed if its metadata/status changed."""
     if not schedule.last_task_id:
         return schedule

@@ -25,7 +25,7 @@ import { cn } from "@/lib/utils"
 
 /**
  * Level 2/Advanced, read-only except for two explicitly-triggered actions
- * (Run doctor, view a service log). Rebuilt in docs/UI_UX_AUDIT.md Phase 9:
+ * (Run doctor, view a service log). Rebuilt in docs/archive/UI_UX_AUDIT.md Phase 9:
  * the backend (and this file's own Zod schemas) already carried
  * restart_count, last_exit_code, child_pid, and age_seconds per service -
  * none of it was rendered, just a name/status/message line. Still

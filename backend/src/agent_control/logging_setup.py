@@ -1,7 +1,7 @@
 """Structured logging - the one thing every service entry point calls first.
 
 Before this module existed there was no logging configuration anywhere in the
-codebase (docs/HISTORY.md §2.1): the stdlib root logger defaulted to WARNING
+codebase (docs/archive/HISTORY.md §2.1): the stdlib root logger defaulted to WARNING
 with a last-resort stderr handler, so every `logger.debug(...)` call in the
 app (17 of them) was silently discarded, `structlog` was a declared dependency
 imported by nothing, and service logs were whatever `print()` happened to

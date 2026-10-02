@@ -1,4 +1,4 @@
-"""Check whether a newer YBM release exists (docs/UI_UX_AUDIT.md
+"""Check whether a newer YBM release exists (docs/archive/UI_UX_AUDIT.md
 Phase 6) - read-only, no auth, degrades to a plain "couldn't check"
 result on any failure rather than raising. There is no auto-apply step:
 this only ever reports a URL for a person to act on themselves, matching

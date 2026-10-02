@@ -198,7 +198,7 @@ async def test_code_interpreter_blocks_import_bypass_modules_by_default(tmp_path
     # wouldn't see "os"/"subprocess" being reached this way unless importlib
     # itself is blocked. multiprocessing (process spawning) and winreg
     # (Windows registry) are the same risk class as subprocess/os but were
-    # missing from the original list (docs/HISTORY.md P5).
+    # missing from the original list (docs/archive/HISTORY.md P5).
     adapter = CodeInterpreterAdapter(CodeInterpreterAdapterConfig(workspace_root=str(tmp_path / "code")))
 
     result = await adapter.execute(_request(tmp_path, "run_python", code=code))
@@ -485,7 +485,7 @@ def _auto_workspace_request(operation: str, task_id: str = "task_chain", **paylo
 
 @pytest.mark.asyncio
 async def test_code_interpreter_reuses_one_workspace_across_calls_in_a_task(tmp_path) -> None:
-    """Regression guard (docs/HISTORY.md Part 2 §4 item 7): _workspace() used
+    """Regression guard (docs/archive/HISTORY.md Part 2 §4 item 7): _workspace() used
     to append uuid4().hex[:8], so every call got a fresh empty directory and
     no multi-step file workflow could ever work - step 2 could not see the
     file step 1 created. Task ids are already unique, so the suffix only ever
@@ -571,7 +571,7 @@ class PromptCapturingProvider(FakeScriptProvider):
 async def test_code_interpreter_generation_prompt_demands_relative_paths(tmp_path) -> None:
     """Generated scripts must never hardcode the workspace's absolute path.
 
-    Two real consequences, both observed (docs/HISTORY.md Part 2 §4 item 9):
+    Two real consequences, both observed (docs/archive/HISTORY.md Part 2 §4 item 9):
     the Docker backend bind-mounts the workspace at a DIFFERENT path inside
     the container (`workspace_mount_target`, default /workspace), so a script
     carrying an absolute host path fails outright under the sandbox backend -
@@ -605,7 +605,7 @@ async def test_code_interpreter_generation_prompt_demands_relative_paths(tmp_pat
 
 @pytest.mark.asyncio
 async def test_code_interpreter_previews_created_file_content_for_grounding(tmp_path) -> None:
-    """Regression guard (docs/HISTORY.md Part 3 W1): the Auditor grounds its
+    """Regression guard (docs/archive/HISTORY.md Part 3 W1): the Auditor grounds its
     "did this actually answer the objective" check in terminal_output text.
     Before this, that text listed only file NAMES plus stdout - a script
     that computed the wrong number and wrote it to a file passed every check

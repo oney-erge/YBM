@@ -1,4 +1,4 @@
-"""Stable step_id linking (docs/UI_UX_AUDIT.md Phase 14e) - the real
+"""Stable step_id linking (docs/archive/UI_UX_AUDIT.md Phase 14e) - the real
 parent-child link Graph v2 is built on, replacing inferred structure from
 `origin` tags alone. One id per observe/decide/act tick, stamped onto that
 tick's operator_history entry, its LLM call, and any ToolCallRequest.parent_step_id

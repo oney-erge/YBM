@@ -1,4 +1,4 @@
-"""channels/base.py (docs/UI_UX_AUDIT.md Phase 16) - the channel-agnostic
+"""channels/base.py (docs/archive/UI_UX_AUDIT.md Phase 16) - the channel-agnostic
 "classify -> task" core extracted out of TelegramIntakeService. These tests
 deliberately use a non-Telegram ChannelType to prove the extraction is
 real: a future channel calling classify_and_spawn_task directly gets
@@ -62,7 +62,7 @@ async def test_classify_and_spawn_task_creates_a_task_for_a_non_telegram_channel
     assert result.task.metadata["source_channel"] == "discord"
     assert result.task.metadata["source_chat_id"] == "chat-1"
     # The audit trail must say which channel this came from, not silently
-    # assume Telegram (docs/UI_UX_AUDIT.md Phase 16's whole point).
+    # assume Telegram (docs/archive/UI_UX_AUDIT.md Phase 16's whole point).
     events = repos.audit.list_for_task(result.task.id)
     assert any(event.actor.startswith("discord:user:") for event in events)
 
@@ -157,7 +157,7 @@ def test_standing_instruction_detects_a_durable_rule_not_a_one_off_request() -> 
 async def test_chat_route_persists_a_stated_preference_and_says_so(tmp_path) -> None:
     """The chat route composed "Understood, all future summaries will be…" and
     persisted nothing, so the next task had no fact to read and silently ignored
-    the rule (docs/E2E_FINDINGS.md P1-3). Claiming to have learned while
+    the rule (docs/archive/E2E_FINDINGS.md P1-3). Claiming to have learned while
     learning nothing is worse than declining - the user gets no signal."""
     repos, audit = make_repos(tmp_path)
     conversation_id = repos.conversations.get_or_create(ChannelType.SLACK, "chat-1")

@@ -23,7 +23,7 @@ def test_build_service_specs_skips_unconfigured_channels_on_a_fresh_install(monk
     WhatsApp has always been gated this way: poll-whatsapp refuses to start when
     disabled, so attempting it anyway crash-looped four times on every
     `ybm start` for everyone who never touched the feature
-    (docs/UI_UX_AUDIT.md Phase 16 review).
+    (docs/archive/UI_UX_AUDIT.md Phase 16 review).
 
     Telegram used to be attempted unconditionally, and has exactly the same
     problem for exactly the same reason: `poll-telegram` raises "Telegram token
