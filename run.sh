@@ -41,6 +41,9 @@ case "$action" in
   doctor) [ -x backend/.venv/bin/ybm ] || { echo "YBM is not installed. Run ./run.sh once." >&2; exit 1; }; exec backend/.venv/bin/ybm doctor ;;
   repair) rm -f backend/.venv/.ybm_sync_fingerprint ;;
 esac
+# ${args[@]+"${args[@]}"}, not "${args[@]}": with `set -u`, macOS's stock bash
+# 3.2 treats an empty array as unset and aborts with "unbound variable", which
+# is the default (no --no-browser) case.
 args=()
 [ "$no_browser" -eq 1 ] && args+=(--no-browser)
-exec ./ybm.sh "${args[@]}"
+exec ./ybm.sh ${args[@]+"${args[@]}"}

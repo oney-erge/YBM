@@ -16,6 +16,10 @@ if errorlevel 1 (
   goto :failed
 )
 
+rem Windows PowerShell 5.1 started from a PowerShell 7 terminal inherits that
+rem terminal's module path, and Get-FileHash and friends stop resolving. Clear
+rem it so powershell.exe computes its own.
+set "PSModulePath="
 set "INSTALLER_FILE=%TEMP%\Install-YBM-%RANDOM%-%RANDOM%.ps1"
 set "INSTALLER_URL=https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.ps1"
 if defined YBM_INSTALLER_PS1_PATH (

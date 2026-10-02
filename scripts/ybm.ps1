@@ -27,6 +27,16 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Windows PowerShell 5.1 started from a PowerShell 7 terminal inherits that
+# terminal's PSModulePath, whose PowerShell 7 entries shadow the built-in
+# modules and make cmdlets such as Get-FileHash disappear mid-install. Drop
+# those entries so 5.1 resolves its own. A no-op everywhere else.
+if ($PSVersionTable.PSEdition -eq "Desktop" -and $env:PSModulePath) {
+  # -like, not -match: backslashes are literal in a wildcard, so there is nothing to escape.
+  $env:PSModulePath = (($env:PSModulePath -split ";") | Where-Object {
+    $_ -and $_ -notlike "*\PowerShell\Modules" -and $_ -notlike "*\PowerShell\7\Modules"
+  }) -join ";"
+}
 . "$PSScriptRoot\lib\common.ps1"
 . "$Script:YbmRoot\scripts\install-utils.ps1"
 Initialize-Install -RepositoryRoot $Script:YbmRoot -ProductName "YBM"
@@ -160,7 +170,11 @@ function Invoke-YbmUvSync {
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-      $output = & $Uv sync @Arguments 2>&1
+      # Each line becomes a plain string: left as the ErrorRecords that 2>&1
+      # makes of uv's routine stderr progress, Windows PowerShell 5.1 prints
+      # them as a red NativeCommandError stack trace in the middle of a
+      # successful install.
+      $output = @(& $Uv sync @Arguments 2>&1 | ForEach-Object { "$_" })
       $code = $LASTEXITCODE
     } finally {
       $ErrorActionPreference = $previousPreference
@@ -514,7 +528,12 @@ function Invoke-YbmStart {
     # `channel-enabled` fails closed (exit 1 = treat as disabled) on a
     # broken config, matching build_service_specs()'s Python-path behavior.
     & (Get-YbmPython) -m agent_control.cli channel-enabled whatsapp | Out-Null
-    if ($LASTEXITCODE -eq 0) {
+    $whatsAppEnabled = ($LASTEXITCODE -eq 0)
+    # Exit 1 here only means "WhatsApp is off", which is the default. Left in
+    # $LASTEXITCODE it outlives this function and the caller reads it as
+    # "startup failed" even though every service came up.
+    $global:LASTEXITCODE = 0
+    if ($whatsAppEnabled) {
       # Required $false even when enabled: a bridge hiccup (crash, not yet
       # linked) must not block the rest of the stack the way a required
       # service would.
@@ -737,15 +756,21 @@ function Invoke-YbmConfig {
 switch ($Command) {
   "help" { Show-YbmHelp }
   "setup" { Invoke-YbmSetup -Argv (@($Sub) + $Rest | Where-Object { $_ }); Complete-Install; exit $LASTEXITCODE }
-  "run" { Invoke-YbmRun -Argv (@($Sub) + $Rest | Where-Object { $_ }) }
+  # Invoke-YbmStart exits 1 itself when a required service fails, so reaching
+  # the line after it means success. The explicit `exit 0` matters: without it
+  # the script ends with whatever native exit code was last left in
+  # $LASTEXITCODE (a check-updates or channel probe), and callers such as the
+  # installer and run.ps1 read that as a failed start.
+  "run" { Invoke-YbmRun -Argv (@($Sub) + $Rest | Where-Object { $_ }); exit 0 }
   "doctor" { Invoke-YbmDoctor; exit $LASTEXITCODE }
-  "start" { Invoke-YbmStart -Argv (@($Sub) + $Rest | Where-Object { $_ }) }
-  "stop" { Invoke-YbmStop }
+  "start" { Invoke-YbmStart -Argv (@($Sub) + $Rest | Where-Object { $_ }); exit 0 }
+  "stop" { Invoke-YbmStop; exit 0 }
   "restart" {
     $restartArgv = @($Sub) + $Rest | Where-Object { $_ }
     Invoke-YbmStop
     Start-Sleep -Seconds 2
     Invoke-YbmStart -Argv $restartArgv
+    exit 0
   }
   "status" { Invoke-YbmStatus }
   "ui-build" { Invoke-YbmUi -Mode "ui-build" }
