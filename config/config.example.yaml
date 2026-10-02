@@ -97,6 +97,13 @@ llm:
       temperature: 0.2
 
 capabilities:
+  # YBM's own built-in helpers (task status, skills, persona, notes search): local
+  # reads of its own state, no reason to ask.
+  agent.core:
+    enabled: true
+    scopes: []
+    requires_approval: false
+    max_risk_level: "low"
   telegram.receive:
     enabled: true
     scopes: []

@@ -146,11 +146,11 @@ class TaskStatusAdapter:
 
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
-    enabled = deps.repositories is not None and capability_enabled(settings, Capability.TELEGRAM_RECEIVE)
+    enabled = deps.repositories is not None and capability_enabled(settings, Capability.AGENT_CORE)
     definitions.append(
         ToolDefinition(
             name="task.status",
-            capability=Capability.TELEGRAM_RECEIVE,
+            capability=Capability.AGENT_CORE,
             enabled=enabled,
             description="report current task, plan, active, completed, and blocked state for status questions",
             operations=("status",),

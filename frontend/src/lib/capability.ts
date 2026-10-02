@@ -10,6 +10,7 @@
  * string values, not guessed - keep in sync if that enum changes.
  */
 const CAPABILITY_DESCRIPTIONS: Record<string, string> = {
+  "agent.core": "can use YBM's built-in helpers (task status, skills, persona, notes search)",
   "telegram.receive": "can read incoming Telegram messages",
   "telegram.send": "can send Telegram messages",
   "llm.generate": "can call the configured LLM",

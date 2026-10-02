@@ -7,6 +7,21 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Web chat, the default front door, acknowledged "remember that ..." and standing
+  rules ("always answer in three bullets") and stored nothing, while Telegram and
+  WhatsApp stored them. Web chat now uses the same runtime-level handling, so a rule
+  stated in chat reaches the next task's context.
+- Receipts understated model cost: the Concierge's own call (the first call of a task,
+  and the only call of a chat-only reply) was never recorded. It now lands on the task
+  it led to, in `token_usage.by_source.concierge` and the per-call trace, on web chat,
+  Telegram and WhatsApp.
+- YBM's built-in helpers (task status, skills, persona, notes search) no longer borrow
+  the `telegram.receive` capability, so the Tools page stops describing a status check
+  as "can read incoming Telegram messages" and turning Telegram's receiving off cannot
+  remove them. They run under a new `agent.core` capability, enabled by default; a
+  config written before it existed keeps following `telegram.receive`, so nothing
+  changes on upgrade. The recorded scenario fixtures were migrated mechanically (the
+  four catalog lines relabelled, every recorded response kept byte-for-byte).
 - Switching **File system** access on in the console did not make the file tool
   available, because `filesystem.manage` also required `adapters.computer_use.enabled`,
   a desktop-control flag that setting never touched. "Organize my Downloads" stayed

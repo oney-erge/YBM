@@ -53,6 +53,7 @@ UNTRUSTED_EXTERNAL = "untrusted_external"
 
 
 CAPABILITY_MINIMUM_RISKS: dict[Capability, RiskLevel] = {
+    Capability.AGENT_CORE: RiskLevel.LOW,
     Capability.TELEGRAM_RECEIVE: RiskLevel.LOW,
     Capability.TELEGRAM_SEND: RiskLevel.LOW,
     Capability.LLM_GENERATE: RiskLevel.LOW,

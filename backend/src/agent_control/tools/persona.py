@@ -68,11 +68,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     # Reuses TELEGRAM_RECEIVE, same reasoning as skills.use and task.status:
     # reading/writing a local preferences document has no side effects
     # outside the document itself.
-    enabled = capability_enabled(settings, Capability.TELEGRAM_RECEIVE) and settings.adapters.persona.enabled
+    enabled = capability_enabled(settings, Capability.AGENT_CORE) and settings.adapters.persona.enabled
     definitions.append(
         ToolDefinition(
             name="persona.manage",
-            capability=Capability.TELEGRAM_RECEIVE,
+            capability=Capability.AGENT_CORE,
             enabled=enabled,
             description=(
                 "read the current user persona/preferences document, or replace it with an updated "
