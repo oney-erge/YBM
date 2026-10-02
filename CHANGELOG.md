@@ -5,6 +5,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- The installers' closing message still told people to "pick a model" after first run started choosing one
+  for them; it now says that YBM names the model it found and only asks when it found none.
+- The usage guide told every install to stop YBM with `ybm stop`, which does not see services started by the
+  Windows PowerShell wrapper (the MSI and `Install-YBM.bat`). It now gives the command for each way of
+  starting it.
+
 ## [0.1.4] - 2026-10-02
 
 ### Fixed
