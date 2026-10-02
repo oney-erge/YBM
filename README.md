@@ -115,22 +115,25 @@ everything else. Docker, source-checkout, headless, and verification instruction
 
 The release image is
 [`ghcr.io/oney-erge/ybm:latest`](https://github.com/oney-erge/YBM/pkgs/container/ybm). It includes
-the web console and is intended for Telegram, WhatsApp, API, and server workflows. See
-[Local setup](docs/LOCAL_SETUP.md#docker-for-a-headless-server) for the required admin token,
-volumes, and loopback-only port mapping.
+the web console and is intended for Telegram, WhatsApp, API, and server workflows. Nothing needs
+configuring first: it creates its own admin token on first start, and `./run.sh docker` (or
+`.\run.ps1 docker`) starts it and opens the console already signed in. See
+[Local setup](docs/LOCAL_SETUP.md#docker-for-a-headless-server) for volumes, a cloud model key, and
+the loopback-only port mapping.
 
 ## First run
 
-The browser wizard has two steps:
+There is nothing to enter: the launcher creates your config and admin token and signs the console in
+for you. It also picks a model from what is already on the machine, in this order: your own
+LocalDeploy (`YBM_LOCALDEPLOY_ROOT`), a running Ollama server, then a provider API key already in
+your environment or `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and the other providers below).
+Choosing never calls a paid API, and the launcher and the chat header both say which model was
+picked.
 
-1. Choose a local model or configure a cloud provider. YBM verifies access, lists models when the
-   provider supports it, and makes one small completion before saving the choice.
-2. Use the built-in web chat immediately, or optionally connect Telegram. WhatsApp is configured
-   later under Settings.
-
-Both wizard steps can be skipped. A skipped model means chat and task classification will not work
-until a model is configured under Settings. See [Local setup](docs/LOCAL_SETUP.md) for manual and
-headless configuration.
+If nothing is found, the browser wizard offers a local model or a cloud provider; it verifies access
+and makes one small completion before saving. Connecting Telegram is optional, and WhatsApp is
+configured later under Settings. Until a model exists, chat and task classification will not work.
+See [Local setup](docs/LOCAL_SETUP.md) for manual and headless configuration.
 
 ## Choose a model
 

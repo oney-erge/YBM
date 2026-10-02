@@ -9,7 +9,7 @@ from pathlib import Path
 import sys
 
 from agent_control.backup import run_backup
-from agent_control.bootstrap import run_doctor, run_setup
+from agent_control.bootstrap import admin_console_url, run_doctor, run_setup
 from agent_control.updates import check_for_updates
 from agent_control.config_sync import set_config_path
 from agent_control.onboarding import run_onboard
@@ -684,6 +684,7 @@ def main() -> None:
             "run-coding-session-watcher",
             "backup",
             "check-updates",
+            "admin-url",
         ],
     )
     parser.add_argument("--session-root", default=None)
@@ -709,15 +710,25 @@ def main() -> None:
         help="for `start`: stay in the foreground until a service exits or a signal arrives "
              "(what a container or systemd Type=simple needs; a detached start would look like an immediate exit)",
     )
+    parser.add_argument(
+        "--quiet", action="store_true",
+        help="for `doctor` and `setup`: print only what needs attention (what the launchers use)",
+    )
     parser.add_argument("--out", default=None, help="output directory for `backup` (default: .agent_control/backups)")
     args = parser.parse_args()
 
     _configure_logging_for_command(args.command)
 
     if args.command == "doctor":
-        raise SystemExit(run_doctor())
+        raise SystemExit(run_doctor(quiet=args.quiet))
     elif args.command == "setup":
-        raise SystemExit(run_setup(telegram_token=args.telegram_token))
+        raise SystemExit(run_setup(telegram_token=args.telegram_token, quiet=args.quiet))
+    elif args.command == "admin-url":
+        # The address to open the console at, already signed in. The one thing a
+        # headless or containerised install needs to print, since there is no
+        # launcher there to open a browser for you.
+        print(admin_console_url())
+        raise SystemExit(0)
     elif args.command == "onboard":
         raise SystemExit(run_onboard())
     elif args.command == "start":

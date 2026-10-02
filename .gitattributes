@@ -37,3 +37,6 @@ Dockerfile    text eol=lf
 *.msi         binary
 *.exe         binary
 *.pdf         binary
+
+# Read by uv, which does not tolerate a stray carriage return on every platform.
+.python-version text eol=lf

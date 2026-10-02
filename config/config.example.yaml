@@ -26,9 +26,17 @@ channels:
     node_path: null
 
 llm:
-  default_profile: "localdeploy_qwen3vl_8b"
-  major_profile: "localdeploy_qwen3vl_8b"
-  fallback_profile: "openai_saved"
+  # Left empty on purpose. The first run (`ybm setup`, which every launcher
+  # runs) fills it in from what is already on the machine: your own LocalDeploy
+  # if YBM_LOCALDEPLOY_ROOT is set, a running Ollama, or a provider API key
+  # already in your environment or .env. It never calls a paid API to decide,
+  # and it tells you what it picked. The profiles below are reference shapes
+  # you can point default_profile at by hand.
+  default_profile: ""
+  major_profile: null
+  # No silent paid fallback: set one explicitly if you want a second model to
+  # take over when the first is unreachable.
+  fallback_profile: null
   profiles:
     # Claude. `provider: anthropic` routes to the native provider rather than
     # the OpenAI-compatible one, which matters: current Claude models reject

@@ -57,13 +57,13 @@ function App() {
   // (docs/UI_REWRITE_PLAN.md §9 Phase 0.3) - it decides wizard vs console.
   if (isPending) return null
 
-  // A real, previously-missing gap (see TokenEntryScreen's own comment):
-  // `run_setup()` always auto-generates AGENT_ADMIN_TOKEN, and every /api/*
-  // route except bootstrap enforces it - without this gate, a fresh install
-  // 401s on every page with no way to recover from the browser. The
-  // ?token= URL case (same-machine `ybm start` auto-open) is captured and
-  // stripped synchronously in lib/api.ts, before this ever renders.
-  if (bootstrap?.token_required && !getAdminToken()) {
+  // `run_setup()` always auto-generates AGENT_ADMIN_TOKEN and every /api/*
+  // route except bootstrap enforces it, so a browser with no sign-in has to
+  // be asked. Almost nobody ever is: the launchers open a ?token= link (captured
+  // and stripped synchronously in lib/api.ts, before this renders), and that
+  // is exchanged for a session cookie the server reports back as
+  // `authenticated` on every later visit. This screen is the rare fallback.
+  if (bootstrap?.token_required && !bootstrap.authenticated && !getAdminToken()) {
     return <TokenEntryScreen key={tokenVersion} onVerified={() => setTokenVersion((v) => v + 1)} />
   }
 

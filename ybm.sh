@@ -80,6 +80,12 @@ ensure_uv() {
   printf '%s' "$uv"
 }
 
+# uv lists every package it installs ("+ name==version"): dozens of lines that
+# mean nothing to someone waiting for YBM to start. Keep the download progress and
+# the summary, drop the list. Filtering stderr in place (uv writes everything
+# there) leaves install_retry's own capture of it, and uv's exit status, intact.
+uv_sync_quietly() { "$UV" sync "$@" 2> >(sed -E '/^ [+~-] /d' >&2); }
+
 # pyproject.toml as well as uv.lock: a hand-edited pyproject that has not been
 # re-locked still changes what `uv sync` resolves, and a fingerprint that
 # missed it would leave a stale venv looking up to date.
@@ -87,6 +93,8 @@ lock_fingerprint() {
   local files=()
   [ -f backend/pyproject.toml ] && files+=(backend/pyproject.toml)
   [ -f backend/uv.lock ] && files+=(backend/uv.lock)
+  # The pinned interpreter counts: changing it must rebuild the venv.
+  [ -f backend/.python-version ] && files+=(backend/.python-version)
   [ ${#files[@]} -eq 0 ] && return 1
   if command -v sha256sum >/dev/null 2>&1; then
     cat "${files[@]}" | sha256sum | cut -d' ' -f1
@@ -131,7 +139,7 @@ if [ -x "$VENV_PY" ] && [ -n "$CURRENT_FP" ] && [ "$CURRENT_FP" = "$STORED_FP" ]
   info "[1/3] Dependencies up to date - skipping sync."
 else
   log "[1/3] Installing dependencies (the long part on a first run)"
-  ( cd backend && install_retry "dependency synchronization" "$UV" sync "${EXTRAS[@]}" ) \
+  ( cd backend && install_retry "dependency synchronization" uv_sync_quietly "${EXTRAS[@]}" ) \
     || fail "dependency install failed" "See the message above."
   [ -n "$CURRENT_FP" ] && printf '%s' "$CURRENT_FP" > "$FINGERPRINT_FILE"
 fi
@@ -143,7 +151,7 @@ YBM_BIN="$HERE/backend/.venv/bin/ybm"
 # Idempotent: creates config.yaml and tokens the first time, leaves them alone
 # afterwards.
 log "[2/3] Setting up config and tokens"
-"$YBM_BIN" setup
+"$YBM_BIN" setup --quiet
 
 install_complete
 log "[3/3] Starting YBM and opening the console"

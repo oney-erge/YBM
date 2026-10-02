@@ -28,6 +28,8 @@ import logging
 import os
 import secrets
 import shutil
+import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
@@ -97,6 +99,32 @@ class _AsyncioBridgeProcessHandle:
         return await self._process.wait()
 
 
+def install_bridge_dependencies() -> tuple[bool, str]:
+    """Install the sidecar's Node dependencies from its lockfile, quietly.
+
+    The sidecar's ~90 packages are only needed once WhatsApp is switched on, so
+    first-run setup no longer installs them (it used to, and printed an
+    ``npm audit`` warning at people who never use WhatsApp). Whoever turns the
+    channel on gets them installed here the first time the bridge starts.
+    Returns ``(ok, detail)``; never raises, so the caller decides how to report.
+    """
+    if shutil.which("npm") is None:
+        return False, "npm was not found on PATH - install Node.js 22.22+ (https://nodejs.org)"
+    use_lockfile = (BRIDGE_DIR / "package-lock.json").exists()
+    command = ["npm", "ci" if use_lockfile else "install", "--omit=dev", "--no-audit", "--no-fund", "--loglevel=error"]
+    try:
+        result = subprocess.run(
+            command, cwd=BRIDGE_DIR, shell=(sys.platform == "win32"),
+            capture_output=True, text=True, check=False,
+        )
+    except OSError as exc:
+        return False, str(exc)
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return False, detail[-400:] or f"npm exited with {result.returncode}"
+    return True, "installed"
+
+
 def find_node_binary(node_path: str | None) -> str | None:
     if node_path:
         return node_path if Path(node_path).exists() else None
@@ -146,10 +174,13 @@ class WhatsAppBridgeProcess:
                 "the WhatsApp channel, or leave channels.whatsapp.enabled: false."
             )
         if not (BRIDGE_DIR / "node_modules").is_dir():
-            raise RuntimeError(
-                f"{BRIDGE_DIR}/node_modules is missing - run `npm install` in {BRIDGE_DIR}/ "
-                "(or re-run `ybm setup`, which does it for you) before enabling the WhatsApp channel."
-            )
+            installed, detail = await asyncio.to_thread(install_bridge_dependencies)
+            if not installed:
+                raise RuntimeError(
+                    f"{BRIDGE_DIR}/node_modules is missing and could not be installed automatically "
+                    f"({detail}) - run `npm install` in {BRIDGE_DIR}/ before enabling the WhatsApp channel."
+                )
+            logger.info("installed whatsapp-bridge dependencies on first start")
         AUTH_DIR.mkdir(parents=True, exist_ok=True)
         env = {
             **os.environ,

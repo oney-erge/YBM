@@ -179,7 +179,11 @@ function Invoke-YbmUvSync {
     } finally {
       $ErrorActionPreference = $previousPreference
     }
-    $output | Out-Host
+    # uv lists every package it installs (" + name==version"): dozens of lines
+    # that mean nothing to someone waiting for YBM to start. Keep the download
+    # progress and the "Installed N packages" summary; a failure below still
+    # carries everything uv said.
+    $output | Where-Object { $_ -notmatch '^\s+[+~-]\s\S' } | Out-Host
     if ($code -ne 0) {
       throw "uv sync failed with exit $($code): $($output -join [Environment]::NewLine)"
     }
@@ -227,7 +231,9 @@ function Invoke-YbmSetup {
       Pop-Location
     }
   } else {
-    Write-Host "backend\.venv already exists - skipping venv creation (run 'uv sync' in backend/ to update deps)."
+    if (-not $runtimeOnly) {
+      Write-Host "backend\.venv already exists - skipping venv creation (run 'uv sync' in backend/ to update deps)."
+    }
   }
 
   $telegramToken = $null
@@ -242,6 +248,9 @@ function Invoke-YbmSetup {
   if ($telegramToken) {
     $pyArgs += @("--telegram-token", $telegramToken)
   }
+  # The launcher path passes -RuntimeOnly; it has no use for the developer
+  # hints setup prints ("Next: ybm doctor", "TELEGRAM_BOT_TOKEN not set").
+  if ($runtimeOnly) { $pyArgs += "--quiet" }
   & (Get-YbmPython) @pyArgs
   # Deliberately no `exit` here (there used to be one) - Invoke-YbmRun calls
   # this as a sub-step and needs to keep going afterward. $LASTEXITCODE from
@@ -259,9 +268,12 @@ function Get-YbmLockFingerprint {
   # case of a hand-edited pyproject.toml that hasn't been re-locked yet -
   # `uv sync` (no --frozen here) resolves fresh in that case, and the
   # fingerprint needs to change too or a stale venv would look "up to date."
+  # .python-version too: changing the pinned interpreter must rebuild the venv,
+  # or an install made before the pin keeps running whatever Python it got.
   $paths = @(
     (Join-Path $Script:YbmRoot "backend\pyproject.toml"),
-    (Join-Path $Script:YbmRoot "backend\uv.lock")
+    (Join-Path $Script:YbmRoot "backend\uv.lock"),
+    (Join-Path $Script:YbmRoot "backend\.python-version")
   ) | Where-Object { Test-Path -LiteralPath $_ }
   if ($paths.Count -eq 0) { return $null }
   $hashes = $paths | ForEach-Object { (Get-FileHash -LiteralPath $_ -Algorithm SHA256).Hash }
@@ -356,8 +368,13 @@ function Invoke-YbmRun {
 }
 
 function Invoke-YbmDoctor {
+  param([switch]$Quiet)
   $env:PYTHONPATH = "$Script:YbmRoot\backend\src"
-  & (Get-YbmPython) -m agent_control.cli doctor
+  # -Quiet is what start/run use: someone launching YBM needs the lines that
+  # need attention and a one-line verdict, not 25 lines saying all is well.
+  $doctorArgs = @("-m", "agent_control.cli", "doctor")
+  if ($Quiet) { $doctorArgs += "--quiet" }
+  & (Get-YbmPython) @doctorArgs
   # $LASTEXITCODE survives the function return; callers read it directly.
   # Do NOT wrap this call (or the caller's call to this function) in
   # parens/Out-Null - that captures the child's stdout instead of letting
@@ -489,9 +506,7 @@ function Invoke-YbmStart {
   $openBrowser = $Argv -contains "-Open"
 
   if (-not $skipDoctor) {
-    Write-Host "Preflight (ybm doctor)..."
-    Write-Host ""
-    Invoke-YbmDoctor
+    Invoke-YbmDoctor -Quiet
     if ($LASTEXITCODE -ne 0) {
       Write-Host ""
       Write-Host "Preflight failed. Fix the [FAIL] items above, run '.\scripts\ybm.ps1 setup', or pass -SkipDoctor to start anyway." -ForegroundColor Red
@@ -504,7 +519,11 @@ function Invoke-YbmStart {
 
   $results = [ordered]@{}
 
-  if (-not $noLocalDeploy) {
+  # LocalDeploy only when this install is set up for it. It is the author's own
+  # local model server: starting it everywhere cost every other user a 30 second
+  # wait and a warning on each launch, for a service that was never going to
+  # come up. YBM_LOCALDEPLOY_ROOT in .env is how a machine opts in.
+  if (-not $noLocalDeploy -and $env:YBM_LOCALDEPLOY_ROOT) {
     $results["localdeploy"] = Start-YbmService -Name "localdeploy" -ScriptPath (Join-Path $Script:YbmRoot "scripts\services\run_localdeploy.ps1") `
       -ReadyUrl "http://127.0.0.1:8000/health" -ReadyTimeoutSeconds 30 -Required $false
   }

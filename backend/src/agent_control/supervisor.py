@@ -33,7 +33,7 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from agent_control.config import load_settings
+from agent_control.config import backend_base_url, load_settings
 from agent_control.config_sync import read_env_value
 
 
@@ -303,9 +303,12 @@ def start_all(*, open_browser: bool = False, **flags) -> int:
     if hard_failure:
         print("One or more required services failed to start. Check the logs above, then `ybm status` / `ybm logs <name>`.")
         return 1
-    admin_url = "http://127.0.0.1:8765/admin"
+    from agent_control.bootstrap import admin_console_url
+
+    settings = load_settings()
+    admin_url = admin_console_url(settings, with_token=False)
     print(f"Admin UI:   {admin_url}")
-    print("Backend:    http://127.0.0.1:8765/health")
+    print(f"Backend:    {backend_base_url(settings).rstrip('/')}/health")
     print("Stop with:  ybm stop")
     if open_browser:
         # Carries AGENT_ADMIN_TOKEN (if set) as a one-time ?token= URL param
@@ -318,8 +321,7 @@ def start_all(*, open_browser: bool = False, **flags) -> int:
         # `ybm start` during normal development never pops a browser tab.
         import webbrowser
 
-        token = read_env_value("AGENT_ADMIN_TOKEN")
-        target = f"{admin_url}?token={token}" if token else admin_url
+        target = admin_console_url(settings)
         try:
             if not webbrowser.open(target):
                 raise webbrowser.Error("no browser handler available")

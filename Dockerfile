@@ -107,8 +107,9 @@ COPY --chown=ybm:ybm AGENTS.md CHANGELOG.md LICENSE README.md SECURITY.md /app/
 #
 # 0.0.0.0 binds every interface *inside the container only*; compose publishes
 # it to 127.0.0.1 on the host. Binding loopback here would make it unreachable.
-# The admin API refuses to serve on a non-loopback host without a token, so set
-# AGENT_ADMIN_TOKEN in .env - compose passes it through.
+# The admin API refuses to serve on a non-loopback host without a token; the
+# entrypoint below generates one on first start and keeps it in the state volume,
+# so nothing has to be set by hand.
 ENV PATH="/app/backend/.venv/bin:$PATH" \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -116,16 +117,22 @@ ENV PATH="/app/backend/.venv/bin:$PATH" \
     AGENT_SERVER__HOST=0.0.0.0 \
     AGENT_SERVER__PORT=8765
 
-# Written at runtime, and the mount points compose attaches volumes to.
+# Written at runtime, and the mount points compose attaches volumes to. /app
+# itself is chowned (not recursively) so the entrypoint can link /app/.env into
+# the state volume, which is how an API key saved in the console survives the
+# container being recreated.
 RUN mkdir -p /app/.agent_control /app/config /app/workspace \
-    && chown -R ybm:ybm /app/.agent_control /app/config /app/workspace
+    && chown ybm:ybm /app \
+    && chown -R ybm:ybm /app/.agent_control /app/config /app/workspace \
+    && chmod +x /app/scripts/docker-entrypoint.sh
 
 USER ybm
 EXPOSE 8765
 
 # tini reaps the subprocesses YBM spawns (coding agents, MCP stdio servers),
-# which would otherwise accumulate as zombies under PID 1.
-ENTRYPOINT ["/usr/bin/tini", "--"]
+# which would otherwise accumulate as zombies under PID 1. The entrypoint script
+# prepares secrets and config, then execs the command below.
+ENTRYPOINT ["/usr/bin/tini", "--", "/app/scripts/docker-entrypoint.sh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -fsS http://127.0.0.1:8765/health || exit 1

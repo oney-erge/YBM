@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
 import importlib.util
 import json
@@ -17,13 +19,14 @@ from urllib.parse import urlparse
 import time
 
 import httpx
-from fastapi import APIRouter, File, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import Field, SecretStr
 
 from agent_control.analytics import build_reliability_dashboard
 from agent_control.security_review import build_security_review
-from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks
+from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks, describe_active_model
+from agent_control.llm.autodetect import recommended_ollama_model
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
 from agent_control.config import LLMProfileConfig
@@ -399,6 +402,42 @@ def _origin_is_trusted(request: Request) -> bool:
     return urlparse(origin).netloc == host_header
 
 
+# A signed-in browser keeps an HttpOnly cookie rather than asking for the admin
+# token again. The token lives in .env and is handed to the browser once, in the
+# one-time ?token= link every launcher opens; after that the console only needs
+# to prove it was signed in. Without this the token sat in sessionStorage, so
+# closing the tab (or opening a bookmark later) landed on "paste your admin
+# token", which sends a person digging through .env for a string they never
+# chose. HttpOnly keeps it out of reach of page scripts, which is why this is not
+# localStorage.
+_SESSION_COOKIE_PREFIX = "ybm_admin_"
+_SESSION_MAX_AGE_SECONDS = 60 * 60 * 24 * 365
+
+
+def _session_cookie_name(request: Request, settings: AppSettings) -> str:
+    # Cookies are scoped to a host, not a port, so two YBM instances on one
+    # machine (8765 and 9001, say) would overwrite each other's cookie if they
+    # shared a name.
+    return f"{_SESSION_COOKIE_PREFIX}{request.url.port or settings.server.port}"
+
+
+def _session_cookie_value(token: str) -> str:
+    # Derived from the token rather than the token itself, so a copied cookie
+    # does not reveal it, and rotating the token signs every browser out.
+    return hmac.new(token.encode("utf-8"), b"ybm-admin-session-v1", hashlib.sha256).hexdigest()
+
+
+def _has_valid_credentials(request: Request, settings: AppSettings, expected: str) -> bool:
+    # compare_digest, not ==: a plain comparison returns as soon as two bytes
+    # differ, which leaks the shared prefix length to anything that can time
+    # requests.
+    provided = request.headers.get("X-Agent-Control-Admin-Token")
+    if provided and secrets.compare_digest(str(provided), str(expected)):
+        return True
+    cookie = request.cookies.get(_session_cookie_name(request, settings))
+    return bool(cookie) and secrets.compare_digest(cookie, _session_cookie_value(expected))
+
+
 def _serve_admin_app(request: Request, sub_path: str) -> FileResponse | HTMLResponse:
     """Serve the React console (docs/UI_REWRITE_PLAN.md §4/§9 Phase 0.2).
 
@@ -438,32 +477,9 @@ def _serve_admin_app(request: Request, sub_path: str) -> FileResponse | HTMLResp
     return HTMLResponse(_ADMIN_HTML)
 
 
-# Ollama tags the wizard should prefer when several are installed, best first.
-# Matched as a prefix against the tag ("qwen3-vl:8b-instruct" matches
-# "qwen3-vl"), so a specific quantisation still counts. Vision-capable and
-# instruction-tuned models come first because the operator loop asks for
-# structured output and the desktop tools pass screenshots.
-_PREFERRED_OLLAMA_MODELS = (
-    "qwen3-vl", "qwen3vl", "qwen3", "qwen2.5", "gemma3", "llama3.1", "mistral",
-)
-
-
-def _recommended_ollama_model(models: list[str]) -> str | None:
-    """The model the wizard should preselect, or None when it should not guess.
-
-    A single installed model is the answer whatever it is - the user has
-    already made the choice by pulling it. With several, prefer the ones this
-    project is actually tuned against rather than whichever sorts first.
-    """
-    if not models:
-        return None
-    if len(models) == 1:
-        return models[0]
-    for preferred in _PREFERRED_OLLAMA_MODELS:
-        for model in models:
-            if model.casefold().startswith(preferred):
-                return model
-    return None
+# Which installed Ollama model to preselect lives with the rest of model
+# auto-detection (llm/autodetect.py); the wizard and first-run setup share it.
+_recommended_ollama_model = recommended_ollama_model
 
 
 LLM_PRESETS: dict[str, dict[str, Any]] = {
@@ -568,7 +584,6 @@ def create_admin_router(
         # leak into browser history, referrers, screenshots, and proxy logs.
         # The SPA captures its one-time launch URL token into an auth header
         # before making API calls; artifact navigation uses a scoped grant.
-        provided = request.headers.get("X-Agent-Control-Admin-Token")
         if not expected:
             if not is_loopback_host(loaded.server.host):
                 raise HTTPException(
@@ -579,10 +594,7 @@ def create_admin_router(
                     ),
                 )
             return loaded
-        # compare_digest, not ==: a plain comparison returns as soon as two
-        # bytes differ, which leaks the shared prefix length to anything that
-        # can time requests.
-        if not secrets.compare_digest(str(provided or ""), str(expected)):
+        if not _has_valid_credentials(request, loaded, expected):
             raise HTTPException(status_code=401, detail="invalid admin token")
         return loaded
 
@@ -608,8 +620,13 @@ def create_admin_router(
                 detail="admin API refused: cross-origin request (Origin header does not match Host)",
             )
         llm_configured = check_llm_configured(loaded)
+        expected = read_env_value(loaded.server.admin_token_env)
         return {
-            "token_required": bool(read_env_value(loaded.server.admin_token_env)),
+            "token_required": bool(expected),
+            # Whether THIS browser is already signed in (a valid header or the
+            # session cookie). The console shows the token screen only when a
+            # token is required and this is false.
+            "authenticated": (not expected) or _has_valid_credentials(request, loaded, expected),
             # Not just "does config.yaml exist" - `ybm setup` always creates
             # one now (bootstrap.run_setup), so that alone would never show
             # the wizard. A real LLM being configured is the actual signal
@@ -617,8 +634,41 @@ def create_admin_router(
             # from Settings regardless of this value.
             "onboarding_complete": CONFIG_FILE_PATH.exists() and llm_configured,
             "llm_reachable": llm_configured,
+            # Which model was picked (never a secret): first run chooses one
+            # without asking, so the console says what it chose and why.
+            "model": describe_active_model(loaded, configured=llm_configured),
             "version": _APP_VERSION,
         }
+
+    @router.post("/api/session")
+    def admin_start_session(request: Request, response: Response) -> dict[str, Any]:
+        """Turn a token the browser was just handed into a lasting sign-in.
+
+        Requires valid credentials like any other admin route, so it cannot be
+        used to mint a session from nothing. The cookie is HttpOnly (page
+        scripts cannot read it), SameSite=Strict (a request from another site
+        never carries it) and scoped to /admin.
+        """
+        loaded = require_admin(request)
+        expected = read_env_value(loaded.server.admin_token_env)
+        if expected:
+            response.set_cookie(
+                key=_session_cookie_name(request, loaded),
+                value=_session_cookie_value(expected),
+                max_age=_SESSION_MAX_AGE_SECONDS,
+                httponly=True,
+                samesite="strict",
+                secure=request.url.scheme == "https",
+                path="/admin",
+            )
+        return {"status": "ok", "persistent": bool(expected)}
+
+    @router.delete("/api/session")
+    def admin_end_session(request: Request, response: Response) -> dict[str, Any]:
+        """Sign this browser out: forget the session cookie."""
+        loaded = require_admin(request)
+        response.delete_cookie(key=_session_cookie_name(request, loaded), path="/admin")
+        return {"status": "signed_out"}
 
     @router.get("/api/setup/detect")
     def admin_setup_detect(request: Request) -> dict[str, Any]:
@@ -3272,13 +3322,16 @@ def _config_warnings(settings: AppSettings) -> list[str]:
     whatsapp = settings.channels.whatsapp
     if whatsapp.enabled and not whatsapp.allowed_numbers:
         warnings.append("WhatsApp is enabled but no allowed numbers are configured; all messages will be denied.")
-    if settings.llm.default_profile not in settings.llm.profiles:
-        warnings.append("Default orchestrator LLM profile is not configured; Telegram task classification will fail.")
+    # Only when it can actually bite. With no model yet, the console already says
+    # so everywhere (the setup banner); repeating it as a red configuration
+    # warning on the Access page of a fresh install helped nobody.
+    if telegram.enabled and settings.llm.default_profile not in settings.llm.profiles:
+        warnings.append("Telegram is enabled but no model is configured; incoming messages cannot be classified or answered.")
     if read_env_value("AGENT_CAPABILITIES"):
         warnings.append("AGENT_CAPABILITIES is set in the environment and may override access-mode changes saved to YAML.")
-    schedule_policy = settings.capabilities.get(Capability.SCHEDULE_MANAGE)
-    if settings.scheduler.enabled and not (schedule_policy and schedule_policy.enabled):
-        warnings.append("Scheduler service is enabled, but schedule.manage capability is off; scheduled jobs cannot be created from tasks.")
+    # No warning for "scheduler service on, schedule.manage off": that is the
+    # shipped default (every capability starts off), so it flagged a correct
+    # fresh install as misconfigured.
     return warnings
 
 

@@ -7,6 +7,26 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Windows first run: `run.bat` and `run.ps1` failed on every default start (an
+  array was passed to a `[string]` parameter), and a successful start was
+  reported as "startup failed" because the "is WhatsApp enabled" probe's exit
+  code leaked through `$LASTEXITCODE`. Both fixed; `YBM.bat`, `Install-YBM.bat`
+  and the installers share the fix.
+- Windows PowerShell 5.1 started from a PowerShell 7 terminal inherited that
+  terminal's module path and lost `Get-FileHash`, failing an install at its last
+  step. The `.bat` entry points now clear `PSModulePath`, and the scripts drop the
+  PowerShell 7 entries themselves.
+- On a machine with no `uv`, the uv installer's console output was returned along
+  with its path, so first run died with `The term 'Downloading uv ...' is not
+  recognized`. The output is now captured and shown only if the install fails.
+- `run.bat stop` and `logs` crashed with a raw Docker API error when Docker
+  Desktop was installed but not running, and `uv sync` progress was printed as a
+  red `NativeCommandError` stack trace in the middle of a successful install.
+- `run.sh` aborted on macOS's stock bash 3.2 (an empty array under `set -u`).
+- The default configuration no longer warns about itself ("Scheduler service is
+  enabled, but schedule.manage capability is off"), and the Access page no longer
+  shows a red "default LLM profile is not configured" on a fresh install.
+
 - `frontend`: resolved the `fast-uri` (high) and `qs` (moderate) advisories
   flagged by the scheduled dependency audit (#32) via `npm audit fix`.
 - The version a released archive reports through `ybm check-updates` now
@@ -21,6 +41,29 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   release behind (`0.1.2` while `v0.1.3` was already public).
 
 ### Added
+
+- First run needs no input. A model is chosen from what is already on the machine
+  (your own LocalDeploy via `YBM_LOCALDEPLOY_ROOT`, a running Ollama, then a
+  provider API key already in your environment or `.env`), without calling a paid
+  API, and the launcher and the chat header both say which one was picked. The
+  shipped config no longer names a model that only existed on the author's machine
+  or a silent paid fallback.
+- The console signs in once and stays signed in. The admin token is generated
+  and handed to the browser in the one-time `?token=` link every launcher, the
+  tray icon and the new `ybm admin-url` open; the console exchanges it for an
+  HttpOnly, SameSite=Strict session cookie (`POST /admin/api/session`), so a
+  closed tab or a bookmark no longer lands on "paste your admin token". The token
+  screen remains as a rare fallback and explains the easy way back in first.
+- Docker needs no setup: the container generates its admin token and vault key on
+  first start, keeps them (and keys saved in the console) in the `ybm-state`
+  volume, and `./run.sh docker` / `.\run.ps1 docker` open a signed-in console.
+  `docker compose up -d` works with no `.env` (Compose 2.24+).
+- CI runs every launcher for real (Windows PowerShell 5.1, macOS bash 3.2, Linux)
+  and starts the container with no configuration, instead of only parsing them.
+- `ybm doctor --quiet` and `ybm setup --quiet`, which the launchers use to print
+  only what needs attention.
+- The Python version is pinned (`backend/.python-version`, 3.12), so a fresh
+  install no longer runs whatever newest interpreter `uv` finds.
 
 - `frontend`: a vitest + Testing Library unit-test setup, seeded with
   coverage for access-mode preset computation, task-status action gating,

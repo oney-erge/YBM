@@ -15,17 +15,20 @@ import { z } from "zod"
 
 const ADMIN_TOKEN_STORAGE_KEY = "ybm-admin-token"
 
-// In-memory only, never localStorage - limits XSS blast radius (plan §4).
-// Seeded synchronously at module load (before any component renders or
-// query fires), checking two sources in order:
-//  1. A `?token=` URL param - how `ybm start`'s auto-opened browser tab
-//     carries the auto-generated AGENT_ADMIN_TOKEN on a fresh install, so
-//     the one-click flow never hits TokenEntryScreen at all. Stripped from
-//     the URL immediately (history.replaceState) so it never lingers in
-//     browser history or gets shared via a copied link.
+// Never localStorage - limits XSS blast radius (plan §4). Seeded
+// synchronously at module load (before any component renders or query
+// fires), checking two sources in order:
+//  1. A `?token=` URL param - how every launcher's auto-opened browser tab
+//     carries the auto-generated AGENT_ADMIN_TOKEN, so the one-click flow
+//     never shows a token screen. Stripped from the URL immediately
+//     (history.replaceState) so it never lingers in browser history or gets
+//     shared via a copied link.
 //  2. sessionStorage - so a page refresh during the same tab session
-//     doesn't force re-entering the token; still clears on tab close,
-//     unlike localStorage.
+//     doesn't force re-entering the token.
+// Neither survives closing the tab, so a token handed over this way is also
+// exchanged for a lasting HttpOnly session cookie (establishSession below):
+// that, not this variable, is what keeps a later visit signed in.
+let launchTokenCaptured = false
 let adminToken: string | null = (() => {
   try {
     const url = new URL(window.location.href)
@@ -34,6 +37,7 @@ let adminToken: string | null = (() => {
       url.searchParams.delete("token")
       window.history.replaceState({}, "", url.pathname + url.search + url.hash)
       sessionStorage.setItem(ADMIN_TOKEN_STORAGE_KEY, urlToken)
+      launchTokenCaptured = true
       return urlToken
     }
     return sessionStorage.getItem(ADMIN_TOKEN_STORAGE_KEY)
@@ -41,6 +45,32 @@ let adminToken: string | null = (() => {
     return null
   }
 })()
+
+/**
+ * Trade the token this tab holds for a lasting sign-in: an HttpOnly,
+ * SameSite=Strict cookie the server sets (backend admin.py, `/api/session`).
+ * From then on a closed-and-reopened browser, a bookmark, or the tray icon's
+ * "Open" lands signed in, and nobody ever has to find the token in `.env`.
+ *
+ * Best effort by design: if it fails the current tab still works through the
+ * header, and the only cost is being asked for the token on a later visit.
+ */
+export async function establishSession(): Promise<void> {
+  if (!adminToken) return
+  try {
+    await fetch("/admin/api/session", {
+      method: "POST",
+      headers: { "X-Agent-Control-Admin-Token": adminToken },
+      credentials: "same-origin",
+    })
+  } catch {
+    // offline or blocked - see above
+  }
+}
+
+if (launchTokenCaptured) {
+  void establishSession()
+}
 
 export function setAdminToken(token: string): void {
   adminToken = token
@@ -217,10 +247,28 @@ export function uploadChatAttachment(file: File) {
 
 // ---- Bootstrap -----------------------------------------------------------
 
+// The model first run picked for you, so the console can say so. Optional: a
+// backend that predates it simply shows nothing rather than failing.
+export const ActiveModelSchema = z.object({
+  configured: z.boolean(),
+  model: z.string().nullable(),
+  provider: z.string().nullable(),
+  local: z.boolean(),
+  // Name (never the value) of the environment variable supplying the key, when
+  // one from the person's own environment is in use.
+  key_env: z.string().nullable(),
+})
+export type ActiveModel = z.infer<typeof ActiveModelSchema>
+
 export const BootstrapResponseSchema = z.object({
   token_required: z.boolean(),
+  // Whether this browser is already signed in (a valid session cookie or token
+  // header). Defaults to true so an older backend that predates the field never
+  // locks anyone behind the token screen.
+  authenticated: z.boolean().default(true),
   onboarding_complete: z.boolean(),
   llm_reachable: z.boolean(),
+  model: ActiveModelSchema.optional(),
   version: z.string(),
 })
 export type Bootstrap = z.infer<typeof BootstrapResponseSchema>

@@ -43,6 +43,7 @@ TREES = ("backend/src", "scripts", "whatsapp-bridge/src")
 ROOT_OF_TREE_FILES = (
     "backend/pyproject.toml",
     "backend/uv.lock",
+    "backend/.python-version",
     "config/config.example.yaml",
     "whatsapp-bridge/package.json",
     "whatsapp-bridge/package-lock.json",
