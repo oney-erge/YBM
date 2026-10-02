@@ -114,7 +114,7 @@ def _run_npm_script(script: str) -> int:
 
 
 def ui_build() -> int:
-    """`npm run build` for the React console (docs/UI_REWRITE_PLAN.md §12.3) -
+    """`npm run build` for the React console (docs/archive/UI_REWRITE_PLAN.md §12.3) -
     output lands under agent_control/static/admin per vite.config.ts's
     build.outDir, where admin.py's SPA route serves it from."""
     code = _run_npm_script("build")
@@ -143,7 +143,7 @@ def config_summary() -> None:
 
 def trace_task(task_id: str, *, as_json: bool = False) -> int:
     """One-command task post-mortem, reading the DB directly - no running
-    backend required, unlike the admin UI (docs/HISTORY.md §2.4: "to debug a
+    backend required, unlike the admin UI (docs/archive/HISTORY.md §2.4: "to debug a
     failed task today you need the stack running, then the admin UI, then
     click into a trace"). Shares `build_task_trace()` with the
     `/admin/api/tasks/{id}/trace` endpoint so the two never drift apart.
@@ -264,7 +264,7 @@ async def poll_telegram() -> None:
 
 
 async def poll_whatsapp() -> None:
-    """Mirrors poll_telegram() (docs/UI_UX_AUDIT.md Phase 16), with one extra
+    """Mirrors poll_telegram() (docs/archive/UI_UX_AUDIT.md Phase 16), with one extra
     step: it also owns the whatsapp-bridge Node sidecar for its whole
     lifetime (start it before polling, stop it on exit) - see
     channels/whatsapp_bridge_process.py for why that lives here rather than
@@ -612,7 +612,7 @@ def _whatsapp_notifier() -> WhatsAppTaskNotifier | None:
 class RoutingNotificationSink:
     """Implements `TaskNotificationSink` (orchestration/worker.py) - routes
     a task-completion notification to whichever channel it came from
-    (docs/UI_UX_AUDIT.md Phase 16), replacing the single hardcoded
+    (docs/archive/UI_UX_AUDIT.md Phase 16), replacing the single hardcoded
     `notifier` `run_worker()` used to build once at startup for every task
     regardless of source. Rebuilds the per-channel notifier fresh on every
     call rather than caching one at construction time: WhatsApp's bridge

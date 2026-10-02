@@ -1,7 +1,7 @@
 """Scenario: "send me the PDF at this path" through the real Operator loop -
 a single artifact.deliver send_file call -> the fake Telegram client. Ports
 e2e/all_cases.json's `send_found_pdf` case down to the deterministic tier
-(docs/HISTORY.md P2) - the simplest possible delivery-only case (single
+(docs/archive/HISTORY.md P2) - the simplest possible delivery-only case (single
 step, a known literal path, no filesystem search first), chosen deliberately
 after `output_delivery` turned out to need an unusually flaky multi-attempt
 plan under the old plan-based path; this one locks in the harness's

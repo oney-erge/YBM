@@ -1,7 +1,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import type { TokenUsage } from "@/lib/api"
 
-/** docs/UI_REWRITE_PLAN.md §12.3 (D5) - per task, with the by_source split
+/** docs/archive/UI_REWRITE_PLAN.md §12.3 (D5) - per task, with the by_source split
  * (operator/auditor/subagent) that was already computed and barely
  * surfaced before this. */
 export function CostPanel({ usage }: { usage: TokenUsage }) {

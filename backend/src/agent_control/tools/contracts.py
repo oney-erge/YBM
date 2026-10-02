@@ -291,7 +291,7 @@ class DependenciesInstallInput(ToolInputModel):
 class SkillsInput(ToolInputModel):
     operation: Literal["list", "read"] = "list"
     # Required for operation=read - which skill's full body to load. Optional
-    # for operation=list, which never needs one (docs/HISTORY.md Part 4 T1.3).
+    # for operation=list, which never needs one (docs/archive/HISTORY.md Part 4 T1.3).
     name: str | None = None
 
     @model_validator(mode="after")
@@ -661,7 +661,7 @@ class CodeInterpreterGenerateAndRunInput(ToolInputModel):
     # before adapter dispatch, and ToolExecutor overwrites this to True only
     # when a human already authorized this call - either by approving this
     # exact request (approval consumed) or via an active ApprovalGrant
-    # ("Allow for this task", docs/UI_UX_AUDIT.md Phase 1). Adapter-level
+    # ("Allow for this task", docs/archive/UI_UX_AUDIT.md Phase 1). Adapter-level
     # approval gates (e.g. code.interpreter's unsandboxed-fallback check)
     # must see the same signal a policy-level bypass already granted, or a
     # grant silently stops working the moment an adapter has its own gate.
@@ -715,7 +715,7 @@ class MCPClientInput(ToolInputModel):
         # a dict) are easy to conflate - the local 8B model reliably does,
         # reproduced across three independent live recordings with zero
         # self-correction against the raw Pydantic "should be a valid
-        # list" message (docs/HISTORY.md Part 4's re-recording note).
+        # list" message (docs/archive/HISTORY.md Part 4's re-recording note).
         # Naming the correct field explicitly here gives it something
         # actionable to react to instead.
         if isinstance(value, dict):

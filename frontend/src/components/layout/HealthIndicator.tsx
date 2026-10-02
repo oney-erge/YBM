@@ -13,7 +13,7 @@ interface HealthItem {
  * Streamlit showed as a persistent chip strip at the top of every page.
  * Kept as a hover tooltip on the existing compact nav-footer dot rather
  * than a chip strip above every screen (including the minimal Chat
- * landing page, docs/UI_REWRITE_PLAN.md §10's "workbench test") or a
+ * landing page, docs/archive/UI_REWRITE_PLAN.md §10's "workbench test") or a
  * dropdown menu - Tooltip is already loaded unconditionally (main.tsx's
  * TooltipProvider), so this adds no bundle cost to Chat's first paint,
  * unlike the dropdown-menu primitive this replaced during review (+27kB

@@ -2,11 +2,11 @@
 
 > **Archive + roadmap, not reference.** Audited 2026-08-01 against the live console, React
 > source, admin API, and config schema. **Roadmap items are not implemented unless marked
-> shipped.** For current behavior see [ARCHITECTURE.md](ARCHITECTURE.md) and
-> [CAPABILITIES.md](CAPABILITIES.md).
+> shipped.** For current behavior see [ARCHITECTURE.md](../ARCHITECTURE.md) and
+> [CAPABILITIES.md](../CAPABILITIES.md).
 
 > Historical implementation record: current limitations and release priorities live in
-> [GAPS.md](GAPS.md) and [ROADMAP.md](ROADMAP.md). Statements below such as
+> [ROADMAP.md](../ROADMAP.md). Statements below such as
 > “nothing is currently open” describe the audit at that time, not the current release state.
 
 ## Outcome
@@ -267,7 +267,7 @@ both `ybm.ps1` and `supervisor.py` (unlike Telegram's `$true`), specifically so 
 unconfigured checkout doesn't hard-fail `ybm start`/`ybm run`. No real phone number was available
 this session and none ships in the repo or config.example.yaml - live QR-pairing, linking an
 account, and live send/receive were explicitly not performed; whoever runs this repo links their
-own number (see `docs/LOCAL_SETUP.md`).
+own number (see `docs/INSTALL.md`).
 
 **What's left, disclosed not silent:** rich WhatsApp features (buttons, lists, media, read
 receipts) and artifact/screenshot delivery over WhatsApp; a JS test runner for the sidecar (no JS

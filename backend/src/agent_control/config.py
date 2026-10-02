@@ -61,7 +61,7 @@ class TelegramConfig(StrictBaseModel):
 
 
 class WhatsAppConfig(StrictBaseModel):
-    """docs/UI_UX_AUDIT.md Phase 16 - a second channel, via Baileys (an
+    """docs/archive/UI_UX_AUDIT.md Phase 16 - a second channel, via Baileys (an
     unofficial WhatsApp Web client, QR-code linked, no Meta account or
     public webhook needed - see channels/whatsapp_bridge_process.py). No
     bot-token equivalent: there is nothing to put in `.env` here, since
@@ -150,10 +150,10 @@ class StorageConfig(StrictBaseModel):
     # used to be the one exception, sitting in the repo root. storage/database.py's
     # Database.__init__ auto-migrates an existing repo-root file into this
     # location the first time it's constructed with this exact default
-    # (docs/HISTORY.md P6); it never touches a path a caller customized.
+    # (docs/archive/HISTORY.md P6); it never touches a path a caller customized.
     database_url: str = "sqlite:///.agent_control/agent_control.db"
     artifact_dir: str = ".agent_control/artifacts"
-    # The receipts (docs/UI_UX_AUDIT.md Phase 14d): one row per LLM call the
+    # The receipts (docs/archive/UI_UX_AUDIT.md Phase 14d): one row per LLM call the
     # operator/auditor/subagent make, with the redacted prompt, the raw
     # response text, tokens, and real latency - what turns the trace's
     # inferred "operator thinking" gaps into measured time. On by default,
@@ -182,7 +182,7 @@ class SchedulerConfig(StrictBaseModel):
     default_timezone: str = "America/Chicago"
     # A schedule whose spawned task fails this many times in a row is
     # auto-paused rather than left to keep failing silently and unnoticed
-    # (docs/HISTORY.md P6 - the motivating case was 7 real schedules whose
+    # (docs/archive/HISTORY.md P6 - the motivating case was 7 real schedules whose
     # target had gone away, still firing and failing every day for weeks).
     max_consecutive_failures: int = Field(default=5, ge=1, le=100)
 
@@ -210,7 +210,7 @@ class LimitsConfig(StrictBaseModel):
 
 
 class OperatorConfig(StrictBaseModel):
-    # The observe/decide/act agent loop (docs/HISTORY.md P3 §2.2) - the sole
+    # The observe/decide/act agent loop (docs/archive/HISTORY.md P3 §2.2) - the sole
     # execution path as of 2026-07-28 (the old plan-once-then-replan path and
     # its keyword-driven recovery were deleted, not just defaulted off).
     max_steps: int = Field(default=12, ge=1, le=50)
@@ -525,7 +525,7 @@ class DependenciesAdapterConfig(StrictBaseModel):
 
 
 class SkillsAdapterConfig(StrictBaseModel):
-    """User-droppable capability packs (docs/HISTORY.md Part 4 T1.3): a flat
+    """User-droppable capability packs (docs/archive/HISTORY.md Part 4 T1.3): a flat
     directory of markdown files, each with a name/description in YAML
     frontmatter and full instructions as the body. Adding one is copying a
     file in - no code change, no restart of anything but the worker process
@@ -545,7 +545,7 @@ class SkillsAdapterConfig(StrictBaseModel):
 
 class PersonaAdapterConfig(StrictBaseModel):
     """A single stable identity/preference document, injected into every
-    Operator prompt (docs/HISTORY.md Part 4 T2.5) - separate from
+    Operator prompt (docs/archive/HISTORY.md Part 4 T2.5) - separate from
     channels/memory.py's ConversationMemoryService, which is per-conversation
     short-term recall, not a global, cross-conversation preference store.
     """
@@ -562,7 +562,7 @@ class PersonaAdapterConfig(StrictBaseModel):
 
 
 class KnowledgeBaseAdapterConfig(StrictBaseModel):
-    """A local, personal document index (docs/HISTORY.md Part 4 T2.7):
+    """A local, personal document index (docs/archive/HISTORY.md Part 4 T2.7):
     lexical (keyword-overlap) search over a folder of the user's own files -
     notes, docs, reference material - so the Operator can answer from what
     the user already has instead of only from tool output gathered mid-task.

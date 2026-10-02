@@ -1,6 +1,6 @@
 """A fake `LLMProvider` that replays recorded prompt/response pairs.
 
-This is the deterministic test tier called for in docs/HISTORY.md P2: real DB,
+This is the deterministic test tier called for in docs/archive/HISTORY.md P2: real DB,
 real tool registry, real policy engine, real worker loop, real tools against a
 temp filesystem - with this in place of a live LLM. No network, no GPU,
 fully reproducible.

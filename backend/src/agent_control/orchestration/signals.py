@@ -67,7 +67,7 @@ def _cleanup_cancelled_task(
     repositories: Repositories, audit: AuditLogger, task, settings: AppSettings | None
 ) -> None:
     """Everything a cancelled task leaves behind that must not keep looking
-    live (docs/UI_UX_AUDIT.md Phase 8 - "cancellation can leave stale
+    live (docs/archive/UI_UX_AUDIT.md Phase 8 - "cancellation can leave stale
     approvals and block the worker"). Cancelling a task previously only
     flipped its status: the pending approval stayed pending forever (still
     shown as actionable in the console), any task-scoped grant stayed valid
@@ -132,7 +132,7 @@ def _stop_awaiting_external_session(task, settings: AppSettings, audit: AuditLog
 
 def requeue_after_approval_decision(repositories: Repositories, task_id: str) -> None:
     """Makes an AWAITING_APPROVAL task workable again once its approval has
-    been decided (docs/UI_UX_AUDIT.md Phase 8, second pass).
+    been decided (docs/archive/UI_UX_AUDIT.md Phase 8, second pass).
 
     worker.py's WORKABLE_STATUSES deliberately excludes AWAITING_APPROVAL
     now - claim_next never re-selects a task sitting in it, the same way it

@@ -182,7 +182,7 @@ capabilities:
   memory.manage:
     enabled: false
     scopes: []
-    # docs/UI_UX_AUDIT.md Phase 15: requires_approval stays false here
+    # docs/archive/UI_UX_AUDIT.md Phase 15: requires_approval stays false here
     # (unlike schedule.manage above, which gates every operation at this
     # level) so list/remember stay approval-free - the tool's own
     # approval_required_operations=("forget",) is what gates forget
@@ -435,7 +435,7 @@ adapters:
     # User-droppable capability packs - drop a .md file (YAML frontmatter
     # with name/description, then instructions as the body) into root_dir
     # and it's available via the skills.use tool on the worker's next call,
-    # no restart or code change needed. See docs/HISTORY.md Part 4 T1.3.
+    # no restart or code change needed. See docs/archive/HISTORY.md Part 4 T1.3.
     enabled: true
     root_dir: ".agent_control/skills"
     max_skills_listed: 50
@@ -443,13 +443,13 @@ adapters:
     # One global identity/preference document, injected into every Operator
     # prompt - distinct from the per-conversation memory above. Edit the
     # file directly, or let the model update it via persona.manage when it
-    # learns something durable. See docs/HISTORY.md Part 4 T2.5.
+    # learns something durable. See docs/archive/HISTORY.md Part 4 T2.5.
     enabled: true
     path: ".agent_control/persona.md"
     max_chars: 4000
   knowledge_base:
     # Local, personal document search (notes, reference material) by
-    # keyword overlap, not embeddings - see docs/HISTORY.md Part 4 T2.7 for
+    # keyword overlap, not embeddings - see docs/archive/HISTORY.md Part 4 T2.7 for
     # why. Drop files under root_dir; knowledge.search re-indexes fresh on
     # every call, no separate indexing step.
     enabled: true

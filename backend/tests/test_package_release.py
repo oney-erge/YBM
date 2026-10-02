@@ -38,6 +38,12 @@ def test_release_archives_have_stable_download_names_and_versioned_roots(tmp_pat
     console.parent.mkdir(parents=True, exist_ok=True)
     console.write_text("<main>YBM</main>\n", encoding="utf-8")
 
+    # The README links to the top-level docs; the archive and image assets stay in the repository.
+    (tmp_path / "docs/archive").mkdir(parents=True)
+    (tmp_path / "docs/INSTALL.md").write_text("# Install\n", encoding="utf-8")
+    (tmp_path / "docs/archive/HISTORY.md").write_text("# History\n", encoding="utf-8")
+    (tmp_path / "docs/demo.gif").write_bytes(b"GIF89a")
+
     output = tmp_path / "output"
     monkeypatch.setattr(
         sys,
@@ -61,6 +67,9 @@ def test_release_archives_have_stable_download_names_and_versioned_roots(tmp_pat
         assert "YBM-1.2.3/backend/src/agent_control/static/admin/index.html" in archive.namelist()
         assert "YBM-1.2.3/Install-YBM.bat" in archive.namelist()
         assert archive.read("YBM-1.2.3/.ybm-release-version") == b"1.2.3"
+        assert "YBM-1.2.3/docs/INSTALL.md" in archive.namelist()
+        assert "YBM-1.2.3/SECURITY.md" in archive.namelist()
+        assert not any("/docs/archive/" in name or name.endswith(".gif") for name in archive.namelist())
 
     with tarfile.open(output / "YBM-unix.tar.gz") as archive:
         launcher = archive.getmember("YBM-1.2.3/ybm.sh")

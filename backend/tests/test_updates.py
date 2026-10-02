@@ -1,4 +1,4 @@
-"""docs/UI_UX_AUDIT.md Phase 6: a read-only "is a newer release out"
+"""docs/archive/UI_UX_AUDIT.md Phase 6: a read-only "is a newer release out"
 check against GitHub's public releases API - no auth, no auto-apply,
 degrades to a plain result on any failure rather than raising.
 """

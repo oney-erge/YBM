@@ -33,7 +33,14 @@ import zipfile
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 # Single files copied to the payload root.
-ROOT_FILES = ("YBM.bat", "Install-YBM.bat", "ybm.sh", "README.md", "LICENSE", "CHANGELOG.md")
+ROOT_FILES = (
+    "YBM.bat", "Install-YBM.bat", "ybm.sh", "README.md", "LICENSE", "CHANGELOG.md",
+    "SECURITY.md", "CONTRIBUTING.md",
+)
+
+# The README links to these, and an installed copy has no checkout to resolve them against. Only the
+# top-level pages: docs/archive/ and the image assets stay in the repository.
+DOCS_DIR = "docs"
 
 # Directory trees. backend/tests and the VS Code extension are not runtime.
 TREES = ("backend/src", "scripts", "whatsapp-bridge/src")
@@ -100,6 +107,12 @@ def stage(version: str, stage_dir: Path) -> None:
         source = REPO_ROOT / name
         if source.exists():
             shutil.copy2(source, stage_dir / name)
+
+    docs = REPO_ROOT / DOCS_DIR
+    if docs.is_dir():
+        (stage_dir / DOCS_DIR).mkdir(parents=True, exist_ok=True)
+        for page in sorted(docs.glob("*.md")):
+            shutil.copy2(page, stage_dir / DOCS_DIR / page.name)
 
     for tree in TREES:
         source = REPO_ROOT / tree

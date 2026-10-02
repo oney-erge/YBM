@@ -190,7 +190,7 @@ def test_approval_decision_and_consumption_are_atomic_and_expiry_aware(tmp_path)
 
 
 def test_task_list_for_conversation_is_oldest_first_and_scoped(tmp_path) -> None:
-    """docs/HISTORY.md Part 4 T2.8: the local web chat channel renders one
+    """docs/archive/HISTORY.md Part 4 T2.8: the local web chat channel renders one
     conversation's tasks as a transcript, oldest first - the opposite order
     of list_recent - and must not leak another conversation's tasks in."""
     database = Database(f"sqlite:///{tmp_path / 'agent.db'}")

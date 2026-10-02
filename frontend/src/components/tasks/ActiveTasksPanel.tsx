@@ -9,7 +9,7 @@ import { CANCELLABLE, PAUSABLE } from "@/lib/task-signals"
 import { useTaskSignal, useTasks } from "@/lib/queries"
 
 /**
- * "Live Activity" (docs/UI_REWRITE_PLAN.md §19 parity check) - ports
+ * "Live Activity" (docs/archive/UI_REWRITE_PLAN.md §19 parity check) - ports
  * Streamlit's `_render_live_activity`: currently-running tasks, inline
  * pause/cancel, without opening a trace. Lives at the top of Tasks rather
  * than on the Chat landing page - Chat is scoped to the local web-chat

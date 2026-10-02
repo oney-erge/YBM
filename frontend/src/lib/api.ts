@@ -4,10 +4,10 @@ import { z } from "zod"
  * Client for the existing FastAPI admin API (`/admin/api/*`,
  * backend/src/agent_control/admin.py). The backend returns untyped Python
  * dicts, so every response is parsed with a Zod schema at the boundary -
- * see docs/UI_REWRITE_PLAN.md §15.4 ("Contract tests - the drift guard"):
+ * see docs/archive/UI_REWRITE_PLAN.md §15.4 ("Contract tests - the drift guard"):
  * a backend shape change should fail loudly here, not render `undefined`.
  *
- * Same-origin only, by design (docs/UI_REWRITE_PLAN.md §4) - this app is
+ * Same-origin only, by design (docs/archive/UI_REWRITE_PLAN.md §4) - this app is
  * always served from the same origin as the backend (Vite proxy in dev,
  * static mount in prod), so requests are plain relative fetches with no
  * base URL to configure.
@@ -199,7 +199,7 @@ export const TaskRecordSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   metadata: z.record(z.string(), z.unknown()),
-  // Only populated by the chat endpoints (docs/UI_UX_AUDIT.md Phase 1's
+  // Only populated by the chat endpoints (docs/archive/UI_UX_AUDIT.md Phase 1's
   // artifact cards) - optional so /api/tasks and /api/tasks/{id}/trace,
   // which don't send this key, still parse.
   artifacts: z.array(ArtifactSchema).optional(),
@@ -277,7 +277,7 @@ export function getBootstrap() {
   return apiFetch("/api/bootstrap", BootstrapResponseSchema)
 }
 
-// ---- Setup detection (docs/UI_REWRITE_PLAN.md's first-run wizard) --------
+// ---- Setup detection (docs/archive/UI_REWRITE_PLAN.md's first-run wizard) --------
 //
 // Real detection so the wizard asks real questions instead of blind ones -
 // an actual Ollama model list, and "already configured" booleans (never
@@ -384,7 +384,7 @@ export function countActive(tasks: TaskRecord[]): number {
   return tasks.filter((task) => ACTIVE_STATUSES.has(task.status)).length
 }
 
-// ---- Approvals (Evidence Pack, docs/UI_REWRITE_PLAN.md §11) --------------
+// ---- Approvals (Evidence Pack, docs/archive/UI_REWRITE_PLAN.md §11) --------------
 
 export const RiskLevelSchema = z.enum(["low", "medium", "high", "critical"])
 export type RiskLevel = z.infer<typeof RiskLevelSchema>
@@ -494,7 +494,7 @@ export function decideApproval(approvalId: string, decision: ApprovalDecision) {
 // policy/engine.py's RISK_ORDER.
 export const RISK_ORDER: Record<RiskLevel, number> = { low: 1, medium: 2, high: 3, critical: 4 }
 
-// ---- Tasks + Trace (docs/UI_REWRITE_PLAN.md §12) --------------------------
+// ---- Tasks + Trace (docs/archive/UI_REWRITE_PLAN.md §12) --------------------------
 
 const TaskListResponseSchema = z.object({
   tasks: z.array(TaskRecordSchema),
@@ -561,12 +561,12 @@ const OperatorHistoryEntrySchema = z.object({
   error: z.string().nullable().optional(),
   origin: z.string().optional(),
   parallel: z.boolean().optional(),
-  // Set server-side (admin.py's _enrich_operator_history, docs/UI_UX_AUDIT.md
+  // Set server-side (admin.py's _enrich_operator_history, docs/archive/UI_UX_AUDIT.md
   // Phase 14) by joining on request_id - always present in the response
   // (unlike the fields above), but null for entries that don't correspond
   // to exactly one tool call: pseudo-checks, delegate summaries, refusals.
   duration_ms: z.number().nullable(),
-  // The real parent-child link (docs/UI_UX_AUDIT.md Phase 14e) - the same id
+  // The real parent-child link (docs/archive/UI_UX_AUDIT.md Phase 14e) - the same id
   // on this step's ToolCallRequest.parent_step_id and LLMCall.step_id.
   // .optional() because entries recorded before this shipped have no such
   // key at all, not a present-but-null one.
@@ -605,7 +605,7 @@ const TokenUsageSchema = z.object({
 })
 export type TokenUsage = z.infer<typeof TokenUsageSchema>
 
-// "effect" (docs/UI_UX_AUDIT.md Phase 14): what actually happened to this
+// "effect" (docs/archive/UI_UX_AUDIT.md Phase 14): what actually happened to this
 // item - read/created/modified/moved/deleted/command_executed/
 // website_visited/message_sent/other - replacing the earlier "everything
 // is just touched" wording fix (Phase 8) with a real per-item label.
@@ -632,7 +632,7 @@ export type EvidenceItem = z.infer<typeof EvidenceItemSchema>
 // their own). `category` is a plain string, not a strict enum, matching
 // the backend's own CATEGORY_BY_TYPE - it can grow independently without
 // a frontend schema update; an unrecognized value just falls back to a
-// neutral display (docs/UI_UX_AUDIT.md Phase 14).
+// neutral display (docs/archive/UI_UX_AUDIT.md Phase 14).
 export const TimelineItemSchema = z.object({
   at: z.string().nullable(),
   kind: z.enum(["audit", "tool"]),
@@ -645,7 +645,7 @@ export const TimelineItemSchema = z.object({
 })
 export type TimelineItem = z.infer<typeof TimelineItemSchema>
 
-// One persisted LLM call (worker.py's _record_llm_call, docs/UI_UX_AUDIT.md
+// One persisted LLM call (worker.py's _record_llm_call, docs/archive/UI_UX_AUDIT.md
 // Phase 14d) - the receipts behind the Duration view's real, measured
 // segments. Only present for tasks run after this shipped; older tasks
 // simply have an empty array here, falling back to inferred gaps.
@@ -655,7 +655,7 @@ export const LLMCallSchema = z.object({
   source: z.string(),
   model: z.string().nullable(),
   step_index: z.number().nullable(),
-  // The real parent-child link (docs/UI_UX_AUDIT.md Phase 14e) - matches
+  // The real parent-child link (docs/archive/UI_UX_AUDIT.md Phase 14e) - matches
   // the same step's operator_history entry and ToolCallRequest.parent_step_id.
   step_id: z.string().nullable(),
   messages: z.array(z.record(z.string(), z.unknown())),
@@ -850,7 +850,7 @@ function tokenUsageOf(task: TaskRecord): TokenUsage | null {
 
 export { tokenUsageOf }
 
-// ---- Access (docs/UI_REWRITE_PLAN.md §13) ---------------------------------
+// ---- Access (docs/archive/UI_REWRITE_PLAN.md §13) ---------------------------------
 
 export const CapabilityAccessModeSchema = z.enum([
   "off", "read_only", "write_access", "full_access",
@@ -870,11 +870,11 @@ const CapabilityAccessSummarySchema = z.object({
 export type CapabilityAccessSummary = z.infer<typeof CapabilityAccessSummarySchema>
 
 // The raw per-capability policy (config.py's CapabilityPolicy) - Level 2/
-// Advanced-only, read-only display (docs/UI_REWRITE_PLAN.md §13's "risk
+// Advanced-only, read-only display (docs/archive/UI_REWRITE_PLAN.md §13's "risk
 // ceilings, scopes, allow/deny patterns"). There is no write endpoint for
 // these individual fields, only the coarse access-mode groups below, so
 // this client only ever reads them - see the Phase 4 notes in
-// docs/UI_REWRITE_PLAN.md for why editing them was left out of this pass.
+// docs/archive/UI_REWRITE_PLAN.md for why editing them was left out of this pass.
 const CapabilityPolicySchema = z.object({
   enabled: z.boolean(),
   scopes: z.array(z.string()),
@@ -946,7 +946,7 @@ export function initSecretVault() {
   return apiFetch("/api/secrets/init", SecretVaultInitResponseSchema, { method: "POST" })
 }
 
-// ---- Settings (docs/UI_REWRITE_PLAN.md §14) -------------------------------
+// ---- Settings (docs/archive/UI_REWRITE_PLAN.md §14) -------------------------------
 //
 // Reuses /api/summary (already fetched for the health indicator) rather
 // than adding a dedicated settings endpoint - the shape it returns already
@@ -1338,7 +1338,7 @@ export type DoctorCheck = z.infer<typeof DoctorCheckSchema>
 
 const DoctorResponseSchema = z.object({ checks: z.array(DoctorCheckSchema), ok: z.boolean() })
 
-/** Runs the same checks `ybm doctor` runs (docs/UI_UX_AUDIT.md Phase 9) -
+/** Runs the same checks `ybm doctor` runs (docs/archive/UI_UX_AUDIT.md Phase 9) -
  * takes a couple of seconds, so this is operator-triggered, never polled. */
 export function runDoctor() {
   return apiFetch("/api/doctor", DoctorResponseSchema)
@@ -1663,7 +1663,7 @@ export function updateComputerUseConfig(input: ComputerUseConfigInput) {
   })
 }
 
-// ---- Audit (docs/UI_REWRITE_PLAN.md §14 Level 2) --------------------------
+// ---- Audit (docs/archive/UI_REWRITE_PLAN.md §14 Level 2) --------------------------
 
 const AuditEventTypeSchema = z.enum([
   "message_received", "message_sent", "config_updated", "telegram_access_decision",
@@ -1676,7 +1676,7 @@ const AuditEventTypeSchema = z.enum([
 // Mirrors storage/audit_view.py's CATEGORY_BY_TYPE value set - a small,
 // derived grouping (event type -> coarser category), not a schema of its own.
 // "raw_message"/"channel_access" (not "raw_telegram"/only "telegram_access")
-// since docs/UI_UX_AUDIT.md Phase 16 - WhatsApp emits the same event types.
+// since docs/archive/UI_UX_AUDIT.md Phase 16 - WhatsApp emits the same event types.
 export const AUDIT_CATEGORIES = [
   "raw_message", "telegram_access", "channel_access", "classification", "failed_classification",
   "spawned_task", "policy", "config", "tool", "approval", "task_state", "artifact",
@@ -1716,7 +1716,7 @@ export function clearAudit() {
   return apiFetch("/api/audit", AuditClearResponseSchema, { method: "DELETE" })
 }
 
-// ---- Memory (docs/UI_UX_AUDIT.md Phase 4) ------------------------------
+// ---- Memory (docs/archive/UI_UX_AUDIT.md Phase 4) ------------------------------
 
 export const MemorySourceSchema = z.enum(["user_stated", "task_derived", "operator_admin"])
 export type MemorySource = z.infer<typeof MemorySourceSchema>
@@ -1768,7 +1768,7 @@ export function deleteMemoryFact(factId: string) {
   })
 }
 
-// ---- Skills (docs/UI_UX_AUDIT.md Phase 5) -------------------------------
+// ---- Skills (docs/archive/UI_UX_AUDIT.md Phase 5) -------------------------------
 
 export const SkillSchema = z.object({
   name: z.string(),
@@ -1792,7 +1792,7 @@ export function listSkills() {
 
 const SkillsCatalogResponseSchema = z.object({ skills: z.array(SkillSchema) })
 
-/** The bundled skills/starter/ catalog (docs/UI_UX_AUDIT.md Phase 11) -
+/** The bundled skills/starter/ catalog (docs/archive/UI_UX_AUDIT.md Phase 11) -
  * read-only browsing, distinct from listSkills() above (what's actually
  * installed). Installing a catalog entry reuses installSkill() with its
  * own fields - one install code path, not a separate one for the catalog. */
@@ -1819,7 +1819,7 @@ export function uninstallSkill(name: string) {
   })
 }
 
-// ---- Folders (docs/UI_UX_AUDIT.md Phase 13) ------------------------------
+// ---- Folders (docs/archive/UI_UX_AUDIT.md Phase 13) ------------------------------
 
 const FolderEntrySchema = z.object({ name: z.string(), path: z.string() })
 

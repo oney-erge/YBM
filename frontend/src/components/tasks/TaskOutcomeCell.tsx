@@ -3,7 +3,7 @@ import { formatDuration } from "@/lib/time"
 import { tokenUsageOf, type TaskRecord } from "@/lib/api"
 
 /**
- * What actually happened, not just the status badge (docs/UI_UX_AUDIT.md
+ * What actually happened, not just the status badge (docs/archive/UI_UX_AUDIT.md
  * Phase 9 - "the tasks menu should be able to show the outcome as well").
  * StatusBadge already says completed/failed/blocked; this says WHY, reusing
  * chatAnswerText so the same text Chat shows for a task's outcome is what

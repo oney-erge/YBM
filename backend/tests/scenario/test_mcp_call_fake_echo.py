@@ -1,7 +1,7 @@
 """Scenario: "use the fake MCP echo tool" through the real Operator loop ->
 mcp.client call_tool -> a real fake MCP server subprocess over stdio. Ports
 e2e/all_cases.json's `mcp_call_fake_echo` case down to the deterministic
-tier (docs/HISTORY.md P2) - the first MCP category case ported, and the
+tier (docs/archive/HISTORY.md P2) - the first MCP category case ported, and the
 first where the pre-built tool catalog (not just capability config) has to
 be part of the Operator's prompt for the LLM to know `fake.echo` exists at
 all - mirrors test_mcp_client.py's `_fake_mcp_server` fixture and
@@ -29,7 +29,7 @@ Two separate bugs this file used to document are now both fixed:
    the next). Fixed by printing the fields the way the schema names them:
    `- server="fake" tool="echo" - Echo text; ...`. Re-recording after that
    change, the model immediately produced the correct split input and the
-   call succeeded first try. See docs/HISTORY.md Part 2 §4 item 8.
+   call succeeded first try. See docs/archive/HISTORY.md Part 2 §4 item 8.
 
 The objective quotes the echoed text explicitly ("echo the exact text
 \"hello from E2E\"") because the earlier unquoted phrasing ("echo hello

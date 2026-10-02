@@ -1,7 +1,7 @@
 # History - why it's built this way
 
 > **Archive, not reference.** For how the system works *now*, read
-> [ARCHITECTURE.md](ARCHITECTURE.md). This file is the decision record: what was broken, what
+> [ARCHITECTURE.md](../ARCHITECTURE.md). This file is the decision record: what was broken, what
 > was tried, and what was deliberately rejected.
 
 **The goal this repo exists to serve:** *I talk to my local computer, and agents on my local
@@ -9,16 +9,16 @@ computer do whatever I ask.* Every decision below is judged against that sentenc
 
 | Part | Date | What it covers |
 |---|---|---|
-| [1 - P0–P6](#part-1--p0p6-the-architecture-overhaul) | 2026-07-26 | The architecture overhaul: from "doesn't reliably install" to the three-agent design |
-| [2 - N1–N6](#part-2--n1n6-the-post-migration-audit) | 2026-07-28 | The audit that found P3 had regressed observability, and the fix |
-| [3 - The way forward](#part-3--the-way-forward) | 2026-07-29 | Prioritised next steps; five real bugs the dark test tier had hidden |
-| [4 - Multi-agent build](#part-4--multi-agent-and-feature-parity-build-2026-07-30) | 2026-07-30 | Parallel calls, delegation, skills, persona, knowledge base, cost tracking |
-| [5 - React console](#part-5--react-admin-console-build-and-cutover-2026-08-01) | 2026-08-01 | Admin console build and cutover |
-| [6 - WhatsApp](#part-6--whatsapp-as-a-second-real-channel-2026-08-02) | 2026-08-02 | A second real channel, and the channel-agnostic core it forced |
+| [1 - P0–P6](#part-1---p0p6-the-architecture-overhaul) | 2026-07-26 | The architecture overhaul: from "doesn't reliably install" to the three-agent design |
+| [2 - N1–N6](#part-2---n1n6-the-post-migration-audit) | 2026-07-28 | The audit that found P3 had regressed observability, and the fix |
+| [3 - The way forward](#part-3---the-way-forward) | 2026-07-29 | Prioritised next steps; five real bugs the dark test tier had hidden |
+| [4 - Multi-agent build](#part-4---multi-agent-and-feature-parity-build-2026-07-30) | 2026-07-30 | Parallel calls, delegation, skills, persona, knowledge base, cost tracking |
+| [5 - React console](#part-5---react-admin-console-build-and-cutover-2026-08-01) | 2026-08-01 | Admin console build and cutover |
+| [6 - WhatsApp](#part-6---whatsapp-as-a-second-real-channel-2026-08-02) | 2026-08-02 | A second real channel, and the channel-agnostic core it forced |
 
 **Section labels are load-bearing.** Parts keep their original `P0`–`P6`, `N1`–`N6`, and `§1.1`
 labels because ~90 code comments cite them. Arriving from a comment like
-`(docs/HISTORY.md P3 §2.2)`? Search this file for that exact string.
+`(docs/archive/HISTORY.md P3 §2.2)`? Search this file for that exact string.
 
 The fine-grained evidence trail - test names, line-count deltas, before/after reproductions -
 lives in git history: `git log --oneline` plus commit bodies from 2026-07-27 onward.
@@ -247,8 +247,8 @@ Three things beyond this plan, cheap once the Operator loop exists, expensive be
 | `PlanModel`, `PlanStep`, `ApprovalGate`, `SubtaskRecord`, `ToolObservation`, `ApprovalDecision`, `PlanRepository`, `ToolRegistry.validate_plan()`, `plans`/`subtasks` tables, `tasks.plan_id`/`current_step_id` columns | §1.1 found these unreachable; physically deleted in a later 2026-07-28 pass (see Part 2's closing note). | **Deleted** |
 | `docs/ROADMAP.md`, `docs/AUDIT.md` | Merged into this file. | **Deleted, merged here** |
 
-Docs now: `README.md`, `CLAUDE.md`, `docs/HISTORY.md`, `docs/ARCHITECTURE.md`,
-`docs/LOCAL_SETUP.md`, `docs/MINIMAL_END_TO_END_TEST.md`, `docs/DATABASE_INSPECTION.md`,
+Docs now: `README.md`, `CLAUDE.md`, `docs/archive/HISTORY.md`, `docs/ARCHITECTURE.md`,
+`docs/INSTALL.md`, `docs/USING.md`, `docs/DATABASE_INSPECTION.md`,
 `e2e/README.md`.
 
 ## 6. Honest unknowns
@@ -1131,14 +1131,14 @@ end (`pytest tests`, exit 0).
 
 # Part 5 - React admin console: build and cutover (2026-08-01)
 
-Context: `docs/UI_REWRITE_PLAN.md` (written after a competitive UI/UX pass, 2026-07-31) called for
+Context: `docs/archive/UI_REWRITE_PLAN.md` (written after a competitive UI/UX pass, 2026-07-31) called for
 replacing the 1,776-line single-page Streamlit console with a React SPA served by the existing
 FastAPI backend, in six phases (0 backend readiness, 1 shell+chat, 2 approvals, 3 tasks+trace, 4
 access, 5 settings+wizard, 6 cutover). All six shipped; this entry records the cutover and the two
 things found only by actually building it rather than by re-reading the plan.
 
 **Phases 0–5, in brief** (full detail, including every scoping decision and what was deliberately
-cut, lives in `docs/UI_REWRITE_PLAN.md` §9–§14, kept current phase by phase as each landed):
+cut, lives in `docs/archive/UI_REWRITE_PLAN.md` §9–§14, kept current phase by phase as each landed):
 Vite + React 19 + TanStack Query/Table + React Flow + Zod, served from
 `backend/src/agent_control/static/admin/` at `/admin` with a dev-proxy fallback; an
 Evidence-Pack approval flow ordered for a sub-15-second decision; a Tasks/Trace view with a real
@@ -1270,7 +1270,7 @@ already-proven-working extras list instead.
 
 # Part 6 - WhatsApp as a second real channel (2026-08-02)
 
-Context: `docs/UI_UX_AUDIT.md` Phase 16 shipped its "channel-adapter interface" half
+Context: `docs/archive/UI_UX_AUDIT.md` Phase 16 shipped its "channel-adapter interface" half
 (2026-08-01) - `channels/base.py`'s `classify_and_spawn_task`/`resume_clarifying_reply`/
 `status_summary` extracted out of `TelegramIntakeService` behind a `ChannelAdapter` Protocol -
 but deliberately deferred an actual second channel, since there was nothing real yet to validate
@@ -1373,7 +1373,7 @@ session, and none was added to the repo, `config.example.yaml`, or any commit. `
 run` was not run live against this machine's already-running instance (it has real services on
 ports 8000/8765 already up) to avoid disrupting whatever the user currently has live; `doctor`
 (read-only) was used instead to confirm safe-by-default behavior. Whoever runs this repo links
-their own number by following `docs/LOCAL_SETUP.md`'s new "Link WhatsApp" section.
+their own number by following `docs/INSTALL.md`'s new "Link WhatsApp" section.
 
 ### Review pass: the sidecar could not start at all *(same day)*
 
@@ -1481,7 +1481,7 @@ asks the complementary question: does it stay trustworthy while doing so? Eight 
 Telegram cases covering learned preferences, credential handling, honoring a refusal,
 compound instructions, admitting a capability gap, real scaffolding, scheduled
 continuation instead of a retry loop, and refusing to invent a missing file's contents.
-Full evidence and reasoning in `docs/E2E_FINDINGS.md`; the short version:
+Full evidence and reasoning in `docs/archive/E2E_FINDINGS.md`; the short version:
 
 **The harness could not have produced trustworthy results first.** Four runner defects
 were fixed before the suite could mean anything. A "last 5 minutes" audit lookup compared

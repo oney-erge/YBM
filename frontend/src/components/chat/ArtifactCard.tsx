@@ -33,7 +33,7 @@ function basename(uri: string): string {
 }
 
 /**
- * A file/output a task produced (docs/UI_UX_AUDIT.md Phase 1). `uri` is a
+ * A file/output a task produced (docs/archive/UI_UX_AUDIT.md Phase 1). `uri` is a
  * local filesystem path for most artifact types - Phase 8 added a real
  * download endpoint, so a local artifact now gets Open / Download / Copy
  * path instead of only showing its path as inert text. ("Show in folder"

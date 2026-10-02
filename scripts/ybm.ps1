@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
   Single entry point for YBM: setup, doctor, start/stop/status/logs, test, e2e, db, config.
-  Replaces the 15+ separate scripts that used to live here (see docs/HISTORY.md P1).
+  Replaces the 15+ separate scripts that used to live here (see docs/archive/HISTORY.md P1).
 
 .EXAMPLE
   .\scripts\ybm.ps1 run
@@ -211,7 +211,7 @@ function Invoke-YbmSetup {
     try {
       if ($runtimeOnly) {
         # The consumer path (YBM.bat / `ybm run` / install.ps1, which now
-        # just calls `ybm run` - docs/UI_UX_AUDIT.md Phase 10, second
+        # just calls `ybm run` - docs/archive/UI_UX_AUDIT.md Phase 10, second
         # review): a person double-clicking their way to a running console
         # has no use for pytest, ruff, or the Telethon E2E client. Every
         # dev-tooling extra stays behind the bare `ybm setup` a developer
@@ -283,7 +283,7 @@ function Get-YbmLockFingerprint {
 function Invoke-YbmRun {
   param([string[]]$Argv = @())
   $openBrowser = -not ($Argv -contains "-NoBrowser" -or $Argv -contains "--no-browser")
-  # The one command a non-developer should ever need (docs/UI_UX_AUDIT.md
+  # The one command a non-developer should ever need (docs/archive/UI_UX_AUDIT.md
   # Phase 10, second review): install whatever's missing, do nothing when
   # there's nothing to do, and start the console in a few seconds - not
   # "double-click, then wait while a dependency manager evaluates the
@@ -358,7 +358,7 @@ function Invoke-YbmRun {
   # Deliberately informational only, never auto-applied: pulling and
   # restarting onto new, unreviewed code without being asked is an
   # external-write action this script doesn't take on its own - same
-  # reasoning as `ybm check-updates` itself (docs/UI_UX_AUDIT.md Phase 6).
+  # reasoning as `ybm check-updates` itself (docs/archive/UI_UX_AUDIT.md Phase 6).
 
   Write-Host ""
   Write-Host "[4/4] Starting YBM$(if ($openBrowser) { ' and opening the console' })..." -ForegroundColor Cyan
@@ -466,7 +466,7 @@ function Start-YbmService {
   Set-Content -LiteralPath $pidFile -Value $process.Id
 
   # Truthful readiness: poll for a real signal instead of assuming success
-  # the instant Start-Process returns (see docs/HISTORY.md P0).
+  # the instant Start-Process returns (see docs/archive/HISTORY.md P0).
   $deadline = (Get-Date).AddSeconds($ReadyTimeoutSeconds)
   while ((Get-Date) -lt $deadline) {
     Start-Sleep -Seconds 1
@@ -640,7 +640,7 @@ function Invoke-YbmStatus {
     }
     # A status.json can outlive its process if the supervisor was killed
     # before it could write a final "stopped" state - verify the pid is
-    # actually alive rather than trusting the file (see docs/HISTORY.md P6).
+    # actually alive rather than trusting the file (see docs/archive/HISTORY.md P6).
     $displayStatus = $status.status
     if ($status.child_pid -and $displayStatus -eq "running" -and -not (Get-Process -Id ([int]$status.child_pid) -ErrorAction SilentlyContinue)) {
       $displayStatus = "stale"

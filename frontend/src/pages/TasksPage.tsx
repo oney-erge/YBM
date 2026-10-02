@@ -45,7 +45,7 @@ export function TasksPage() {
   const [search, setSearch] = useState("")
 
   // Client-side filter/search: the backend's /api/tasks has no status/query
-  // params today (docs/UI_REWRITE_PLAN.md §12.1), and a personal-scale task
+  // params today (docs/archive/UI_REWRITE_PLAN.md §12.1), and a personal-scale task
   // history (dozens to low hundreds) makes filtering the fetched page
   // cheap enough that adding server-side filtering would be solving a
   // problem that doesn't exist yet - the same reasoning knowledge_base.py

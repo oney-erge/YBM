@@ -24,7 +24,7 @@ type PendingAction = {
 }
 
 /**
- * The security control room (docs/UI_REWRITE_PLAN.md §13). Level 1: kill
+ * The security control room (docs/archive/UI_REWRITE_PLAN.md §13). Level 1: kill
  * switch, presets, per-group capability toggles, secret vault, and active
  * time-boxed grants (ActiveGrantsCard). Level 2 (Advanced): read-only risk
  * ceiling/scope/allow-deny detail per capability, rendered inside each

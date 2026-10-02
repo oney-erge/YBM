@@ -323,7 +323,7 @@ def test_operator_prompt_has_a_whole_request_budget_and_keeps_tool_identities() 
 
 @pytest.mark.asyncio
 async def test_decide_prefer_major_uses_major_provider_from_the_start() -> None:
-    """docs/HISTORY.md Part 4 T2.6: prefer_major must select major_provider
+    """docs/archive/HISTORY.md Part 4 T2.6: prefer_major must select major_provider
     BEFORE any call is made, not just as a post-failure escalation - the
     default provider should never be invoked at all in this case."""
     provider = QueueDecisionProvider([])  # would raise IndexError if ever called

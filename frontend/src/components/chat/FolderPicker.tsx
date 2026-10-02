@@ -15,7 +15,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { useFolders } from "@/lib/queries"
 
 /**
- * Server-side folder browsing for the chat composer (docs/UI_UX_AUDIT.md
+ * Server-side folder browsing for the chat composer (docs/archive/UI_UX_AUDIT.md
  * Phase 13) - a browser directory picker cannot yield a usable absolute
  * path, which is why this was deferred back in Phase 1. Selecting a
  * folder inserts its absolute path into the draft text; there is no new

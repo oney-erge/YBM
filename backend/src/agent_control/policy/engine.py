@@ -62,7 +62,7 @@ class PolicyEngine:
         approval: ApprovalRequest | None = None,
         has_grant: bool = False,
     ) -> PolicyDecision:
-        """``has_grant`` (docs/UI_UX_AUDIT.md Phase 1's "Allow for this
+        """``has_grant`` (docs/archive/UI_UX_AUDIT.md Phase 1's "Allow for this
         task"): the caller has already confirmed an ApprovalGrant matches
         (task_id, tool_name, capability) - see ApprovalGrantRepository.
         find_matching. It only skips the "ask a human" step below; every

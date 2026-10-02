@@ -1,4 +1,4 @@
-"""Cancellation must clean up after itself (docs/UI_UX_AUDIT.md Phase 8) -
+"""Cancellation must clean up after itself (docs/archive/UI_UX_AUDIT.md Phase 8) -
 previously only the task's own status flipped to cancelled; a pending
 approval stayed pending forever, a task-scoped grant stayed valid until its
 own unrelated expiry, and a stuck-at-needs_approval tool invocation stayed
@@ -187,7 +187,7 @@ def test_cancelling_an_already_completed_tool_invocation_leaves_it_alone(tmp_pat
     assert invocations[0]["status"] == "succeeded"
 
 
-# ---- requeue_after_approval_decision (docs/UI_UX_AUDIT.md Phase 8, second review) ----
+# ---- requeue_after_approval_decision (docs/archive/UI_UX_AUDIT.md Phase 8, second review) ----
 
 
 def test_requeue_after_approval_decision_makes_the_task_claimable_again(tmp_path) -> None:

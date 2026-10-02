@@ -12,7 +12,7 @@ import { Button } from "@/components/ui/button"
 
 /**
  * Reusable "confirm dialog naming the concrete consequence" required by
- * docs/UI_REWRITE_PLAN.md §13 for destructive Access toggles - the
+ * docs/archive/UI_REWRITE_PLAN.md §13 for destructive Access toggles - the
  * Streamlit console never had this (it applied capability changes
  * instantly), so this is genuinely new behavior, not a port.
  *

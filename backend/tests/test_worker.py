@@ -67,7 +67,7 @@ async def test_worker_notifies_once_on_completion(tmp_path) -> None:
     await worker.process_next()
 
     assert [item.status for item in notifier.tasks] == [TaskStatus.RUNNING, TaskStatus.COMPLETED]
-    # RUNNING is deduped per completed step (docs/HISTORY.md §3.3), so its key
+    # RUNNING is deduped per completed step (docs/archive/HISTORY.md §3.3), so its key
     # carries the step count; COMPLETED is once-per-task and stays bare.
     assert repos.tasks.get(task.id).metadata["notified_statuses"] == [
         TaskStatus.COMPLETED.value,
@@ -169,7 +169,7 @@ def test_reconcile_orphaned_tasks_returns_zero_when_nothing_to_do(tmp_path) -> N
 
 
 def test_tool_output_text_grounds_auditor_in_code_interpreter_file_content() -> None:
-    """Regression guard (docs/HISTORY.md Part 3 W1): before code.interpreter
+    """Regression guard (docs/archive/HISTORY.md Part 3 W1): before code.interpreter
     added file_previews to its terminal_output, `_tool_output_text()` - the
     function that feeds `last_tool_output_text`, which is exactly what the
     Auditor's raw_output argument is built from (see worker.py's audit gate

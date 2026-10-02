@@ -1,4 +1,4 @@
-"""System tray icon for YBM (docs/UI_UX_AUDIT.md Phase 6).
+"""System tray icon for YBM (docs/archive/UI_UX_AUDIT.md Phase 6).
 
 A thin GUI shell around the existing, tested scripts/ybm.ps1 - this file
 has no process-supervision logic of its own (AGENTS.md: "scripts/ybm.ps1
@@ -58,7 +58,7 @@ def _admin_port() -> int:
 
 
 def _make_icon_image() -> Image.Image:
-    """The real mark (docs/UI_UX_AUDIT.md Phase 10), not a placeholder -
+    """The real mark (docs/archive/UI_UX_AUDIT.md Phase 10), not a placeholder -
     scripts/assets/logo_256.png is a rasterized copy of
     frontend/public/favicon.svg (the same chunky Y shown in the browser
     tab), so the tray icon and the browser tab agree

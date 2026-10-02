@@ -1,4 +1,4 @@
-"""Tool surface for agent_control.persona (docs/HISTORY.md Part 4 T2.5) - lets
+"""Tool surface for agent_control.persona (docs/archive/HISTORY.md Part 4 T2.5) - lets
 the Operator read the current persona/preferences document and update it
 when it learns something durable ("the user said they always want file
 summaries under 5 bullets"). See persona.py's module docstring for how this

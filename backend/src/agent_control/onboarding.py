@@ -10,7 +10,7 @@ all, so the wizard asks exactly those two and defaults everything else:
    cloud API key as the fallback, or skip and fix it later.
 2. How you talk to it - the local web chat (already built, zero extra setup)
    is the default; Telegram is opt-in and asks for a bot token only if
-   chosen. See docs/HISTORY.md Part 4 T2.8 for why the web chat exists.
+   chosen. See docs/archive/HISTORY.md Part 4 T2.8 for why the web chat exists.
 """
 
 from __future__ import annotations

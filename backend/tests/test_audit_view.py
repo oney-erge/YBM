@@ -1,4 +1,4 @@
-"""docs/UI_UX_AUDIT.md Phase 14: format_audit_event's CATEGORY_BY_TYPE had
+"""docs/archive/UI_UX_AUDIT.md Phase 14: format_audit_event's CATEGORY_BY_TYPE had
 no dedicated test coverage at all before this - the timeline's category
 labels are read straight from it now, so a wrong mapping here would
 silently mislabel every event of that type across the console.
@@ -36,7 +36,7 @@ def test_egress_contacted_categorizes_as_egress() -> None:
 
 def test_an_uncategorized_type_falls_back_to_system() -> None:
     """PLAN_CREATED is deliberately left uncategorized - PlanModel is dead
-    (docs/HISTORY.md §1.1), nothing creates one anymore, so it isn't worth
+    (docs/archive/HISTORY.md §1.1), nothing creates one anymore, so it isn't worth
     its own category."""
     assert format_audit_event(_event(AuditEventType.PLAN_CREATED)).category == "system"
 

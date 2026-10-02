@@ -1,7 +1,7 @@
 """Scenario: "summarize the PDF at X" through the real Operator loop ->
 document.manage summarize_pdf -> Auditor. Replayed from a fixture recorded
 against a live LLM. Ports e2e/all_cases.json's `pdf_open_summary` case down
-to the deterministic tier (docs/HISTORY.md P2). Fixture re-recorded
+to the deterministic tier (docs/archive/HISTORY.md P2). Fixture re-recorded
 2026-07-28 (`ybm scenario record document_pdf_summary`,
 localdeploy_qwen3vl_8b).
 """

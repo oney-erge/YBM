@@ -1,4 +1,4 @@
-"""Back up the state that can't be regenerated (docs/UI_UX_AUDIT.md Phase 6):
+"""Back up the state that can't be regenerated (docs/archive/UI_UX_AUDIT.md Phase 6):
 the task/audit/memory database, config.yaml, .env, and the encrypted secret
 vault. Deliberately excludes artifacts/workspaces/logs/caches - those are
 task output or regenerable, not "your data" in the sense that losing it

@@ -1,7 +1,7 @@
 """Credential handling at the two sinks a secret can escape through.
 
 A config file's API key reached both the Telegram reply and the audit trail
-(docs/E2E_FINDINGS.md P0-1): key-name matching only sees a credential that is
+(docs/archive/E2E_FINDINGS.md P0-1): key-name matching only sees a credential that is
 the value of its own field, and vault-value matching only sees secrets YBM
 already knows. A key read out of a *user's* file is neither.
 """

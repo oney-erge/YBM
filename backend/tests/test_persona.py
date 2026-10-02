@@ -1,4 +1,4 @@
-"""docs/HISTORY.md Part 4 T2.5: a single global identity/preference document,
+"""docs/archive/HISTORY.md Part 4 T2.5: a single global identity/preference document,
 distinct from channels/memory.py's per-conversation ConversationMemoryService.
 """
 

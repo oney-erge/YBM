@@ -1,4 +1,4 @@
-"""docs/HISTORY.md Part 4 T1.3: user-droppable capability packs. A skill is
+"""docs/archive/HISTORY.md Part 4 T1.3: user-droppable capability packs. A skill is
 one markdown file (YAML frontmatter + instructions body) under
 adapters.skills.root_dir, discovered fresh on every list/read call - no
 code change, no restart.
@@ -177,7 +177,7 @@ def test_registry_disables_skills_use_when_telegram_receive_capability_is_off() 
     assert definitions["skills.use"].enabled is False
 
 
-# ---- Lifecycle: manifest, install, uninstall (docs/UI_UX_AUDIT.md Phase 5) ----
+# ---- Lifecycle: manifest, install, uninstall (docs/archive/UI_UX_AUDIT.md Phase 5) ----
 
 
 def test_slugify_produces_a_safe_filename_stem() -> None:

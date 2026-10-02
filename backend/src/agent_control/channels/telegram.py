@@ -263,7 +263,7 @@ class TelegramPollingRunner:
 
 class TelegramAdapter:
     """Implements the `ChannelAdapter` Protocol (channels/base.py,
-    docs/UI_UX_AUDIT.md Phase 16): the intake half of Telegram support -
+    docs/archive/UI_UX_AUDIT.md Phase 16): the intake half of Telegram support -
     raw webhook JSON in, `ChannelUpdateResult` out. A future channel's
     adapter (WhatsApp/Discord/...) implements the same shape."""
 
@@ -698,7 +698,7 @@ class TelegramIntakeService:
         return self._out(inbound.chat_id, f"Got it, I'll remember: {content}")
 
     def _plain_text_command_response(self, inbound: InboundMessage) -> OutboundMessage | None:
-        # "Remember that ..." (docs/UI_UX_AUDIT.md Phase 15) is checked here,
+        # "Remember that ..." (docs/archive/UI_UX_AUDIT.md Phase 15) is checked here,
         # at the runtime level, before the LLM classifier ever sees the
         # message - provenance is decided by the runtime, never selectable
         # by the model, same guarantee task_derived facts already have via

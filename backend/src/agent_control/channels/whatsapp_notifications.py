@@ -9,7 +9,7 @@ class WhatsAppTaskNotifier:
     """Implements `TaskNotificationSink` (orchestration/worker.py) - the
     WhatsApp half of notify, mirroring `TelegramTaskNotifier`'s shape but
     plain-text only (no inline keyboard, no separate screenshot delivery -
-    docs/UI_UX_AUDIT.md Phase 16's disclosed v1 scope)."""
+    docs/archive/UI_UX_AUDIT.md Phase 16's disclosed v1 scope)."""
 
     def __init__(self, client: WhatsAppBridgeClient) -> None:
         self.client = client

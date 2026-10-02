@@ -1,7 +1,7 @@
 """Scenario: "find a .txt file and read it to me" through the real Operator
 loop - a 2-step filesystem.manage sequence (search, then read_file) chosen
 one at a time -> Auditor. Ports e2e/all_cases.json's `file_find_and_read`
-case down to the deterministic tier (docs/HISTORY.md P2) - locks in
+case down to the deterministic tier (docs/archive/HISTORY.md P2) - locks in
 multi-step tool use within a single tool, not just multi-tool sequences.
 Fixture re-recorded 2026-07-28 against the Operator loop
 (`ybm scenario record file_find_and_read`, localdeploy_qwen3vl_8b).

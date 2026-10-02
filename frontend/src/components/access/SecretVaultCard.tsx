@@ -11,7 +11,7 @@ import { ApiError } from "@/lib/api"
 import { useDeleteSecret, useInitSecretVault, useSecrets, useSetSecret } from "@/lib/queries"
 
 /**
- * Secret vault (docs/UI_REWRITE_PLAN.md §13) - list `service.key`, never
+ * Secret vault (docs/archive/UI_REWRITE_PLAN.md §13) - list `service.key`, never
  * values (storage/secrets.py never returns them either), add, delete.
  * Ports Streamlit's admin_streamlit.py `_render_secrets_config`.
  */

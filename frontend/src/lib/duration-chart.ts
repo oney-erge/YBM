@@ -15,7 +15,7 @@ export interface DurationSegment {
 const FAILED_STATUSES = new Set(["failed", "denied", "timeout"])
 
 // Gaps smaller than this are scheduling/poll-loop noise, not meaningful
-// "operator thinking" time worth its own row (docs/UI_UX_AUDIT.md Phase 14).
+// "operator thinking" time worth its own row (docs/archive/UI_UX_AUDIT.md Phase 14).
 const MIN_INFERRED_GAP_MS = 250
 
 interface RealSegment {

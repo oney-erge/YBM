@@ -1,7 +1,7 @@
 import type { CapabilityAccessMode, CapabilityAccessSummary } from "@/lib/api"
 
 /**
- * Access-mode presets (docs/UI_REWRITE_PLAN.md §13's "access-mode
+ * Access-mode presets (docs/archive/UI_REWRITE_PLAN.md §13's "access-mode
  * presets") - client-composed, not a backend concept. There is no
  * `/api/config/access-modes/preset` endpoint (unlike the LLM presets,
  * which the backend does define); each preset here just computes a

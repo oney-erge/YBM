@@ -13,15 +13,15 @@ import { Label } from "@/components/ui/label"
 import { AdvancedModeContext, readAdvancedMode, writeAdvancedMode } from "@/lib/advanced-mode"
 import { ThemeToggle } from "@/components/layout/ThemeToggle"
 
-// Matches docs/UI_REWRITE_PLAN.md §10's table. Memory (Phase 4), Skills
+// Matches docs/archive/UI_REWRITE_PLAN.md §10's table. Memory (Phase 4), Skills
 // (Phase 5), and Tools (Phase 11) all live under one "Agent" entry rather
-// than three separate top-level items - docs/UI_UX_AUDIT.md Phase 11's
+// than three separate top-level items - docs/archive/UI_UX_AUDIT.md Phase 11's
 // regroup, in response to direct feedback that they read as scattered
 // ("these are basically agentic setup... should live at one place").
 // Chat is the landing page/first route on purpose (plan: "a first-time
 // user must get an answer without visiting any other screen").
 // matchPaths: sibling routes that should also highlight this item even
-// though they don't share its URL prefix (docs/UI_UX_AUDIT.md Phase 12) -
+// though they don't share its URL prefix (docs/archive/UI_UX_AUDIT.md Phase 12) -
 // Memory/Skills/Tools are reachable from the Agent hub but live at their
 // own top-level paths (kept that way in Phase 11 so bookmarks and deep
 // links didn't break), so NavLink's own prefix-based isActive never
@@ -54,7 +54,7 @@ export function AppShell() {
     <AdvancedModeContext.Provider value={{ advanced, setAdvanced }}>
       <div className="flex h-svh w-full flex-col overflow-hidden bg-background text-foreground">
         {/* Full-width, above both nav and content - "persistent, unmissable,
-            on every route" (docs/UI_REWRITE_PLAN.md §11.1). Renders nothing
+            on every route" (docs/archive/UI_REWRITE_PLAN.md §11.1). Renders nothing
             when there are no pending approvals. */}
         <ApprovalBanner />
         {/* While no model is configured the console cannot answer anything.
@@ -108,7 +108,7 @@ export function AppShell() {
               </ul>
             </div>
             <div className="flex flex-col gap-3">
-              {/* One switch, reveals Level 2 everywhere (docs/UI_REWRITE_PLAN.md
+              {/* One switch, reveals Level 2 everywhere (docs/archive/UI_REWRITE_PLAN.md
                   §6) - not a per-panel disclosure to hunt for on each screen. */}
               <div className="flex items-center justify-between gap-2 rounded-xl px-2 py-1">
                 <Label htmlFor="advanced-mode" className="text-xs text-muted-foreground">
@@ -161,7 +161,7 @@ export function AppShell() {
 
 function Brand() {
   // The same mark as the browser tab (public/favicon.svg), not a Lucide
-  // Bot glyph in a colored box (docs/UI_UX_AUDIT.md Phase 10) - the two
+  // Bot glyph in a colored box (docs/archive/UI_UX_AUDIT.md Phase 10) - the two
   // disagreeing was the actual gap, not a missing logo; a real one already
   // existed and just wasn't reused here. BASE_URL-prefixed the same way
   // main.tsx's router basename is, since this app is served at /admin in

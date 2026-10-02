@@ -14,7 +14,7 @@ import { useAdvancedMode } from "@/lib/advanced-mode"
 import { PageHeader } from "@/components/layout/PageHeader"
 
 /**
- * docs/UI_REWRITE_PLAN.md §14. Level 1: LLM + Telegram. Level 2/Advanced
+ * docs/archive/UI_REWRITE_PLAN.md §14. Level 1: LLM + Telegram. Level 2/Advanced
  * adds every adapter field, MCP servers (read-only), diagnostics, the audit
  * viewer, and per-role model routing (LLMRolesCard). **A2/A3 (per-role
  * prompt override, delegate presets) and D4 (OpenTelemetry export) are not

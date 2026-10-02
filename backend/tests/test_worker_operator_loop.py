@@ -1,5 +1,5 @@
 """Unit tests for the Operator loop path in orchestration/worker.py - the
-sole execution path (docs/HISTORY.md P3 §2.2). Uses the same
+sole execution path (docs/archive/HISTORY.md P3 §2.2). Uses the same
 StaticToolAdapter/PolicyEngine harness as test_worker.py, but drives
 TaskWorker with a scripted decision sequence instead of a persisted plan.
 See orchestration/operator.py's module docstring for the design.
@@ -125,7 +125,7 @@ class QueueOperator:
 
     `usages`, if given, is a same-length list of usage dicts (or None) - one
     per decide() call, mirroring how the real OperatorLoopService sets
-    self.last_usage after each call (docs/HISTORY.md Part 4 T1.4).
+    self.last_usage after each call (docs/archive/HISTORY.md Part 4 T1.4).
     `fallback_flags` does the same for last_fallback_used (docs/ROADMAP.md
     per-role models/fallback chain).
     """
@@ -142,7 +142,7 @@ class QueueOperator:
         self.calls = 0
         self.last_usage: dict | None = None
         self.last_fallback_used: bool = False
-        # docs/HISTORY.md Part 4 T2.6: one entry per decide() call, so tests
+        # docs/archive/HISTORY.md Part 4 T2.6: one entry per decide() call, so tests
         # can assert exactly when the caller asked for the stronger model.
         self.prefer_major_calls: list[bool] = []
 
@@ -592,7 +592,7 @@ async def test_operator_loop_blocks_repeated_successful_observations(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_gap_check_entries_do_not_consume_the_tool_call_budget(tmp_path) -> None:
-    """Regression guard (docs/HISTORY.md §3.1): the fulfillment/audit gap paths
+    """Regression guard (docs/archive/HISTORY.md §3.1): the fulfillment/audit gap paths
     append check pseudo-entries to operator_history so the next decide() sees
     why `done` was rejected. Those are bookkeeping - counting them against
     operator_max_steps meant every gap stole a slot from the tool calls the
@@ -654,7 +654,7 @@ async def test_gap_check_entries_do_not_consume_the_tool_call_budget(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_auditor_receives_full_output_not_the_truncated_history_summary(tmp_path) -> None:
-    """Regression guard (docs/HISTORY.md §3.2): history entries store a
+    """Regression guard (docs/archive/HISTORY.md §3.2): history entries store a
     2000-char display summary. The Auditor judges count/section sufficiency,
     so handing it a truncation produces false INSUFFICIENT verdicts on exactly
     the long-content objectives it exists for."""
@@ -1332,7 +1332,7 @@ def test_multi_tool_audit_evidence_includes_every_observed_outcome() -> None:
 
 @pytest.mark.asyncio
 async def test_multi_step_task_sends_a_progress_notification_per_step(tmp_path) -> None:
-    """Regression guard (docs/HISTORY.md §3.3): the RUNNING dedupe key used to be
+    """Regression guard (docs/archive/HISTORY.md §3.3): the RUNNING dedupe key used to be
     built from metadata["attempt_history"] + current_step_id, both plan-era
     fields with zero writers since P3. That collapsed the key to the constant
     "running", so a 30-step task sent one "working on it" and then went
@@ -1497,13 +1497,13 @@ async def test_operator_loop_awaiting_approval_stays_put_while_pending(tmp_path)
 
 @pytest.mark.asyncio
 async def test_run_forever_sleeps_instead_of_busy_looping_on_a_pending_approval(tmp_path, monkeypatch) -> None:
-    """docs/UI_UX_AUDIT.md Phase 8: originally, process_next() returned the
+    """docs/archive/UI_UX_AUDIT.md Phase 8: originally, process_next() returned the
     SAME AWAITING_APPROVAL task on every call (claim_next always re-picked
     the oldest task this worker already claimed, and that check returned
     instantly) - without a sleep here, run_forever spun the CPU at 100%
     hammering the DB for as long as a human takes to decide.
 
-    Second pass (docs/UI_UX_AUDIT.md Phase 8, second review): AWAITING_APPROVAL
+    Second pass (docs/archive/UI_UX_AUDIT.md Phase 8, second review): AWAITING_APPROVAL
     was removed from WORKABLE_STATUSES entirely, so process_next() now
     returns None here (nothing else is queued in this test) rather than
     re-picking the same task - but the risk of a busy loop is the same
@@ -1648,7 +1648,7 @@ async def test_operator_loop_resumes_via_requeue_instead_of_asking_again(tmp_pat
 
 @pytest.mark.asyncio
 async def test_a_pending_approval_no_longer_blocks_the_worker_from_a_second_task(tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 8, second review: the CPU busy-loop was
+    """docs/archive/UI_UX_AUDIT.md Phase 8, second review: the CPU busy-loop was
     fixed, but the architectural bottleneck wasn't - with the default
     single worker, an AWAITING_APPROVAL task stayed claimable so the
     worker could notice when a decision landed, and claim_next's
@@ -1723,7 +1723,7 @@ async def test_operator_loop_done_with_fulfillment_gap_continues_instead_of_comp
 def test_write_claim_without_any_successful_write_is_rejected() -> None:
     """The observed failure: one unsupported-operation error, then a synthesized
     "The following files were created:" for an empty workspace, and the task
-    completed (docs/E2E_FINDINGS.md P0-2)."""
+    completed (docs/archive/E2E_FINDINGS.md P0-2)."""
     answer = "Scaffolded the extension. The following files were created: package.json, extension.js"
     history = [{"tool_name": "filesystem.manage", "status": "failed", "input": {"operation": "list_directory"}}]
 
@@ -2107,7 +2107,7 @@ async def test_operator_loop_retrying_resumes_and_retries_after_backoff_elapses(
 
 @pytest.mark.asyncio
 async def test_retrying_a_timed_out_write_warns_it_may_have_already_happened(tmp_path) -> None:
-    """docs/HISTORY.md P6's crash-recovery reasoning ("silently retrying can
+    """docs/archive/HISTORY.md P6's crash-recovery reasoning ("silently retrying can
     do a thing twice") applies just as much to an ordinary TIMEOUT on a risky
     write - the difference is nothing crashed, so the loop reaches
     decide() again on its own next step instead of asking a human. That
@@ -2311,7 +2311,7 @@ async def test_worker_without_operator_or_executor_blocks_instead_of_crashing(tm
 
 @pytest.mark.asyncio
 async def test_worker_accumulates_token_usage_across_operator_and_auditor_calls(tmp_path) -> None:
-    """docs/HISTORY.md Part 4 T1.4: the worker used to discard LLM usage
+    """docs/archive/HISTORY.md Part 4 T1.4: the worker used to discard LLM usage
     entirely, so there was no way to see what a task cost. Two operator
     decide() calls plus one auditor audit() call must accumulate into
     task.metadata["token_usage"], split both as a running total and per
@@ -2378,7 +2378,7 @@ async def test_worker_does_not_record_token_usage_when_provider_reports_none(tmp
 
 @pytest.mark.asyncio
 async def test_worker_prefers_major_provider_on_the_step_after_an_audit_gap(tmp_path) -> None:
-    """docs/HISTORY.md Part 4 T2.6: once a `done` has been rejected once
+    """docs/archive/HISTORY.md Part 4 T2.6: once a `done` has been rejected once
     (an audit-gap or fulfillment-gap marker is in history), the NEXT
     decide() call should prefer the major provider - a done-was-rejected
     signal is exactly the kind of observed difficulty the escalation logic

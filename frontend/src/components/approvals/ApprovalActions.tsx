@@ -7,7 +7,7 @@ import type { RiskLevel } from "@/lib/api"
  * The three decision buttons, extracted so the Chat inline card, the
  * expanded Evidence Pack, and the review dialog's sticky footer all render
  * the same choices in the same order without duplicating decision logic
- * (docs/UI_UX_AUDIT.md Phase 8).
+ * (docs/archive/UI_UX_AUDIT.md Phase 8).
  *
  * Still no "Always allow" - that needs a revocation list to be safe, which
  * doesn't exist yet (the original scope-down in Phase 1 still holds).

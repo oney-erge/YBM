@@ -1,6 +1,6 @@
 @echo off
 rem The one file a non-developer should ever need to double-click
-rem (docs/UI_UX_AUDIT.md Phase 10). Installs whatever's missing, does
+rem (docs/archive/UI_UX_AUDIT.md Phase 10). Installs whatever's missing, does
 rem nothing when there's nothing to do, and opens the console. Everything
 rem real lives in scripts\ybm.ps1's "run" command - this is just the
 rem double-clickable front door to it.

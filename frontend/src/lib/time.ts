@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react"
 
-/** Live countdown formatting for approval expiry (docs/UI_REWRITE_PLAN.md §11.3). */
+/** Live countdown formatting for approval expiry (docs/archive/UI_REWRITE_PLAN.md §11.3). */
 export function secondsUntil(isoTimestamp: string): number {
   const target = new Date(isoTimestamp).getTime()
   return Math.max(0, Math.round((target - Date.now()) / 1000))
@@ -29,7 +29,7 @@ export function useCountdown(isoTimestamp: string): number {
 }
 
 /** How long a task ran/took - shared by the Task Receipt card and the
- * Tasks list outcome column (docs/UI_UX_AUDIT.md Phase 9) rather than
+ * Tasks list outcome column (docs/archive/UI_UX_AUDIT.md Phase 9) rather than
  * each computing their own copy of the same rounding rules. */
 export function formatDuration(seconds: number): string {
   if (seconds < 1) return "under a second"
@@ -43,7 +43,7 @@ export function formatDuration(seconds: number): string {
  * above, not a duplicate: that one is tuned for whole-task durations
  * (usually multi-second, "under a second" is precise enough), this one
  * is for individual tool-call/LLM-call durations shown in the Timeline,
- * Steps list, Graph, and duration chart (docs/UI_UX_AUDIT.md Phase 14),
+ * Steps list, Graph, and duration chart (docs/archive/UI_UX_AUDIT.md Phase 14),
  * which are routinely sub-second and need real millisecond precision to
  * be useful at all. */
 export function formatDurationMs(ms: number): string {

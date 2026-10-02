@@ -4,7 +4,7 @@ import type { TaskRecord } from "@/lib/api"
  * Ports admin_streamlit.py's _extract_last_output / _chat_answer_text
  * exactly, so the web console's chat behaves identically to the Streamlit
  * one it replaces. Keep these two in sync with the Python originals until
- * Streamlit is retired (docs/UI_REWRITE_PLAN.md §19).
+ * Streamlit is retired (docs/archive/UI_REWRITE_PLAN.md §19).
  */
 
 interface LastToolResult {

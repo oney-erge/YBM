@@ -358,7 +358,7 @@ def test_user_facing_message_retrying_status_explains_retry() -> None:
 
 
 def test_user_facing_message_awaiting_approval_shows_preview_and_real_resume_path() -> None:
-    # "Approving blind is not approval" (docs/HISTORY.md P5) - the message
+    # "Approving blind is not approval" (docs/archive/HISTORY.md P5) - the message
     # must say what's being approved, and must not point at the admin UI,
     # which has no approve/reject capability (read-only task-trace listing
     # only). Replying "approve" in this chat is the only working resume path
@@ -388,7 +388,7 @@ def test_user_facing_message_awaiting_approval_without_preview_still_names_resum
 
 
 def test_running_progress_message_names_the_last_real_step() -> None:
-    """Regression guard (docs/HISTORY.md §3.3): _latest_attempt_summary() read
+    """Regression guard (docs/archive/HISTORY.md §3.3): _latest_attempt_summary() read
     metadata["attempt_history"], a plan-era field with zero writers since P3,
     so per-step progress messages silently lost their detail. Now reads
     operator_history."""

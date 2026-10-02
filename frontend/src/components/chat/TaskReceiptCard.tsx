@@ -8,7 +8,7 @@ import { StatusBadge } from "@/components/tasks/StatusBadge"
 import { formatDuration } from "@/lib/time"
 import { EFFECT_DISPLAY } from "@/lib/evidence"
 
-/** Plain-text export (docs/UI_UX_AUDIT.md Phase 2) - human-readable, not a
+/** Plain-text export (docs/archive/UI_UX_AUDIT.md Phase 2) - human-readable, not a
  * raw JSON dump, so it reads the same way the card does. Client-side only:
  * every field here already came from the receipt the card already fetched,
  * so there's nothing new to ask the backend for. */
@@ -27,7 +27,7 @@ function formatReceiptAsText(receipt: TaskReceipt): string {
   }
   const touched = [...receipt.changes.files, ...receipt.changes.commands, ...receipt.changes.urls]
   if (touched.length > 0) {
-    // Each item carries its own real effect label (docs/UI_UX_AUDIT.md
+    // Each item carries its own real effect label (docs/archive/UI_UX_AUDIT.md
     // Phase 14) - this list still merges tool inputs and outputs, so a
     // single task can genuinely contain both a "Read" and a "Modified"
     // item, which is exactly why the label lives per-item, not as one
@@ -60,7 +60,7 @@ function formatReceiptAsText(receipt: TaskReceipt): string {
   } else if (receipt.verification.not_checked > 0) {
     // Silence here would read as "nothing to verify" - say plainly that
     // nothing was actually re-checked, and name which tools have no
-    // mechanical check yet (docs/GAPS.md).
+    // mechanical check yet (docs/ROADMAP.md).
     lines.push(`Not verified: no automatic check available yet for ${receipt.verification.unverified_tools.join(", ")}`)
   }
   if (receipt.approvals.length > 0) {
@@ -99,7 +99,7 @@ const OUTCOME_STYLE: Partial<Record<TaskStatus, { border: string; bg: string; te
 const DEFAULT_OUTCOME_STYLE = { border: "border-success/25", bg: "bg-success/5", text: "text-success" }
 
 /**
- * The "Done" result format (docs/UI_UX_AUDIT.md Phase 2), extended in
+ * The "Done" result format (docs/archive/UI_UX_AUDIT.md Phase 2), extended in
  * Phase 8 to every terminal state, not only "completed" - a task that
  * modified files, contacted a service, or spent an approval before
  * failing is exactly when the user most needs to see what happened. The
@@ -170,7 +170,7 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
 
       {changedItems.length > 0 && (
         <div>
-          {/* Each item shows its own real effect (docs/UI_UX_AUDIT.md
+          {/* Each item shows its own real effect (docs/archive/UI_UX_AUDIT.md
               Phase 14) - the backend still merges tool inputs and outputs
               into one list, so a single task can genuinely contain both a
               Read and a Modified item; that's exactly why the label is

@@ -1,4 +1,4 @@
-"""docs/UI_UX_AUDIT.md Phase 14: real per-item effect classification,
+"""docs/archive/UI_UX_AUDIT.md Phase 14: real per-item effect classification,
 replacing "touched" with what actually happened - a tool's own operation
 name already distinguishes this at the source in most cases.
 """

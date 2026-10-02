@@ -70,10 +70,10 @@ class OpenAICompatibleProvider:
             raise ValueError("base_url is required for OpenAI-compatible LLM provider")
         self.profile = profile
         # Usage from the most recent successful _chat() call - see
-        # docs/HISTORY.md Part 4 T1.4. None until a call completes, or if the
+        # docs/archive/HISTORY.md Part 4 T1.4. None until a call completes, or if the
         # server never reported usage; never a fabricated zero.
         self.last_usage: dict | None = None
-        # Siblings to last_usage, for LLM-call persistence (docs/UI_UX_AUDIT.md
+        # Siblings to last_usage, for LLM-call persistence (docs/archive/UI_UX_AUDIT.md
         # Phase 14d) - same "None until a call completes" contract.
         self.last_request: list[dict] | None = None
         self.last_response_text: str | None = None

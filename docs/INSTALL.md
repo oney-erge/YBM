@@ -1,4 +1,7 @@
-# Local setup
+# Install and run
+
+Every way to get YBM running, and the commands for running it day to day. Once it is up, [USING.md](USING.md)
+tours the console and walks through a first task.
 
 ## Before you start
 
@@ -221,7 +224,8 @@ WhatsApp is disabled by default. It uses [Baileys](https://github.com/WhiskeySoc
 unofficial WhatsApp Web client. It does not need a Meta developer account or public webhook, but it
 does carry a small account-flagging risk.
 
-1. Set `channels.whatsapp.enabled: true` in `config/config.yaml` or use Settings.
+1. Set `channels.whatsapp.enabled: true` in `config/config.yaml`. There is no WhatsApp card in the
+   console yet.
 2. Start or restart YBM.
 3. Follow the bridge log: `.\scripts\ybm.ps1 logs whatsapp -Follow` on Windows, or
    `./backend/.venv/bin/ybm logs whatsapp --follow` on macOS/Linux.

@@ -1,5 +1,5 @@
 /**
- * Chat column width, persisted per-browser (docs/UI_UX_AUDIT.md Phase 12).
+ * Chat column width, persisted per-browser (docs/archive/UI_UX_AUDIT.md Phase 12).
  * Chat was hardcoded to max-w-3xl (768px) everywhere - fine on a laptop,
  * a thin ribbon of text on a wide monitor with a code block scrolling
  * inside it. Same read/write-to-localStorage shape as advanced-mode.ts,

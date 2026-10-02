@@ -1,4 +1,4 @@
-"""The Auditor (docs/HISTORY.md P3 §2.1): "did we actually achieve the
+"""The Auditor (docs/archive/HISTORY.md P3 §2.1): "did we actually achieve the
 goal?" Merges the old two-call validator-then-synthesizer sequence into one
 - check whether raw tool output actually grounds an answer, and if it does,
 extract the focused answer, in a single LLM call.
@@ -54,10 +54,10 @@ class AuditorService:
     def __init__(self, provider: LLMProvider) -> None:
         self.provider = provider
         # Usage from the most recent audit() call - see
-        # docs/HISTORY.md Part 4 T1.4.
+        # docs/archive/HISTORY.md Part 4 T1.4.
         self.last_usage: dict | None = None
         # Siblings to last_usage, read by worker.py to persist the full call
-        # record (docs/UI_UX_AUDIT.md Phase 14d).
+        # record (docs/archive/UI_UX_AUDIT.md Phase 14d).
         self.last_request: list[dict] | None = None
         self.last_response_text: str | None = None
         self.last_model: str | None = None

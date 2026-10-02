@@ -1,7 +1,7 @@
 """Scenario: "write and run a small local Python script" through the real
 Operator loop -> code.interpreter, WITHOUT the objective naming the adapter.
 Ports e2e/all_cases.json's `implicit_code_interpreter_numbers_report` case
-down to the deterministic tier (docs/HISTORY.md P2) - unlike
+down to the deterministic tier (docs/archive/HISTORY.md P2) - unlike
 test_code_interpreter_csv_summary.py/test_code_interpreter_generate_file.py
 (which both say "use the local code interpreter" explicitly), this locks in
 implicit routing: the Operator has to recognize a bounded local script task

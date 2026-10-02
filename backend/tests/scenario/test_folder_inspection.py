@@ -1,7 +1,7 @@
 """Scenario: "inspect this folder and tell me what's inside" through the real
 Operator loop -> filesystem.manage inspect_folder -> Auditor. Ports
 e2e/all_cases.json's `folder_open_inspection` case down to the deterministic
-tier (docs/HISTORY.md P2) - the inspect_folder operation counterpart to
+tier (docs/archive/HISTORY.md P2) - the inspect_folder operation counterpart to
 test_filesystem_search.py's search operation. Fixture re-recorded 2026-07-28
 against the Operator loop (`ybm scenario record folder_open_inspection`,
 localdeploy_qwen3vl_8b) after the plan-based path it was originally recorded

@@ -2,7 +2,7 @@
 
 These exist so a missing dependency, missing config, or unreachable local
 service produces one readable line instead of a stack trace three layers
-deep in a supervised background process (see docs/HISTORY.md P0).
+deep in a supervised background process (see docs/archive/HISTORY.md P0).
 """
 
 from __future__ import annotations
@@ -656,7 +656,7 @@ def _build_admin_console(*, quiet: bool = False) -> None:
     Skips the actual `npm run build` (the slow part - several seconds of
     tsc + vite on every single call) when nothing under frontend/ has
     changed since the last successful build, tracked by a fingerprint next
-    to the build output itself (docs/UI_UX_AUDIT.md Phase 10, second
+    to the build output itself (docs/archive/UI_UX_AUDIT.md Phase 10, second
     review - `ybm run` is meant to open the console in a few seconds, not
     rebuild the console every launch regardless of whether anything
     changed)."""

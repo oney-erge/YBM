@@ -148,7 +148,7 @@ def build_reliability_dashboard(repositories: Repositories, window_days: int = 7
         # missing. A low verified_completed_pct reads very differently
         # depending on whether coverage is high (things were checked and
         # came up wrong) or low (most completions were simply never
-        # checkable yet, per docs/GAPS.md's one-tool verify() coverage).
+        # checkable yet, per docs/ROADMAP.md's one-tool verify() coverage).
         "checked_completed": checked_completed,
         "checked_completed_pct": pct(checked_completed),
         "verification_coverage_pct": (

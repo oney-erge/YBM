@@ -5,7 +5,7 @@ import { PageHeader } from "@/components/layout/PageHeader"
 import { useMemoryFacts, useSettingsSummary, useSkills, useWorkflows } from "@/lib/queries"
 
 /**
- * "What the agent is made of" in one place (docs/UI_UX_AUDIT.md Phase 11) -
+ * "What the agent is made of" in one place (docs/archive/UI_UX_AUDIT.md Phase 11) -
  * Tools, Skills, and Memory were three separate, equally-weighted nav
  * entries, which is the exact scatter the operator feedback that prompted
  * this phase named directly: "these are basically agentic setup... should

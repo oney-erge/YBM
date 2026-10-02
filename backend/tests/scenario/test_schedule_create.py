@@ -3,7 +3,7 @@ Operator loop -> schedule.manage create. schedule.manage is not a content
 tool (no Auditor step), so this locks in the non-content deterministic-
 completion path - the counterpart to the content-tool round-trips in the
 other scenario tests. Ports e2e/all_cases.json's `scheduled_jobs` case down
-to the deterministic tier (docs/HISTORY.md P2). Fixture re-recorded
+to the deterministic tier (docs/archive/HISTORY.md P2). Fixture re-recorded
 2026-07-28 (`ybm scenario record schedule_create`, localdeploy_qwen3vl_8b).
 """
 

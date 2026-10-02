@@ -1,5 +1,5 @@
 """Classifies what a tool call actually did, for receipts and evidence
-(docs/UI_UX_AUDIT.md Phase 14) - replacing Phase 8's "Touched during this
+(docs/archive/UI_UX_AUDIT.md Phase 14) - replacing Phase 8's "Touched during this
 task" wording fix (itself a stopgap for the original, over-claiming
 "Changed") with real per-item effect labels: read, created, modified,
 moved, deleted, command_executed, website_visited, message_sent.

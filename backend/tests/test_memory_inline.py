@@ -31,7 +31,7 @@ def test_strips_path_only_no_filename():
 
 
 def test_memory_context_puts_remembered_facts_first_and_untrimmed():
-    """docs/UI_UX_AUDIT.md Phase 4: a fact someone deliberately remembered
+    """docs/archive/UI_UX_AUDIT.md Phase 4: a fact someone deliberately remembered
     must not silently disappear because the rolling summary ran long -
     unlike the summary, the facts block isn't subject to max_chars."""
     long_summary = "x" * 50

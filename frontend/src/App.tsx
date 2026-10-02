@@ -6,7 +6,7 @@ import { TokenEntryScreen } from "@/components/onboarding/TokenEntryScreen"
 import { useBootstrap } from "@/lib/queries"
 import { getAdminToken } from "@/lib/api"
 
-// Chat is the landing page and should stay light (docs/UI_REWRITE_PLAN.md
+// Chat is the landing page and should stay light (docs/archive/UI_REWRITE_PLAN.md
 // §10: "a first-time user must get an answer without visiting any other
 // screen") - lazy-loading Tasks/Trace/Access/Settings/the wizard keeps
 // TanStack Table and React Flow (the two heaviest deps this rewrite
@@ -35,7 +35,7 @@ const OnboardingWizard = lazy(() =>
 
 const SETUP_DISMISSED_KEY = "ybm.setup.dismissed"
 
-// Route table matches docs/UI_REWRITE_PLAN.md §10's page table exactly.
+// Route table matches docs/archive/UI_REWRITE_PLAN.md §10's page table exactly.
 function App() {
   const { data: bootstrap, isPending } = useBootstrap()
   const [manualWizard, setManualWizard] = useState(false)
@@ -54,7 +54,7 @@ function App() {
   const [tokenVersion, setTokenVersion] = useState(0)
 
   // Bootstrap is the one request that must resolve before any real paint
-  // (docs/UI_REWRITE_PLAN.md §9 Phase 0.3) - it decides wizard vs console.
+  // (docs/archive/UI_REWRITE_PLAN.md §9 Phase 0.3) - it decides wizard vs console.
   if (isPending) return null
 
   // `run_setup()` always auto-generates AGENT_ADMIN_TOKEN and every /api/*

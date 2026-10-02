@@ -231,7 +231,7 @@ def test_desktop_capability_not_requested_by_default(monkeypatch, tmp_path) -> N
     assert bootstrap._desktop_capability_requested(settings) is False
 
 
-# ---- Admin console build fingerprinting (docs/UI_UX_AUDIT.md Phase 10, second review) ----
+# ---- Admin console build fingerprinting (docs/archive/UI_UX_AUDIT.md Phase 10, second review) ----
 
 
 def _write(path: Path, content: str = "x") -> None:

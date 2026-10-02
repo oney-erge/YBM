@@ -89,7 +89,7 @@ async def test_artifact_delivery_sends_screenshot_from_task_metadata(tmp_path) -
 
 @pytest.mark.asyncio
 async def test_artifact_delivery_on_a_whatsapp_task_fails_with_a_channel_aware_message(tmp_path) -> None:
-    """artifact.deliver is Telegram-only in this version (docs/UI_UX_AUDIT.md
+    """artifact.deliver is Telegram-only in this version (docs/archive/UI_UX_AUDIT.md
     Phase 16's disclosed scope) - a WhatsApp-sourced task must fail with a
     message naming its actual channel, not a generic Telegram-flavored one
     that would read like a bug to whoever hits it."""

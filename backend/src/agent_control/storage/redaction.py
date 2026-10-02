@@ -25,7 +25,7 @@ PLACEHOLDER = "***"
 # field*. A credential read out of a user's file arrives as one free-text blob
 # under an innocuous key like "summary", and it was never in YBM's vault, so
 # neither existing rule could see it - a config file's API key reached both the
-# chat reply and the audit trail (docs/E2E_FINDINGS.md P0-1). These patterns
+# chat reply and the audit trail (docs/archive/E2E_FINDINGS.md P0-1). These patterns
 # match on the shape of the value itself, which is what survives being embedded
 # in prose.
 

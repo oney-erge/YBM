@@ -7,7 +7,7 @@ from agent_control.schemas import AuditEvent, AuditEventType, ChannelType, Forma
 
 
 CATEGORY_BY_TYPE = {
-    # "raw_message", not "raw_telegram" (docs/UI_UX_AUDIT.md Phase 16) -
+    # "raw_message", not "raw_telegram" (docs/archive/UI_UX_AUDIT.md Phase 16) -
     # MESSAGE_RECEIVED/MESSAGE_SENT were always channel-generic in the enum
     # itself, but displayed as if only Telegram could emit them; WhatsApp
     # emits the exact same event types now. Which channel it was is the
@@ -26,7 +26,7 @@ CATEGORY_BY_TYPE = {
     AuditEventType.APPROVAL_REQUESTED: "approval",
     AuditEventType.APPROVAL_DECIDED: "approval",
     AuditEventType.ERROR: "error",
-    # Added docs/UI_UX_AUDIT.md Phase 14 - these four previously fell back
+    # Added docs/archive/UI_UX_AUDIT.md Phase 14 - these four previously fell back
     # to the generic "system" category, which was a real gap for
     # TASK_STATE_CHANGED specifically: it's the single most common event
     # type in any task's timeline (fires on every status transition), so
@@ -94,7 +94,7 @@ def _summary(event_type: AuditEventType, payload: dict[str, Any]) -> str:
     if event_type == AuditEventType.TELEGRAM_ACCESS_DECISION:
         return f"{'Allowed' if payload.get('allowed') else 'Denied'} Telegram message"
     if event_type == AuditEventType.CHANNEL_ACCESS_DECISION:
-        # Generic counterpart to TELEGRAM_ACCESS_DECISION above (docs/UI_UX_AUDIT.md
+        # Generic counterpart to TELEGRAM_ACCESS_DECISION above (docs/archive/UI_UX_AUDIT.md
         # Phase 16) - the channel name comes from the payload each adapter's
         # own _audit_access() already stamps, not hardcoded to WhatsApp,
         # so a future channel using this same event type gets a correct
@@ -152,7 +152,7 @@ _CHANNEL_ACTOR_PREFIXES = frozenset(channel.value for channel in ChannelType)
 
 def _source(event: AuditEvent, payload: dict[str, Any]) -> str | None:
     # Every channel's own code stamps its actor strings "<channel>:..."
-    # (docs/UI_UX_AUDIT.md Phase 16 - see channels/base.py's
+    # (docs/archive/UI_UX_AUDIT.md Phase 16 - see channels/base.py's
     # classify_and_spawn_task and each adapter's _audit_access/
     # _normalize_message) - reading the prefix generalizes this for free
     # instead of hardcoding channel names. Checked against ChannelType's

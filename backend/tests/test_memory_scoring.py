@@ -1,4 +1,4 @@
-"""score_facts (docs/UI_UX_AUDIT.md Phase 15) - deterministic relevance
+"""score_facts (docs/archive/UI_UX_AUDIT.md Phase 15) - deterministic relevance
 selection replacing "inject every fact into every task," which is fine at
 five facts and actively harmful at a thousand.
 """

@@ -89,16 +89,16 @@ def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
 
     There used to be a plan-derived path here that took priority (the LLM's
     own declared `plan.postconditions`, then tool-name-derived rules). Both
-    are gone with the plan-once execution path (docs/HISTORY.md P3) -
+    are gone with the plan-once execution path (docs/archive/HISTORY.md P3) -
     nothing creates a PlanModel anymore, so `plan` was always None and those
-    branches were unreachable. See docs/HISTORY.md §1.1.
+    branches were unreachable. See docs/archive/HISTORY.md §1.1.
 
     `task.objective` is the classifier's *paraphrase* of the request, so
     relying on it alone made the keyword fallback depend on the wording a
     model happened to choose: "Create the real files" yields a
     WORKSPACE_DIR obligation, the paraphrase "creating package.json"
     yielded none, and a run that wrote nothing while claiming otherwise
-    completed unchallenged (docs/E2E_FINDINGS.md P0-2). The user's own
+    completed unchallenged (docs/archive/E2E_FINDINGS.md P0-2). The user's own
     message is the stable source of intent, so both are read and the
     results unioned - a paraphrase can add an obligation it makes explicit,
     but can no longer drop one the request already established.

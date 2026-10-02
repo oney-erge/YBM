@@ -13,7 +13,7 @@ from helpers import make_repos
 
 @pytest.mark.asyncio
 async def test_memory_manage_remember_creates_a_task_derived_fact(tmp_path) -> None:
-    """The tool cannot claim any other source (docs/UI_UX_AUDIT.md Phase 4's
+    """The tool cannot claim any other source (docs/archive/UI_UX_AUDIT.md Phase 4's
     provenance requirement) - there is no source field on the input at all,
     every fact this adapter creates is stamped TASK_DERIVED."""
     repos, _audit = make_repos(tmp_path)
@@ -93,7 +93,7 @@ def _executor_for_memory_manage(repos, audit, settings: AppSettings) -> ToolExec
     synthetic stand-in) so this test exercises the actual operation_risks/
     approval_required_operations shipped in tools/memory_manage.py, through
     the full ToolExecutor/PolicyEngine stack the adapter-only tests above
-    bypass (docs/UI_UX_AUDIT.md Phase 15)."""
+    bypass (docs/archive/UI_UX_AUDIT.md Phase 15)."""
     definitions: list = []
     adapters: dict = {}
     register_memory_manage(
@@ -113,7 +113,7 @@ def _executor_for_memory_manage(repos, audit, settings: AppSettings) -> ToolExec
 
 @pytest.mark.asyncio
 async def test_memory_manage_forget_requires_approval_but_remember_and_list_do_not(tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 15: the agent must not be able to silently
+    """docs/archive/UI_UX_AUDIT.md Phase 15: the agent must not be able to silently
     erase a remembered fact - forget is gated, remember/list stay free."""
     repos, audit = make_repos(tmp_path)
     settings = AppSettings()

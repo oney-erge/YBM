@@ -471,7 +471,7 @@ def status_all() -> int:
 
 
 def read_log_tail(name: str, lines: int = 200) -> tuple[str, list[str]] | None:
-    """The admin Diagnostics page's "view log" action (docs/UI_UX_AUDIT.md
+    """The admin Diagnostics page's "view log" action (docs/archive/UI_UX_AUDIT.md
     Phase 9) - the same file `ybm logs <service>` tails, returned as text
     instead of printed. Returns None if the log doesn't exist yet.
     """

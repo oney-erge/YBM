@@ -1,7 +1,7 @@
 import { createContext, useContext } from "react"
 
 /**
- * The single global Advanced mode switch (docs/UI_REWRITE_PLAN.md §6): one
+ * The single global Advanced mode switch (docs/archive/UI_REWRITE_PLAN.md §6): one
  * toggle that reveals Level 2 everywhere, rather than a per-panel
  * disclosure a user has to find and click on every screen. Simple users
  * never touch it; power users flip it once.

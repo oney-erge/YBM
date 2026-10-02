@@ -13,7 +13,7 @@ import { SkillCatalogBrowser } from "@/components/skills/SkillCatalogBrowser"
 import { useSkills } from "@/lib/queries"
 
 /**
- * Skill catalog (docs/UI_UX_AUDIT.md Phase 5, reworked Phase 12): install/
+ * Skill catalog (docs/archive/UI_UX_AUDIT.md Phase 5, reworked Phase 12): install/
  * uninstall entirely from the console, with the tools each skill's
  * instructions reference shown up front - replacing "drop a markdown file
  * into adapters.skills.root_dir by hand". Those tool tags are

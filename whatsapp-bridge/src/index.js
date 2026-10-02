@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * Local WhatsApp sidecar (docs/UI_UX_AUDIT.md Phase 16).
+ * Local WhatsApp sidecar (docs/archive/UI_UX_AUDIT.md Phase 16).
  *
  * Owned and spawned by the Python backend (channels/whatsapp_bridge_process.py),
  * never run standalone in production. Talks to WhatsApp via Baileys (an
@@ -49,7 +49,7 @@ const SECRET = process.env.WHATSAPP_BRIDGE_SECRET || "";
 const AUTH_DIR = process.env.WHATSAPP_AUTH_DIR || ".whatsapp_auth";
 // Bounds the in-memory update buffer so a bridge nobody is polling doesn't
 // grow without limit - a documented v1 limitation, not a persistent queue
-// (see docs/UI_UX_AUDIT.md Phase 16's write-up on this exact tradeoff).
+// (see docs/archive/UI_UX_AUDIT.md Phase 16's write-up on this exact tradeoff).
 const MAX_BUFFERED_MESSAGES = 500;
 
 // The missing-secret guard lives in main(), not here at module scope, so

@@ -6,7 +6,7 @@ actually contacted, and which capabilities can act without asking first.
 
 Every fact here is read from configuration or a recorded audit/invocation
 row; nothing here probes the network or spawns Docker to find out live -
-`ybm doctor` already does live capability checks (docs/GAPS.md). Kept
+`ybm doctor` already does live capability checks (docs/ROADMAP.md). Kept
 fast and honest about the difference between "asked and it said yes" and
 "assumed" - the same "computed on read, nothing new persisted" approach
 analytics.py's reliability dashboard already uses.

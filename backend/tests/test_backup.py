@@ -1,4 +1,4 @@
-"""docs/UI_UX_AUDIT.md Phase 6: back up the state that can't be
+"""docs/archive/UI_UX_AUDIT.md Phase 6: back up the state that can't be
 regenerated (database, config, .env, secret vault) into a timestamped
 zip - not artifacts/workspaces/logs, which are task output or caches.
 """

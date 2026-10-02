@@ -16,8 +16,8 @@ import { formatDurationMs } from "@/lib/time"
 import { cn } from "@/lib/utils"
 
 /**
- * Graph v2 (docs/UI_UX_AUDIT.md Phase 14f) - rooted at the actual query
- * (not just tool calls), one node per real step (docs/UI_UX_AUDIT.md
+ * Graph v2 (docs/archive/UI_UX_AUDIT.md Phase 14f) - rooted at the actual query
+ * (not just tool calls), one node per real step (docs/archive/UI_UX_AUDIT.md
  * Phase 14e's step_id), with duration/token badges, a status ring, and a
  * click-to-inspect panel showing the exact prompt sent, the raw response,
  * tool input/output, and the approval gate, if any. lib/graph.ts owns the
@@ -44,7 +44,7 @@ export function TraceGraph({ trace }: { trace: TaskTrace }) {
 
   if (graphNodes.length <= 1) {
     // Only the root Query node built - either nothing ran yet, or this task
-    // predates step_id linking (docs/UI_UX_AUDIT.md Phase 14e) and its real
+    // predates step_id linking (docs/archive/UI_UX_AUDIT.md Phase 14e) and its real
     // tool calls exist but aren't linkable here; either way, Steps/Timeline
     // still show what happened.
     const message = trace.tool_invocations.length > 0

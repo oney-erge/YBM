@@ -134,7 +134,7 @@ class FakeBridgeClientForProgress:
 
 @pytest.mark.asyncio
 async def test_whatsapp_skips_the_pre_classification_acknowledgment_but_sends_task_started(tmp_path) -> None:
-    """docs/UI_UX_AUDIT.md Phase 16 review: WhatsApp is an unofficial
+    """docs/archive/UI_UX_AUDIT.md Phase 16 review: WhatsApp is an unofficial
     client (Baileys) with real account-flagging risk, unlike Telegram's
     official bot API - the pure-filler "got your message" ping is skipped
     to trim outbound volume, but "task started" is still sent since a real

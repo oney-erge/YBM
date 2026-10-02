@@ -739,7 +739,7 @@ class CodeInterpreterAdapter:
             # but not when it silently fell back from the configured
             # sandboxed backend to unsandboxed local_subprocess (Docker
             # unavailable): that's full process-privilege execution of
-            # LLM-authored code with no human review at all (docs/HISTORY.md
+            # LLM-authored code with no human review at all (docs/archive/HISTORY.md
             # P5). An admin who explicitly configured local_subprocess as
             # untrusted_default_backend (no fallback occurred, this is None)
             # has already made that call and isn't re-prompted per call.
@@ -804,7 +804,7 @@ class CodeInterpreterAdapter:
         - `run_python` could never read a file an earlier step generated.
 
         Found 2026-07-29 re-recording the code_interpreter_csv_summary
-        scenario (docs/HISTORY.md Part 2 §4 item 7), which failed identically
+        scenario (docs/archive/HISTORY.md Part 2 §4 item 7), which failed identically
         on three independent live attempts. A caller can still pass an
         explicit `workspace_dir` to opt out; the containment check below is
         what keeps that from escaping the configured root.
@@ -1198,7 +1198,7 @@ def _summary(returncode: int, stdout: str, stderr: str, created: list[str]) -> s
 
 
 # Bounds for the file-content previews added to created/modified files below.
-# Existed to close a real gap (docs/HISTORY.md Part 3 W1): the Auditor grounds
+# Existed to close a real gap (docs/archive/HISTORY.md Part 3 W1): the Auditor grounds
 # its "did this actually satisfy the objective" check in terminal_output text,
 # but that used to list only file NAMES plus stdout - a script that computed
 # the wrong number and wrote it to result.json passed every check because

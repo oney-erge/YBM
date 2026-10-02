@@ -1,4 +1,4 @@
-"""Unit tests for call_tools_parallel and delegate (docs/HISTORY.md Part 3
+"""Unit tests for call_tools_parallel and delegate (docs/archive/HISTORY.md Part 3
 T1.1/T1.2) - the two new OperatorAction values that let the Operator loop
 run independent tool calls concurrently, or hand a bounded sub-task off to
 an isolated inner loop with its own history and step budget.
@@ -526,7 +526,7 @@ async def test_delegate_accumulates_subagent_token_usage_into_parent_task(tmp_pa
 
 @pytest.mark.asyncio
 async def test_call_tools_parallel_tags_all_calls_with_a_shared_batch_origin(tmp_path) -> None:
-    """docs/UI_REWRITE_PLAN.md §7/§9 Phase 0.6: a trace UI needs to render
+    """docs/archive/UI_REWRITE_PLAN.md §7/§9 Phase 0.6: a trace UI needs to render
     concurrent calls as siblings, not indistinguishable sequential ones.
     Every call in one batch must carry the same ToolCallRequest.origin, both
     on the persisted tool_invocations row (via request_json) and on the

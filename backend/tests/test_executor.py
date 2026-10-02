@@ -360,7 +360,7 @@ async def test_tool_definition_approval_cannot_be_disabled_by_capability_setting
 
 @pytest.mark.asyncio
 async def test_approval_required_operation_carries_its_specific_reason(tmp_path) -> None:
-    # docs/HISTORY.md Part 4's concurrent-hardening note: NEEDS_APPROVAL used
+    # docs/archive/HISTORY.md Part 4's concurrent-hardening note: NEEDS_APPROVAL used
     # to lose the tool-specific "why" (a generic "Approve X using Y" summary
     # only). ToolDefinition.approval_reasons restores it - this pins the
     # restored behavior so it can't silently regress again.

@@ -1,4 +1,4 @@
-"""Tool surface for agent_control.knowledge_base (docs/HISTORY.md Part 3
+"""Tool surface for agent_control.knowledge_base (docs/archive/HISTORY.md Part 3
 T2.7) - lexical search over a folder of the user's own reference material.
 See that module's docstring for why this is keyword-overlap, not embeddings.
 """

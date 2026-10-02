@@ -1,5 +1,5 @@
 """The channel-agnostic half of "intake -> classify -> task -> notify"
-(docs/UI_UX_AUDIT.md Phase 16).
+(docs/archive/UI_UX_AUDIT.md Phase 16).
 
 Telegram (`channels/telegram.py`) was the only channel for a while, and its
 intake service used to inline all four stages as private methods on one
@@ -255,7 +255,7 @@ def _standing_instruction(text: str) -> str | None:
 
     The chat route used to compose an agreeable "Understood, all future
     summaries will be…" and persist nothing, so the next task had no fact to
-    read and silently ignored the rule (docs/E2E_FINDINGS.md P1-3). Saying it
+    read and silently ignored the rule (docs/archive/E2E_FINDINGS.md P1-3). Saying it
     learned while learning nothing is worse than declining: the user gets no
     signal the preference evaporated.
     """

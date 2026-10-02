@@ -15,9 +15,9 @@
 
 </div>
 
-YBM runs on your machine and turns a message into either a direct reply or a traceable task. Tasks
-can use the tools you enable, including files, terminal commands, Chrome, VS Code, desktop control,
-scheduled work, MCP servers, and coding agents.
+YBM runs on your machine and turns a message into either a direct reply or a traceable task. Tasks can
+use the tools you enable: files, terminal commands, Chrome, VS Code, desktop control, scheduled work, MCP
+servers, and coding agents.
 
 ## The question YBM answers
 
@@ -27,113 +27,60 @@ actual computer**. Every task runs the same five stages, and you can stop it at 
 ```text
 Plan  ->  Approve  ->  Execute  ->  Verify  ->  Receipt
  |         |            |            |           |
- |         |            |            |           +-- every file it touched, every
- |         |            |            |               command it ran, what left the
- |         |            |            |               machine, and what it is unsure of
- |         |            |            +-- the answer is checked against the evidence,
- |         |            |                not just asserted
- |         |            +-- policy is enforced per tool call, not once at the start
- |         +-- anything consequential stops and asks, showing its blast radius first
- +-- related changes are grouped and shown as one list, before any of them run
+ |         |            |            |           +-- what it touched and how, what it re-checked on
+ |         |            |            |               disk (and an admission when it checked nothing),
+ |         |            |            |               and what the model calls cost
+ |         |            |            +-- the answer is checked against the tool output, not just
+ |         |            |                asserted, for tasks that read or produce content
+ |         |            +-- policy is enforced on every tool call, not once at the start
+ |         +-- anything consequential stops and asks; related changes are asked for once, as a list
+ +-- large or destructive work is listed up front, before any of it runs
 ```
 
-High-impact capabilities are off until you turn them on, filesystem access is limited to roots you
-choose, and approvals are short-lived rather than standing grants. It is built for three jobs in
-particular:
+High-impact capabilities are off until you turn them on, file access is limited to folders you choose,
+and approvals are exact, expiring, and used once. It is built for three jobs in particular:
 
 1. **Safely organise and change files on your actual computer.**
 2. **Do browser and desktop work for you, asking before anything consequential.**
 3. **Run a long multi-step task and prove afterwards exactly what happened.**
 
-> YBM is alpha software. Start with a test directory, review the access settings, and keep the admin
-> console bound to localhost unless you understand the authentication and network implications.
+> YBM is alpha software. Start with a test folder, review the access settings, and keep the admin console
+> bound to localhost unless you understand the authentication and network implications.
 
 ## Install
 
-The installer gets everything YBM needs, starts it, and opens the setup page. The first start takes
-2-5 minutes while Python and the runtime are downloaded. Later starts take seconds.
+Nothing needs configuring first. The installer gets everything YBM needs, starts it, picks a model from
+what is already on your machine, and opens the console signed in. The first start takes 2-5 minutes while
+Python and the runtime download; later starts take seconds.
 
-### From a source checkout
+**Windows**
 
-The root launchers provide the same lifecycle on every platform. They install
-or repair the local runtime, start YBM, wait for readiness, and then open the
-admin console.
+1. **[Download YBM-Setup.msi](https://github.com/oney-erge/YBM/releases/latest/download/YBM-Setup.msi),**
+   open it, and leave **Launch YBM now** selected.
+2. Or, without an MSI, **[download Install-YBM.bat](https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.bat)**
+   and double-click it. It needs no administrator access or script signing.
 
-```powershell
-.\run.bat          # Windows
-```
-
-```bash
-./run.command      # macOS
-./run.sh           # Linux
-```
-
-Use `.\run.ps1` from PowerShell. Every launcher accepts `doctor`, `repair`,
-`docker`, `logs`, and `stop`, and supports a no-browser mode. Re-running the
-default command reuses a healthy environment.
-
-Setup checks disk space, prevents concurrent dependency changes, retries
-temporary downloads and package synchronization up to three times, and records
-failures in `.setup/install.log`.
-
-### Windows release: choose either installer
-
-**Option 1 - guided installer**
-
-1. **[Download YBM-Setup.msi](https://github.com/oney-erge/YBM/releases/latest/download/YBM-Setup.msi).**
-2. Open it, install, and leave **Launch YBM now** selected.
-3. In the browser, choose a model and start chatting.
-
-**Option 2 - no MSI**
-
-1. **[Download Install-YBM.bat](https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.bat).**
-2. Double-click it and leave the progress window open for 2-5 minutes.
-3. In the browser, choose a model and start chatting.
-
-The second option is a plain-text wrapper around
-[`Install-YBM.ps1`](https://github.com/oney-erge/YBM/releases/latest/download/Install-YBM.ps1),
-does not require administrator access or script signing, verifies the downloaded release, and shows
-which step failed if setup cannot finish. Open **YBM** from the Start Menu after an MSI install, or
-double-click `YBM.bat` in `%USERPROFILE%\ybm` after a script install.
-
-### macOS and Linux
-
-1. Open Terminal.
-2. Paste this command:
+**macOS and Linux:** open Terminal and paste
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.sh | bash
 ```
 
-3. When YBM opens in your browser, choose a model and start chatting.
+Run `~/ybm/ybm.sh` next time. **From a source checkout** run `run.bat` (Windows), `./run.command`
+(macOS), or `./run.sh` (Linux). **Headless server:** `./run.sh docker` starts the published container and
+opens its console. Every option, with checksums and verification, is in [INSTALL.md](docs/INSTALL.md).
 
-Run `~/ybm/ybm.sh` next time. The installer needs Bash, `curl`, and `tar`; it provides Python and
-everything else. Docker, source-checkout, headless, and verification instructions are in
-[Local setup](docs/LOCAL_SETUP.md).
+## Your first ten minutes
 
-### Docker (headless)
+1. YBM opens in your browser, already signed in. It picks a model it finds (your own LocalDeploy, a
+   running Ollama, or a provider API key in your environment or `.env`) and tells you which. It never
+   calls a paid API to choose. If none is found, a short wizard offers a local model or a cloud provider.
+2. File access starts off. Chat offers your Downloads, Documents, and Desktop folders: pick one and
+   whether YBM may only read, or may change things after asking you.
+3. With write access, try **"Organize my Downloads folder by type"**. It shows what it will move and waits
+   for your approval. Nothing moves until you say so, and the finished task keeps a receipt.
 
-The release image is
-[`ghcr.io/oney-erge/ybm:latest`](https://github.com/oney-erge/YBM/pkgs/container/ybm). It includes
-the web console and is intended for Telegram, WhatsApp, API, and server workflows. Nothing needs
-configuring first: it creates its own admin token on first start, and `./run.sh docker` (or
-`.\run.ps1 docker`) starts it and opens the console already signed in. See
-[Local setup](docs/LOCAL_SETUP.md#docker-for-a-headless-server) for volumes, a cloud model key, and
-the loopback-only port mapping.
-
-## First run
-
-There is nothing to enter: the launcher creates your config and admin token and signs the console in
-for you. It also picks a model from what is already on the machine, in this order: your own
-LocalDeploy (`YBM_LOCALDEPLOY_ROOT`), a running Ollama server, then a provider API key already in
-your environment or `.env` (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, and the other providers below).
-Choosing never calls a paid API, and the launcher and the chat header both say which model was
-picked.
-
-If nothing is found, the browser wizard offers a local model or a cloud provider; it verifies access
-and makes one small completion before saving. Connecting Telegram is optional, and WhatsApp is
-configured later under Settings. Until a model exists, chat and task classification will not work.
-See [Local setup](docs/LOCAL_SETUP.md) for manual and headless configuration.
+[USING.md](docs/USING.md) tours the console and covers approvals and troubleshooting.
 
 ## Choose a model
 
@@ -141,45 +88,19 @@ See [Local setup](docs/LOCAL_SETUP.md) for manual and headless configuration.
 |---|---|
 | Ollama, LM Studio, LocalDeploy | Anthropic, OpenAI, OpenRouter, Google Gemini, Groq, DeepSeek, Mistral, xAI, Together AI |
 
-The provider picker also accepts a custom OpenAI-compatible endpoint. Anthropic uses its native
-SDK; the remaining cloud providers and local runtimes use their OpenAI-compatible APIs.
-
-Using a local model keeps model prompts and completions on the configured local endpoint. Other
-enabled tools, such as web search or HTTP requests, can still contact external services.
+The picker also accepts a custom OpenAI-compatible endpoint. Anthropic uses its native SDK; the other
+providers use their OpenAI-compatible APIs. A local model keeps prompts and completions on your machine;
+other enabled tools, such as web search or HTTP requests, can still contact external services.
 
 ## Channels
 
-- **Web chat:** available in the admin console after a model is configured.
-- **Telegram:** optional bot integration with user and chat allowlists. Text, commands, approvals,
-  voice transcription, and artifact delivery are supported.
-- **WhatsApp:** optional, text-only integration through the unofficial Baileys WhatsApp Web client.
-  It requires Node.js, QR linking, and an explicit phone-number allowlist.
+- **Web chat:** in the console, ready as soon as a model is configured.
+- **Telegram:** optional bot with user and chat allowlists. Text, commands, approvals, voice transcription,
+  and file delivery.
+- **WhatsApp:** optional and text-only, through the unofficial Baileys client. Needs Node.js, QR linking,
+  and a phone-number allowlist, and is configured in `config/config.yaml`.
 
 An empty Telegram or WhatsApp allowlist denies every incoming message.
-
-## What it can do
-
-- Search, read, and organize files inside configured roots.
-- Run bounded terminal commands, Python code, and supported coding agents.
-- Use Chrome, screenshots, and Windows desktop control when enabled.
-- Schedule recurring work and continue long-running tasks.
-- Connect to MCP servers and expose its own MCP entry point.
-- Work with VS Code through the optional bridge extension.
-- Store attributed memory and search an indexed local knowledge base.
-- Produce task traces with tool results, approvals, LLM receipts, timing, and cost data.
-
-Capabilities and adapters are separate controls. Enabling an adapter does not bypass its capability
-policy. See [Capabilities](docs/CAPABILITIES.md) for the implemented tool catalog.
-
-## Safety model
-
-High-impact capabilities start disabled. Filesystem access is restricted to configured roots.
-Terminal, browser, desktop control, dependency installation, and Git pushes are separately gated.
-Risky operations require short-lived approvals enforced by the runtime. Secrets are redacted from
-logs and task output, and each task retains an audit trail.
-
-Read the [Threat model](docs/THREAT_MODEL.md) before granting access to important files or accounts.
-See [SECURITY.md](SECURITY.md) for vulnerability reporting.
 
 ## How it works
 
@@ -190,68 +111,42 @@ Web chat  /         |            |
                     +--> reply    +--> Auditor --> result and trace
 ```
 
-The FastAPI backend owns orchestration, policy, persistence, and adapters. The React console talks
-to it through `/admin/api/*`. Telegram and WhatsApp are channel adapters over the same task pipeline,
-and the VS Code extension is an editor bridge rather than a second agent runtime. See
-[Architecture](docs/ARCHITECTURE.md) and [Roles](docs/ROLES.md) for details.
+A FastAPI backend owns orchestration, policy, persistence, and the channel adapters; the React console
+talks to it through `/admin/api/*`. The Concierge decides whether a message is chat or a task, the
+Operator does the work one tool call at a time under the policy engine, and the Auditor checks the
+result. See [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
-## Everyday commands
+## Safety
 
-On Windows, use the repository lifecycle wrapper:
+High-impact capabilities start disabled: terminal, file writes, browser and desktop control, dependency
+installs, and Git pushes are each gated separately. Secrets are redacted from logs and task output, and
+every task keeps an audit trail. Read the [threat model](docs/THREAT_MODEL.md) before granting access to
+important files or accounts, and see [SECURITY.md](SECURITY.md) to report a vulnerability.
 
-```powershell
-.\scripts\ybm.ps1 doctor
-.\scripts\ybm.ps1 start -Open
-.\scripts\ybm.ps1 status
-.\scripts\ybm.ps1 logs worker -Follow
-.\scripts\ybm.ps1 stop
-```
+## Limitations
 
-On macOS and Linux, use the installed console script:
+- Alpha, and tested most heavily on Windows.
+- Desktop observation and control are Windows-only.
+- WhatsApp is text-only and uses an unofficial client, which carries account risk.
+- Voice transcription is off by default and needs the `voice` extra.
+- Docker cannot reach the host desktop or editor, and sees only mounted paths.
 
-```bash
-./backend/.venv/bin/ybm doctor
-./backend/.venv/bin/ybm start --open
-./backend/.venv/bin/ybm status
-./backend/.venv/bin/ybm logs worker --follow
-./backend/.venv/bin/ybm stop
-```
-
-Run `.\scripts\ybm.ps1 help` or `./backend/.venv/bin/ybm --help` for the command available on that
-interface. Windows-only conveniences include the tray app, login autostart, test runner, scenario
-tools, and extension packaging.
-
-## Development
-
-```powershell
-.\scripts\ybm.ps1 setup
-.\scripts\ybm.ps1 doctor
-.\scripts\ybm.ps1 test
-```
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for focused verification commands. Deterministic backend tests
-do not need a network connection, GPU, Telegram account, or paid model call. Live E2E and scenario
-recording have separate prerequisites and can make external calls.
+The full list is under [Known limits](docs/ROADMAP.md#known-limits).
 
 ## Documentation
 
 | Guide | Contents |
 |---|---|
-| [Local setup](docs/LOCAL_SETUP.md) | Installers, manual setup, runtime commands, and local data |
-| [Architecture](docs/ARCHITECTURE.md) | Current components and message flow |
-| [Roles](docs/ROLES.md) | Concierge, Operator, and Auditor responsibilities |
-| [Capabilities](docs/CAPABILITIES.md) | Implemented tools and their policy gates |
-| [Threat model](docs/THREAT_MODEL.md) | Trust boundaries, protections, and residual risk |
+| [Install](docs/INSTALL.md) | Every install path, runtime commands, local data, linking WhatsApp |
+| [Using YBM](docs/USING.md) | First run, the console, approvals, checking it works, troubleshooting |
+| [Architecture](docs/ARCHITECTURE.md) | The three roles, the Operator loop, task states, components |
+| [Capabilities](docs/CAPABILITIES.md) | The tool catalog and the access each tool needs |
+| [Threat model](docs/THREAT_MODEL.md) | Trust boundaries, protections, residual risk |
+| [Roadmap](docs/ROADMAP.md) | What is built, what is next, and the known limits |
 | [Database inspection](docs/DATABASE_INSPECTION.md) | Inspect, prune, reset, and trace local state |
-| [Known gaps](docs/GAPS.md) | Current limitations and unimplemented behavior |
-| [History](docs/HISTORY.md) | Design rationale and completed phases |
+| [Contributing](CONTRIBUTING.md) | Development setup and verification commands |
 
-## Current limitations
-
-- The project is alpha and is tested most heavily on Windows.
-- Desktop observation and control are Windows-only.
-- WhatsApp is text-only and uses an unofficial client, which carries account risk.
-- Voice transcription is disabled by default and needs the `voice` dependency extra.
-- Docker cannot access host desktop or editor sessions, and only mounted paths are visible.
+Design rationale and finished plans are kept in [docs/archive/](docs/archive/HISTORY.md); they describe
+decisions at the time, not current behavior.
 
 MIT licensed.

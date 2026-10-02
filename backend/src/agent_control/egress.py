@@ -1,7 +1,7 @@
 """Records when a task's own tool call reaches beyond this machine.
 
 Backs Task Receipts' "did anything leave the machine" line
-(docs/UI_UX_AUDIT.md Phase 2) with a real signal instead of a guess: an
+(docs/archive/UI_UX_AUDIT.md Phase 2) with a real signal instead of a guess: an
 EGRESS_CONTACTED audit event, task-scoped like every other audit event, so
 a receipt just filters the same audit_events table it already reads.
 Loopback hosts (local Ollama/LocalDeploy, the VS Code bridge) are excluded

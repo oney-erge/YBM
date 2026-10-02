@@ -1,5 +1,5 @@
 """Spawns and owns the whatsapp-bridge Node sidecar as a child process
-(docs/UI_UX_AUDIT.md Phase 16) - so `ybm.ps1`'s service list doesn't need to
+(docs/archive/UI_UX_AUDIT.md Phase 16) - so `ybm.ps1`'s service list doesn't need to
 learn a new, non-Python process type. From its perspective this is still
 just one more Python entry point (`poll-whatsapp`, cli.py); Node is an
 internal implementation detail that entry point happens to spawn.

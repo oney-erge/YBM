@@ -2,7 +2,7 @@
  * Deliberately conservative: describes what a capability *is* (a factual
  * name→description lookup), never asserts whether a specific action is
  * "reversible" - claiming that with false confidence in a security UI is
- * worse than not claiming it at all (docs/UI_REWRITE_PLAN.md §11.2's
+ * worse than not claiming it at all (docs/archive/UI_REWRITE_PLAN.md §11.2's
  * "Reversibility" field is scoped down to this on purpose). Unlisted
  * capabilities fall back to the raw name, not a guess.
  *

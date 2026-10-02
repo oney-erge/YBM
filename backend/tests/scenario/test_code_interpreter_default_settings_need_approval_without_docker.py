@@ -1,4 +1,4 @@
-"""Scenario: proves the code.interpreter approval gate (docs/HISTORY.md P5)
+"""Scenario: proves the code.interpreter approval gate (docs/archive/HISTORY.md P5)
 holds through the *entire* real worker/planner/policy/registry/executor
 stack under genuinely default settings - not just at the adapter unit-test
 level (see test_code_interpreter.py's
@@ -67,7 +67,7 @@ async def test_generated_code_needs_approval_under_true_default_settings(tmp_pat
     assert needing_approval
     # The NEEDS_APPROVAL result itself carries only {"approval_id": ...} -
     # the human-facing "why" lives on the ApprovalRequest.summary instead,
-    # via ToolDefinition.approval_reasons (docs/HISTORY.md Part 4). Asserts
+    # via ToolDefinition.approval_reasons (docs/archive/HISTORY.md Part 4). Asserts
     # both the record's identity (tool/capability/risk) and that a human
     # reading it actually learns why - not just a generic "Approve X using Y".
     approvals = scenario.repositories.approvals.list_for_task(task.id)

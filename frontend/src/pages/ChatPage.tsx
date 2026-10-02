@@ -57,7 +57,7 @@ interface PendingAttachment {
 //
 // The first deliberately routes through an approval, so a first-time user
 // meets the approval gate in their first minute rather than discovering it
-// later (docs/UI_REWRITE_PLAN.md §10).
+// later (docs/archive/UI_REWRITE_PLAN.md §10).
 const STARTER_PROMPTS = [
   "Organize my Downloads folder by type",
   "Summarize the PDFs on my desktop",
@@ -395,7 +395,7 @@ function ChatExchange({ task }: { task: TaskRecord }) {
       <Bubble role="assistant" text={chatAnswerText(task)} pending={!settled} status={task.status}>
         {/* Every terminal state gets a receipt, not just completed - a task
             that modified files then failed is exactly when the user most
-            needs to see what happened (docs/UI_UX_AUDIT.md Phase 8). */}
+            needs to see what happened (docs/archive/UI_UX_AUDIT.md Phase 8). */}
         {settled && <TaskReceiptCard taskId={task.id} />}
         {blockedAccess && (
           <AccessHintCard
