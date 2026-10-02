@@ -40,7 +40,6 @@ Two concrete things, both about not having to take the agent's word:
 Smaller items that are real and unfinished:
 
 - A WhatsApp card in Settings (QR pairing and the allowlist), so it no longer needs a config edit.
-- Telegram and WhatsApp intake following a model change without a restart.
 - A human clean-machine pass of the installers on Windows, macOS, and Linux.
 
 ## Not doing
@@ -104,14 +103,17 @@ Git history and [archive/](archive/), not here.
   CLI-based coding-agent flow are supported.
 - The Windows PowerShell supervisor and the cross-platform `ybm` supervisor are separate
   implementations.
-- The task worker follows `config.yaml` and `.env` while it runs, but the Telegram and WhatsApp intake
-  processes build their model clients once at startup, so a model chosen or changed later does not reach
-  their first-line chat replies and task classification until YBM is restarted.
+- The task worker and the Telegram and WhatsApp intake follow `config.yaml` and `.env` while they run,
+  except that rotating a channel's own token needs a restart.
+- The launchers (`run.*`, `scripts/ybm.ps1`) and the tray icon assume the default port 8765 when they
+  probe or open the console. The backend, `ybm start`, and `ybm doctor` honour `server.port`, but if you
+  change it, open the console with `ybm admin-url` rather than relying on the launcher's readiness check.
 - Receipts include the Concierge's call once a task exists. A classification for a message that never
   becomes a task, and conversation-memory summary calls, have no task to attach to and are not recorded.
 - Status requests cost two LLM calls. The old LLM-free keyword shortcut was deliberately not rebuilt: it
   was brittle and silently misroutable.
-- Installing from a source checkout needs Node.js 22.22 or newer to build the console; release installs
+- Installing from a source checkout needs Node.js 22.22 or newer to build the console, because the built
+  console is not committed; with less, the launcher continues with the JSON API only. Release installs
   ship it prebuilt.
 
 ### Maintainability

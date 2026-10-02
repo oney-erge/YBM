@@ -7,6 +7,18 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A model chosen or changed after the Telegram or WhatsApp intake started did not reach its first-line
+  chat replies or task classification until everything was restarted. Both intake loops now follow
+  `config.yaml` and `.env` the way the task worker does, and keep the previous setup if an edit is bad.
+  Rotating a channel's own token still needs a restart.
+- `ybm start` waited out its 45-second budget and reported the backend as failed when `server.port` was
+  not 8765, because the readiness probe was hard-coded. The probe, `ybm doctor`'s port check, and the
+  console address printed by `ui-build` and onboarding now follow the configured port. The launchers and
+  tray icon still assume 8765 (see "Known limits" in the roadmap).
+- The console showed a blank window until the first response from the backend, which on a cold launch
+  looked like a crash. It now says "Starting YBM...".
+- The per-role models and MCP servers toasts told people to restart long-running processes; neither is
+  needed any more.
 - Web chat, the default front door, acknowledged "remember that ..." and standing
   rules ("always answer in three bullets") and stored nothing, while Telegram and
   WhatsApp stored them. Web chat now uses the same runtime-level handling, so a rule

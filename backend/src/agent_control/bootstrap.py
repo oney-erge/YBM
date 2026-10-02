@@ -252,7 +252,7 @@ def _localdeploy_expected(settings: AppSettings | None) -> bool:
 def _check_ports(settings: AppSettings | None = None) -> list[Check]:
     # A free port is the normal state before `ybm start`, not a warning: this
     # used to print "[WARN] ... free - not running yet" on every first run.
-    ports = [("Backend", 8765)]
+    ports = [("Backend", settings.server.port if settings is not None else 8765)]
     if _localdeploy_expected(settings):
         ports.insert(0, ("LocalDeploy", 8000))
     return [

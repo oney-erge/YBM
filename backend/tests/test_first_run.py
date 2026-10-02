@@ -220,6 +220,18 @@ def test_a_free_port_is_not_a_warning(monkeypatch, tmp_path) -> None:
     assert [c.name for c in checks] == ["Port 8765 (Backend)"]
 
 
+def test_the_backend_port_checked_is_the_configured_one(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("YBM_LOCALDEPLOY_ROOT", raising=False)
+    probed: list[int] = []
+    monkeypatch.setattr(bootstrap, "_port_listening", lambda port, **kw: probed.append(port) or False)
+
+    checks = bootstrap._check_ports(AppSettings(_env_file=None, server={"port": 9123}))
+
+    assert [c.name for c in checks] == ["Port 9123 (Backend)"]
+    assert probed == [9123]
+
+
 def test_the_localdeploy_port_is_only_listed_for_installs_that_use_it(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(bootstrap, "_port_listening", lambda port, **kw: False)

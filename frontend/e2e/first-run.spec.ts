@@ -299,3 +299,20 @@ test("the launch link's token is exchanged for a session and removed from the ad
   expect(page.url()).not.toContain("token=")
   expect(state).toBeTruthy()
 })
+
+test("a slow first response shows that YBM is starting instead of a blank window", async ({ page }) => {
+  await page.route("**/admin/api/**", async (route) => {
+    const path = new URL(route.request().url()).pathname.replace(/^\/admin/, "")
+    if (path === "/api/bootstrap") {
+      await new Promise((resolve) => setTimeout(resolve, 1500))
+      return route.fulfill({ json: bootstrap() })
+    }
+    if (path === "/api/approvals") return route.fulfill({ json: { approvals: [] } })
+    return route.fulfill({ json: {} })
+  })
+  await page.goto("./")
+
+  await expect(page.getByRole("status")).toHaveText("Starting YBM...")
+  await expect(page.getByRole("link", { name: "Chat" })).toBeVisible({ timeout: 10_000 })
+  await expect(page.getByRole("status").filter({ hasText: "Starting YBM" })).toHaveCount(0)
+})

@@ -55,7 +55,9 @@ function App() {
 
   // Bootstrap is the one request that must resolve before any real paint
   // (docs/archive/UI_REWRITE_PLAN.md §9 Phase 0.3) - it decides wizard vs console.
-  if (isPending) return null
+  // A blank window here reads as a crash, and it is the first thing seen on every launch while the
+  // backend is still warming up, so say what is happening instead.
+  if (isPending) return <StartingScreen />
 
   // `run_setup()` always auto-generates AGENT_ADMIN_TOKEN and every /api/*
   // route except bootstrap enforces it, so a browser with no sign-in has to
@@ -184,6 +186,17 @@ function App() {
 
 function PageFallback() {
   return <div className="p-6 text-sm text-muted-foreground">Loading...</div>
+}
+
+function StartingScreen() {
+  return (
+    <div
+      role="status"
+      className="flex h-screen items-center justify-center bg-background text-sm text-muted-foreground"
+    >
+      Starting YBM...
+    </div>
+  )
 }
 
 export default App

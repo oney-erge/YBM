@@ -15,7 +15,7 @@ all, so the wizard asks exactly those two and defaults everything else:
 
 from __future__ import annotations
 
-from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, run_doctor, run_setup
+from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, admin_console_url, run_doctor, run_setup
 from agent_control.config_sync import ConfigManager, read_env_value
 
 
@@ -134,5 +134,5 @@ def run_onboard() -> int:
         return start_all(open_browser=True)
 
     print("\nWhen you're ready: `ybm start` (or `.\\scripts\\ybm.ps1 start` on Windows).")
-    print("Then open http://127.0.0.1:8765/admin for the admin console and web chat.")
+    print(f"Then open {admin_console_url(with_token=False)} for the admin console and web chat.")
     return 0

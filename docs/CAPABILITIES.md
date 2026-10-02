@@ -37,11 +37,11 @@ Set access from the admin console's **Access** page, which groups capabilities i
 | **Write with approval** | Writes allowed, each one pauses for a human |
 | **Full access** | Writes allowed without per-call approval |
 
-Changes to access, folders and the model take effect on the next task: the worker follows
-`config/config.yaml` and `.env` while it runs, so nothing needs restarting. (Telegram and
-WhatsApp intake keep the model they started with; restart after changing it. See
-[Known limits](ROADMAP.md#known-limits).) A config that enables only `filesystem.write` keeps working: being
-allowed to change files implies being allowed to look at them.
+Changes to access, folders and the model take effect on the next task: the worker, and the Telegram
+and WhatsApp intake, follow `config/config.yaml` and `.env` while they run, so nothing needs
+restarting. (Changing a channel's own token does; see [Known limits](ROADMAP.md#known-limits).) A
+config that enables only `filesystem.write` keeps working: being allowed to change files implies
+being allowed to look at them.
 
 > "Full access" still does **not** bypass approvals that a tool declares for a specific
 > operation (installing an MCP server, promoting generated code, running generated Python).

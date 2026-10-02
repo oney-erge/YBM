@@ -33,7 +33,7 @@ from pathlib import Path
 from urllib.error import URLError
 from urllib.request import urlopen
 
-from agent_control.config import backend_base_url, load_settings
+from agent_control.config import backend_base_url, load_settings, local_backend_url
 from agent_control.config_sync import read_env_value
 
 
@@ -126,6 +126,20 @@ def _whatsapp_enabled() -> bool:
         return False
 
 
+def _backend_ready_url() -> str:
+    """The backend's /health on the port it is configured to listen on.
+
+    Hard-coding 8765 made `ybm start` wait 45 seconds for a backend that was
+    healthy on any other `server.port`, then report a required service as failed.
+    A config that cannot be read falls back to the default, so a broken file
+    surfaces in `ybm doctor` rather than here.
+    """
+    try:
+        return f"{local_backend_url(load_settings())}/health"
+    except Exception:
+        return "http://127.0.0.1:8765/health"
+
+
 def build_service_specs(
     *, no_telegram: bool = False, no_whatsapp: bool = False, no_worker: bool = False,
     no_scheduler: bool = False, no_localdeploy: bool = False,
@@ -142,7 +156,7 @@ def build_service_specs(
         name="backend",
         args=[sys.executable, "-m", "agent_control.serve_backend"],
         cwd=_repo_root(), env=env,
-        ready_url="http://127.0.0.1:8765/health", ready_timeout_seconds=45, required=True,
+        ready_url=_backend_ready_url(), ready_timeout_seconds=45, required=True,
     ))
     if not no_telegram and _telegram_configured():
         specs.append(ServiceSpec(
