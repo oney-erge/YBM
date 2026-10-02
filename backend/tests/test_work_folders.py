@@ -146,10 +146,11 @@ def test_the_systems_own_temporary_folder_is_never_mistaken_for_a_system_folder(
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX system directories")
 def test_specific_posix_system_directories_are_still_refused(tmp_path) -> None:
+    home = _home(tmp_path)
     for path in ("/etc", "/usr/bin", "/var/log"):
         if Path(path).is_dir():
             with pytest.raises(FolderRejected, match="system folder"):
-                validate_work_folder(path, home=_home(tmp_path))
+                validate_work_folder(path, home=home)
 
 
 # ---- writing the config ---------------------------------------------------------------------
