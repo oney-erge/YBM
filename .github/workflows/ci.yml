@@ -32,6 +32,13 @@ jobs:
           $errors = $null
           [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path run.ps1), [ref]$null, [ref]$errors)
           if ($errors.Count) { $errors | Format-List | Out-String | Write-Error }
+      # install.sh is what the README's curl one-liner runs. A stray "+" in place of a line
+      # continuation and CRLF in the release's SHA256SUMS.txt both broke it while this job was
+      # green, because neither is a syntax error. Run its two helpers against local fixtures.
+      - name: Exercise the Unix installer's download and checksum helpers
+        run: |
+          shellcheck --severity=error scripts/install.sh scripts/check_install_sh.sh
+          bash scripts/check_install_sh.sh
 
   # Parsing a launcher proves it is valid syntax, not that it starts YBM. A
   # launcher that failed on every default start (and one that reported success

@@ -45,7 +45,14 @@ fail() {
 
 download_release() {
   local url=$1 destination=$2
-  curl --fail --location --silent --show-error --retry 2 --retry-delay 1 +       --retry-connrefused --output "$destination" --write-out '%{http_code}' "$url"
+  curl --fail --location --silent --show-error --retry 2 --retry-delay 1 \
+    --retry-connrefused --output "$destination" --write-out '%{http_code}' "$url"
+}
+
+# The release workflow writes SHA256SUMS.txt on a Windows runner, so its lines end in
+# CRLF. Strip the CR first, or the file name never matches and verification fails.
+expected_unix_sha256() {
+  tr -d '\r' < "$1" | awk '$2 == "YBM-unix.tar.gz" || $2 ~ /^YBM-[^[:space:]]+-unix\.tar\.gz$/ { print tolower($1); exit }'
 }
 
 # --- 1. Get the complete release -----------------------------------------
@@ -77,7 +84,7 @@ else
     fail "checksum download failed" "Check your internet connection and re-run."
   fi
   [ "$checksum_status" = "200" ] || { rm -rf "$tmp"; fail "checksum download failed (HTTP $checksum_status)" "Open the latest YBM release and report the broken checksum file."; }
-  expected="$(awk '$2 == "YBM-unix.tar.gz" || $2 ~ /^YBM-[^[:space:]]+-unix\.tar\.gz$/ { print tolower($1); exit }' "$tmp/SHA256SUMS.txt")"
+  expected="$(expected_unix_sha256 "$tmp/SHA256SUMS.txt")"
   [ -n "$expected" ] || { rm -rf "$tmp"; fail "the release checksum file has no Unix archive entry" "Open the latest YBM release and report the broken release."; }
   if command -v sha256sum >/dev/null 2>&1; then
     actual="$(sha256sum "$tmp/ybm.tar.gz" | awk '{ print tolower($1) }')"
