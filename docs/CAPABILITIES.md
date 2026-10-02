@@ -23,7 +23,8 @@ flowchart LR
     H -->|approved| X
 ```
 
-Only three capabilities ship enabled: `telegram.receive`, `telegram.send`, `llm.generate`.
+Only four capabilities ship enabled: `agent.core` (YBM's own built-in helpers), `telegram.receive`,
+`telegram.send` and `llm.generate`.
 **Everything else starts off** - including all filesystem, terminal, browser, desktop, and
 network access.
 
@@ -67,10 +68,10 @@ allowed to change files implies being allowed to look at them.
 | `memory.manage` | `memory.manage` | Remember, list, and forget structured facts. |
 | `tts.synthesize` | `tts.synthesize` | Text to speech. |
 | `artifact.deliver` | `telegram.send` | Send a generated file or screenshot back to the chat. |
-| `knowledge.search` | `telegram.receive` | Keyword-overlap search across a folder of your documents. Not embeddings. |
-| `persona.manage` | `telegram.receive` | Read/update the global preference document injected into every Operator prompt. |
-| `skills.use` | `telegram.receive` | List and load user-droppable skill instructions. |
-| `task.status` | `telegram.receive` | Active tasks, background sessions, and what's waiting on approval or external work. |
+| `knowledge.search` | `agent.core` | Keyword-overlap search across a folder of your documents. Not embeddings. |
+| `persona.manage` | `agent.core` | Read/update the global preference document injected into every Operator prompt. |
+| `skills.use` | `agent.core` | List and load user-droppable skill instructions. |
+| `task.status` | `agent.core` | Active tasks, background sessions, and what's waiting on approval or external work. |
 
 ## Channels
 

@@ -270,11 +270,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     # CONTENT can only influence what the model reads, never act on its own;
     # any action it prompts the model toward still goes through that tool's
     # own capability gate.
-    enabled = capability_enabled(settings, Capability.TELEGRAM_RECEIVE) and settings.adapters.skills.enabled
+    enabled = capability_enabled(settings, Capability.AGENT_CORE) and settings.adapters.skills.enabled
     definitions.append(
         ToolDefinition(
             name="skills.use",
-            capability=Capability.TELEGRAM_RECEIVE,
+            capability=Capability.AGENT_CORE,
             enabled=enabled,
             description=(
                 "list available user-defined skills (name + one-line description), or read one "

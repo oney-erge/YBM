@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from agent_control.channels.memory import ConversationMemoryService
 from agent_control.error_text import describe_exception
+from agent_control.llm.call_log import cap_messages, merge_token_usage
 from agent_control.logging_setup import bind_task_context
 from agent_control.orchestration.auditor import AuditorService
 from agent_control.orchestration.executor import ToolExecutor
@@ -2022,9 +2023,9 @@ class TaskWorker:
         """Accumulate one LLM call's token usage into task.metadata["token_usage"].
 
         `source` is "operator" or "auditor" - the two LLM calls the worker
-        itself makes per step (docs/HISTORY.md Part 4 T1.4). Deliberately
-        does NOT cover the Concierge/classifier/responder calls made before a
-        task exists, or coding-agent-reported usage (already tracked
+        itself makes per step (docs/HISTORY.md Part 4 T1.4). The Concierge's
+        call is added by llm/call_log.py once its task exists. Deliberately
+        does NOT cover coding-agent-reported usage (already tracked
         separately as last_tool_usage/last_copilot_usage in
         _record_tool_result - a different cost source with different
         pricing, not merged with this one). `usage` is None whenever the
@@ -2036,28 +2037,10 @@ class TaskWorker:
         ever fell back to a secondary profile stays flagged for the rest of
         the task, even if a later call succeeds on the primary again.
         """
-        if not usage:
+        merged = merge_token_usage(task.metadata.get("token_usage"), source, usage, fallback_used=fallback_used)
+        if merged is None:
             return task
-        current = dict(task.metadata.get("token_usage") or {})
-        current["calls"] = int(current.get("calls", 0)) + 1
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-            value = usage.get(key)
-            if isinstance(value, int | float):
-                current[key] = int(current.get(key, 0)) + int(value)
-        by_source = dict(current.get("by_source") or {})
-        source_entry = dict(by_source.get(source) or {})
-        source_entry["calls"] = int(source_entry.get("calls", 0)) + 1
-        for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
-            value = usage.get(key)
-            if isinstance(value, int | float):
-                source_entry[key] = int(source_entry.get(key, 0)) + int(value)
-        by_source[source] = source_entry
-        current["by_source"] = by_source
-        if usage.get("model"):
-            current["last_model"] = usage["model"]
-        if fallback_used:
-            current["fallback_used"] = True
-        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "token_usage": current})
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "token_usage": merged})
 
     def _record_llm_call(
         self, task_id: str, source: str, step_index: int, service: Any, *, step_id: str
@@ -2098,7 +2081,7 @@ class TaskWorker:
                 model=getattr(service, "last_model", None),
                 step_index=step_index,
                 step_id=step_id,
-                messages=_cap_messages(redact_payload(messages, self.redact_patterns), self.llm_call_max_chars),
+                messages=cap_messages(redact_payload(messages, self.redact_patterns), self.llm_call_max_chars),
                 response_text=response_text,
                 prompt_tokens=usage.get("prompt_tokens"),
                 completion_tokens=usage.get("completion_tokens"),
@@ -3281,37 +3264,6 @@ def _looks_like_http_output(output: dict[str, Any]) -> bool:
     return output.get("operation") == "request" and "status_code" in output and (
         "json" in output or "text" in output
     )
-
-def _cap_messages(messages: list[dict[str, Any]], max_chars: int) -> list[dict[str, Any]]:
-    """Bounds one LLM call's persisted messages (docs/UI_UX_AUDIT.md Phase
-    14d) - applied after redaction, per-message, so the cap can't truncate
-    mid-redaction-pattern. A multimodal message's image_url parts are a
-    base64 data URI, not prompt text; they're replaced with a placeholder
-    rather than capped like text, since a screenshot belongs in the task's
-    artifacts, not duplicated (and truncated into garbage) in a text field.
-    """
-    return [
-        {**message, "content": _cap_message_content(message.get("content"), max_chars)}
-        for message in messages
-        if isinstance(message, dict)
-    ]
-
-
-def _cap_message_content(content: Any, max_chars: int) -> Any:
-    if isinstance(content, str):
-        return content if len(content) <= max_chars else f"{content[:max_chars]}...[truncated]"
-    if isinstance(content, list):
-        capped = []
-        for part in content:
-            if isinstance(part, dict) and part.get("type") == "image_url":
-                capped.append({"type": "image_url", "image_url": {"url": "[image omitted from trace]"}})
-            elif isinstance(part, dict) and isinstance(part.get("text"), str):
-                capped.append({**part, "text": _cap_message_content(part["text"], max_chars)})
-            else:
-                capped.append(part)
-        return capped
-    return content
-
 
 def _trim_result(result: ToolCallResult) -> dict:
     payload = result.model_dump(mode="json")

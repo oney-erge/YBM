@@ -81,11 +81,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     settings = deps.settings
     # Reuses TELEGRAM_RECEIVE, same reasoning as skills.use/persona.manage:
     # read-only local search with no side effects.
-    enabled = capability_enabled(settings, Capability.TELEGRAM_RECEIVE) and settings.adapters.knowledge_base.enabled
+    enabled = capability_enabled(settings, Capability.AGENT_CORE) and settings.adapters.knowledge_base.enabled
     definitions.append(
         ToolDefinition(
             name="knowledge.search",
-            capability=Capability.TELEGRAM_RECEIVE,
+            capability=Capability.AGENT_CORE,
             enabled=enabled,
             description=(
                 "search the user's local knowledge base (personal notes/reference documents) by "

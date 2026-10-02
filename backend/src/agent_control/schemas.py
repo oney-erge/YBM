@@ -73,6 +73,12 @@ class RiskLevel(StrEnum):
 
 
 class Capability(StrEnum):
+    # YBM's own built-in helpers: task status, skills, persona and notes search.
+    # They are local reads of YBM's own state, and used to borrow
+    # telegram.receive, which made them look (and behave) like Telegram features:
+    # the Tools page said task.status needed "can read incoming Telegram
+    # messages", and disabling that capability silently removed all four.
+    AGENT_CORE = "agent.core"
     TELEGRAM_RECEIVE = "telegram.receive"
     TELEGRAM_SEND = "telegram.send"
     LLM_GENERATE = "llm.generate"
@@ -698,11 +704,11 @@ class ToolCallResult(StrictBaseModel):
 class LLMCallRecord(StrictBaseModel):
     """One LLM API call, persisted for the trace (docs/UI_UX_AUDIT.md Phase
     14d) - the receipts that turn the Duration view's inferred "operator
-    thinking" gaps into measured latency. `source` is "operator", "auditor",
-    or "subagent" today - the same three the worker's own token-usage
-    tracking already distinguishes (see TaskWorker._record_llm_usage);
-    Concierge/classifier/memory calls made before a task exists are
-    deliberately out of scope, same boundary that tracking already draws.
+    thinking" gaps into measured latency. `source` is "concierge", "operator",
+    "auditor", or "subagent". The Concierge's call is recorded against the task
+    it led to once that task exists (llm/call_log.py); classifier calls for a
+    message that never becomes a task, and memory-summary calls, have no task
+    to attach to and are still not recorded.
     `messages`/`response_text` are redacted and size-capped by the caller
     before construction, not here - this model just carries the result.
 

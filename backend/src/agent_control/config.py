@@ -605,6 +605,11 @@ class AdaptersConfig(StrictBaseModel):
 
 def default_capability_policies() -> dict[Capability, CapabilityPolicy]:
     policies = {capability: CapabilityPolicy() for capability in Capability}
+    policies[Capability.AGENT_CORE] = CapabilityPolicy(
+        enabled=True,
+        requires_approval=False,
+        max_risk_level=RiskLevel.LOW,
+    )
     policies[Capability.TELEGRAM_RECEIVE] = CapabilityPolicy(
         enabled=True,
         requires_approval=False,
@@ -671,7 +676,9 @@ class AppSettings(BaseSettings):
     def capability_policy(self, capability: Capability) -> CapabilityPolicy | None:
         """The policy that actually governs ``capability``.
 
-        Same as looking it up in ``capabilities``, with one implication: being
+        Same as looking it up in ``capabilities``, with two compatibility rules.
+        First, a config that predates ``agent.core`` follows ``telegram.receive``.
+        Second, being
         allowed to change files means being allowed to look at them. The file
         tools' read operations run under ``filesystem.read`` so the "Read-only"
         access mode can offer them without the write capability; a config that
@@ -683,6 +690,11 @@ class AppSettings(BaseSettings):
         Access and security views, keep showing exactly what was configured.
         """
         policy = self.capabilities.get(capability)
+        if capability == Capability.AGENT_CORE and policy is None:
+            # A config written before agent.core existed lists none: the built-in
+            # helpers then ran under telegram.receive, so keep following it rather
+            # than silently switching them off on upgrade.
+            return self.capabilities.get(Capability.TELEGRAM_RECEIVE)
         if capability == Capability.FILESYSTEM_READ and (policy is None or not policy.enabled):
             write = self.capabilities.get(Capability.FILESYSTEM_WRITE)
             if write is not None and write.enabled:

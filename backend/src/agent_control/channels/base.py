@@ -37,6 +37,7 @@ from agent_control.channels.memory import memory_context
 from agent_control.channels.responder import ChatResponder, gateway_context
 from agent_control.clarification import find_clarifying_task, resume_clarifying_task
 from agent_control.config import AppSettings
+from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.schemas import (
@@ -264,7 +265,7 @@ def _standing_instruction(text: str) -> str | None:
     return cleaned if _STANDING_INSTRUCTION.search(cleaned) else None
 
 
-def _remember_standing_instruction(
+def remember_standing_instruction(
     repositories: Repositories,
     audit: AuditLogger,
     inbound: InboundMessage,
@@ -423,7 +424,7 @@ async def classify_and_spawn_task(
     if is_chat_only:
         # Persist before replying, so the acknowledgment only claims what was
         # actually stored.
-        remembered = _remember_standing_instruction(repositories, audit, inbound, actor)
+        remembered = remember_standing_instruction(repositories, audit, inbound, actor)
         outbound = await _non_task_response(audit, repositories, inbound, classification, conversation_id, responder)
         if outbound is not None:
             if remembered:
@@ -485,6 +486,14 @@ async def classify_and_spawn_task(
             "classification_reason": classification.reason,
             "orchestration_intent": classification.intent.model_dump(mode="json") if classification.intent else None,
         },
+    )
+    # The Concierge's own call is the first model call of this task; put it on
+    # the receipt next to the Operator's and Auditor's instead of leaving it out.
+    record_concierge_call(
+        repositories, task.id, getattr(classifier, "provider", None),
+        persist=settings.storage.persist_llm_calls if settings is not None else True,
+        max_chars=settings.storage.llm_call_max_chars if settings is not None else 8000,
+        redact_patterns=settings.logging.redact_patterns if settings is not None else None,
     )
     await send_progress(inbound.chat_id, TASK_STARTED_TEXT)
     return ChannelUpdateResult(

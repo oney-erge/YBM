@@ -51,7 +51,9 @@ from agent_control.policy import apply_access_modes_to_config, summarize_access_
 from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
 from agent_control.supervisor import read_log_tail
-from agent_control.channels.memory import memory_context
+from agent_control.channels.base import remember_standing_instruction
+from agent_control.channels.memory import detect_remember_request, memory_context
+from agent_control.llm.call_log import record_concierge_call
 from agent_control.clarification import find_clarifying_task, resume_clarifying_task
 from agent_control.schemas import (
     ApprovalGrant,
@@ -2484,7 +2486,35 @@ def create_admin_router(
         # which returned no matches, three times, until the no-progress guard
         # blocked it (docs/GAPS.md G8). Telegram has always classified first;
         # web chat is a channel too and should behave like one.
-        chat_reply = await _web_chat_reply(loaded, objective) if not attached else None
+        #
+        # It also has to remember things like one. "Remember that ..." is handled
+        # at the runtime level, before any model sees the message, exactly as on
+        # Telegram and WhatsApp; and a standing rule stated in passing ("always
+        # answer in three bullets") is stored before the reply says it was
+        # learned. On web chat neither was wired up, so YBM acknowledged a
+        # preference and kept nothing (docs/E2E_FINDINGS.md P1-3).
+        concierge_provider = None
+        remember_content = detect_remember_request(text) if not attached else None
+        if remember_content is not None:
+            repositories.memory_facts.create(
+                MemoryFact(category="user_note", content=remember_content, source=MemorySource.USER_STATED)
+            )
+            audit.append(
+                AuditEventType.MEMORY_UPDATED,
+                actor="admin_chat",
+                payload={"category": "user_note", "content": remember_content},
+            )
+            chat_reply = f"Got it, I'll remember: {remember_content}"
+        elif attached:
+            chat_reply = None
+        else:
+            chat_reply, concierge_provider = await _web_concierge(loaded, objective)
+            if chat_reply:
+                remembered = remember_standing_instruction(
+                    repositories, audit, _web_inbound_message(objective), "admin_chat"
+                )
+                if remembered:
+                    chat_reply = f"{chat_reply}\n\n(Remembered: {remembered[:300]})"
 
         task = repositories.tasks.create(
             objective,
@@ -2503,6 +2533,15 @@ def create_admin_router(
             task = repositories.tasks.update_status(task.id, TaskStatus.COMPLETED)
         for artifact in attached:
             repositories.artifacts.link_to_task(artifact.id, task.id)
+        # The Concierge's own model call belongs on the receipt next to the
+        # Operator's and Auditor's; a chat-only reply was showing no cost at all.
+        record_concierge_call(
+            repositories, task.id, concierge_provider,
+            persist=loaded.storage.persist_llm_calls,
+            max_chars=loaded.storage.llm_call_max_chars,
+            redact_patterns=loaded.logging.redact_patterns,
+        )
+        task = repositories.tasks.get(task.id) or task
         audit.append(
             AuditEventType.TASK_CREATED,
             actor="admin_chat",
@@ -2813,42 +2852,49 @@ def _presets_that_can_work() -> dict[str, dict[str, Any]]:
     }
 
 
-async def _web_chat_reply(settings: AppSettings, objective: str) -> str | None:
-    """Let the Concierge answer plain chat instead of spawning a task.
-
-    Returns the reply when the message is not work, None when it is - in which
-    case the caller creates a task exactly as before. Any failure returns None
-    too: classification is an optimisation, and a broken classifier must not
-    stop a real request from running.
-    """
+def _web_inbound_message(text: str) -> Any:
+    """The web console's message, in the shape the shared channel code expects."""
     from agent_control.channels.base import ChannelType as _ChannelType
-    from agent_control.llm.classifier import LLMMessageClassifier
-    from agent_control.llm.providers import build_default_llm_provider, build_role_llm_provider
     from agent_control.schemas import InboundMessage, MessageKind
 
+    return InboundMessage(
+        id="web_chat",
+        channel=_ChannelType.WEB,
+        chat_id=WEB_CHAT_ID,
+        sender_id="admin",
+        kind=MessageKind.TEXT,
+        text=text,
+        received_at=utc_now(),
+    )
+
+
+async def _web_concierge(settings: AppSettings, objective: str) -> tuple[str | None, Any]:
+    """Let the Concierge answer plain chat instead of spawning a task.
+
+    Returns ``(reply, provider)``: the reply when the message is not work (None
+    when it is, in which case the caller creates a task exactly as before), and
+    the model client that made the call so its cost can be put on the receipt.
+    Any failure returns ``(None, None)``: classification is an optimisation, and
+    a broken classifier must not stop a real request from running.
+    """
+    from agent_control.llm.classifier import LLMMessageClassifier
+    from agent_control.llm.providers import build_default_llm_provider, build_role_llm_provider
+
+    provider = None
     try:
         provider = build_role_llm_provider(settings, "concierge") or build_default_llm_provider(settings)
         if provider is None:
-            return None
-        message = InboundMessage(
-            id="web_chat",
-            channel=_ChannelType.WEB,
-            chat_id=WEB_CHAT_ID,
-            sender_id="admin",
-            kind=MessageKind.TEXT,
-            text=objective,
-            received_at=utc_now(),
-        )
-        classification = await LLMMessageClassifier(provider).classify(message)
+            return None, None
+        classification = await LLMMessageClassifier(provider).classify(_web_inbound_message(objective))
     except Exception:  # noqa: BLE001 - never block a real request on this
         logging.getLogger(__name__).warning(
             "web chat classification failed; treating as a task", exc_info=True
         )
-        return None
+        return None, provider
     if classification.is_task:
-        return None
+        return None, provider
     reply = (classification.reply or "").strip()
-    return reply or None
+    return (reply or None), provider
 
 
 def _telegram_config_env_keys() -> list[str]:
