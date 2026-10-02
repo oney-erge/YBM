@@ -47,6 +47,24 @@ and approvals are exact, expiring, and used once. It is built for three jobs in 
 > YBM is alpha software. Start with a test folder, review the access settings, and keep the admin console
 > bound to localhost unless you understand the authentication and network implications.
 
+## Is YBM for you?
+
+**A good fit:**
+
+- You want an agent to work on your own files, browser, or desktop, and you want to approve the
+  consequential steps and keep a record of what it did.
+- You want it to run on your machine, with a local model (Ollama, LM Studio, LocalDeploy) or an API key you
+  already have.
+- You use Windows, where YBM is tested most heavily and where desktop control works.
+
+**Probably not a good fit:**
+
+- You want one assistant across many chat apps or native phone apps. YBM has web chat, Telegram, and
+  text-only WhatsApp. [OpenClaw](https://github.com/openclaw/openclaw) lists more than twenty channels and
+  native apps.
+- You want fully unattended automation. By design, anything consequential stops and asks.
+- You need a hardened production service. YBM is alpha software.
+
 ## Install
 
 Nothing needs configuring first. The installer gets everything YBM needs, starts it, picks a model from
