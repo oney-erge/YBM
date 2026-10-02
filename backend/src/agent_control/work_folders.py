@@ -65,10 +65,18 @@ def _protected_directories() -> list[Path]:
     if sys.platform == "win32":
         names = ("SystemRoot", "ProgramFiles", "ProgramFiles(x86)", "ProgramData")
         return [Path(value).resolve() for value in (os.environ.get(name) for name in names) if value]
+    # Specific system directories, not whole top-level trees. "/var" and "/private"
+    # used to be listed, which also condemned everything beneath them: on macOS
+    # that includes /private/var/folders, where a user's temporary files live.
+    # (macOS reaches /etc and /var through /private, so those spellings are here
+    # too: paths are compared after resolving symlinks.)
     return [
         Path(p)
-        for p in ("/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/var", "/boot", "/dev", "/proc", "/sys",
-                  "/System", "/Library", "/private")
+        for p in (
+            "/etc", "/usr", "/bin", "/sbin", "/lib", "/lib64", "/boot", "/dev", "/proc", "/sys",
+            "/var/lib", "/var/log", "/var/run", "/System", "/Library",
+            "/private/etc", "/private/var/db", "/private/var/root", "/private/var/log",
+        )
     ]
 
 

@@ -131,6 +131,27 @@ def test_an_operating_system_folder_is_refused(tmp_path) -> None:
         validate_work_folder(str(system), home=home)
 
 
+def test_the_systems_own_temporary_folder_is_never_mistaken_for_a_system_folder(tmp_path) -> None:
+    """macOS keeps temp folders under /private/var/folders. Listing "/private" or
+    "/var" as protected condemned everything beneath them, so on that platform no
+    folder under the temp directory could ever be granted."""
+    import tempfile
+
+    folder = Path(tempfile.mkdtemp(dir=tempfile.gettempdir()))
+    try:
+        assert validate_work_folder(str(folder), home=_home(tmp_path)) == folder.resolve()
+    finally:
+        folder.rmdir()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX system directories")
+def test_specific_posix_system_directories_are_still_refused(tmp_path) -> None:
+    for path in ("/etc", "/usr/bin", "/var/log"):
+        if Path(path).is_dir():
+            with pytest.raises(FolderRejected, match="system folder"):
+                validate_work_folder(path, home=_home(tmp_path))
+
+
 # ---- writing the config ---------------------------------------------------------------------
 
 
