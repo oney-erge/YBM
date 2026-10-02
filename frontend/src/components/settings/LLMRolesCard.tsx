@@ -76,7 +76,7 @@ export function LLMRolesCard() {
     }
     updateRoles.mutate(input, {
       onSuccess: () => {
-        toast.success("Per-role models saved. Restart long-running processes to pick it up.")
+        toast.success("Per-role models saved. The next task uses them.")
         resetDraft()
       },
       onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save per-role models."),

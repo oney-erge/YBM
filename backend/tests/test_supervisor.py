@@ -92,3 +92,34 @@ def test_build_service_specs_excludes_whatsapp_when_config_is_unreadable(monkeyp
     specs = build_service_specs()
 
     assert "whatsapp" not in {spec.name for spec in specs}
+
+
+def test_backend_readiness_probe_follows_the_configured_port(monkeypatch, tmp_path) -> None:
+    """The probe was hard-coded to 8765, so a backend on any other `server.port` was healthy but
+    never "ready": `ybm start` waited out the 45-second budget and reported a required service
+    as failed."""
+    _isolate(monkeypatch, tmp_path)
+    _write_config(tmp_path, "server:\n  port: 9123\n")
+
+    backend = {spec.name: spec for spec in build_service_specs()}["backend"]
+
+    assert backend.ready_url == "http://127.0.0.1:9123/health"
+
+
+def test_backend_readiness_probe_ignores_the_public_base_url(monkeypatch, tmp_path) -> None:
+    """A tunnel or proxy address cannot be dialled from here, and probing it would call a healthy
+    backend down."""
+    _isolate(monkeypatch, tmp_path)
+    _write_config(tmp_path, "server:\n  port: 9123\n  public_base_url: https://ybm.example.test\n")
+
+    backend = {spec.name: spec for spec in build_service_specs()}["backend"]
+
+    assert backend.ready_url == "http://127.0.0.1:9123/health"
+
+
+def test_backend_readiness_probe_defaults_to_8765_without_a_config(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+
+    backend = {spec.name: spec for spec in build_service_specs()}["backend"]
+
+    assert backend.ready_url == "http://127.0.0.1:8765/health"

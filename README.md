@@ -66,8 +66,8 @@ Python and the runtime download; later starts take seconds.
 curl -fsSL https://raw.githubusercontent.com/oney-erge/YBM/main/scripts/install.sh | bash
 ```
 
-Run `~/ybm/ybm.sh` next time. **From a source checkout** run `run.bat` (Windows), `./run.command`
-(macOS), or `./run.sh` (Linux). **Headless server:** `./run.sh docker` starts the published container and
+Run `~/ybm/ybm.sh` next time. **From a source checkout** (needs Node.js 22.22+ to build the console) run
+`run.bat` (Windows), `./run.command` (macOS), or `./run.sh` (Linux). **Headless server:** `./run.sh docker` starts the published container and
 opens its console. Every option, with checksums and verification, is in [INSTALL.md](docs/INSTALL.md).
 
 ## Your first ten minutes

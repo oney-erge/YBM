@@ -154,7 +154,7 @@ export function MCPServersCard() {
     }
     upsert.mutate(input, {
       onSuccess: () => {
-        toast.success(`Saved ${input.name}. Restart long-running processes to pick it up.`)
+        toast.success(`Saved ${input.name}. The next task can use it.`)
         setEditing(null)
       },
       onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not save the MCP server."),

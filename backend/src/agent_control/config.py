@@ -797,7 +797,20 @@ def backend_base_url(settings: AppSettings) -> str:
     """
     if settings.server.public_base_url:
         return settings.server.public_base_url
+    return local_backend_url(settings)
+
+
+def local_backend_url(settings: AppSettings) -> str:
+    """Where this machine reaches the backend it is about to start or check.
+
+    The configured bind, never `public_base_url`: that may be a proxy or tunnel
+    address this process cannot dial, and a readiness probe or port check that
+    followed it would report a healthy backend as down. A wildcard bind is
+    rewritten to loopback for the same reason as in `backend_base_url`.
+    """
     host = "127.0.0.1" if settings.server.host in {"0.0.0.0", "::"} else settings.server.host
+    if ":" in host:
+        host = f"[{host}]"
     return f"http://{host}:{settings.server.port}"
 
 

@@ -191,8 +191,11 @@ sidecar over loopback HTTP with a per-run shared secret. Setup is in
 The worker builds its policy, tools, and model client from `config/config.yaml` and `.env`, and
 `WorkerRuntimeReloader` (`cli.py`) fingerprints those two files each poll. When either changes, the
 running worker is reconfigured in place (`TaskWorker.reconfigure()`), so access, folders, and the model
-chosen in the console apply to the next task with no restart. Telegram and WhatsApp intake build their
-model clients once at startup; see [ROADMAP.md](ROADMAP.md#known-limits).
+chosen in the console apply to the next task with no restart. The Telegram and WhatsApp intake loops do
+the same for their model-backed parts (`IntakeModelReloader` in `cli.py`): a model or policy change
+reaches their first-line replies and task classification at the next poll. A channel's own token is the
+exception, because the API client and its cursor are bound to the old bot, so rotating it needs a
+restart.
 
 ### Admin sign-in
 

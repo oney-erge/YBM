@@ -11,6 +11,24 @@ CONFIG_FILE_PATH = Path("config/config.yaml")
 ENV_FILE_PATH = Path(".env")
 
 
+def config_fingerprint(watched: tuple[Path, ...] = (CONFIG_FILE_PATH, ENV_FILE_PATH)) -> tuple[tuple[int, int] | None, ...]:
+    """A cheap "did either file change" token: modification time and size, per file.
+
+    Used by every long-running process that follows config.yaml and .env while
+    it runs (the task worker and the Telegram and WhatsApp intake loops). A
+    missing file is its own distinct state, so creating or deleting one counts.
+    """
+    state: list[tuple[int, int] | None] = []
+    for path in watched:
+        try:
+            stat = path.stat()
+        except OSError:
+            state.append(None)
+        else:
+            state.append((stat.st_mtime_ns, stat.st_size))
+    return tuple(state)
+
+
 class ConfigManager:
     def __init__(self, config_path: Path = CONFIG_FILE_PATH, env_path: Path = ENV_FILE_PATH) -> None:
         self.config_path = config_path

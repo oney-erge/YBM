@@ -13,7 +13,7 @@ from typing import Any
 from agent_control.backup import run_backup
 from agent_control.bootstrap import admin_console_url, run_doctor, run_setup
 from agent_control.updates import check_for_updates
-from agent_control.config_sync import CONFIG_FILE_PATH, ENV_FILE_PATH, set_config_path
+from agent_control.config_sync import CONFIG_FILE_PATH, ENV_FILE_PATH, config_fingerprint, set_config_path
 from agent_control.onboarding import run_onboard
 from agent_control.db_tools import db_clean, db_inspect, db_reset
 from agent_control.logging_setup import configure_logging
@@ -120,7 +120,7 @@ def ui_build() -> int:
     code = _run_npm_script("build")
     if code == 0:
         print()
-        print("Admin console built - reload http://127.0.0.1:8765/admin")
+        print(f"Admin console built - reload {admin_console_url(with_token=False)}")
     return code
 
 
@@ -210,15 +210,86 @@ def trace_task(task_id: str, *, as_json: bool = False) -> int:
     return 0
 
 
-async def poll_telegram() -> None:
-    settings = load_settings()
-    repositories, audit = build_repositories()
-    adapter = TelegramAdapter(settings.channels.telegram, audit)
+def _concierge_parts(
+    settings: AppSettings, repositories: Repositories
+) -> tuple[LLMMessageClassifier | None, LLMChatResponder | None, ConversationMemoryService]:
+    """The model-backed pieces a chat channel's first-line handling needs.
+
+    Telegram and WhatsApp intake each carried an identical copy of this, and
+    both built it once at startup, so it lives here where a reload can rebuild
+    it too. With no model configured the classifier and responder are None and
+    the intake falls back to its plain-text handling.
+    """
     provider = build_default_llm_provider(settings)
     concierge_provider = build_role_llm_provider(settings, "concierge") or provider
     classifier = LLMMessageClassifier(concierge_provider) if concierge_provider else None
     responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
-    memory_service = ConversationMemoryService(repositories, provider=concierge_provider)
+    return classifier, responder, ConversationMemoryService(repositories, provider=concierge_provider)
+
+
+def _intake_parts(repositories: Repositories) -> tuple[AppSettings, Any, Any, Any]:
+    settings = load_settings()
+    return (settings, *_concierge_parts(settings, repositories))
+
+
+class IntakeModelReloader:
+    """Lets a running Telegram or WhatsApp intake follow a model or policy change.
+
+    The task worker already follows config.yaml and .env while it runs
+    (WorkerRuntimeReloader). The intake processes built their classifier,
+    responder and memory service once, so a model chosen or changed later
+    reached tasks but not the first-line chat replies and task classification
+    until everything was restarted. Called once per poll; when either file has
+    changed it rebuilds those parts and swaps them onto the live service. A bad
+    edit is reported and the previous ones keep working. Rotating a channel's
+    own token still needs a restart: the API client and its cursor are bound to
+    the old bot.
+    """
+
+    def __init__(
+        self,
+        service: Any,
+        build: Callable[[], tuple[AppSettings, Any, Any, Any]],
+        audit: AuditLogger,
+        *,
+        actor: str,
+        watched: tuple[Path, ...] = (CONFIG_FILE_PATH, ENV_FILE_PATH),
+    ) -> None:
+        self._service = service
+        self._build = build
+        self._audit = audit
+        self._actor = actor
+        self._watched = watched
+        self._fingerprint = config_fingerprint(watched)
+
+    def __call__(self) -> bool:
+        """Returns True when the service was updated."""
+        current = config_fingerprint(self._watched)
+        if current == self._fingerprint:
+            return False
+        self._fingerprint = current
+        try:
+            settings, classifier, responder, memory_service = self._build()
+        except Exception as exc:  # noqa: BLE001 - a bad edit must not stop the intake
+            self._audit.append(
+                AuditEventType.ERROR,
+                actor=self._actor,
+                payload={"error": "config_reload_failed", "reason": str(exc)},
+            )
+            return False
+        self._service.settings = settings
+        self._service.classifier = classifier
+        self._service.responder = responder
+        self._service.memory_service = memory_service
+        logger.info("%s intake model rebuilt after a config change", self._actor)
+        return True
+
+
+async def poll_telegram() -> None:
+    settings = load_settings()
+    repositories, audit = build_repositories()
+    adapter = TelegramAdapter(settings.channels.telegram, audit)
+    classifier, responder, memory_service = _concierge_parts(settings, repositories)
     client = TelegramBotApi(load_telegram_token(settings.channels.telegram), audit=audit)
     service = TelegramIntakeService(
         adapter,
@@ -233,6 +304,9 @@ async def poll_telegram() -> None:
         memory_service=memory_service,
     )
     runner = TelegramPollingRunner(client, service)
+    model_reloader = IntakeModelReloader(
+        service, lambda: _intake_parts(repositories), audit, actor="telegram_polling"
+    )
     offset: int | None = None
     while True:
         # Pick up allowlist/enabled edits without a restart. Everything above
@@ -252,6 +326,8 @@ async def poll_telegram() -> None:
                 actor="telegram_polling",
                 payload={"error": "config_reload_failed", "reason": str(exc)},
             )
+        # The model, its key and the capability policy follow the same files.
+        model_reloader()
         try:
             offset, _ = await runner.poll_once(offset=offset, timeout=30)
         except Exception as exc:
@@ -290,11 +366,7 @@ async def poll_whatsapp() -> None:
         raise
 
     adapter = WhatsAppAdapter(settings.channels.whatsapp, audit)
-    provider = build_default_llm_provider(settings)
-    concierge_provider = build_role_llm_provider(settings, "concierge") or provider
-    classifier = LLMMessageClassifier(concierge_provider) if concierge_provider else None
-    responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
-    memory_service = ConversationMemoryService(repositories, provider=concierge_provider)
+    classifier, responder, memory_service = _concierge_parts(settings, repositories)
     client = WhatsAppBridgeClient(bridge.base_url, bridge.secret)
     service = WhatsAppIntakeService(
         adapter, repositories, audit,
@@ -302,9 +374,13 @@ async def poll_whatsapp() -> None:
         classifier=classifier, responder=responder, memory_service=memory_service,
     )
     runner = WhatsAppPollingRunner(client, service)
+    model_reloader = IntakeModelReloader(
+        service, lambda: _intake_parts(repositories), audit, actor="whatsapp_polling"
+    )
     offset = 0
     try:
         while True:
+            model_reloader()
             if not bridge.is_alive():
                 # The node child exited on its own (crash, killed
                 # externally, port taken by something else) - without this
@@ -410,15 +486,7 @@ class WorkerRuntimeReloader:
         self.version = 0
 
     def _current(self) -> tuple[tuple[int, int] | None, ...]:
-        state: list[tuple[int, int] | None] = []
-        for path in self._watched:
-            try:
-                stat = path.stat()
-            except OSError:
-                state.append(None)
-            else:
-                state.append((stat.st_mtime_ns, stat.st_size))
-        return tuple(state)
+        return config_fingerprint(self._watched)
 
     def __call__(self, worker: TaskWorker) -> None:
         current = self._current()

@@ -28,6 +28,12 @@ Use `.\run.ps1` from PowerShell. Append `doctor`, `repair`, `docker`, `logs`,
 or `stop` for the same lifecycle operations on every platform. The default
 action is safe to rerun and opens the console only after readiness succeeds.
 
+**A checkout needs Node.js 22.22 or newer.** The built console is not committed, so the launcher builds it
+from source, which the installers above do not need to do. With an older or missing Node the launcher
+says so and carries on with the JSON API only, with no web console; install Node from
+<https://nodejs.org> and run the launcher again (or `ybm ui-build`). If you only want to use YBM, use an
+installer instead.
+
 ## Windows option 1: MSI
 
 1. **[Download YBM for Windows](https://github.com/oney-erge/YBM/releases/latest/download/YBM-Setup.msi).**
@@ -127,9 +133,7 @@ docker build --tag ybm-control:local .
 3. YBM creates ignored local config and secret files when they do not exist.
 4. YBM initializes its local database, starts the services, and opens the console.
 
-Existing config, tokens, task history, and other local state are retained. A source checkout is for
-development: use `run.bat` on Windows, `run.command` on macOS, or `run.sh` on Linux. Source UI changes
-require Node.js 22.22 or newer and `ybm ui-build`; release installs do not.
+Existing config, tokens, task history, and other local state are retained.
 
 ## First-run configuration
 
