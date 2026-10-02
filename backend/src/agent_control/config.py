@@ -640,6 +640,7 @@ class AppSettings(BaseSettings):
     channels: ChannelsConfig = Field(default_factory=ChannelsConfig)
     llm: LLMConfig = Field(default_factory=LLMConfig)
     capabilities: dict[Capability, CapabilityPolicy] = Field(default_factory=default_capability_policies)
+
     approval_policy: ApprovalPolicyConfig = Field(default_factory=ApprovalPolicyConfig)
     storage: StorageConfig = Field(default_factory=StorageConfig)
     secrets: SecretVaultConfig = Field(default_factory=SecretVaultConfig)
@@ -666,6 +667,27 @@ class AppSettings(BaseSettings):
             YamlConfigSettingsSource(settings_cls),
             file_secret_settings,
         )
+
+    def capability_policy(self, capability: Capability) -> CapabilityPolicy | None:
+        """The policy that actually governs ``capability``.
+
+        Same as looking it up in ``capabilities``, with one implication: being
+        allowed to change files means being allowed to look at them. The file
+        tools' read operations run under ``filesystem.read`` so the "Read-only"
+        access mode can offer them without the write capability; a config that
+        enables only ``filesystem.write`` (hand-edited, or from before that split)
+        must not lose the ability to even list a folder it can reorganise. The
+        implied read policy inherits the write policy's scopes and patterns, so a
+        scoped write grant never becomes an unscoped read one, and never asks for
+        approval to look. It exists only here: ``capabilities`` itself, and so the
+        Access and security views, keep showing exactly what was configured.
+        """
+        policy = self.capabilities.get(capability)
+        if capability == Capability.FILESYSTEM_READ and (policy is None or not policy.enabled):
+            write = self.capabilities.get(Capability.FILESYSTEM_WRITE)
+            if write is not None and write.enabled:
+                return write.model_copy(update={"requires_approval": False, "max_risk_level": RiskLevel.LOW})
+        return policy
 
     def safe_summary(self) -> dict[str, Any]:
         return {

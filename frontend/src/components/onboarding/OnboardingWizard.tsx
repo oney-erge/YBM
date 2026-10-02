@@ -420,7 +420,20 @@ export function OnboardingWizard({ onDone }: { onDone: () => void }) {
 
           {step === "done" && (
             <>
-              <p className="text-sm font-medium">You&apos;re set.</p>
+              <p className="text-sm font-medium">
+                {detect?.llm_configured ? "You're set." : "Almost there - YBM still needs a model."}
+              </p>
+              {!detect?.llm_configured && (
+                <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
+                  <p className="text-sm">
+                    Without a model YBM has nothing to think with, so it cannot answer yet. Choose one now, or any
+                    time in Settings.
+                  </p>
+                  <Button size="sm" variant="outline" className="mt-2" onClick={() => setStep("brain")}>
+                    Choose a model
+                  </Button>
+                </div>
+              )}
               {telegramEnabled && (
                 <div className="rounded-md border border-border bg-muted/30 p-3">
                   <p className="text-sm font-medium">One thing left for Telegram</p>

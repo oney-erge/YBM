@@ -22,13 +22,18 @@ const STATUS: Record<ChannelSpec["status"], { label: string; tone: string }> = {
 export function ChannelGrid({
   channels,
   onConnect,
+  showPlanned = false,
 }: {
   channels: ChannelSpec[]
   onConnect: (key: string) => void
+  /** Planned channels are hidden by default: on a first-run screen, five "Not
+   * built yet" cards read as clutter and a promise, not as information. */
+  showPlanned?: boolean
 }) {
+  const visible = showPlanned ? channels : channels.filter((channel) => channel.status !== "planned")
   return (
     <div className="grid gap-2 sm:grid-cols-2">
-      {channels.map((channel) => {
+      {visible.map((channel) => {
         const selectable = channel.status === "ready" && !channel.connected && !channel.zero_setup
         return (
           <div

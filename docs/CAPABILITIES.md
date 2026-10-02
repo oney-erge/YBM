@@ -36,6 +36,12 @@ Set access from the admin console's **Access** page, which groups capabilities i
 | **Write with approval** | Writes allowed, each one pauses for a human |
 | **Full access** | Writes allowed without per-call approval |
 
+Changes to access, folders and the model take effect on the next task: the worker follows
+`config/config.yaml` and `.env` while it runs, so nothing needs restarting. (Telegram and
+WhatsApp intake keep the model they started with; restart after changing it. See
+[GAPS.md](GAPS.md).) A config that enables only `filesystem.write` keeps working: being
+allowed to change files implies being allowed to look at them.
+
 > "Full access" still does **not** bypass approvals that a tool declares for a specific
 > operation (installing an MCP server, promoting generated code, running generated Python).
 > Those are enforced by the runtime, not by the access mode. See [THREAT_MODEL.md](THREAT_MODEL.md).
@@ -44,9 +50,9 @@ Set access from the admin console's **Access** page, which groups capabilities i
 
 | Tool | Capability | What it does |
 |---|---|---|
-| `filesystem.manage` | `filesystem.write` | Inspect, search, describe, organize, and rename files inside allowed roots. Builds a manifest first, then applies only approved moves/copies. Rejects path escapes. |
+| `filesystem.manage` | `filesystem.read` for looking, `filesystem.write` for changing | Inspect, search, describe, organize, and rename files inside allowed roots. Builds a manifest first, then applies only approved moves/copies. Rejects path escapes. The read operations (`inspect_folder`, `search`, `read_file`, `organize_plan`, and the other lookups) run under `filesystem.read`, so **Read-only** access genuinely lets it look without being able to change anything; moving, copying, renaming, writing and opening a file need `filesystem.write`. |
 | `workspace.manage` | `filesystem.write` | Per-task workspace under `.agent_control/workspaces/task_<id>`: prepare, write files, materialize a static app, serve it on localhost. |
-| `document.manage` | `filesystem.write` | Inspect/extract documents, summarize PDFs, create and update PowerPoint files. |
+| `document.manage` | `filesystem.read` for reading, `filesystem.write` for creating | Inspect/extract documents and summarize PDFs (read), create and update PowerPoint files (write). |
 | `adapter.factory` | `filesystem.write` | Scaffolds a reviewable adapter proposal when a needed tool doesn't exist. Never auto-loaded. |
 | `code.interpreter` | `terminal.run` | Run or generate-and-run Python. Local subprocess by default; optional Docker sandbox for untrusted code with network off and memory/CPU/pid limits. |
 | `coding.agent` | `terminal.run` | Session-backed Codex, Claude Code, and GitHub Copilot CLI runs with durable session files and restart-safe completion. |

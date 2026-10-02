@@ -8,7 +8,9 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { ArtifactCard } from "@/components/chat/ArtifactCard"
 import { ChatMarkdown } from "@/components/chat/ChatMarkdown"
 import { ComposerModeChips, ComposerTools } from "@/components/chat/ComposerTools"
+import { AccessHintCard } from "@/components/chat/AccessHintCard"
 import { ModelChip } from "@/components/chat/ModelChip"
+import { WorkFoldersCard } from "@/components/chat/WorkFoldersCard"
 import { VoiceRecorder } from "@/components/chat/VoiceRecorder"
 import { FolderPicker } from "@/components/chat/FolderPicker"
 import { InlineApproval } from "@/components/chat/InlineApproval"
@@ -25,7 +27,7 @@ import {
   useVoiceConfig,
 } from "@/lib/queries"
 import { cn } from "@/lib/utils"
-import { ApiError, type TaskRecord } from "@/lib/api"
+import { ApiError, blockedAccessOf, type TaskRecord } from "@/lib/api"
 import { COMPOSER_MODES } from "@/lib/composer-modes"
 
 const WIDTH_OPTIONS: { value: ChatWidth; label: string; icon: typeof Minimize2 }[] = [
@@ -198,6 +200,10 @@ ${instructions}` : trimmed
                 YBM works on this machine - your files, your browser, your terminal - and asks
                 before anything risky.
               </p>
+              {/* The headline request ("organize my Downloads") needs a folder. Ask
+                  for it here, once, instead of letting the first task fail. Renders
+                  nothing when folders are already granted. */}
+              <WorkFoldersCard />
               {/* Stretched grid cells with h-full: the cards keep one shared
                   height and one shared left edge whether a suggestion runs to
                   one line or two, instead of each sizing to its own text. */}
@@ -358,6 +364,7 @@ function ChatExchange({ task }: { task: TaskRecord }) {
   const sendMessage = useSendChatMessage()
   const [clarifyDraft, setClarifyDraft] = useState("")
   const clarifying = task.status === "clarifying"
+  const blockedAccess = blockedAccessOf(task)
   const { data: approvalsData } = usePendingApprovals()
   const pendingApproval =
     task.status === "awaiting_approval"
@@ -390,6 +397,12 @@ function ChatExchange({ task }: { task: TaskRecord }) {
             that modified files then failed is exactly when the user most
             needs to see what happened (docs/UI_UX_AUDIT.md Phase 8). */}
         {settled && <TaskReceiptCard taskId={task.id} />}
+        {blockedAccess && (
+          <AccessHintCard
+            access={blockedAccess}
+            onRetry={() => sendMessage.mutate({ text: displayedObjective(task.objective) })}
+          />
+        )}
         {!settled && !clarifying && (
           <Button
             type="button"

@@ -13,7 +13,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 import secrets
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import time
@@ -27,6 +27,13 @@ from agent_control.analytics import build_reliability_dashboard
 from agent_control.security_review import build_security_review
 from agent_control.bootstrap import OLLAMA_TAGS_URL, _http_json, check_llm_configured, collect_checks, describe_active_model
 from agent_control.llm.autodetect import recommended_ollama_model
+from agent_control.work_folders import (
+    FolderRejected,
+    apply_work_folders,
+    current_state as work_folders_state,
+    suggested_folders,
+    validate_work_folder,
+)
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
 from agent_control.config import LLMProfileConfig
@@ -225,6 +232,15 @@ class AdminComputerUseConfigRequest(StrictBaseModel):
 
 class AdminAccessModesRequest(StrictBaseModel):
     modes: dict[str, CapabilityAccessMode]
+
+
+class AdminWorkFoldersRequest(StrictBaseModel):
+    """Folders YBM may work in, and how careful to be inside them. Only the two
+    gentle modes are accepted here: full autonomy is a deliberate choice on the
+    Access page, not something a setup shortcut hands out."""
+
+    folders: list[str] = Field(min_length=1, max_length=20)
+    mode: Literal["read_only", "write_access"] = "write_access"
 
 
 class AdminApprovalDecisionRequest(StrictBaseModel):
@@ -2282,6 +2298,45 @@ def create_admin_router(
                 for name, summary in summarize_access_modes(refreshed).items()
             },
         }
+
+    @router.get("/api/setup/folders")
+    def admin_setup_folders(request: Request) -> dict[str, Any]:
+        """Where file access stands and which folders to offer.
+
+        The first-run "let YBM work on a folder" step reads this: the usual places
+        that exist on this machine (Downloads, Documents, ...), the folders already
+        granted, and the current file-access mode.
+        """
+        loaded = require_admin(request)
+        return {"suggested": suggested_folders(), **work_folders_state(loaded)}
+
+    @router.post("/api/setup/work-folders")
+    def admin_set_work_folders(request: Request, payload: AdminWorkFoldersRequest) -> dict[str, Any]:
+        """Grant folders and a file-access mode in one step.
+
+        Replaces "find the Access page, pick a mode, then edit allowed roots in a
+        config file". Folders are validated (real directories, never a whole drive,
+        the home folder, or a system directory) and only the gentle modes are
+        accepted. The worker picks the change up on its next task; nothing needs
+        restarting.
+        """
+        loaded = require_admin(request)
+        try:
+            resolved = [validate_work_folder(folder) for folder in payload.folders]
+        except FolderRejected as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        config = _read_config_file(config_manager)
+        apply_work_folders(config, resolved, CapabilityAccessMode(payload.mode))
+        _write_config_file(config_manager, config)
+        os.environ.pop("AGENT_CAPABILITIES", None)
+        config_manager.remove_env_keys(["AGENT_CAPABILITIES", *_computer_use_config_env_keys()])
+        _audit_config_update(
+            repositories_loader(),
+            loaded,
+            "work_folders",
+            {"folders": [str(path) for path in resolved], "mode": payload.mode},
+        )
+        return {"suggested": suggested_folders(), **work_folders_state(settings_loader())}
 
     @router.post("/api/secrets/init")
     def admin_init_secret_vault(request: Request) -> dict[str, Any]:

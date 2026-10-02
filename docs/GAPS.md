@@ -68,6 +68,10 @@ operator documentation.
   VS Code API; the bridge and CLI-based coding-agent flow are supported.
 - The Windows PowerShell supervisor and cross-platform `ybm` supervisor are
   separate implementations.
+- The task worker follows `config.yaml` and `.env` while it runs, but the Telegram
+  and WhatsApp intake processes build their model clients once at startup, so a
+  model chosen or changed later does not reach their first-line chat replies and
+  task classification until YBM is restarted.
 - ~~`mcp.client` supports configured servers, but the console does not yet
   offer a full add/edit/test form for MCP server definitions~~ - shipped
   (Settings' MCP servers card: add/edit/test/remove, env write-only and

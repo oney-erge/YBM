@@ -23,6 +23,7 @@ from agent_control.orchestration.fulfillment import (
 )
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.signals import sweep_expired_approvals
+from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
 from agent_control.recovery.usage_limits import describe_wait, next_attempt_at
 from agent_control.schemas import (
@@ -247,6 +248,7 @@ class TaskWorker:
         audit_min_tool_calls: int = 2,
         persona_config: object | None = None,
         skills_config: object | None = None,
+        runtime_refresh: Callable[["TaskWorker"], None] | None = None,
     ) -> None:
         self.repositories = repositories
         self.audit = audit
@@ -286,12 +288,42 @@ class TaskWorker:
         # Stable id per worker process; written into tasks.claimed_by so
         # concurrent workers can't race on the same task.
         self.worker_id = f"worker-{uuid4().hex[:12]}"
+        # Called before each claim so a worker started long ago still honors the
+        # access and model the person has since chosen (see reconfigure()).
+        self.runtime_refresh = runtime_refresh
+        self.runtime_version = 0
+
+    # Attributes reconfigure() leaves alone: who this worker is and what it is
+    # connected to. Everything else on the instance is derived from settings.
+    _IDENTITY_ATTRIBUTES = frozenset({"repositories", "audit", "worker_id", "runtime_refresh", "runtime_version"})
+
+    def reconfigure(self, **kwargs: Any) -> None:
+        """Adopt freshly built settings-derived state (executor and its policy and
+        tools, the model clients, budgets) without restarting the process.
+
+        The worker used to build all of that once at startup, so turning on file
+        access or choosing a model in the console had no effect on it until the
+        whole stack was restarted - the console even told people to "restart
+        long-running processes". Building a throwaway worker from the new keyword
+        arguments and copying its configuration across keeps this in step with
+        __init__ automatically, instead of a second list of fields to maintain. A
+        task already running keeps the objects it started with.
+        """
+        fresh = TaskWorker(self.repositories, self.audit, **kwargs)
+        for name, value in vars(fresh).items():
+            if name not in self._IDENTITY_ATTRIBUTES:
+                setattr(self, name, value)
 
     async def process_next(self) -> TaskRecord | None:
         # Atomically claim a task. Two workers running this call simultaneously
         # will produce at most one successful claim - the other returns None
         # and tries again on the next poll. Claim expires after budget+buffer
         # so a crashed worker doesn't strand the task.
+        if self.runtime_refresh is not None:
+            try:
+                self.runtime_refresh(self)
+            except Exception:  # noqa: BLE001 - a bad config edit must never stop the worker
+                logger.exception("worker_runtime_refresh_failed")
         claim_expiry = int(self.task_budget_seconds) + 120
         task = self.repositories.tasks.claim_next(
             WORKABLE_STATUSES,
@@ -811,7 +843,21 @@ class TaskWorker:
 
         if decision.action == OperatorAction.BLOCKED:
             reason = _operator_blocked_reason(decision.reason, history)
-            metadata = {**latest.metadata, "operator_history": history, "last_worker_error": reason}
+            metadata = {**latest.metadata, "operator_history": history}
+            # A task that cannot proceed because access is off should say which
+            # access, and let the console offer to turn it on, rather than leave a
+            # first-time user with "no tool can do this" and a dozen settings to
+            # guess between. Evidence-based (tools that are off, calls refused for
+            # it), never a match on the words of the request.
+            hint = blocked_access_hint(self.executor.tool_definitions, history) if self.executor is not None else None
+            if hint is not None:
+                stated = str(decision.reason or "").strip()
+                if not stated or stated == "operator_blocked":
+                    reason = hint["summary"]
+                elif hint["evidence"] == "denied":
+                    reason = f"{stated} {hint['summary']}"
+                metadata["blocked_access"] = {"evidence": hint["evidence"], "groups": hint["groups"]}
+            metadata["last_worker_error"] = reason
             return self._transition_operator(latest, metadata, TaskStatus.BLOCKED, reason)
 
         if decision.action == OperatorAction.CALL_TOOLS_PARALLEL:
@@ -890,7 +936,7 @@ class TaskWorker:
         request = ToolCallRequest(
             task_id=latest.id,
             tool_name=tool_name,
-            capability=tool_def.capability,
+            capability=tool_def.capability_for(tool_input),
             risk_level=_effective_operator_risk(tool_def, decision.tool_input, decision.risk_level),
             input=tool_input,
             parent_step_id=step_id,
@@ -1023,7 +1069,7 @@ class TaskWorker:
             built.append((
                 call,
                 ToolCallRequest(
-                    task_id=task_id, tool_name=tool_name, capability=tool_def.capability,
+                    task_id=task_id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
                     risk_level=_effective_operator_risk(tool_def, tool_input, call.risk_level),
                     input=tool_input, parent_step_id=step_id,
                 ),
@@ -1197,7 +1243,7 @@ class TaskWorker:
                     **normalization,
                 }
             request = ToolCallRequest(
-                task_id=task_id, tool_name=tool_name, capability=tool_def.capability,
+                task_id=task_id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
                 risk_level=_effective_operator_risk(tool_def, tool_input, call.risk_level),
                 input=tool_input, origin=batch_origin, parent_step_id=step_id,
             )
@@ -1393,7 +1439,7 @@ class TaskWorker:
                 })
                 continue
             request = ToolCallRequest(
-                task_id=task.id, tool_name=tool_name, capability=tool_def.capability,
+                task_id=task.id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
                 risk_level=_effective_operator_risk(tool_def, tool_input, sub_decision.risk_level),
                 input=tool_input, origin=delegate_origin, parent_step_id=sub_step_id,
             )
@@ -1799,7 +1845,7 @@ class TaskWorker:
         request = ToolCallRequest(
             task_id=task.id,
             tool_name=tool_name,
-            capability=tool_def.capability,
+            capability=tool_def.capability_for(tool_input),
             risk_level=RiskLevel(pending_call["risk_level"]) if pending_call.get("risk_level") else RiskLevel.LOW,
             input=tool_input,
             parent_step_id=step_id,
@@ -2800,7 +2846,7 @@ def _replay_step_is_ambiguous(last: dict[str, Any] | None, tool_definitions: dic
     if definition is None:
         return _in_flight_is_ambiguous({"risk_level": "high", "capability": ""})
     return _in_flight_is_ambiguous(
-        {"risk_level": definition.required_risk(step_input).value, "capability": definition.capability.value}
+        {"risk_level": definition.required_risk(step_input).value, "capability": definition.capability_for(step_input).value}
     )
 
 

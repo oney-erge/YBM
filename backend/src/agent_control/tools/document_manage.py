@@ -366,11 +366,21 @@ def _verify_document_manage(request: ToolCallRequest, result: ToolCallResult) ->
 
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
-    enabled = capability_enabled(settings, Capability.FILESYSTEM_WRITE)
+    enabled = (
+        capability_enabled(settings, Capability.FILESYSTEM_READ)
+        or capability_enabled(settings, Capability.FILESYSTEM_WRITE)
+    )
     definitions.append(
         ToolDefinition(
             name="document.manage",
             capability=Capability.FILESYSTEM_WRITE,
+            # Reading a document is looking, not changing: available in the
+            # Read-only access mode. Creating or revising a presentation is not.
+            operation_capabilities={
+                "inspect_document": Capability.FILESYSTEM_READ,
+                "extract_text": Capability.FILESYSTEM_READ,
+                "summarize_pdf": Capability.FILESYSTEM_READ,
+            },
             enabled=enabled,
             description="inspect documents, summarize PDFs, and create or revise PowerPoint files as task artifacts",
             operations=("inspect_document", "extract_text", "summarize_pdf", "create_presentation", "update_presentation"),

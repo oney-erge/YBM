@@ -226,12 +226,13 @@ class ToolExecutor:
         definition = self.tool_definitions.get(request.tool_name)
         if definition is None:
             return request, None
-        if request.capability != definition.capability:
+        expected_capability = definition.capability_for(request.input)
+        if request.capability != expected_capability:
             return (
                 request,
                 (
                     f"tool {request.tool_name} requires capability "
-                    f"{definition.capability.value}, not {request.capability.value}"
+                    f"{expected_capability.value}, not {request.capability.value}"
                 ),
             )
         try:
