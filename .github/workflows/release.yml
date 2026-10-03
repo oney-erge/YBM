@@ -206,7 +206,12 @@ jobs:
             $hash = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash
             $lines += "$hash  $($file.Name)"
           }
-          $lines | Set-Content -LiteralPath dist\SHA256SUMS.txt -Encoding ascii
+          # Write LF line endings. Set-Content on a Windows runner writes CRLF, which made
+          # `sha256sum -c` and the Unix installer's parser fail on the published file.
+          [System.IO.File]::WriteAllText(
+            (Join-Path (Get-Location) "dist\SHA256SUMS.txt"),
+            (($lines -join "`n") + "`n"),
+            [System.Text.UTF8Encoding]::new($false))
           $lines | ForEach-Object { Write-Host $_ }
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
