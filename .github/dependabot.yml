@@ -5,6 +5,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # The backend uses the v1 FastMCP API; v2 needs an explicit migration.
+    ignore:
+      - dependency-name: mcp
+        update-types: ["version-update:semver-major"]
     groups:
       production-dependencies:
         dependency-type: production
@@ -17,6 +21,10 @@ updates:
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
+    # TasksPage uses the v8 table hooks removed in v9.
+    ignore:
+      - dependency-name: "@tanstack/react-table"
+        update-types: ["version-update:semver-major"]
     groups:
       production-dependencies:
         dependency-type: production
