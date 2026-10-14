@@ -18,8 +18,8 @@
   "dependencies": {
     "@base-ui/react": "^1.9.0",
     "@fontsource-variable/geist": "^5.3.0",
-    "@tanstack/react-query": "^5.104.1",
-    "@tanstack/react-query-devtools": "^5.104.1",
+    "@tanstack/react-query": "^5.104.2",
+    "@tanstack/react-query-devtools": "^5.104.2",
     "@tanstack/react-table": "^8.21.3",
     "@xyflow/react": "^12.12.0",
     "class-variance-authority": "^0.7.1",
@@ -50,7 +50,7 @@
     "oxlint": "^1.87.0",
     "tailwindcss": "^4.3.3",
     "typescript": "~7.0.2",
-    "vite": "^7.3.6",
+    "vite": "^8.3.4",
     "vitest": "^5.0.3"
   }
 }
