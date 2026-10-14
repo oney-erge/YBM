@@ -112,3 +112,5 @@ files or accounts. See [Security](SECURITY.md) to report a vulnerability.
 | [Contributing](CONTRIBUTING.md) | Development setup and verification |
 
 MIT licensed.
+
+Built by [Oney Erge](https://oneyerge.com).
