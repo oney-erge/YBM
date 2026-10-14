@@ -168,3 +168,7 @@ Design rationale and finished plans are kept in [docs/archive/](docs/archive/HIS
 decisions at the time, not current behavior.
 
 MIT licensed.
+
+## Author
+
+Built by [Oney Erge](https://oneyerge.com).
