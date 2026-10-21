@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -281,6 +282,22 @@ def _wait_ready(url: str, timeout_seconds: float) -> bool:
     return False
 
 
+def stop_command() -> str:
+    """The command that stops this install, usable from the shell it was started in.
+
+    `ybm` is on PATH only while the virtualenv is active, so a bare "ybm stop" fails
+    for anyone who started YBM through a launcher. Name the console script of the
+    interpreter that is running this supervisor unless `ybm` already resolves to it.
+    """
+    script = Path(sys.executable).with_name("ybm.exe" if os.name == "nt" else "ybm")
+    on_path = shutil.which("ybm")
+    if on_path and script.exists() and Path(on_path).resolve() == script.resolve():
+        return "ybm stop"
+    if script.exists():
+        return f'"{script}" stop' if " " in str(script) else f"{script} stop"
+    return "ybm stop"
+
+
 def start_all(*, open_browser: bool = False, **flags) -> int:
     specs = build_service_specs(**flags)
     print(f"Starting {len(specs)} service(s)...")
@@ -323,7 +340,7 @@ def start_all(*, open_browser: bool = False, **flags) -> int:
     admin_url = admin_console_url(settings, with_token=False)
     print(f"Admin UI:   {admin_url}")
     print(f"Backend:    {backend_base_url(settings).rstrip('/')}/health")
-    print("Stop with:  ybm stop")
+    print(f"Stop with:  {stop_command()}")
     if open_browser:
         # Carries AGENT_ADMIN_TOKEN (if set) as a one-time ?token= URL param
         # so the browser's very first request is already authenticated -

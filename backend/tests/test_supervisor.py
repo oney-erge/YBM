@@ -1,8 +1,13 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
+from agent_control import supervisor
 from agent_control.supervisor import build_service_specs
+
+
+_CONSOLE_SCRIPT = "ybm.exe" if os.name == "nt" else "ybm"
 
 
 def _isolate(monkeypatch, tmp_path) -> None:
@@ -123,3 +128,30 @@ def test_backend_readiness_probe_defaults_to_8765_without_a_config(monkeypatch, 
     backend = {spec.name: spec for spec in build_service_specs()}["backend"]
 
     assert backend.ready_url == "http://127.0.0.1:8765/health"
+
+
+def test_stop_command_names_the_launched_console_script_when_ybm_is_not_on_path(monkeypatch, tmp_path) -> None:
+    script = tmp_path / "venv" / "bin" / _CONSOLE_SCRIPT
+    script.parent.mkdir(parents=True)
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setattr(supervisor.sys, "executable", str(script.with_name("python.exe" if os.name == "nt" else "python")))
+    monkeypatch.setattr(supervisor.shutil, "which", lambda name: None)
+
+    assert supervisor.stop_command() == f"{script} stop"
+
+
+def test_stop_command_is_plain_ybm_when_it_resolves_to_this_install(monkeypatch, tmp_path) -> None:
+    script = tmp_path / "venv" / "bin" / _CONSOLE_SCRIPT
+    script.parent.mkdir(parents=True)
+    script.write_text("", encoding="utf-8")
+    monkeypatch.setattr(supervisor.sys, "executable", str(script.with_name("python.exe" if os.name == "nt" else "python")))
+    monkeypatch.setattr(supervisor.shutil, "which", lambda name: str(script))
+
+    assert supervisor.stop_command() == "ybm stop"
+
+
+def test_stop_command_falls_back_to_ybm_when_no_console_script_is_found(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(supervisor.sys, "executable", str(tmp_path / "missing" / "python"))
+    monkeypatch.setattr(supervisor.shutil, "which", lambda name: None)
+
+    assert supervisor.stop_command() == "ybm stop"
