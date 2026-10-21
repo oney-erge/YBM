@@ -137,6 +137,35 @@ jobs:
               });
             }
 
+      - name: Close the audit issue once everything is clean
+        if: steps.pip_audit.outputs.exit_code == '0' && steps.npm_audit.outputs.exit_code == '0'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v7.0.1
+        with:
+          script: |
+            const title = 'Dependency audit: known vulnerability in the lockfile';
+            const { data: existing } = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              state: 'open',
+              per_page: 100,
+            });
+            const open = existing.find(issue => issue.title === title && !issue.pull_request);
+            if (!open) return;
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: open.number,
+              body: [
+                'The scheduled audit passed on this run, so the vulnerabilities reported above are no longer in the lockfiles.',
+                'Closing this issue; the audit opens a new one if something is reported again.',
+                '',
+                `Run: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              ].join('\n'),
+            });
+            await github.rest.issues.update({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: open.number, state: 'closed', state_reason: 'completed',
+            });
+
       - name: Fail the run so the schedule shows red
         if: steps.pip_audit.outputs.exit_code != '0' || steps.npm_audit.outputs.exit_code != '0'
         run: exit 1
