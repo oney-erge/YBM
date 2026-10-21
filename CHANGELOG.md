@@ -15,6 +15,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `ybm start` ended with "Stop with: ybm stop", but `ybm` is only on PATH while the virtualenv is active, so the
+  macOS and Linux one-liner (and `ybm.sh`) left people with a command that does not exist. It now prints the
+  console script of the install that started the services.
 - The installers' closing message still told people to "pick a model" after first run started choosing one
   for them; it now says that YBM names the model it found and only asks when it found none.
 - The usage guide told every install to stop YBM with `ybm stop`, which does not see services started by the
