@@ -5,6 +5,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security
+
+- Updated Pillow 12.3.0 to 13.0.0 (nine advisories, fixed in 13.0.0), certifi to 2026.10.19, and the WhatsApp
+  bridge's `follow-redirects` 1.16.0 to a patched release (two high-severity advisories about credential headers
+  on cross-origin redirects). These new advisories made the `backend-quality` and `whatsapp-bridge` jobs fail on
+  every branch and would have failed the scheduled audit. `pip-audit` and `npm audit --audit-level=high` are
+  clean in every lockfile again; the backend tests pass on Pillow 13.
+
 ### Fixed
 
 - The installers' closing message still told people to "pick a model" after first run started choosing one
