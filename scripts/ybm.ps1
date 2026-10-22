@@ -535,11 +535,20 @@ function Invoke-YbmStart {
     -ReadyUrl "http://127.0.0.1:8765/health" -ReadyTimeoutSeconds 45 -Required $true
 
   if (-not $noTelegram) {
-    $results["telegram_polling"] = Start-YbmService -Name "telegram_polling" -ScriptPath (Join-Path $Script:YbmRoot "scripts\services\run_telegram_polling.ps1") -Required $true
+    # Same rule as the Python supervisor (_telegram_configured): only when
+    # Telegram is enabled AND has a token. Without a token poll-telegram exits
+    # at once, so a fresh install got a required service that crash-looped
+    # while the status line still said [OK].
+    & (Get-YbmPython) -m agent_control.cli channel-enabled telegram | Out-Null
+    $telegramReady = ($LASTEXITCODE -eq 0)
+    $global:LASTEXITCODE = 0
+    if ($telegramReady) {
+      $results["telegram_polling"] = Start-YbmService -Name "telegram_polling" -ScriptPath (Join-Path $Script:YbmRoot "scripts\services\run_telegram_polling.ps1") -Required $true
+    }
   }
   if (-not $noWhatsApp) {
-    # Gated on the config flag itself, unlike telegram_polling (always
-    # attempted) - most installs never touch WhatsApp, and poll-whatsapp
+    # Gated on the config flag itself, like telegram_polling above - most
+    # installs never touch WhatsApp, and poll-whatsapp
     # refuses to start at all when disabled (cli.py's poll_whatsapp), so
     # attempting it anyway would crash-loop 4 times (~20s wasted) on every
     # single `ybm start`/`ybm run`, for every user, and leave a permanently

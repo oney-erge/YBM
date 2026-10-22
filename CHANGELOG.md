@@ -17,6 +17,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On Windows, `YBM.bat` / `scripts\ybm.ps1 run` started the Telegram poller on every launch, even on a fresh
+  install with Telegram off and no token. It died at once (`Telegram token not found in TELEGRAM_BOT_TOKEN`), was
+  restarted, and the status line still said `[OK]`. It now starts only when Telegram is enabled and has a token, the
+  same rule the macOS/Linux launcher (the Python supervisor) already used.
 - `ybm start` ended with "Stop with: ybm stop", but `ybm` is only on PATH while the virtualenv is active, so the
   macOS and Linux one-liner (and `ybm.sh`) left people with a command that does not exist. It now prints the
   console script of the install that started the services.

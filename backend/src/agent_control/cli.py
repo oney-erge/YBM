@@ -900,19 +900,19 @@ def main() -> None:
         print(message)
         raise SystemExit(0 if ok else 1)
     elif args.command == "channel-enabled":
-        # Exit-code contract (0 enabled, 1 disabled/unknown) rather than
-        # stdout - lets scripts/ybm.ps1 gate a service start on it with a
-        # plain $LASTEXITCODE check, no JSON parsing needed. Used to decide
-        # whether to even attempt the whatsapp service, so a broken config
-        # here must not itself crash `ybm start` - fail closed (treat as
-        # disabled) and let `ybm doctor` be where a bad config surfaces.
+        # Exit-code contract (0 = start this channel's service, 1 = do not)
+        # rather than stdout - lets scripts/ybm.ps1 gate a service start on it
+        # with a plain $LASTEXITCODE check, no JSON parsing needed. It answers
+        # with the Python supervisor's own rules, so both launchers start the
+        # same services: Telegram needs `enabled` AND a token (without one
+        # poll-telegram dies at once), WhatsApp needs `enabled`. Both fail
+        # closed on a broken config; `ybm doctor` is where that surfaces.
         if not args.path:
             raise SystemExit("usage: ybm channel-enabled <telegram|whatsapp>")
-        try:
-            channel_config = getattr(load_settings().channels, args.path)
-        except Exception:
-            raise SystemExit(1) from None
-        raise SystemExit(0 if getattr(channel_config, "enabled", False) else 1)
+        from agent_control.supervisor import _telegram_configured, _whatsapp_enabled
+
+        should_start = {"telegram": _telegram_configured, "whatsapp": _whatsapp_enabled}.get(args.path)
+        raise SystemExit(0 if should_start is not None and should_start() else 1)
     elif args.command == "db-inspect":
         raise SystemExit(db_inspect())
     elif args.command == "db-clean":
