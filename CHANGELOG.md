@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- Updated pypdf 6.20.0 to 6.21.2 (three advisories published 2026-10-21, fixed in 6.20.1 and 6.21.1). The
+  `backend-quality` audit failed on every branch until then. The backend tests pass on 6.21.2.
 - Updated Pillow 12.3.0 to 13.0.0 (nine advisories, fixed in 13.0.0), certifi to 2026.10.19, and the WhatsApp
   bridge's `follow-redirects` 1.16.0 to a patched release (two high-severity advisories about credential headers
   on cross-origin redirects). These new advisories made the `backend-quality` and `whatsapp-bridge` jobs fail on
