@@ -27,6 +27,7 @@ Use the stable root launcher when running from a clone:
 Use `.\run.ps1` from PowerShell. Append `doctor`, `repair`, `docker`, `logs`,
 or `stop` for the same lifecycle operations on every platform. The default
 action is safe to rerun and opens the console only after readiness succeeds.
+If source-checkout setup fails, inspect `.setup/install.log` in the checkout.
 
 **A checkout needs Node.js 22.22 or newer.** The built console is not committed, so the launcher builds it
 from source, which the installers above do not need to do. With an older or missing Node the launcher
