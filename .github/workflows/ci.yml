@@ -18,6 +18,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  windows-launcher:
+    # run.bat starts Windows PowerShell 5.1, which treats native stderr as an error
+    # under $ErrorActionPreference = "Stop"; these helpers must survive that.
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Launcher helpers under Windows PowerShell 5.1
+        shell: powershell
+        run: ./scripts/test-launcher-helpers.ps1
+
   launchers:
     name: Launcher contract
     runs-on: ubuntu-latest
