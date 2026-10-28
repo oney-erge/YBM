@@ -170,7 +170,7 @@ def build_service_specs(
         # WhatsApp hiccup (bridge crash, not yet linked) must not block the
         # rest of the stack the way a required service would.
         #
-        # Gated on the config flag itself, unlike telegram_polling - most
+        # Gated on the config flag itself (telegram_polling also needs a token) - most
         # installs never touch WhatsApp, and poll-whatsapp refuses to start
         # at all when disabled (cli.py's poll_whatsapp), so attempting it
         # anyway would just crash-loop 4 times (~20s wasted) every single

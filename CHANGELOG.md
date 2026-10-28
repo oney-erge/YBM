@@ -5,8 +5,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.5] - 2026-10-22
+
 ### Security
 
+- Updated pypdf 6.20.0 to 6.21.2 (three advisories published 2026-10-21, fixed in 6.20.1 and 6.21.1). The
+  `backend-quality` audit failed on every branch until then. The backend tests pass on 6.21.2.
 - Updated Pillow 12.3.0 to 13.0.0 (nine advisories, fixed in 13.0.0), certifi to 2026.10.19, and the WhatsApp
   bridge's `follow-redirects` 1.16.0 to a patched release (two high-severity advisories about credential headers
   on cross-origin redirects). These new advisories made the `backend-quality` and `whatsapp-bridge` jobs fail on
@@ -15,6 +19,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The macOS and Linux one-liner (`curl ... | bash`) had been failing since 2026-08-26: a line continuation was
+  missing, and the release's `SHA256SUMS.txt` was written with Windows line endings, so checksum verification
+  never matched. The script is fetched from `main`, so its fix was already live; this is the first release whose
+  checksum file is written correctly, so `sha256sum -c SHA256SUMS.txt` also works on Linux.
+- On Windows, `YBM.bat` / `scripts\ybm.ps1 run` started the Telegram poller on every launch, even on a fresh
+  install with Telegram off and no token. It died at once (`Telegram token not found in TELEGRAM_BOT_TOKEN`), was
+  restarted, and the status line still said `[OK]`. It now starts only when Telegram is enabled and has a token, the
+  same rule the macOS/Linux launcher (the Python supervisor) already used.
 - `ybm start` ended with "Stop with: ybm stop", but `ybm` is only on PATH while the virtualenv is active, so the
   macOS and Linux one-liner (and `ybm.sh`) left people with a command that does not exist. It now prints the
   console script of the install that started the services.
@@ -26,6 +38,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - The usage guide told every install to stop YBM with `ybm stop`, which does not see services started by the
   Windows PowerShell wrapper (the MSI and `Install-YBM.bat`). It now gives the command for each way of
   starting it.
+
+### Changed
+
+- The admin console no longer depends on the `shadcn` npm package, which pulled in a `braces` version with an
+  unpatched advisory and turned `npm audit` red. Its one stylesheet is vendored; the compiled CSS is
+  byte-identical.
+- Compatible dependency updates were consolidated and the security audits repaired.
+- README: shorter, with a new "Is YBM for you?" section.
 
 ## [0.1.4] - 2026-10-02
 
