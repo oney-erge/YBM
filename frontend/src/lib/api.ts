@@ -121,8 +121,18 @@ async function apiFetch<T>(
   if (!response.ok) {
     let detail = response.statusText
     try {
-      const body = (await response.json()) as { detail?: string }
-      detail = body.detail ?? detail
+      const body = (await response.json()) as { detail?: unknown }
+      if (typeof body.detail === "string") {
+        detail = body.detail
+      } else if (Array.isArray(body.detail)) {
+        const messages = body.detail.flatMap((issue: unknown) => {
+          if (issue && typeof issue === "object" && "msg" in issue && typeof issue.msg === "string") {
+            return [issue.msg]
+          }
+          return []
+        })
+        if (messages.length) detail = messages.join("; ")
+      }
     } catch {
       // response body wasn't JSON - keep statusText
     }
@@ -218,14 +228,15 @@ const ChatSendResponseSchema = z.object({
   task: TaskRecordSchema,
 })
 
-export function listChatMessages(limit = 50) {
-  return apiFetch(`/api/chat/messages?limit=${limit}`, ChatMessagesResponseSchema)
+export function listChatMessages(limit = 50, projectId?: string) {
+  const project = projectId ? `&project_id=${encodeURIComponent(projectId)}` : ""
+  return apiFetch(`/api/chat/messages?limit=${limit}${project}`, ChatMessagesResponseSchema)
 }
 
-export function sendChatMessage(text: string, attachmentIds: string[] = []) {
+export function sendChatMessage(text: string, attachmentIds: string[] = [], projectId?: string) {
   return apiFetch("/api/chat/messages", ChatSendResponseSchema, {
     method: "POST",
-    body: JSON.stringify({ text, attachment_ids: attachmentIds }),
+    body: JSON.stringify({ text, attachment_ids: attachmentIds, project_id: projectId }),
   })
 }
 
@@ -841,6 +852,89 @@ export function runWorkflow(workflowId: string, values: Record<string, string>) 
     method: "POST",
     body: JSON.stringify({ values }),
   })
+}
+
+const ScheduledWorkflowResponseSchema = z.object({
+  schedule: z.object({ id: z.string(), cadence: z.string(), next_run_at: z.string() }),
+})
+
+const ScheduleSchema = z.object({
+  id: z.string(), objective: z.string(), cadence: z.string(), timezone: z.string(),
+  status: z.enum(["enabled", "paused", "deleted"]), next_run_at: z.string(),
+  last_task_id: z.string().nullable(), metadata: z.object({
+    folder_trigger: z.object({
+      folder: z.string(), file_parameter: z.string(), suffixes: z.array(z.string()), settle_seconds: z.number(),
+    }).optional(),
+    watch_error: z.string().nullable().optional(),
+  }).catchall(z.unknown()),
+})
+
+export function listSchedules() {
+  return apiFetch("/api/schedules", z.object({ enabled: z.boolean(), schedules: z.array(ScheduleSchema) }))
+}
+
+export function updateScheduleStatus(scheduleId: string, status: "enabled" | "paused" | "deleted") {
+  return apiFetch(`/api/schedules/${scheduleId}`, z.object({ schedule: ScheduleSchema }), {
+    method: "PATCH", body: JSON.stringify({ status }),
+  })
+}
+
+export function scheduleWorkflow(
+  workflowId: string,
+  input: { values: Record<string, string>; cadence: string; timezone?: string; projectId?: string },
+) {
+  return apiFetch(`/api/workflows/${workflowId}/schedule`, ScheduledWorkflowResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({
+      values: input.values,
+      cadence: input.cadence,
+      timezone: input.timezone ?? "America/Chicago",
+      project_id: input.projectId,
+    }),
+  })
+}
+
+export function watchWorkflow(workflowId: string, input: {
+  values: Record<string, string>; folder: string; fileParameter: string; suffixes: string[];
+  settleSeconds: number; projectId?: string;
+}) {
+  return apiFetch(`/api/workflows/${workflowId}/watch`, z.object({ schedule: ScheduleSchema }), {
+    method: "POST", body: JSON.stringify({
+      values: input.values, folder: input.folder, file_parameter: input.fileParameter,
+      suffixes: input.suffixes, settle_seconds: input.settleSeconds, project_id: input.projectId,
+    }),
+  })
+}
+
+export const ProjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  instructions: z.string(),
+  root_paths: z.array(z.string()),
+  criteria: z.array(z.string()),
+  created_at: z.string(),
+  updated_at: z.string(),
+})
+export type Project = z.infer<typeof ProjectSchema>
+export type ProjectInput = Pick<Project, "name" | "instructions" | "root_paths" | "criteria">
+
+const ProjectsResponseSchema = z.object({ projects: z.array(ProjectSchema) })
+const ProjectResponseSchema = z.object({ project: ProjectSchema })
+
+export function listProjects() {
+  return apiFetch("/api/projects", ProjectsResponseSchema)
+}
+
+export function createProject(input: ProjectInput) {
+  return apiFetch("/api/projects", ProjectResponseSchema, { method: "POST", body: JSON.stringify(input) })
+}
+
+export function updateProject(projectId: string, input: ProjectInput) {
+  return apiFetch(`/api/projects/${projectId}`, ProjectResponseSchema, { method: "PUT", body: JSON.stringify(input) })
+}
+
+export function deleteProject(projectId: string) {
+  return apiFetch(`/api/projects/${projectId}`, z.object({ status: z.string() }), { method: "DELETE" })
 }
 
 function tokenUsageOf(task: TaskRecord): TokenUsage | null {

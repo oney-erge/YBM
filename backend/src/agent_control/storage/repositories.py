@@ -19,6 +19,7 @@ from agent_control.schemas import (
     InboundMessage,
     LLMCallRecord,
     MemoryFact,
+    ProjectRecord,
     ScheduleRecord,
     ScheduleStatus,
     TaskRecord,
@@ -195,25 +196,29 @@ class TaskRepository:
     ) -> TaskRecord:
         task = TaskRecord(objective=objective, conversation_id=conversation_id, metadata=metadata or {})
         with self.database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO tasks (
-                    id, objective, status, conversation_id,
-                    metadata_json, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    task.id,
-                    task.objective,
-                    task.status.value,
-                    task.conversation_id,
-                    _dump(task.metadata),
-                    _dt(task.created_at),
-                    _dt(task.updated_at),
-                ),
-            )
+            self.insert(connection, task)
         return task
+
+    @staticmethod
+    def insert(connection: sqlite3.Connection, task: TaskRecord) -> None:
+        connection.execute(
+            """
+            INSERT INTO tasks (
+                id, objective, status, conversation_id,
+                metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task.id,
+                task.objective,
+                task.status.value,
+                task.conversation_id,
+                _dump(task.metadata),
+                _dt(task.created_at),
+                _dt(task.updated_at),
+            ),
+        )
 
     def get(self, task_id: str) -> TaskRecord | None:
         with self.database.connect() as connection:
@@ -246,6 +251,14 @@ class TaskRepository:
         with self.database.connect() as connection:
             row = connection.execute("SELECT COUNT(*) FROM tasks").fetchone()
         return int(row[0] if row else 0)
+
+    def list_for_project(self, project_id: str, limit: int = 50) -> list[TaskRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM tasks WHERE json_extract(metadata_json, '$.project_id') = ? "
+                "ORDER BY created_at DESC LIMIT ?", (project_id, limit),
+            ).fetchall()
+        return [self._row_to_task(row) for row in reversed(rows)]
 
     def clear_history(self, include_active: bool = False) -> int:
         where_clause = ""
@@ -906,6 +919,66 @@ class WorkflowRepository:
         )
 
 
+class ProjectRepository:
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, project: ProjectRecord) -> ProjectRecord:
+        with self.database.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO projects (
+                    id, name, instructions, root_paths_json, criteria_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    project.id, project.name, project.instructions, _dump(project.root_paths), _dump(project.criteria),
+                    _dt(project.created_at), _dt(project.updated_at),
+                ),
+            )
+        return project
+
+    def get(self, project_id: str) -> ProjectRecord | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+        return self._row_to_project(row) if row is not None else None
+
+    def list_all(self, limit: int = 200) -> list[ProjectRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT * FROM projects ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [self._row_to_project(row) for row in rows]
+
+    def update(self, project: ProjectRecord) -> ProjectRecord:
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                """
+                UPDATE projects
+                SET name = ?, instructions = ?, root_paths_json = ?, criteria_json = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    project.name, project.instructions, _dump(project.root_paths), _dump(project.criteria),
+                    _dt(project.updated_at), project.id,
+                ),
+            )
+        if cursor.rowcount == 0:
+            raise KeyError(project.id)
+        return project
+
+    def delete(self, project_id: str) -> bool:
+        with self.database.connect() as connection:
+            cursor = connection.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        return cursor.rowcount > 0
+
+    @staticmethod
+    def _row_to_project(row: sqlite3.Row) -> ProjectRecord:
+        return ProjectRecord(
+            id=row["id"], name=row["name"], instructions=row["instructions"],
+            root_paths=_load(row["root_paths_json"], []), criteria=_load(row["criteria_json"], []),
+            created_at=row["created_at"], updated_at=row["updated_at"],
+        )
+
+
 class ToolInvocationRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -1220,41 +1293,58 @@ class ScheduleRepository:
 
     def create(self, schedule: ScheduleRecord) -> ScheduleRecord:
         with self.database.connect() as connection:
-            connection.execute(
-                """
-                INSERT INTO schedules (
-                    id, source_channel, source_chat_id, objective, cadence, timezone, status,
-                    next_run_at, last_run_at, last_task_id, metadata_json, created_at, updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    schedule.id,
-                    schedule.source_channel.value,
-                    schedule.source_chat_id,
-                    schedule.objective,
-                    schedule.cadence,
-                    schedule.timezone,
-                    schedule.status.value,
-                    _dt(schedule.next_run_at),
-                    _dt(schedule.last_run_at) if schedule.last_run_at else None,
-                    schedule.last_task_id,
-                    _dump(schedule.metadata),
-                    _dt(schedule.created_at),
-                    _dt(schedule.updated_at),
-                ),
-            )
+            self.insert(connection, schedule)
         return schedule
+
+    @staticmethod
+    def insert(connection: sqlite3.Connection, schedule: ScheduleRecord) -> None:
+        connection.execute(
+            """
+            INSERT INTO schedules (
+                id, source_channel, source_chat_id, objective, cadence, timezone, status,
+                next_run_at, last_run_at, last_task_id, metadata_json, created_at, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                schedule.id,
+                schedule.source_channel.value,
+                schedule.source_chat_id,
+                schedule.objective,
+                schedule.cadence,
+                schedule.timezone,
+                schedule.status.value,
+                _dt(schedule.next_run_at),
+                _dt(schedule.last_run_at) if schedule.last_run_at else None,
+                schedule.last_task_id,
+                _dump(schedule.metadata),
+                _dt(schedule.created_at),
+                _dt(schedule.updated_at),
+            ),
+        )
 
     def get(self, schedule_id: str) -> ScheduleRecord | None:
         with self.database.connect() as connection:
             row = connection.execute("SELECT * FROM schedules WHERE id = ?", (schedule_id,)).fetchone()
         return self._row_to_schedule(row) if row else None
 
-    def list_recent(self, limit: int = 50) -> list[ScheduleRecord]:
+    def resume(self, schedule_id: str, next_run_at: datetime) -> ScheduleRecord:
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE schedules SET status = ?, next_run_at = ?, updated_at = ?, "
+                "metadata_json = json_set(metadata_json, '$.consecutive_failures', 0) WHERE id = ?",
+                (ScheduleStatus.ENABLED.value, _dt(next_run_at), _dt(utc_now()), schedule_id),
+            )
+        result = self.get(schedule_id)
+        if result is None:
+            raise KeyError(schedule_id)
+        return result
+
+    def list_recent(self, limit: int = 50, *, include_deleted: bool = True) -> list[ScheduleRecord]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM schedules ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM schedules " + ("" if include_deleted else "WHERE status != 'deleted' ") +
+                "ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self._row_to_schedule(row) for row in rows]
@@ -1263,13 +1353,19 @@ class ScheduleRepository:
         with self.database.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT *
-                FROM schedules
-                WHERE status = ? AND next_run_at <= ?
+                SELECT schedules.*
+                FROM schedules LEFT JOIN tasks ON tasks.id = schedules.last_task_id
+                WHERE schedules.status = ? AND next_run_at <= ?
+                  AND json_type(schedules.metadata_json, '$.folder_trigger') IS NULL
+                  AND (tasks.id IS NULL OR tasks.status IN (?, ?, ?, ?))
                 ORDER BY next_run_at ASC
                 LIMIT ?
                 """,
-                (ScheduleStatus.ENABLED.value, _dt(now), limit),
+                (
+                    ScheduleStatus.ENABLED.value, _dt(now),
+                    TaskStatus.COMPLETED.value, TaskStatus.CANCELLED.value,
+                    TaskStatus.FAILED.value, TaskStatus.BLOCKED.value, limit,
+                ),
             ).fetchall()
         return [self._row_to_schedule(row) for row in rows]
 
@@ -1335,6 +1431,94 @@ class ScheduleRepository:
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
+
+
+class FolderWatchRepository:
+    """Persist observations and atomically bind one file version to one task."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, schedule: ScheduleRecord, files: dict[str, str]) -> ScheduleRecord:
+        with self.database.connect() as connection:
+            ScheduleRepository.insert(connection, schedule)
+            connection.executemany(
+                "INSERT INTO folder_watch_files (schedule_id, path, signature, stable_since, delivered_signature) "
+                "VALUES (?, ?, ?, ?, ?)",
+                [(schedule.id, path, signature, _dt(schedule.created_at), signature) for path, signature in files.items()],
+            )
+        return schedule
+
+    def list_enabled(self) -> list[ScheduleRecord]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM schedules WHERE status = 'enabled' "
+                "AND json_type(metadata_json, '$.folder_trigger') = 'object' ORDER BY created_at LIMIT 200"
+            ).fetchall()
+        return [ScheduleRepository._row_to_schedule(row) for row in rows]
+
+    def observe(self, schedule_id: str, files: dict[str, str], now: datetime) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            previous = connection.execute(
+                "SELECT path FROM folder_watch_files WHERE schedule_id = ?", (schedule_id,),
+            ).fetchall()
+            connection.executemany(
+                "DELETE FROM folder_watch_files WHERE schedule_id = ? AND path = ?",
+                [(schedule_id, row['path']) for row in previous if row['path'] not in files],
+            )
+            connection.executemany(
+                "INSERT INTO folder_watch_files (schedule_id, path, signature, stable_since) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(schedule_id, path) DO UPDATE SET signature = excluded.signature, "
+                "stable_since = excluded.stable_since WHERE signature != excluded.signature",
+                [(schedule_id, path, signature, _dt(now)) for path, signature in files.items()],
+            )
+            rows = connection.execute(
+                "SELECT * FROM folder_watch_files WHERE schedule_id = ? "
+                "AND (delivered_signature IS NULL OR delivered_signature != signature) ORDER BY stable_since, path",
+                (schedule_id,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def output_paths(self) -> set[str]:
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT uri FROM artifacts WHERE uri IS NOT NULL",
+            ).fetchall()
+        return {str(row['uri']) for row in rows}
+
+    def acknowledge(self, schedule_id: str, path: str, signature: str, digest: str) -> None:
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE folder_watch_files SET delivered_signature = ?, delivered_digest = ? "
+                "WHERE schedule_id = ? AND path = ? AND signature = ?",
+                (signature, digest, schedule_id, path, signature),
+            )
+
+    def enqueue(self, schedule_id: str, task: TaskRecord, file: dict[str, Any], now: datetime) -> bool:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            schedule = connection.execute(
+                "SELECT schedules.status, tasks.status AS task_status FROM schedules "
+                "LEFT JOIN tasks ON tasks.id = schedules.last_task_id WHERE schedules.id = ?", (schedule_id,),
+            ).fetchone()
+            if not schedule or schedule['status'] != 'enabled' or schedule['task_status'] not in (
+                None, 'completed', 'failed', 'blocked', 'cancelled',
+            ):
+                return False
+            updated = connection.execute(
+                "UPDATE folder_watch_files SET delivered_signature = ?, delivered_digest = ? "
+                "WHERE schedule_id = ? AND path = ? AND signature = ? "
+                "AND (delivered_signature IS NULL OR delivered_signature != signature)",
+                (file['signature'], file['sha256'], schedule_id, file['path'], file['signature']),
+            )
+            if updated.rowcount != 1:
+                return False
+            TaskRepository.insert(connection, task)
+            connection.execute(
+                "UPDATE schedules SET last_task_id = ?, last_run_at = ?, updated_at = ? WHERE id = ?",
+                (task.id, _dt(now), _dt(now), schedule_id),
+            )
+        return True
 
 
 class AuditRepository:
@@ -1458,6 +1642,8 @@ class Repositories:
     audit: AuditRepository
     llm_calls: LLMCallRepository
     workflows: WorkflowRepository
+    projects: ProjectRepository
+    folder_watches: FolderWatchRepository
 
     @classmethod
     def for_database(cls, database: Database) -> "Repositories":
@@ -1476,4 +1662,6 @@ class Repositories:
             audit=AuditRepository(database),
             llm_calls=LLMCallRepository(database),
             workflows=WorkflowRepository(database),
+            projects=ProjectRepository(database),
+            folder_watches=FolderWatchRepository(database),
         )

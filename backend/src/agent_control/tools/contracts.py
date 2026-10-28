@@ -176,9 +176,13 @@ class ArtifactDeliverInput(ToolInputModel):
 
 
 class DocumentManageInput(ToolInputModel):
-    operation: Literal["inspect_document", "extract_text", "summarize_pdf", "create_presentation", "update_presentation"] = "inspect_document"
+    operation: Literal[
+        "inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation"
+    ] = "inspect_document"
     path: str | None = None
     artifact_id: str | None = None
+    source_paths: list[str] = Field(default_factory=list, max_length=12)
+    criteria: list[str] = Field(default_factory=list, max_length=30)
     title: str | None = None
     content: str | None = None
     instructions: str | None = None
@@ -199,6 +203,11 @@ class DocumentManageInput(ToolInputModel):
             raise ValueError(
                 "create_presentation requires at least one of 'title', 'content', or 'instructions'"
             )
+        if op == "compare_documents":
+            if len(self.source_paths) < 2:
+                raise ValueError("compare_documents requires at least two source_paths")
+            if not self.criteria or any(not item.strip() or len(item) > 300 for item in self.criteria):
+                raise ValueError("compare_documents requires at least one comparison criterion")
         return self
 
 
@@ -885,6 +894,10 @@ class DocumentManageOutput(ToolOutputModel):
     text: str | None = None
     summary: str | None = None
     slide_count: int | None = None
+    workbook_path: str | None = None
+    report_path: str | None = None
+    source_count: int | None = None
+    criterion_count: int | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

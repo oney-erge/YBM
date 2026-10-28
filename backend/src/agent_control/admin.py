@@ -17,11 +17,12 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 
 import time
+import re
 
 import httpx
 from fastapi import APIRouter, File, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, field_validator
 
 from agent_control.analytics import build_reliability_dashboard
 from agent_control.security_review import build_security_review
@@ -47,6 +48,8 @@ from agent_control.observation.artifacts import ArtifactService
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.orchestration.worker import build_replay_plan
 from agent_control.orchestration.workflows import instantiate_plan, parameterize_plan, replay_plan_gaps
+from agent_control.scheduler import next_run_after, validate_schedule
+from agent_control.folder_triggers import snapshot as folder_snapshot, validate_watch_folder
 from agent_control.policy import apply_access_modes_to_config, summarize_access_modes
 from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
@@ -65,7 +68,10 @@ from agent_control.schemas import (
     ChannelType,
     MemoryFact,
     MemorySource,
+    ProjectRecord,
     RiskLevel,
+    ScheduleRecord,
+    ScheduleStatus,
     StrictBaseModel,
     TaskRecord,
     TaskStatus,
@@ -109,6 +115,50 @@ class AdminSaveWorkflowRequest(StrictBaseModel):
 
 class AdminRunWorkflowRequest(StrictBaseModel):
     values: dict[str, str] = Field(default_factory=dict)
+
+
+class AdminScheduleWorkflowRequest(AdminRunWorkflowRequest):
+    cadence: str = Field(min_length=3, max_length=100)
+    timezone: str = Field(default="America/Chicago", min_length=1, max_length=100)
+    project_id: str | None = None
+
+    @field_validator("cadence")
+    @classmethod
+    def valid_cadence(cls, value: str) -> str:
+        validate_schedule(value, "UTC")
+        return value.lower().strip()
+
+    @field_validator("timezone")
+    @classmethod
+    def valid_timezone(cls, value: str) -> str:
+        validate_schedule("daily", value)
+        return value
+
+
+class AdminScheduleStatusRequest(StrictBaseModel):
+    status: Literal["enabled", "paused", "deleted"]
+
+
+class AdminWatchWorkflowRequest(AdminRunWorkflowRequest):
+    folder: str = Field(min_length=1, max_length=2000)
+    file_parameter: str = Field(min_length=1, max_length=100)
+    suffixes: list[str] = Field(default_factory=lambda: ['.pdf', '.txt', '.csv', '.json'], max_length=12)
+    settle_seconds: int = Field(default=10, ge=1, le=300)
+    project_id: str | None = None
+
+    @field_validator('suffixes')
+    @classmethod
+    def valid_suffixes(cls, values: list[str]) -> list[str]:
+        if not values or any(not re.fullmatch(r'\.[a-zA-Z0-9]{1,16}', value) for value in values):
+            raise ValueError('Choose 1-12 file extensions, such as .pdf or .txt.')
+        return list(dict.fromkeys(value.lower() for value in values))
+
+
+class AdminProjectRequest(StrictBaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    instructions: str = Field(default="", max_length=8000)
+    root_paths: list[str] = Field(default_factory=list, max_length=20)
+    criteria: list[str] = Field(default_factory=list, max_length=30)
 
 
 class AdminLLMConfigRequest(StrictBaseModel):
@@ -287,9 +337,37 @@ class AdminChatMessageRequest(StrictBaseModel):
     # tool it picks requires) enabled and in scope to actually read the
     # file; attaching it does not grant access on its own.
     attachment_ids: list[str] = Field(default_factory=list, max_length=10)
+    # A project selects reusable work context. It never grants filesystem access.
+    project_id: str | None = None
 
 
 MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
+
+
+def _normalized_project_paths(paths: list[str]) -> list[str]:
+    """Store stable absolute paths without treating them as an access grant."""
+    normalized: list[str] = []
+    for raw_path in paths:
+        value = raw_path.strip()
+        if not value:
+            continue
+        resolved = str(Path(value).expanduser().resolve())
+        if resolved not in normalized:
+            normalized.append(resolved)
+    return normalized
+
+
+def _project_task_metadata(project: ProjectRecord) -> dict[str, Any]:
+    """Snapshot project context onto a task so its recorded context is stable."""
+    return {
+        "project_id": project.id,
+        "project_context": {
+            "name": project.name,
+            "instructions": project.instructions,
+            "root_paths": project.root_paths,
+            "criteria": project.criteria,
+        },
+    }
 
 
 # Single fixed local chat "chat_id" (docs/archive/HISTORY.md Part 4 T2.8): this is a
@@ -1549,6 +1627,178 @@ def create_admin_router(
         )
         return {"task": _redact_admin_output(run_task.model_dump(mode="json"), loaded)}
 
+    @router.post("/api/workflows/{workflow_id}/schedule")
+    def admin_schedule_workflow(
+        request: Request, workflow_id: str, payload: AdminScheduleWorkflowRequest
+    ) -> dict[str, Any]:
+        """Schedule a recorded workflow through the existing replay pipeline."""
+        loaded = require_admin(request)
+        if not loaded.scheduler.enabled:
+            raise HTTPException(status_code=400, detail="scheduler is disabled in the current configuration")
+        repositories = repositories_loader()
+        workflow = repositories.workflows.get(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail="workflow not found")
+        try:
+            plan = instantiate_plan(workflow.plan, payload.values)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        project_metadata: dict[str, Any] = {}
+        if payload.project_id:
+            project = repositories.projects.get(payload.project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="project not found")
+            project_metadata = _project_task_metadata(project)
+        schedule = repositories.schedules.create(
+            ScheduleRecord(
+                source_channel=ChannelType.WEB,
+                source_chat_id=f"project:{payload.project_id}" if payload.project_id else WEB_CHAT_ID,
+                objective=f"{workflow.name} (scheduled workflow)",
+                cadence=payload.cadence,
+                timezone=payload.timezone,
+                next_run_at=next_run_after(payload.cadence, utc_now(), payload.timezone),
+                metadata={
+                    "workflow_id": workflow.id,
+                    "workflow_run_values": payload.values,
+                    "replay_plan": plan,
+                    **project_metadata,
+                },
+            )
+        )
+        AuditLogger(repositories.audit, loaded.logging.redact_patterns).append(
+            AuditEventType.TASK_CREATED,
+            actor="admin",
+            payload={"workflow_id": workflow.id, "schedule_id": schedule.id, "cadence": schedule.cadence},
+        )
+        return {"schedule": _redact_admin_output(schedule.model_dump(mode="json"), loaded)}
+
+    @router.post('/api/workflows/{workflow_id}/watch')
+    def admin_watch_workflow(request: Request, workflow_id: str, payload: AdminWatchWorkflowRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        if not loaded.scheduler.enabled:
+            raise HTTPException(status_code=400, detail='scheduler is disabled in the current configuration')
+        repositories = repositories_loader()
+        workflow = repositories.workflows.get(workflow_id)
+        if workflow is None:
+            raise HTTPException(status_code=404, detail='workflow not found')
+        if payload.file_parameter not in workflow.parameters:
+            raise HTTPException(status_code=400, detail='Choose a saved workflow parameter to receive the changed file path.')
+        try:
+            folder = validate_watch_folder(payload.folder, loaded)
+            initial_files = folder_snapshot(folder, payload.suffixes)
+            values = {key: value for key, value in payload.values.items() if key != payload.file_parameter}
+            instantiate_plan(workflow.plan, {**values, payload.file_parameter: str(folder / 'example')})
+        except (ValueError, OSError) as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        project_metadata: dict[str, Any] = {}
+        if payload.project_id:
+            project = repositories.projects.get(payload.project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail='project not found')
+            project_metadata = _project_task_metadata(project)
+        schedule = repositories.folder_watches.create(ScheduleRecord(
+            source_channel=ChannelType.WEB,
+            source_chat_id=f'project:{payload.project_id}' if payload.project_id else WEB_CHAT_ID,
+            objective=f'{workflow.name} (folder workflow)', cadence='file changes', next_run_at=utc_now(),
+            metadata={
+                'workflow_id': workflow.id, 'workflow_run_values': values, 'workflow_plan_template': workflow.plan,
+                'folder_trigger': {'folder': str(folder), 'file_parameter': payload.file_parameter,
+                                   'suffixes': payload.suffixes, 'settle_seconds': payload.settle_seconds},
+                **project_metadata,
+            },
+        ), initial_files)
+        _audit_config_update(repositories, loaded, 'folder_automation', {'id': schedule.id, 'folder': str(folder)})
+        return {'schedule': _redact_admin_output(schedule.model_dump(mode='json'), loaded)}
+
+    @router.get("/api/schedules")
+    def admin_list_schedules(request: Request) -> dict[str, Any]:
+        loaded = require_admin(request)
+        schedules = repositories_loader().schedules.list_recent(200, include_deleted=False)
+        return {
+            "enabled": loaded.scheduler.enabled,
+            "schedules": [
+                _redact_admin_output(item.model_dump(mode="json"), loaded)
+                for item in schedules if item.status != ScheduleStatus.DELETED
+            ],
+        }
+
+    @router.patch("/api/schedules/{schedule_id}")
+    def admin_schedule_status(
+        request: Request, schedule_id: str, payload: AdminScheduleStatusRequest
+    ) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        schedule = repositories.schedules.get(schedule_id)
+        if schedule is None or schedule.status == ScheduleStatus.DELETED:
+            raise HTTPException(status_code=404, detail="schedule not found")
+        if payload.status == "enabled":
+            if not loaded.scheduler.enabled:
+                raise HTTPException(status_code=400, detail="scheduler is disabled in the current configuration")
+            if trigger := schedule.metadata.get('folder_trigger'):
+                try:
+                    validate_watch_folder(trigger['folder'], loaded)
+                except (ValueError, OSError) as exc:
+                    raise HTTPException(status_code=400, detail=str(exc)) from exc
+            schedule = repositories.schedules.resume(schedule_id, utc_now() if trigger else
+                next_run_after(schedule.cadence, utc_now(), schedule.timezone))
+        else:
+            schedule = repositories.schedules.update_status(schedule_id, ScheduleStatus(payload.status))
+        _audit_config_update(repositories, loaded, "schedule", {"id": schedule_id, "status": payload.status})
+        return {"schedule": _redact_admin_output(schedule.model_dump(mode="json"), loaded)}
+
+    @router.get("/api/projects")
+    def admin_list_projects(request: Request) -> dict[str, Any]:
+        loaded = require_admin(request)
+        projects = repositories_loader().projects.list_all()
+        return {"projects": [_redact_admin_output(project.model_dump(mode="json"), loaded) for project in projects]}
+
+    @router.post("/api/projects")
+    def admin_create_project(request: Request, payload: AdminProjectRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        project = repositories_loader().projects.create(
+            ProjectRecord(
+                name=payload.name,
+                instructions=payload.instructions,
+                root_paths=_normalized_project_paths(payload.root_paths),
+                criteria=[item for item in payload.criteria if item.strip()],
+            )
+        )
+        return {"project": _redact_admin_output(project.model_dump(mode="json"), loaded)}
+
+    @router.get("/api/projects/{project_id}")
+    def admin_get_project(request: Request, project_id: str) -> dict[str, Any]:
+        loaded = require_admin(request)
+        project = repositories_loader().projects.get(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        return {"project": _redact_admin_output(project.model_dump(mode="json"), loaded)}
+
+    @router.put("/api/projects/{project_id}")
+    def admin_update_project(request: Request, project_id: str, payload: AdminProjectRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        existing = repositories.projects.get(project_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        project = repositories.projects.update(
+            ProjectRecord(
+                id=existing.id,
+                name=payload.name,
+                instructions=payload.instructions,
+                root_paths=_normalized_project_paths(payload.root_paths),
+                criteria=[item for item in payload.criteria if item.strip()],
+                created_at=existing.created_at,
+            )
+        )
+        return {"project": _redact_admin_output(project.model_dump(mode="json"), loaded)}
+
+    @router.delete("/api/projects/{project_id}")
+    def admin_delete_project(request: Request, project_id: str) -> dict[str, Any]:
+        require_admin(request)
+        if not repositories_loader().projects.delete(project_id):
+            raise HTTPException(status_code=404, detail="project not found")
+        return {"status": "deleted"}
+
     @router.post("/api/config/llm")
     def admin_update_llm_config(request: Request, payload: AdminLLMConfigRequest) -> dict[str, Any]:
         loaded = require_admin(request)
@@ -2407,6 +2657,7 @@ def create_admin_router(
     def admin_list_chat_messages(
         request: Request,
         limit: int = Query(default=50, ge=1, le=200),
+        project_id: str | None = None,
     ) -> dict[str, Any]:
         """docs/archive/HISTORY.md Part 4 T2.8: the local web chat channel - lets the
         admin console drive a task the same way Telegram does, without
@@ -2425,8 +2676,14 @@ def create_admin_router(
         """
         loaded = require_admin(request)
         repositories = repositories_loader()
-        conversation_id = repositories.conversations.get_or_create(ChannelType.WEB, WEB_CHAT_ID)
-        tasks = repositories.tasks.list_for_conversation(conversation_id, limit=limit)
+        if project_id and repositories.projects.get(project_id) is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        chat_id = f"project:{project_id}" if project_id else WEB_CHAT_ID
+        conversation_id = repositories.conversations.get_or_create(ChannelType.WEB, chat_id)
+        tasks = (
+            repositories.tasks.list_for_project(project_id, limit=limit)
+            if project_id else repositories.tasks.list_for_conversation(conversation_id, limit=limit)
+        )
         return {
             "conversation_id": conversation_id,
             "tasks": [_task_with_artifacts(task, repositories, loaded) for task in tasks],
@@ -2441,7 +2698,8 @@ def create_admin_router(
         """
         loaded = require_admin(request)
         repositories = repositories_loader()
-        conversation_id = repositories.conversations.get_or_create(ChannelType.WEB, WEB_CHAT_ID)
+        chat_id = f"project:{payload.project_id}" if payload.project_id else WEB_CHAT_ID
+        conversation_id = repositories.conversations.get_or_create(ChannelType.WEB, chat_id)
         audit = AuditLogger(repositories.audit, loaded.logging.redact_patterns)
 
         text = payload.text.strip()
@@ -2452,8 +2710,14 @@ def create_admin_router(
         attachment_note = (
             "; ".join(f"{a.content_preview or a.id} (at: {a.uri})" for a in attached) if attached else ""
         )
+        project_metadata: dict[str, Any] = {}
+        if payload.project_id:
+            project = repositories.projects.get(payload.project_id)
+            if project is None:
+                raise HTTPException(status_code=404, detail="project not found")
+            project_metadata = _project_task_metadata(project)
 
-        clarifying = find_clarifying_task(repositories, conversation_id=conversation_id, chat_id=WEB_CHAT_ID)
+        clarifying = find_clarifying_task(repositories, conversation_id=conversation_id, chat_id=None)
         if clarifying is not None and text:
             reply_text = f"{text}\n\n[Attached files: {attachment_note}]" if attachment_note else text
             result = resume_clarifying_task(
@@ -2494,7 +2758,7 @@ def create_admin_router(
         # learned. On web chat neither was wired up, so YBM acknowledged a
         # preference and kept nothing (docs/archive/E2E_FINDINGS.md P1-3).
         concierge_provider = None
-        remember_content = detect_remember_request(text) if not attached else None
+        remember_content = detect_remember_request(text) if not attached and not payload.project_id else None
         if remember_content is not None:
             repositories.memory_facts.create(
                 MemoryFact(category="user_note", content=remember_content, source=MemorySource.USER_STATED)
@@ -2505,7 +2769,9 @@ def create_admin_router(
                 payload={"category": "user_note", "content": remember_content},
             )
             chat_reply = f"Got it, I'll remember: {remember_content}"
-        elif attached:
+        elif attached or payload.project_id:
+            # Project questions need context that the stateless Concierge does
+            # not receive. Let the Operator answer with the project snapshot.
             chat_reply = None
         else:
             chat_reply, concierge_provider = await _web_concierge(loaded, objective)
@@ -2520,10 +2786,11 @@ def create_admin_router(
             objective,
             conversation_id=conversation_id,
             metadata={
-                "source_chat_id": WEB_CHAT_ID,
+                "source_chat_id": chat_id,
                 "source_channel": ChannelType.WEB.value,
                 "attachment_ids": [a.id for a in attached],
                 "memory_context": memory_ctx,
+                **project_metadata,
                 # Present only when the Concierge answered directly, so the
                 # worker never picks this up.
                 **({"synthesized_answer": chat_reply} if chat_reply else {}),
@@ -2546,7 +2813,11 @@ def create_admin_router(
             AuditEventType.TASK_CREATED,
             actor="admin_chat",
             task_id=task.id,
-            payload={"conversation_id": conversation_id, "attachment_ids": [a.id for a in attached]},
+            payload={
+                "conversation_id": conversation_id,
+                "attachment_ids": [a.id for a in attached],
+                "project_id": payload.project_id,
+            },
         )
         return {
             "conversation_id": conversation_id,
@@ -3153,10 +3424,11 @@ def _receipt_verification(tool_invocations: list[dict[str, Any]]) -> dict[str, A
 # code interpreter, workspace, VS Code, artifact delivery) - matching on the
 # key means a newly registered tool is covered automatically as long as it
 # follows the same naming, instead of needing a new branch here every time.
+_EVIDENCE_SOURCE_FILE_KEYS = ("source_path", "source_paths")
 _EVIDENCE_FILE_KEYS = (
     "path", "paths", "workspace_dir", "changed_paths", "files_created",
-    "screenshot_path", "screenshot_uri", "adapter_dir",
-)
+    "screenshot_path", "screenshot_uri", "adapter_dir", "workbook_path", "report_path",
+) + _EVIDENCE_SOURCE_FILE_KEYS
 _EVIDENCE_URL_KEYS = ("url", "urls", "visited_urls", "browser_url", "preview_url")
 _EVIDENCE_COMMAND_KEYS = ("command", "commands")
 
@@ -3186,7 +3458,7 @@ def _approval_blast_radius(action_payload: dict[str, Any]) -> dict[str, list[str
     if not isinstance(action_input, dict):
         return {"files": [], "urls": [], "commands": []}
     return {
-        "files": _collect_evidence_values(action_input, _EVIDENCE_FILE_KEYS),
+        "files": _collect_evidence_values(action_input, _EVIDENCE_FILE_KEYS + ("output_name",)),
         "urls": _collect_evidence_values(action_input, _EVIDENCE_URL_KEYS),
         "commands": _collect_evidence_values(action_input, _EVIDENCE_COMMAND_KEYS),
     }
@@ -3210,6 +3482,7 @@ def _extract_evidence(tool_invocations: list[dict[str, Any]]) -> dict[str, list[
             ("commands", _EVIDENCE_COMMAND_KEYS),
         ):
             for source in sources:
+                read_paths = set(_collect_evidence_values(source, _EVIDENCE_SOURCE_FILE_KEYS)) if bucket == "files" else set()
                 for value in _collect_evidence_values(source, keys):
                     if value in seen[bucket]:
                         continue
@@ -3219,7 +3492,7 @@ def _extract_evidence(tool_invocations: list[dict[str, Any]]) -> dict[str, list[
                             "value": value,
                             "tool_name": invocation.get("tool_name"),
                             "at": invocation.get("created_at"),
-                            "effect": effect,
+                            "effect": "read" if value in read_paths else effect,
                         }
                     )
     return evidence

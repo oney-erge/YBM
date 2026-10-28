@@ -26,6 +26,7 @@ const SkillsPage = lazy(() => import("@/pages/SkillsPage").then((m) => ({ defaul
 const ToolsPage = lazy(() => import("@/pages/ToolsPage").then((m) => ({ default: m.ToolsPage })))
 const AgentHubPage = lazy(() => import("@/pages/AgentHubPage").then((m) => ({ default: m.AgentHubPage })))
 const WorkflowsPage = lazy(() => import("@/pages/WorkflowsPage").then((m) => ({ default: m.WorkflowsPage })))
+const ProjectsPage = lazy(() => import("@/pages/ProjectsPage").then((m) => ({ default: m.ProjectsPage })))
 const SettingsPage = lazy(() =>
   import("@/pages/SettingsPage").then((m) => ({ default: m.SettingsPage })),
 )
@@ -144,6 +145,14 @@ function App() {
           element={
             <Suspense fallback={<PageFallback />}>
               <WorkflowsPage />
+            </Suspense>
+          }
+        />
+        <Route
+          path="projects"
+          element={
+            <Suspense fallback={<PageFallback />}>
+              <ProjectsPage />
             </Suspense>
           }
         />
