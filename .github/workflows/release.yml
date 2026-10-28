@@ -82,11 +82,13 @@ jobs:
       - name: Resolve version
         id: version
         shell: pwsh
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           if ($env:GITHUB_REF -like "refs/tags/v*") {
             $version = $env:GITHUB_REF -replace "^refs/tags/v", ""
           } else {
-            $version = "${{ inputs.version }}"
+            $version = $env:INPUT_VERSION
           }
           if (-not $version) { throw "could not determine a version to build" }
           "version=$version" >> $env:GITHUB_OUTPUT
@@ -95,8 +97,8 @@ jobs:
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22.22.0"
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          # No dependency cache while building release artifacts (cache poisoning).
+          package-manager-cache: false
 
       # The console has to exist before packaging; package_release.py refuses
       # to build an archive without it rather than shipping a release that
@@ -107,7 +109,7 @@ jobs:
           npm ci
           npm run build
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: "3.12"
 
@@ -269,10 +271,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE: ghcr.io/oney-erge/ybm
           VERSION: ${{ github.ref_name }}
+          ACTOR: ${{ github.actor }}
         run: |
           set -euo pipefail
           version="${VERSION#v}"
-          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$ACTOR" --password-stdin
           docker build --build-arg "YBM_VERSION=$version" \
             --tag "$IMAGE:$version" \
             --tag "$IMAGE:latest" \
