@@ -31,7 +31,7 @@ function Test-DockerEngine {
   $previous = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    docker info *> $null
+    $null = Invoke-NativeQuiet docker @("info")
     return ($LASTEXITCODE -eq 0)
   } catch {
     return $false
@@ -44,7 +44,7 @@ function Test-DockerRunning {
   $previous = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
-    $container = docker compose ps --quiet ybm 2>$null
+    $container = Invoke-NativeQuiet docker @("compose","ps","--quiet","ybm")
     return [bool]$container
   } catch {
     return $false
