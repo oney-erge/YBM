@@ -195,10 +195,11 @@ class DecisionConfig(StrictBaseModel):
     `shadow` runs it beside the LLM concierge and records whether they agree,
     without using its answer. `cascade` lets it decide on its own when it is
     confident about a route listed in `cascade_routes`; everything else, and
-    every failure, goes to the LLM concierge exactly as before.
+    every failure, goes to the LLM concierge exactly as before. `decision` lets
+    it decide every message it is confident about, chat and status included.
     """
 
-    mode: Literal["off", "shadow", "cascade"] = "off"
+    mode: Literal["off", "shadow", "cascade", "decision"] = "off"
     base_url: str = "http://127.0.0.1:8000"
     # A LocalDeploy decision profile. None uses LocalDeploy's default decision profile.
     profile: str | None = None
@@ -207,9 +208,10 @@ class DecisionConfig(StrictBaseModel):
     # starts also waits for llama-server to start and load the model, so allow for that.
     timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     min_confidence: float = Field(default=0.9, ge=0.5, le=1.0)
-    # Only routes whose task needs nothing the LLM concierge extracts (a provider
-    # name, a schedule, a delivery kind) may be decided without it. Chat and
-    # status stay with the concierge because it also writes the reply.
+    # The routes `cascade` may decide without the LLM concierge: tasks that need
+    # nothing it extracts (a provider name, a schedule, a delivery kind). Chat and
+    # status stay with the concierge there because it also writes the reply.
+    # `decision` mode does not use this list.
     cascade_routes: list[IntentRoute] = Field(
         default_factory=lambda: [
             IntentRoute.FILESYSTEM_MANAGE, IntentRoute.DESKTOP_OBSERVE, IntentRoute.DOCUMENT_MANAGE,

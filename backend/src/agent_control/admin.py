@@ -36,7 +36,16 @@ from agent_control.work_folders import (
 )
 from agent_control.config_sync import CONFIG_FILE_PATH, ConfigManager, read_env_value
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host
-from agent_control.config import LLMProfileConfig
+from agent_control.config import DecisionConfig, LLMProfileConfig
+from agent_control.llm.decision import (
+    CONCIERGE_ONLY_ROUTES,
+    ROUTE_DESCRIPTIONS,
+    DecisionModelClient,
+    DecisionModelError,
+    decides_alone,
+    route_of_classification,
+    summarize_decisions,
+)
 from agent_control.tools.stt import build_stt_adapter
 from agent_control.channels import catalog as channel_catalog
 from agent_control.error_text import explain_voice_failure
@@ -63,12 +72,14 @@ from agent_control.schemas import (
     Capability,
     CapabilityAccessMode,
     ChannelType,
+    IntentRoute,
     MemoryFact,
     MemorySource,
     RiskLevel,
     StrictBaseModel,
     TaskRecord,
     TaskStatus,
+    TaskType,
     TaskWorkflow,
     utc_now,
 )
@@ -161,6 +172,23 @@ class AdminMCPServerRequest(StrictBaseModel):
 class AdminVoiceConfigRequest(StrictBaseModel):
     enabled: bool
     model: str | None = Field(default=None, min_length=1, max_length=80)
+
+
+class AdminDecisionConfigRequest(StrictBaseModel):
+    """Which classifier routes incoming messages (config ``decision``). Fields
+    left out keep their current value; ``profile`` may be cleared with null."""
+
+    mode: Literal["off", "shadow", "cascade", "decision"]
+    profile: str | None = Field(default=None, max_length=80)
+    base_url: str | None = Field(default=None, max_length=200)
+    min_confidence: float | None = Field(default=None, ge=0.5, le=1.0)
+    cascade_routes: list[IntentRoute] | None = Field(default=None, max_length=20)
+
+
+class AdminDecisionTestRequest(StrictBaseModel):
+    text: str = Field(min_length=1, max_length=2000)
+    # The LLM takes several seconds to classify on a local model, so it is opt-in.
+    include_llm: bool = False
 
 
 class AdminTelegramConfigRequest(StrictBaseModel):
@@ -2230,6 +2258,83 @@ def create_admin_router(
         _audit_config_update(repositories_loader(), loaded, "voice", {"enabled": payload.enabled})
         return {"config_file": str(CONFIG_FILE_PATH), "stt": stt}
 
+    @router.get("/api/config/decision")
+    def admin_get_decision_config(request: Request) -> dict[str, Any]:
+        """Which classifier routes incoming messages, and what the decision model has done so far.
+
+        ``stats`` reads the last 500 ``intake_decision`` audit events: how often the
+        model decided alone, and how often it agreed with the LLM where the LLM decided.
+        """
+        loaded = require_admin(request)
+        events = repositories_loader().audit.list_by_type_recent(AuditEventType.INTAKE_DECISION, limit=500)
+        return {
+            "decision": loaded.decision.model_dump(mode="json"),
+            "routes": {route.value: description for route, description in ROUTE_DESCRIPTIONS.items()},
+            "concierge_only_routes": sorted(route.value for route in CONCIERGE_ONLY_ROUTES),
+            "stats": summarize_decisions([event.payload for event in events]),
+        }
+
+    @router.post("/api/config/decision")
+    def admin_update_decision_config(request: Request, payload: AdminDecisionConfigRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        config = _read_config_file(config_manager)
+        patch = payload.model_dump(mode="json", exclude_unset=True)
+        # null keeps the current value, except for profile, where it means "LocalDeploy's default".
+        patch = {key: value for key, value in patch.items() if value is not None or key == "profile"}
+        if "profile" in patch:
+            patch["profile"] = _blank_to_none(patch["profile"])
+        decision = {**(config.get("decision") or {}), **patch}
+        try:
+            DecisionConfig.model_validate(decision)
+        except ValueError as exc:
+            errors = getattr(exc, "errors", lambda: [])()
+            raise HTTPException(status_code=400, detail=errors[0]["msg"] if errors else str(exc)) from exc
+        config["decision"] = decision
+        _write_config_file(config_manager, config)
+        config_manager.remove_env_keys(_decision_config_env_keys())
+        _audit_config_update(repositories_loader(), loaded, "decision", patch)
+        return {"config_file": str(CONFIG_FILE_PATH), "decision": decision}
+
+    @router.post("/api/config/decision/test")
+    async def admin_test_decision(request: Request, payload: AdminDecisionTestRequest) -> dict[str, Any]:
+        """Route one message with the decision model, and with the LLM if asked, without acting on it."""
+        loaded = require_admin(request)
+        result: dict[str, Any] = {"text": payload.text, "mode": loaded.decision.mode}
+        try:
+            opinion = await DecisionModelClient(loaded.decision).route_of(payload.text)
+        except DecisionModelError as exc:
+            result["decision"] = {"error": str(exc)}
+        else:
+            result["decision"] = {
+                "route": opinion.route.value,
+                "confidence": round(opinion.confidence, 4),
+                "top3": dict(sorted(opinion.probabilities.items(), key=lambda kv: -kv[1])[:3]),
+                "latency_ms": round(opinion.latency_ms),
+                # Under the saved mode, would this answer be used without the LLM?
+                "decides_alone": decides_alone(loaded.decision, opinion),
+            }
+        if payload.include_llm:
+            from agent_control.llm.classifier import LLMMessageClassifier
+            from agent_control.llm.providers import build_default_llm_provider, build_role_llm_provider
+
+            provider = build_role_llm_provider(loaded, "concierge") or build_default_llm_provider(loaded)
+            if provider is None:
+                result["llm"] = {"error": "no LLM is configured"}
+            else:
+                started = time.monotonic()
+                try:
+                    classification = await LLMMessageClassifier(provider).classify(_web_inbound_message(payload.text))
+                except Exception as exc:  # noqa: BLE001 - reported to the console, not raised
+                    result["llm"] = {"error": str(exc)}
+                else:
+                    route = route_of_classification(classification) or IntentRoute.UNKNOWN
+                    result["llm"] = {
+                        "route": route.value,
+                        "confidence": classification.confidence,
+                        "latency_ms": round((time.monotonic() - started) * 1000),
+                    }
+        return result
+
     @router.post("/api/config/vscode")
     def admin_update_vscode_config(request: Request, payload: AdminVSCodeConfigRequest) -> dict[str, Any]:
         loaded = require_admin(request)
@@ -2508,7 +2613,7 @@ def create_admin_router(
         elif attached:
             chat_reply = None
         else:
-            chat_reply, concierge_provider = await _web_concierge(loaded, objective)
+            chat_reply, concierge_provider = await _web_concierge(loaded, objective, repositories, audit)
             if chat_reply:
                 remembered = remember_standing_instruction(
                     repositories, audit, _web_inbound_message(objective), "admin_chat"
@@ -2868,7 +2973,12 @@ def _web_inbound_message(text: str) -> Any:
     )
 
 
-async def _web_concierge(settings: AppSettings, objective: str) -> tuple[str | None, Any]:
+async def _web_concierge(
+    settings: AppSettings,
+    objective: str,
+    repositories: Repositories | None = None,
+    audit: AuditLogger | None = None,
+) -> tuple[str | None, Any]:
     """Let the Concierge answer plain chat instead of spawning a task.
 
     Returns ``(reply, provider)``: the reply when the message is not work (None
@@ -2876,16 +2986,39 @@ async def _web_concierge(settings: AppSettings, objective: str) -> tuple[str | N
     the model client that made the call so its cost can be put on the receipt.
     Any failure returns ``(None, None)``: classification is an optimisation, and
     a broken classifier must not stop a real request from running.
+
+    The decision model (settings ``decision``) routes web chat the same way it
+    routes Telegram and WhatsApp. When it decides a message is chat, the
+    Concierge is still asked, because only it writes the reply.
     """
     from agent_control.llm.classifier import LLMMessageClassifier
+    from agent_control.llm.decision import build_decision_classifier
     from agent_control.llm.providers import build_default_llm_provider, build_role_llm_provider
+    from agent_control.task_inbox import find_steerable_task
 
     provider = None
     try:
         provider = build_role_llm_provider(settings, "concierge") or build_default_llm_provider(settings)
         if provider is None:
             return None, None
-        classification = await LLMMessageClassifier(provider).classify(_web_inbound_message(objective))
+        concierge = LLMMessageClassifier(provider)
+        message = _web_inbound_message(objective)
+        classifier = concierge
+        if repositories is not None:
+            classifier = build_decision_classifier(
+                concierge,
+                settings.decision,
+                audit,
+                busy=lambda _: find_steerable_task(repositories, conversation_id=None, chat_id=WEB_CHAT_ID) is not None,
+            )
+        classification = await classifier.classify(message)
+        if (
+            classifier is not concierge
+            and not classification.is_task
+            and classification.task_type != TaskType.STATUS_REQUEST
+            and not (classification.reply or "").strip()
+        ):
+            classification = await concierge.classify(message)
     except Exception:  # noqa: BLE001 - never block a real request on this
         logging.getLogger(__name__).warning(
             "web chat classification failed; treating as a task", exc_info=True
@@ -2895,6 +3028,16 @@ async def _web_concierge(settings: AppSettings, objective: str) -> tuple[str | N
         return None, provider
     reply = (classification.reply or "").strip()
     return (reply or None), provider
+
+
+def _decision_config_env_keys() -> list[str]:
+    return [
+        "AGENT_DECISION__MODE",
+        "AGENT_DECISION__BASE_URL",
+        "AGENT_DECISION__PROFILE",
+        "AGENT_DECISION__MIN_CONFIDENCE",
+        "AGENT_DECISION__CASCADE_ROUTES",
+    ]
 
 
 def _telegram_config_env_keys() -> list[str]:

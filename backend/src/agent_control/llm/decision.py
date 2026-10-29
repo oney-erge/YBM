@@ -12,12 +12,21 @@ module asks one, served by LocalDeploy at ``POST /v1/systemone``, and lets
 * ``cascade``  when the decision model is confident about a route that needs nothing the
                concierge extracts, it decides and the concierge call is skipped. Anything
                else, and any failure, goes to the concierge unchanged.
+* ``decision`` the decision model decides every message it is confident about, chat and
+               status included (a chat reply is still written by the LLM responder). The
+               concierge takes the rest, and every failure.
+
+In ``cascade`` and ``decision`` a message that arrives while a task is running in the same
+chat always goes to the concierge: it may be a correction to that task, which only the
+concierge recognises.
 """
 
 from __future__ import annotations
 
 import asyncio
+import statistics
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -62,6 +71,11 @@ ROUTE_DESCRIPTIONS: dict[IntentRoute, str] = {
     IntentRoute.CONFIGURATION: "change models, access or settings",
 }
 
+#: Routes the concierge keeps even in ``decision`` mode. ``coding.agent`` hands the folder the
+#: concierge extracts to the coding CLI as its workspace (orchestration/worker.py); without it
+#: the CLI would work in the default workspace instead of the one the user named.
+CONCIERGE_ONLY_ROUTES: frozenset[IntentRoute] = frozenset({IntentRoute.CODING_AGENT})
+
 ROUTE_QUESTION: dict[str, Any] = {
     "type": "choice",
     "instructions": "Which route should handle this message to a bot that does things on the user's computer?",
@@ -79,6 +93,49 @@ class DecisionOpinion:
 
 class DecisionModelError(RuntimeError):
     """The decision model could not be asked or gave an answer that cannot be used."""
+
+
+def decides_alone(config: DecisionConfig, opinion: DecisionOpinion) -> bool:
+    """Whether this opinion is used without the concierge under ``config.mode``."""
+    if opinion.confidence < config.min_confidence:
+        return False
+    if config.mode == "cascade":
+        return opinion.route in config.cascade_routes
+    if config.mode == "decision":
+        return opinion.route not in CONCIERGE_ONLY_ROUTES
+    return False
+
+
+def summarize_decisions(payloads: list[dict[str, Any]]) -> dict[str, Any]:
+    """What recorded ``intake_decision`` events show, for the console.
+
+    Agreement only counts messages the concierge decided: where the decision model
+    decided alone there is no second opinion to agree with.
+    """
+    answered = [p for p in payloads if p.get("decision_route")]
+    compared = [p for p in answered if not p.get("used") and p.get("final_route")]
+    agreed = sum(1 for p in compared if p.get("agrees"))
+    times = [float(p["decision_ms"]) for p in answered if p.get("decision_ms") is not None]
+    disagreements = [
+        {
+            "text": str(p.get("text") or "")[:200],
+            "decision_route": p.get("decision_route"),
+            "decision_confidence": p.get("decision_confidence"),
+            "llm_route": p.get("final_route"),
+        }
+        for p in compared
+        if not p.get("agrees")
+    ]
+    return {
+        "messages": len(payloads),
+        "decided_alone": sum(1 for p in payloads if p.get("used")),
+        "unanswered": len(payloads) - len(answered),
+        "compared": len(compared),
+        "agreed": agreed,
+        "agreement": round(agreed / len(compared), 4) if compared else None,
+        "median_ms": round(statistics.median(times)) if times else None,
+        "recent_disagreements": disagreements[:5],
+    }
 
 
 class DecisionModelClient:
@@ -123,11 +180,14 @@ class DecisionModelClassifier:
         config: DecisionConfig,
         audit: AuditLogger | None = None,
         client: DecisionModelClient | None = None,
+        busy: Callable[[InboundMessage], bool] | None = None,
     ) -> None:
         self.fallback = fallback
         self.config = config
         self.audit = audit
         self.client = client or DecisionModelClient(config)
+        # True when a task is in flight for the message's chat (see the module docstring).
+        self.busy = busy
         self._down_until = 0.0
 
     async def classify(self, message: InboundMessage, context: str | None = None) -> MessageClassification:
@@ -136,7 +196,18 @@ class DecisionModelClassifier:
             return await self._concierge(message, context)
         if self.config.mode == "shadow":
             return await self._shadow(message, context, text)
+        if self._busy(message):
+            return await self._shadow(message, context, text, busy=True)
         return await self._cascade(message, context, text)
+
+    def _busy(self, message: InboundMessage) -> bool:
+        if self.busy is None:
+            return False
+        try:
+            return bool(self.busy(message))
+        except Exception:  # an unknown answer counts as busy: the concierge is the safe side
+            logger.exception("decision_model_busy_check_failed")
+            return True
 
     async def _concierge(self, message: InboundMessage, context: str | None) -> MessageClassification:
         try:
@@ -159,7 +230,9 @@ class DecisionModelClassifier:
             logger.exception("decision_model_failed")
             return None, f"{type(exc).__name__}: {exc}"
 
-    async def _shadow(self, message: InboundMessage, context: str | None, text: str) -> MessageClassification:
+    async def _shadow(
+        self, message: InboundMessage, context: str | None, text: str, *, busy: bool = False
+    ) -> MessageClassification:
         asked = asyncio.ensure_future(self._ask(text))
         try:
             classification = await self._concierge(message, context)
@@ -167,13 +240,13 @@ class DecisionModelClassifier:
             asked.cancel()
             raise
         opinion, error = await asked
-        self._record(message, text, opinion, error, used=False, classification=classification)
+        self._record(message, text, opinion, error, used=False, classification=classification, busy=busy)
         return classification
 
     async def _cascade(self, message: InboundMessage, context: str | None, text: str) -> MessageClassification:
         opinion, error = await self._ask(text)
-        if opinion is not None and opinion.route in self.config.cascade_routes and opinion.confidence >= self.config.min_confidence:
-            decided = _task_from_opinion(text, opinion)
+        if opinion is not None and decides_alone(self.config, opinion):
+            decided = classification_from_opinion(text, opinion)
             self._record(message, text, opinion, error, used=True, classification=decided)
             return decided
         classification = await self._concierge(message, context)
@@ -189,12 +262,11 @@ class DecisionModelClassifier:
         *,
         used: bool,
         classification: MessageClassification,
+        busy: bool = False,
     ) -> None:
         if self.audit is None:
             return
-        decided = classification.intent.route if classification.intent else None
-        if decided is None and not classification.is_task:
-            decided = IntentRoute.CONVERSATION
+        decided = route_of_classification(classification)
         self.audit.append(
             AuditEventType.INTAKE_DECISION,
             actor="decision_model",
@@ -204,6 +276,8 @@ class DecisionModelClassifier:
                 "text": text,
                 "mode": self.config.mode,
                 "used": used,
+                # A task was running in this chat, so the concierge decided whatever the model said.
+                "chat_busy": busy,
                 "decision_route": opinion.route.value if opinion else None,
                 "decision_confidence": round(opinion.confidence, 4) if opinion else None,
                 "decision_top3": (
@@ -217,10 +291,30 @@ class DecisionModelClassifier:
         )
 
 
-def _task_from_opinion(text: str, opinion: DecisionOpinion) -> MessageClassification:
-    task_type = TaskType.DESKTOP_OBSERVATION if opinion.route == IntentRoute.DESKTOP_OBSERVE else TaskType.OTHER
+def route_of_classification(classification: MessageClassification) -> IntentRoute | None:
+    """The route intake acts on (channels/base.py): a status request is handled as status whatever
+    its route says, then the route, then chat for a classification that is not a task."""
+    if classification.task_type == TaskType.STATUS_REQUEST:
+        return IntentRoute.STATUS
+    if classification.intent is not None:
+        return classification.intent.route
+    return IntentRoute.CONVERSATION if not classification.is_task else None
+
+
+def classification_from_opinion(text: str, opinion: DecisionOpinion) -> MessageClassification:
+    """The classification intake acts on, shaped the way the concierge shapes its own.
+
+    Chat carries no reply, so intake asks the LLM chat responder for one (channels/base.py).
+    Status is a status request rather than a task, as the concierge marks it.
+    """
+    if opinion.route == IntentRoute.STATUS:
+        task_type = TaskType.STATUS_REQUEST
+    elif opinion.route == IntentRoute.DESKTOP_OBSERVE:
+        task_type = TaskType.DESKTOP_OBSERVATION
+    else:
+        task_type = TaskType.OTHER
     return MessageClassification(
-        is_task=True,
+        is_task=opinion.route not in (IntentRoute.CONVERSATION, IntentRoute.STATUS),
         task_type=task_type,
         normalized_objective=text,
         confidence=round(opinion.confidence, 4),
@@ -234,9 +328,12 @@ def _task_from_opinion(text: str, opinion: DecisionOpinion) -> MessageClassifica
 
 
 def build_decision_classifier(
-    fallback: MessageClassifier, config: DecisionConfig, audit: AuditLogger | None
+    fallback: MessageClassifier,
+    config: DecisionConfig,
+    audit: AuditLogger | None,
+    busy: Callable[[InboundMessage], bool] | None = None,
 ) -> MessageClassifier:
     """The classifier intake should use: the concierge itself when the decision model is off."""
     if config.mode == "off":
         return fallback
-    return DecisionModelClassifier(fallback, config, audit)
+    return DecisionModelClassifier(fallback, config, audit, busy=busy)

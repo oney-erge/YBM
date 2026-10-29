@@ -19,6 +19,8 @@ from agent_control.llm.decision import (
     DecisionModelError,
     DecisionOpinion,
     build_decision_classifier,
+    decides_alone,
+    summarize_decisions,
 )
 from agent_control.schemas import (
     AuditEventType,
@@ -194,6 +196,130 @@ async def test_cascade_honours_a_custom_threshold_and_route_list() -> None:
     classifier, concierge = _make("cascade", client, min_confidence=0.75, cascade_routes=[IntentRoute.SCHEDULE_MANAGE])
     result = await classifier.classify(_message("remind me tomorrow"))
     assert concierge.calls == 0 and result.intent.route == IntentRoute.SCHEDULE_MANAGE
+
+
+@pytest.mark.asyncio
+async def test_shadow_counts_a_concierge_status_request_as_the_status_route(tmp_path) -> None:
+    """Intake handles a status_request as status whatever route the concierge put on it."""
+
+    class _StatusConcierge(_Concierge):
+        async def classify(self, message, context=None):
+            self.calls += 1
+            return MessageClassification(
+                is_task=False, task_type=TaskType.STATUS_REQUEST, confidence=0.97, reason="concierge",
+                intent=OrchestrationIntent(route=IntentRoute.CONVERSATION, reasoning="status", objective="x"),
+            )
+
+    classifier, _ = _make("shadow", _Client(_opinion(IntentRoute.STATUS, 0.9)), concierge=_StatusConcierge(), tmp_path=tmp_path)
+    await classifier.classify(_message("are you busy?"))
+    payload = _events(tmp_path)[0].payload
+    assert payload["final_route"] == "status" and payload["agrees"] is True
+
+
+# --- decision mode and a busy chat ---------------------------------------------
+
+
+def _make_busy(mode, client, busy, concierge=None, tmp_path=None, **config):
+    concierge = concierge or _Concierge()
+    audit = make_repos(tmp_path)[1] if tmp_path is not None else None
+    classifier = DecisionModelClassifier(concierge, DecisionConfig(mode=mode, **config), audit, client, busy=busy)
+    return classifier, concierge
+
+
+@pytest.mark.asyncio
+async def test_decision_mode_decides_chat_alone_and_leaves_the_reply_to_the_responder() -> None:
+    classifier, concierge = _make("decision", _Client(_opinion(IntentRoute.CONVERSATION, 0.98)))
+
+    result = await classifier.classify(_message("thanks, that worked"))
+
+    assert concierge.calls == 0
+    assert result.is_task is False and result.intent.route == IntentRoute.CONVERSATION
+    assert result.reply is None  # channels/base.py then asks the LLM chat responder
+
+
+@pytest.mark.asyncio
+async def test_decision_mode_marks_status_as_a_status_request() -> None:
+    classifier, concierge = _make("decision", _Client(_opinion(IntentRoute.STATUS, 0.95)))
+    result = await classifier.classify(_message("what are you working on?"))
+    assert concierge.calls == 0
+    assert result.is_task is False and result.task_type == TaskType.STATUS_REQUEST
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("route", [IntentRoute.SCHEDULE_MANAGE, IntentRoute.CONFIGURATION, IntentRoute.BROWSER_CONTROL])
+async def test_decision_mode_decides_routes_cascade_leaves_to_the_concierge(route) -> None:
+    classifier, concierge = _make("decision", _Client(_opinion(route, 0.97)))
+    result = await classifier.classify(_message("anything"))
+    assert concierge.calls == 0 and result.is_task is True and result.intent.route == route
+
+
+@pytest.mark.asyncio
+async def test_decision_mode_keeps_coding_agent_with_the_concierge() -> None:
+    """The concierge extracts the folder the coding CLI works in."""
+    classifier, concierge = _make("decision", _Client(_opinion(IntentRoute.CODING_AGENT, 0.99)))
+    await classifier.classify(_message("use Codex in C:/work/app to add a login page"))
+    assert concierge.calls == 1
+
+
+@pytest.mark.asyncio
+async def test_decision_mode_hands_an_unsure_answer_to_the_concierge() -> None:
+    classifier, concierge = _make("decision", _Client(_opinion(IntentRoute.CONVERSATION, 0.7)))
+    await classifier.classify(_message("hmm"))
+    assert concierge.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["cascade", "decision"])
+async def test_a_message_during_a_running_task_goes_to_the_concierge(mode, tmp_path) -> None:
+    """A note like "make it 5 not 3" may steer the running task; only the concierge can tell."""
+    client = _Client(_opinion(IntentRoute.FILESYSTEM_MANAGE, 0.99))
+    classifier, concierge = _make_busy(mode, client, lambda message: message.chat_id == "1", tmp_path=tmp_path)
+
+    result = await classifier.classify(_message("skip the archive folder"))
+
+    assert concierge.calls == 1 and result.reason == "concierge"
+    payload = _events(tmp_path)[0].payload
+    assert payload["used"] is False and payload["chat_busy"] is True
+    assert payload["decision_route"] == "filesystem.manage"  # still recorded for comparison
+
+
+@pytest.mark.asyncio
+async def test_a_failing_busy_check_counts_as_busy() -> None:
+    def broken(message):
+        raise RuntimeError("database is locked")
+
+    classifier, concierge = _make_busy("decision", _Client(_opinion(IntentRoute.FILESYSTEM_MANAGE, 0.99)), broken)
+    await classifier.classify(_message("list my files"))
+    assert concierge.calls == 1
+
+
+def test_decides_alone_follows_the_mode() -> None:
+    sure = _opinion(IntentRoute.CONVERSATION, 0.99)
+    assert decides_alone(DecisionConfig(mode="decision"), sure) is True
+    for mode in ("off", "shadow", "cascade"):
+        assert decides_alone(DecisionConfig(mode=mode), sure) is False
+    assert decides_alone(DecisionConfig(mode="decision", min_confidence=0.995), sure) is False
+
+
+def test_summarize_decisions_counts_agreement_only_where_the_concierge_decided() -> None:
+    payloads = [
+        {"used": True, "decision_route": "filesystem.manage", "final_route": "filesystem.manage", "agrees": True, "decision_ms": 600},
+        {"used": False, "decision_route": "browser.open", "final_route": "browser.open", "agrees": True, "decision_ms": 700},
+        {"used": False, "decision_route": "conversation", "final_route": "filesystem.manage", "agrees": False,
+         "decision_ms": 800, "decision_confidence": 0.6, "text": "is report.pdf in Downloads?"},
+        {"used": False, "decision_route": None, "decision_error": "unreachable", "final_route": "conversation"},
+    ]
+
+    stats = summarize_decisions(payloads)
+
+    assert stats["messages"] == 4 and stats["decided_alone"] == 1 and stats["unanswered"] == 1
+    assert stats["compared"] == 2 and stats["agreed"] == 1 and stats["agreement"] == 0.5
+    assert stats["median_ms"] == 700
+    assert stats["recent_disagreements"] == [
+        {"text": "is report.pdf in Downloads?", "decision_route": "conversation", "decision_confidence": 0.6,
+         "llm_route": "filesystem.manage"}
+    ]
+    assert summarize_decisions([])["agreement"] is None
 
 
 @pytest.mark.asyncio

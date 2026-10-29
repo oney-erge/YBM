@@ -34,6 +34,7 @@ from agent_control.config import AppSettings, backend_base_url, load_settings
 from agent_control.llm import LLMMessageClassifier, build_default_llm_provider
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.llm.decision import build_decision_classifier
+from agent_control.task_inbox import find_steerable_task
 from agent_control.llm.providers import build_major_llm_provider, build_role_llm_provider
 from agent_control.observation import ArtifactService, ScreenshotService
 from agent_control.persona import persona_prompt_section
@@ -226,9 +227,13 @@ def _concierge_parts(
     concierge_provider = build_role_llm_provider(settings, "concierge") or provider
     classifier: MessageClassifier | None = LLMMessageClassifier(concierge_provider) if concierge_provider else None
     if classifier is not None:
-        # Off by default; shadow and cascade add the local decision model in front of the concierge.
+        # Off by default; the other modes add the local decision model in front of the concierge.
         classifier = build_decision_classifier(
-            classifier, settings.decision, AuditLogger(repositories.audit, settings.logging.redact_patterns)
+            classifier,
+            settings.decision,
+            AuditLogger(repositories.audit, settings.logging.redact_patterns),
+            busy=lambda message: find_steerable_task(repositories, conversation_id=None, chat_id=message.chat_id)
+            is not None,
         )
     responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
     return classifier, responder, ConversationMemoryService(repositories, provider=concierge_provider)

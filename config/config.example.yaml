@@ -218,14 +218,14 @@ secrets:
 # lets it decide alone when it is confident about a route in cascade_routes; chat,
 # status, and anything it is unsure of still go to the concierge. See docs/ARCHITECTURE.md.
 decision:
-  mode: "off"                  # off | shadow | cascade
+  mode: "off"                  # off | shadow | cascade | decision (see docs/ARCHITECTURE.md)
   base_url: "http://127.0.0.1:8000"
-  # profile: "d3_lite_decision"   # a LocalDeploy decision profile (d3-lite on the CPU, about 0.6 s); omit for its default
+  # profile: "d3_lite_decision"   # a LocalDeploy decision profile (d3-lite on the CPU, about 0.5 s); omit for its default
   # api_token_env: "LOCALDEPLOY_API_TOKEN"
   timeout_seconds: 10
   min_confidence: 0.9
   cooldown_seconds: 60
-  cascade_routes:
+  cascade_routes:              # used by cascade only
     - "filesystem.manage"
     - "desktop.observe"
     - "document.manage"
