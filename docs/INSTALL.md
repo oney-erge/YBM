@@ -209,6 +209,32 @@ YBM_LOCALDEPLOY_ROOT=C:\path\to\LocalDeploy
 
 You can instead configure any catalog provider or custom OpenAI-compatible endpoint in the browser.
 
+## Optional: a local decision model for routing
+
+By default one LLM call (the Concierge) decides what each message is. A small decision model served by
+[LocalDeploy](https://github.com/oney-erge/LocalDeploy) can make that first decision in about 0.1 s on a GPU and
+report a real probability, which the Concierge cannot (its confidence is 0.95 to 1.00 whether it is right or wrong).
+It is off by default and never replaces the Concierge for chat.
+
+1. In LocalDeploy: `python -m pip install -r requirements-decision.txt`, then enable the `d1_3b_decision` profile in
+   `config.json` and set `"license_accepted": true` once you have read the LFM Open License v1.0 (free for commercial
+   use below US$10M annual revenue). Start LocalDeploy.
+2. In `config/config.yaml` set `decision.mode` to `shadow` and `decision.profile` to `d1_3b_decision`, and restart.
+   Shadow mode changes nothing: every message still goes through the Concierge, and the decision model's route,
+   probability and whether they agree are recorded as `intake_decision` audit events.
+3. After some real use, look at those events (`agrees`, `decision_confidence`). If the model agrees where it is
+   confident, set `decision.mode` to `cascade`: it then decides alone when it is at least `min_confidence` sure of a
+   route in `cascade_routes`, and everything else still goes to the Concierge.
+
+What to expect, from a 98-message hand-labeled set measured on an RTX 3080 Laptop GPU (8 GB): the decision model
+chose the exact route 84% of the time against the Concierge's 88% (86% against 94% once the `status` route is left
+out), and the two make different mistakes. As a cascade at `min_confidence` 0.9 it decided 30% of the messages alone,
+all correctly, and the other 70% still went to the Concierge. The saving is time, not accuracy: the Concierge took a
+median of 15 s per message in that run, the decision model 0.1 s on the GPU. `d1-3B` needs about 6 GB of GPU memory,
+so on an 8 GB card it cannot stay loaded beside an 8B chat model; on the CPU it gives the same answers in about 7 s
+and needs about 12 GB of RAM (estimated from its 6 GB download in half precision, not measured). The full table and
+its limits are in LocalDeploy's `docs/MODELS.md`.
+
 ## Access and approvals
 
 High-impact capabilities start disabled. Enable only the access needed for the current workflow

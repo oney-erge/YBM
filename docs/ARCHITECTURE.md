@@ -32,6 +32,26 @@ flowchart LR
     F --> N["Notify the source channel"]
 ```
 
+### Optional: a local decision model in front of the Concierge
+
+The Concierge's confidence is not informative (it reports 0.95 to 0.98 for nearly everything), so nothing
+downstream can tell a sure call from a guess. A small *decision model* answers the same first question,
+"which route is this message?", in one forward pass and returns a probability for every route. LocalDeploy
+serves it at `POST /v1/systemone`; `llm/decision.py` asks it. `decision.mode` in `config.yaml` chooses how
+much to trust it:
+
+| Mode | What happens |
+|---|---|
+| `off` (default) | The Concierge decides, as before. Nothing is built or called. |
+| `shadow` | The Concierge decides. The decision model's route and probability are recorded beside it as an `intake_decision` audit event, with whether they agree, so it can be judged on real traffic. |
+| `cascade` | When the decision model is at least `min_confidence` sure of a route in `cascade_routes`, it decides alone and the Concierge call is skipped. Otherwise, and on any failure or timeout, the Concierge decides exactly as before. |
+
+Chat and status always stay with the Concierge, because it also writes the reply, as do routes whose task
+needs something only the Concierge extracts (a Codex or Copilot provider, a schedule, a delivery kind). After
+a failure the model is skipped for `cooldown_seconds`, so a stopped LocalDeploy costs one timeout, not one per
+message. The route table in `llm/decision.py` is checked by a test against the Concierge prompt, so the two
+cannot drift apart. See `docs/INSTALL.md` for enabling it.
+
 ## The Operator loop
 
 One tick per poll. Every tool call passes the policy gate - this is where approvals happen.
@@ -211,6 +231,7 @@ fresh signed-in link at any time, and the same-origin check on state-changing re
 | Component | File | Role |
 |---|---|---|
 | Concierge | `llm/classifier.py` | Classify *and* compose the chat reply in one call |
+| Decision model (optional) | `llm/decision.py` | Local route classifier with real probabilities, in front of the Concierge (`decision.mode`) |
 | Channel intake | `channels/telegram.py`, `channels/whatsapp.py` | Allowlist, command routing, task creation |
 | Channel core | `channels/base.py` | The shared, channel-agnostic path |
 | Conversation memory | `channels/memory.py` | Rolling per-chat summary; own LLM call with heuristic fallback |
