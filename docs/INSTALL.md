@@ -211,31 +211,40 @@ You can instead configure any catalog provider or custom OpenAI-compatible endpo
 
 ## Optional: a local decision model for routing
 
-By default one LLM call (the Concierge) decides what each message is. On a 98-message hand-labeled set it took a median
-of 15 s per message here, and it reported a confidence of 0.95 to 1.00 whether it was right or wrong. A small decision
-model served by [LocalDeploy](https://github.com/oney-erge/LocalDeploy) can make that first decision in about 0.7 s on
-the CPU and report a real probability. It is off by default and never replaces the Concierge for chat.
+Every message first has to be sorted: chat, a question about YBM's own work, or a task, and for a task which route
+(files, browser, documents, schedules, and so on). By default one LLM call, the Concierge, does this. With a local 8B
+model that call took about 15 s per message here (11 to 22 s in live use), and the Concierge reports a confidence of
+0.95 to 1.00 whether it is right or wrong. A small *decision model* served by
+[LocalDeploy](https://github.com/oney-erge/LocalDeploy) answers the same question in about 0.5 s on the CPU, with a
+probability for every route, and does not compete with the chat model for the GPU. It is off by default.
 
-1. In LocalDeploy: download a [llama.cpp release](https://github.com/ggml-org/llama.cpp/releases) (b11976 or newer) and
-   set `LLAMACPP_SERVER_PATH` to its `llama-server`, then enable the `d3_lite_decision` profile in `config.json` (vLLM
-   Semantic Router d3-lite, 0.85B, Apache-2.0; its 1 GB GGUF downloads on first use). For about 1.8 times the speed, make
-   a Q4_K_M file once with `scripts/make_decision_gguf.py ggml-org/vllm-d3-lite-GGUF` and point `model_id` at it. No Python
-   packages are needed, and it does not use the GPU, so it does not compete with the chat model for it.
-2. In `config/config.yaml` set `decision.mode` to `shadow` and `decision.profile` to `d3_lite_decision`, and restart.
-   Shadow mode changes nothing: every message still goes through the Concierge, and the decision model's route,
-   probability and whether they agree are recorded as `intake_decision` audit events.
-3. After some real use, look at those events (`agrees`, `decision_confidence`). If the model agrees where it is
-   confident, set `decision.mode` to `cascade`: it then decides alone when it is at least `min_confidence` sure of a
-   route in `cascade_routes`, and everything else still goes to the Concierge.
+1. **In LocalDeploy**, install llama.cpp b11976 or newer (`winget install ggml.llamacpp`, or `winget upgrade
+   ggml.llamacpp` if an older one is installed; `brew install llama.cpp` on macOS) and set `"enabled": true` on the
+   `d3_lite_decision` profile in `config.json`. Its first request downloads the model (about 1.7 GB) and makes a smaller
+   Q4_K_M file once (25 s here on a fast connection); until then YBM keeps using the Concierge.
+2. **In YBM**, open Settings, "Message routing" (or set `decision.mode` in `config/config.yaml`):
 
-What to expect, from that 98-message set on a Ryzen 9 5900HS with 8 threads and no GPU: d3-lite chose the exact route
-93% of the time against the Concierge's 88% (92% against 94% once the `status` route is left out), got chat versus task
-right for 95 of 98 messages against 90, and never mistook a real task for chat. The two make different mistakes: when they
-agree they are right 98% of the time. As a cascade at `min_confidence` 0.9 it decided 34% of the messages alone, 31 of 33
-correctly, and the other 66% still went to the Concierge. The saving is mostly time (about 0.7 s instead of about 15 s for
-those messages) and a usable confidence, not accuracy. Larger d3 models are more accurate (d3-mini 95%) but take 5 to 8 s
-on a CPU. The full comparison of 18 models and quantizations, and its limits, is in LocalDeploy's `docs/MODELS.md`.
+   | Choice | `decision.mode` | What happens |
+   |---|---|---|
+   | LLM only | `off` | The Concierge decides every message (the default). |
+   | LLM decides, decision model compared | `shadow` | Nothing changes; both answers are recorded so you can see how often they agree. |
+   | Decision model for clear task routes | `cascade` | The decision model decides alone when it is at least `min_confidence` sure of a file, desktop, document, script, workspace, new-tool or website request. |
+   | Decision model first | `decision` | The decision model decides every message it is that sure of, chat and status included; the LLM still writes chat replies. Coding-agent requests and unsure messages go to the Concierge. |
 
+   In every mode a failure, a timeout, or a message that arrives while a task is running goes to the Concierge.
+   The card's "Try a message" box asks both models about one message without acting on it, and shows how often they
+   agreed on recorded messages. `ybm doctor` reports whether the chosen decision profile is reachable.
+3. Start with `shadow` for a while, then switch if the recorded agreement looks right for how you use YBM.
+
+What to expect, from the test in LocalDeploy's
+[`benchmarks/decision-routing`](https://github.com/oney-erge/LocalDeploy/tree/main/benchmarks/decision-routing)
+on a Ryzen 9 5900HS with 8 threads: d3-lite sent 93% of 98 hand-written messages and 84% of 43 messages from YBM's own
+e2e catalogue to the right route, and never treated a real task as chat. The Concierge scored 92% and 88%, and
+answered 2 real tasks as chat. With `decision` mode at a 0.9 cut-off, replayed on the same messages, accuracy
+stayed at the Concierge's on both sets while the decision model settled 69 of the 141 messages alone (2 wrongly), most
+of them tasks, which then start about 15 s sooner. Chat rarely reaches 0.9, so a chat reply usually still waits for the
+LLM. Kept running, the decision model holds about 1 GB of RAM and about 2% of one CPU core while idle; after
+LocalDeploy restarts, the first answer takes about 1.6 s.
 ## Access and approvals
 
 High-impact capabilities start disabled. Enable only the access needed for the current workflow

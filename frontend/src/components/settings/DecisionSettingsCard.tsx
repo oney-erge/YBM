@@ -134,11 +134,12 @@ export function DecisionSettingsCard() {
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
-        <Label className="flex flex-col gap-1">
+        <Label className="flex flex-col items-start gap-1">
           <span className="text-xs font-medium">Classifier</span>
           <Select value={draft.mode} onValueChange={(value) => value && setDraft({ ...draft, mode: value as DecisionMode })}>
             <SelectTrigger>
-              <SelectValue />
+              {/* The trigger shows the choice's label, not its config value. */}
+              <SelectValue>{(value: DecisionMode) => MODES.find((mode) => mode.value === value)?.label ?? value}</SelectValue>
             </SelectTrigger>
             <SelectContent>
               {MODES.map((mode) => (
@@ -148,12 +149,12 @@ export function DecisionSettingsCard() {
               ))}
             </SelectContent>
           </Select>
-          <span className="text-xs text-muted-foreground">{chosen.detail(sure)}</span>
+          <span className="text-xs font-normal leading-snug text-muted-foreground">{chosen.detail(sure)}</span>
         </Label>
 
         {draft.mode !== "off" && (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-            <Label className="flex flex-col gap-1">
+            <Label className="flex flex-col items-stretch gap-1">
               <span className="text-xs font-medium">LocalDeploy decision profile</span>
               <Input
                 value={draft.profile}
@@ -161,7 +162,7 @@ export function DecisionSettingsCard() {
                 onChange={(e) => setDraft({ ...draft, profile: e.target.value })}
               />
             </Label>
-            <Label className="flex flex-col gap-1">
+            <Label className="flex flex-col items-stretch gap-1">
               <span className="text-xs font-medium">Decide alone at or above</span>
               <Input
                 type="number"
