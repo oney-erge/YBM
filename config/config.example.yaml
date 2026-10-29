@@ -212,7 +212,7 @@ secrets:
   key_env: "AGENT_SECRET_VAULT_KEY"
 
 # A small local decision model (served by LocalDeploy at /v1/systemone) that picks the
-# route for each incoming message in about a second on a CPU and reports a real
+# route for each incoming message in under a second on a CPU and reports a real
 # probability. Off by default. Try `shadow` first: it records whether the model agrees
 # with the LLM concierge (audit event intake_decision) and changes nothing. `cascade`
 # lets it decide alone when it is confident about a route in cascade_routes; chat,
@@ -220,9 +220,9 @@ secrets:
 decision:
   mode: "off"                  # off | shadow | cascade
   base_url: "http://127.0.0.1:8000"
-  # profile: "d1_omni_600m_decision"   # a LocalDeploy decision profile; omit for its default
+  # profile: "d3_lite_decision"   # a LocalDeploy decision profile (d3-lite on the CPU, about 0.6 s); omit for its default
   # api_token_env: "LOCALDEPLOY_API_TOKEN"
-  timeout_seconds: 5
+  timeout_seconds: 10
   min_confidence: 0.9
   cooldown_seconds: 60
   cascade_routes:

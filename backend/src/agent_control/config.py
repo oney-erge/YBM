@@ -203,9 +203,9 @@ class DecisionConfig(StrictBaseModel):
     # A LocalDeploy decision profile. None uses LocalDeploy's default decision profile.
     profile: str | None = None
     api_token_env: str | None = None
-    # Longer than a warm answer (about a second on a CPU) so the first message after
-    # LocalDeploy starts, which waits for the model to load, usually still counts.
-    timeout_seconds: float = Field(default=5.0, gt=0, le=60)
+    # A warm answer takes well under a second on a CPU. The first message after LocalDeploy
+    # starts also waits for llama-server to start and load the model, so allow for that.
+    timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     min_confidence: float = Field(default=0.9, ge=0.5, le=1.0)
     # Only routes whose task needs nothing the LLM concierge extracts (a provider
     # name, a schedule, a delivery kind) may be decided without it. Chat and

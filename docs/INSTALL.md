@@ -211,29 +211,30 @@ You can instead configure any catalog provider or custom OpenAI-compatible endpo
 
 ## Optional: a local decision model for routing
 
-By default one LLM call (the Concierge) decides what each message is. A small decision model served by
-[LocalDeploy](https://github.com/oney-erge/LocalDeploy) can make that first decision in about 0.1 s on a GPU and
-report a real probability, which the Concierge cannot (its confidence is 0.95 to 1.00 whether it is right or wrong).
-It is off by default and never replaces the Concierge for chat.
+By default one LLM call (the Concierge) decides what each message is. On a 98-message hand-labeled set it took a median
+of 15 s per message here, and it reported a confidence of 0.95 to 1.00 whether it was right or wrong. A small decision
+model served by [LocalDeploy](https://github.com/oney-erge/LocalDeploy) can make that first decision in about 0.7 s on
+the CPU and report a real probability. It is off by default and never replaces the Concierge for chat.
 
-1. In LocalDeploy: `python -m pip install -r requirements-decision.txt`, then enable the `d1_3b_decision` profile in
-   `config.json` and set `"license_accepted": true` once you have read the LFM Open License v1.0 (free for commercial
-   use below US$10M annual revenue). Start LocalDeploy.
-2. In `config/config.yaml` set `decision.mode` to `shadow` and `decision.profile` to `d1_3b_decision`, and restart.
+1. In LocalDeploy: download a [llama.cpp release](https://github.com/ggml-org/llama.cpp/releases) (b11976 or newer) and
+   set `LLAMACPP_SERVER_PATH` to its `llama-server`, then enable the `d3_lite_decision` profile in `config.json` (vLLM
+   Semantic Router d3-lite, 0.85B, Apache-2.0; its 1 GB GGUF downloads on first use). For about 1.8 times the speed, make
+   a Q4_K_M file once with `scripts/make_decision_gguf.py ggml-org/vllm-d3-lite-GGUF` and point `model_id` at it. No Python
+   packages are needed, and it does not use the GPU, so it does not compete with the chat model for it.
+2. In `config/config.yaml` set `decision.mode` to `shadow` and `decision.profile` to `d3_lite_decision`, and restart.
    Shadow mode changes nothing: every message still goes through the Concierge, and the decision model's route,
    probability and whether they agree are recorded as `intake_decision` audit events.
 3. After some real use, look at those events (`agrees`, `decision_confidence`). If the model agrees where it is
    confident, set `decision.mode` to `cascade`: it then decides alone when it is at least `min_confidence` sure of a
    route in `cascade_routes`, and everything else still goes to the Concierge.
 
-What to expect, from a 98-message hand-labeled set measured on an RTX 3080 Laptop GPU (8 GB): the decision model
-chose the exact route 84% of the time against the Concierge's 88% (86% against 94% once the `status` route is left
-out), and the two make different mistakes. As a cascade at `min_confidence` 0.9 it decided 30% of the messages alone,
-all correctly, and the other 70% still went to the Concierge. The saving is time, not accuracy: the Concierge took a
-median of 15 s per message in that run, the decision model 0.1 s on the GPU. `d1-3B` needs about 6 GB of GPU memory,
-so on an 8 GB card it cannot stay loaded beside an 8B chat model; on the CPU it gives the same answers in about 7 s
-and needs about 12 GB of RAM (estimated from its 6 GB download in half precision, not measured). The full table and
-its limits are in LocalDeploy's `docs/MODELS.md`.
+What to expect, from that 98-message set on a Ryzen 9 5900HS with 8 threads and no GPU: d3-lite chose the exact route
+93% of the time against the Concierge's 88% (92% against 94% once the `status` route is left out), got chat versus task
+right for 95 of 98 messages against 90, and never mistook a real task for chat. The two make different mistakes: when they
+agree they are right 98% of the time. As a cascade at `min_confidence` 0.9 it decided 34% of the messages alone, 31 of 33
+correctly, and the other 66% still went to the Concierge. The saving is mostly time (about 0.7 s instead of about 15 s for
+those messages) and a usable confidence, not accuracy. Larger d3 models are more accurate (d3-mini 95%) but take 5 to 8 s
+on a CPU. The full comparison of 18 models and quantizations, and its limits, is in LocalDeploy's `docs/MODELS.md`.
 
 ## Access and approvals
 

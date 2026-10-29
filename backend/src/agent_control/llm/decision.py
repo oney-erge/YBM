@@ -39,36 +39,32 @@ from agent_control.storage.audit import AuditLogger
 
 logger = structlog.get_logger(__name__)
 
-#: One line per route, in the words the decision model was measured with
-#: (LocalDeploy examples/decision/routing_eval.json). ``unknown`` is deliberately absent: a
-#: decision model should pick a real route or hand the message to the concierge.
+#: One short line per route, in the words the decision model was measured with
+#: (LocalDeploy examples/decision/routing_eval_compact.json). Short on purpose: on a CPU a decision
+#: takes time in proportion to the prompt, and d3-lite scored the same with these lines as with
+#: full sentences at about 60% of the time. ``unknown`` is absent: a decision model should pick a
+#: real route or hand the message to the concierge.
 ROUTE_DESCRIPTIONS: dict[IntentRoute, str] = {
-    IntentRoute.CONVERSATION: "pure chat, greeting, thanks, a question about the bot's abilities, or a general-knowledge question that needs nothing from this computer",
-    IntentRoute.STATUS: "a question about the bot's own running tasks, queue or progress",
-    IntentRoute.DESKTOP_OBSERVE: "look at the screen or desktop as a picture: screenshot, what is open, what window is in front",
-    IntentRoute.COMPUTER_USE: "do something in a desktop app: open an app, click, type, press keys, close a window",
-    IntentRoute.BROWSER_OPEN: "open a website or Chrome, search the web, summarize pages, research across pages, screenshot a page",
-    IntentRoute.BROWSER_CONTROL: "act inside a web page: log in, click buttons, fill and submit forms, scroll, extract page data",
-    IntentRoute.FILESYSTEM_MANAGE: "inspect, search, read, write, create, rename, move, delete or organize files and folders",
-    IntentRoute.DOCUMENT_MANAGE: "read or summarize a PDF, or create or revise a presentation or document",
-    IntentRoute.ARTIFACT_DELIVERY: "send an existing file or screenshot back to the user's chat",
-    IntentRoute.CODE_INTERPRETER: "write and run a small script for a calculation, a data transform or a chart",
-    IntentRoute.CODING_AGENT: "hand a coding job to Codex or GitHub Copilot, only when the user names one of them",
-    IntentRoute.SCHEDULE_MANAGE: "create, list, pause, resume, delete or run recurring or timed jobs and reminders",
-    IntentRoute.ADAPTER_FACTORY: "build a new tool or integration the bot does not have yet",
-    IntentRoute.WORKSPACE_MANAGE: "prepare a project workspace, materialize files, launch a local preview",
-    IntentRoute.CONFIGURATION: "change model profiles, access modes or runtime settings",
+    IntentRoute.CONVERSATION: "chat, thanks, general knowledge, questions about the bot",
+    IntentRoute.STATUS: "the bot's own tasks and progress",
+    IntentRoute.DESKTOP_OBSERVE: "screenshot, what is on screen",
+    IntentRoute.COMPUTER_USE: "open apps, click, type, press keys",
+    IntentRoute.BROWSER_OPEN: "open a site, web search, research",
+    IntentRoute.BROWSER_CONTROL: "click or fill inside a web page",
+    IntentRoute.FILESYSTEM_MANAGE: "files and folders: list, read, write, move, delete",
+    IntentRoute.DOCUMENT_MANAGE: "PDF or slide deck work",
+    IntentRoute.ARTIFACT_DELIVERY: "send a file back to the chat",
+    IntentRoute.CODE_INTERPRETER: "write and run a small script",
+    IntentRoute.CODING_AGENT: "hand coding to Codex or Copilot",
+    IntentRoute.SCHEDULE_MANAGE: "reminders and recurring jobs",
+    IntentRoute.ADAPTER_FACTORY: "build a new tool or integration",
+    IntentRoute.WORKSPACE_MANAGE: "set up a project workspace or preview",
+    IntentRoute.CONFIGURATION: "change models, access or settings",
 }
 
 ROUTE_QUESTION: dict[str, Any] = {
     "type": "choice",
-    "instructions": (
-        "A user sent this message to a bot that does things on their own Windows computer. Which route should "
-        "handle it? Pick conversation for greetings, thanks, questions about the bot itself, and general-knowledge "
-        "questions that need nothing from this computer. Pick status only for questions about the bot's own running "
-        "tasks or queue. Anything that has to look at, change, open, send, schedule or build something on this "
-        "computer or the web belongs to one of the other routes."
-    ),
+    "instructions": "Which route should handle this message to a bot that does things on the user's computer?",
     "criteria": {route.value: description for route, description in ROUTE_DESCRIPTIONS.items()},
 }
 
