@@ -227,3 +227,35 @@ def test_task_list_for_conversation_empty_when_none_exist(tmp_path) -> None:
     repos = Repositories.for_database(database)
 
     assert repos.tasks.list_for_conversation("conv_nonexistent") == []
+
+
+def test_an_expired_claim_is_reclaimable_in_the_same_clock_tick(tmp_path, monkeypatch) -> None:
+    """Windows clocks can return one instant twice; a claim expiring at T is expired at T."""
+    import agent_control.storage.repositories as repositories_module
+
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    task = repos.tasks.create("do a thing", repos.conversations.get_or_create(ChannelType.TELEGRAM, "1"))
+    frozen = utc_now()
+    monkeypatch.setattr(repositories_module, "utc_now", lambda: frozen)
+
+    repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="A", claim_expiry_seconds=0)
+    claim_b = repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="B")
+
+    assert claim_b is not None and claim_b.id == task.id
+
+
+def test_rows_created_in_the_same_clock_tick_keep_their_insertion_order(tmp_path) -> None:
+    """The latest task, and every oldest-first list, must not depend on how equal timestamps happen to sort."""
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    conversation_id = repos.conversations.get_or_create(ChannelType.TELEGRAM, "1")
+    first = repos.tasks.create("an earlier task", conversation_id)
+    second = repos.tasks.create("what's the current task status?", conversation_id)
+    with database.connect() as connection:
+        connection.execute("UPDATE tasks SET created_at = ?", (first.created_at.isoformat(),))
+
+    assert [t.id for t in repos.tasks.list_recent(2)] == [second.id, first.id]
+    assert [t.id for t in repos.tasks.list_for_conversation(conversation_id)] == [first.id, second.id]
