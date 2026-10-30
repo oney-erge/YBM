@@ -17,11 +17,13 @@ from agent_control.orchestration.auditor import AuditResult
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.orchestration.worker import (
     CHECK_ENTRY_FULFILLMENT,
+    _answer_from_results,
     _canonical_operator_tool_call,
     _coding_agent_input_with_task_defaults,
     _document_summary_call,
     _coding_agent_input_with_explicit_workspace,
     _effective_operator_risk,
+    _file_in_named_folder,
     _filesystem_search_input_with_content_intent,
     _ground_operator_final_answer,
     _clarification_recovery_reason,
@@ -30,6 +32,8 @@ from agent_control.orchestration.worker import (
     _ordered_artifact_delivery_call,
     _required_named_coding_agent_call,
     _satisfied_task_does_not_need_clarification,
+    _schedule_id_from_this_task,
+    _schedule_objective_with_request_urls,
     _stale_read_recovery_call,
     _unsupported_write_claim,
     build_replay_plan,
@@ -590,6 +594,24 @@ async def test_operator_loop_blocks_repeated_successful_observations(tmp_path) -
     events = repos.audit.list_for_task(result.id)
     assert any(event.payload.get("error") == "operator_repeated_no_progress" for event in events)
 
+
+
+@pytest.mark.asyncio
+async def test_repeated_identical_failures_without_an_operation_are_stopped(tmp_path) -> None:
+    # Live: a scheduled run sent {"query": ...} to web.search ten times and got the same error each time.
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("check for new episodes")
+    executor = _executor_with_adapter(_settings(), audit, repos, FailingAdapter(), tool_name="web.search")
+    search = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="web.search",
+                              tool_input={"query": "new episodes"}, risk_level=RiskLevel.LOW)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([search] * 5), operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.BLOCKED
+    assert "repeated web.search calls returned the same result" in result.metadata["last_worker_error"]
 
 @pytest.mark.asyncio
 async def test_gap_check_entries_do_not_consume_the_tool_call_budget(tmp_path) -> None:
@@ -1342,10 +1364,13 @@ async def test_multi_step_task_sends_a_progress_notification_per_step(tmp_path) 
     repos.tasks.create("do three things", metadata={"source_chat_id": "100"})
     settings = _settings()
     executor = _executor(settings, audit, repos, output={"text": "ok"})
+    # Three different steps: three identical calls with one identical result is a no-progress loop.
     operator = QueueOperator([
-        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
-        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
-        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+        *(
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm",
+                             tool_input={"operation": f"step_{n}"}, risk_level=RiskLevel.LOW)
+            for n in range(3)
+        ),
         OperatorDecision(action=OperatorAction.DONE, final_answer="finished"),
     ])
 
@@ -2869,3 +2894,247 @@ def test_the_pdf_redirect_needs_the_document_tool(tmp_path) -> None:
     call = {"operation": "read_file", "path": "a.pdf"}
     assert _document_summary_call(task, "filesystem.manage", call, _document_definitions(enabled=False)) == ("filesystem.manage", call)
     assert _document_summary_call(task, "filesystem.manage", call, {}) == ("filesystem.manage", call)
+
+
+# ---- references the task already holds are filled in, not made up ----------
+# A live scheduled_jobs run created its schedule, then called run_now three
+# times with an invented "task_name" instead of the id it had just been given,
+# and ended blocked. A live pdf_open_summary run summarized a PDF name built
+# from the folder's before it looked inside the folder.
+
+_SCHEDULE_ID = "schedule_" + "a" * 32
+
+
+def _schedule_result(summary: str, status: str = "succeeded") -> dict:
+    return {"tool_name": "schedule.manage", "status": status, "input": {"operation": "create"}, "output_summary": summary}
+
+
+def test_a_missing_schedule_id_is_the_schedule_this_task_created() -> None:
+    history = [_schedule_result(f"Created schedule {_SCHEDULE_ID}: daily -> Check example.com")]
+    call = {"operation": "run_now", "task_name": "Daily Episode Summary Checker"}
+
+    assert _schedule_id_from_this_task("schedule.manage", call, history)["schedule_id"] == _SCHEDULE_ID
+
+
+@pytest.mark.parametrize(
+    "call, history",
+    [
+        ({"operation": "run_now"}, []),  # nothing created yet: the tool asks for the id
+        ({"operation": "run_now"}, [_schedule_result(f"{_SCHEDULE_ID} and schedule_{'b' * 32}")]),  # two: ambiguous
+        ({"operation": "run_now"}, [_schedule_result(f"Created schedule {_SCHEDULE_ID}", status="failed")]),
+        ({"operation": "run_now", "schedule_id": "schedule_given"}, [_schedule_result(_SCHEDULE_ID)]),
+        ({"operation": "create", "objective": "x"}, [_schedule_result(_SCHEDULE_ID)]),
+    ],
+)
+def test_a_schedule_id_is_only_filled_when_one_schedule_is_meant(call, history) -> None:
+    assert _schedule_id_from_this_task("schedule.manage", call, history) == call
+
+
+@pytest.mark.asyncio
+async def test_run_now_after_create_reaches_the_tool_with_the_created_id(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("create a daily job that checks example.com, then send me the summary")
+    adapter = StaticToolAdapter({"summary": f"Created schedule {_SCHEDULE_ID}: daily -> Check example.com"})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    run_now = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="schedule.manage",
+                               tool_input={"operation": "run_now", "task_name": "Daily checker"}, risk_level=RiskLevel.LOW)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), run_now]),
+                        operator_max_steps=8)
+
+    result = await worker.process_task(task.id)
+    await worker.process_task(result.id)
+
+    assert adapter.requests[1].input["schedule_id"] == _SCHEDULE_ID
+
+
+def _folder_with(tmp_path: Path, *names: str) -> Path:
+    folder = tmp_path / "AgentControlE2E"
+    folder.mkdir()
+    for name in names:
+        (folder / name).write_bytes(b"%PDF-1.4")
+    return folder
+
+
+def _task_saying(tmp_path: Path, message: str) -> TaskRecord:
+    repos, _ = make_repos(tmp_path / "db")
+    return repos.tasks.create(message, metadata={"original_message_text": message})
+
+
+def test_a_made_up_file_name_in_the_named_folder_becomes_the_one_file_there(tmp_path) -> None:
+    folder = _folder_with(tmp_path, "agent-control-sample.pdf", "notes.txt")
+    task = _task_saying(tmp_path, f"Open the desktop folder {folder}, find the PDF inside it, and tell me what it is about.")
+    call = {"operation": "summarize_pdf", "path": str(folder / "AgentControlE2E.pdf")}
+
+    assert _file_in_named_folder(task, "document.manage", call)["path"] == str(folder / "agent-control-sample.pdf")
+
+
+@pytest.mark.parametrize(
+    "files, guessed, message, tool, operation",
+    [
+        (("a.pdf", "b.pdf"), "guess.pdf", "find the PDF inside {folder}", "document.manage", "summarize_pdf"),  # two candidates
+        (("a.pdf",), "report.pdf", "summarize report.pdf in {folder}", "document.manage", "summarize_pdf"),  # the user named it
+        (("a.pdf",), "a.pdf", "find the PDF inside {folder}", "document.manage", "summarize_pdf"),  # it exists
+        (("a.pdf",), "guess.pdf", "find the PDF on my desktop", "document.manage", "summarize_pdf"),  # folder not named
+        (("a.pdf",), "guess.pdf", "find the PDF inside {folder}\\2026", "document.manage", "summarize_pdf"),  # a deeper one is
+        (("a.md",), "brief.md", "write a brief into {folder}", "filesystem.manage", "write_text_file"),  # writes create paths
+    ],
+)
+def test_a_file_path_is_only_replaced_when_one_file_is_meant(tmp_path, files, guessed, message, tool, operation) -> None:
+    folder = _folder_with(tmp_path, *files)
+    task = _task_saying(tmp_path, message.format(folder=folder))
+    call = {"operation": operation, "path": str(folder / guessed)}
+
+    assert _file_in_named_folder(task, tool, call) == call
+
+
+def test_a_relative_made_up_path_is_left_alone(tmp_path) -> None:
+    task = _task_saying(tmp_path, "find the PDF in this folder.")
+    call = {"operation": "summarize_pdf", "path": "guess.pdf"}
+
+    assert _file_in_named_folder(task, "document.manage", call) == call
+
+
+# ---- a question the user already answered is not asked again ---------------
+# After "yes, go ahead with what you proposed", a live run asked the same
+# question again and the task waited until it was cancelled.
+
+_ASKED = ("The requested PDF 'AgentControlE2E.pdf' does not exist in the specified folder. Did you mean to refer "
+          "to 'agent-control-sample.pdf', which was found and summarized? Or is there another file you intended?")
+
+
+def _answered_task() -> TaskRecord:
+    return TaskRecord(
+        objective="Find the PDF and summarize it.",
+        metadata={"answered_clarifying_question": _ASKED, "clarification_answer": "Yes, go ahead."},
+    )
+
+
+def test_the_same_question_again_is_rejected_with_the_answer() -> None:
+    asked_again = _ASKED.replace(
+        "Or is there another file you intended?", "Please confirm if this is correct or provide clarification."
+    )
+
+    reason = _clarification_recovery_reason(_answered_task(), [], asked_again)
+
+    assert reason is not None
+    assert "already asked" in reason and "Yes, go ahead." in reason
+
+
+def test_a_new_question_after_an_answer_can_still_be_asked() -> None:
+    assert _clarification_recovery_reason(_answered_task(), [], "Which email address should the summary go to?") is None
+
+
+def _read(path: Path, operation: str = "summarize_pdf") -> dict:
+    return {"tool_name": "document.manage", "status": "succeeded", "input": {"operation": operation, "path": str(path)}}
+
+
+def test_the_answer_names_the_file_that_was_read_not_the_made_up_one(tmp_path) -> None:
+    folder = _folder_with(tmp_path, "agent-control-sample.pdf")
+    real, made_up = folder / "agent-control-sample.pdf", folder / "AgentControlE2E.pdf"
+
+    answer = _ground_operator_final_answer(f"The PDF located at {made_up} is about desktop automation.", [_read(real)])
+
+    assert answer == f"The PDF located at {real} is about desktop automation."
+
+
+@pytest.mark.parametrize("named", ["other.pdf", "notes.txt", "agent-control-sample.pdf"])
+def test_a_path_that_exists_or_is_another_kind_of_file_is_kept(tmp_path, named) -> None:
+    folder = _folder_with(tmp_path, "agent-control-sample.pdf", "other.pdf")
+    original = f"Compare it with {folder / named}."
+
+    assert _ground_operator_final_answer(original, [_read(folder / "agent-control-sample.pdf")]) == original
+
+
+@pytest.mark.asyncio
+async def test_a_question_after_two_rejections_on_finished_work_ends_the_task_with_the_results(tmp_path) -> None:
+    # Live: the schedule was created, the model was twice told to report instead of asking,
+    # then asked the user anyway and, after "go ahead", asked the same question again.
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Create a daily job that checks example.com for new episodes and sends me the summary.")
+    adapter = StaticToolAdapter(
+        {"summary": f"Created schedule {_SCHEDULE_ID}: daily -> Check example.com", "schedule_id": _SCHEDULE_ID}
+    )
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    question = "The URL is not on the HTTP allowlist. Should I use a local script instead?"
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question=question)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), ask, ask, ask]),
+                        operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    answer = result.metadata["synthesized_answer"]
+    assert f"Created schedule {_SCHEDULE_ID}" in answer
+    assert answer.endswith(f"Not settled: {question}")
+    assert "clarify_count" not in result.metadata  # the user was never asked
+
+
+
+@pytest.mark.asyncio
+async def test_the_finished_answer_is_not_audited_as_a_synthesis(tmp_path) -> None:
+    # Live: the converted finish was audited against a stray read and blocked twice.
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Create a daily job that checks example.com for new episodes and sends me the summary.")
+    settings = _settings()
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={
+            "schedule.manage": StaticToolAdapter({"summary": f"Created schedule {_SCHEDULE_ID}", "schedule_id": _SCHEDULE_ID}),
+            "http.request": StaticToolAdapter({"summary": "Not Found"}),
+        },
+        tool_definitions={
+            name: ToolDefinition(name=name, capability=Capability.LLM_GENERATE, enabled=True, description="test tool")
+            for name in ("schedule.manage", "http.request")
+        },
+    )
+    fetch = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="http.request",
+                             tool_input={"url": "https://example.com"}, risk_level=RiskLevel.LOW)
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="Should I use a browser instead?")
+    auditor = QueueAuditor([AuditResult(sufficient=False, reason="no summary was sent")] * 3)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), fetch, ask, ask, ask]),
+                        auditor=auditor, operator_max_steps=8, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(5):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert auditor.calls == []
+
+def test_the_finished_answer_lists_what_changed_or_the_last_read() -> None:
+    created = {"tool_name": "schedule.manage", "status": "succeeded", "input": {"operation": "create"},
+               "output_summary": "Created schedule s1"}
+    read = {"tool_name": "http.request", "status": "succeeded", "input": {"url": "https://x"}, "output_summary": "Not Found"}
+
+    assert _answer_from_results([created, read], None) == "Done:\n- Created schedule s1"
+    assert _answer_from_results([read], "Which page?") == "Done:\n- Not Found\n\nNot settled: Which page?"
+
+
+def test_a_scheduled_job_keeps_the_url_the_user_gave() -> None:
+    message = "Create a job that runs every day and checks http://127.0.0.1:52308/episode.html for a new episode."
+    task = TaskRecord(objective=message, metadata={"original_message_text": message})
+    call = {"operation": "create", "objective": "Check for new episodes daily at 9 AM and send summaries."}
+
+    objective = _schedule_objective_with_request_urls(task, "schedule.manage", call)["objective"]
+
+    assert objective == (
+        "Check for new episodes daily at 9 AM and send summaries. "
+        "[from the request: http://127.0.0.1:52308/episode.html]"
+    )
+
+
+@pytest.mark.parametrize(
+    "message, call",
+    [
+        ("check https://example.com/feed daily", {"operation": "create", "objective": "Check https://example.com/feed"}),
+        ("remind me to stretch every hour", {"operation": "create", "objective": "Remind the user to stretch"}),
+        ("check https://example.com daily", {"operation": "list"}),
+    ],
+)
+def test_a_scheduled_job_objective_is_otherwise_left_alone(message, call) -> None:
+    task = TaskRecord(objective=message, metadata={"original_message_text": message})
+
+    assert _schedule_objective_with_request_urls(task, "schedule.manage", call) == call
+

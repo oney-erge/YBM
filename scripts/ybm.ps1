@@ -408,9 +408,11 @@ function Stop-YbmOrphansForName {
     return
   }
   $rootPath = $Script:YbmRoot
+  $external = if ($Name -eq "localdeploy") { @(Get-YbmExternalLocalDeployIds) } else { @() }
   $candidates = Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
     $commandLine = $_.CommandLine
     if (-not $commandLine) { return $false }
+    if ($external -contains [int]$_.ProcessId) { return $false }
     foreach ($pattern in $patterns) {
       $matchesPattern = $commandLine -like "*$pattern*"
       # Any `python -m agent_control.*` launch, not just the cli workers: a

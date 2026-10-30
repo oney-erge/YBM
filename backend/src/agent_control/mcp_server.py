@@ -15,6 +15,7 @@ from functools import lru_cache
 
 from mcp.server.fastmcp import FastMCP
 
+from agent_control.clarification import objective_with_answer
 from agent_control.config import load_settings
 from agent_control.schemas import TaskRecord, TaskStatus
 from agent_control.storage import Database, Repositories
@@ -70,7 +71,9 @@ def answer_task_question(task_id: str, answer: str) -> dict:
         return {"error": f"task not found: {task_id}"}
     if task.status != TaskStatus.CLARIFYING:
         return {"error": f"task is not waiting for an answer (status: {task.status.value})"}
-    repositories.tasks.update_objective(task.id, f"{task.objective}\n[User clarification: {answer}]")
+    repositories.tasks.update_objective(
+        task.id, objective_with_answer(task.objective, task.metadata.get("clarifying_question"), answer)
+    )
     answers = list(task.metadata.get("clarification_answers") or [])
     answers.append(
         {
