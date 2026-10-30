@@ -169,6 +169,13 @@ class ToolDefinition:
             return True
         return bool(self.approval_resolver and self.approval_resolver(value))
 
+    def __post_init__(self) -> None:
+        # A tool with one operation means that operation when none is named. web.search had no
+        # default, and a scheduled run sent {"query": ...} five times to "unsupported operation:
+        # <missing>" although its own input schema defaults the operation to "search".
+        if self.default_operation is None and len(self.operations) == 1:
+            object.__setattr__(self, "default_operation", self.operations[0])
+
     def approval_reason(self, value: dict) -> str | None:
         operation = str(value.get("operation") or self.default_operation or "")
         return self.approval_reasons.get(operation)

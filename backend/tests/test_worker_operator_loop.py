@@ -595,6 +595,24 @@ async def test_operator_loop_blocks_repeated_successful_observations(tmp_path) -
     assert any(event.payload.get("error") == "operator_repeated_no_progress" for event in events)
 
 
+
+@pytest.mark.asyncio
+async def test_repeated_identical_failures_without_an_operation_are_stopped(tmp_path) -> None:
+    # Live: a scheduled run sent {"query": ...} to web.search ten times and got the same error each time.
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("check for new episodes")
+    executor = _executor_with_adapter(_settings(), audit, repos, FailingAdapter(), tool_name="web.search")
+    search = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="web.search",
+                              tool_input={"query": "new episodes"}, risk_level=RiskLevel.LOW)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([search] * 5), operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.BLOCKED
+    assert "repeated web.search calls returned the same result" in result.metadata["last_worker_error"]
+
 @pytest.mark.asyncio
 async def test_gap_check_entries_do_not_consume_the_tool_call_budget(tmp_path) -> None:
     """Regression guard (docs/archive/HISTORY.md §3.1): the fulfillment/audit gap paths
@@ -1346,10 +1364,13 @@ async def test_multi_step_task_sends_a_progress_notification_per_step(tmp_path) 
     repos.tasks.create("do three things", metadata={"source_chat_id": "100"})
     settings = _settings()
     executor = _executor(settings, audit, repos, output={"text": "ok"})
+    # Three different steps: three identical calls with one identical result is a no-progress loop.
     operator = QueueOperator([
-        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
-        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
-        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+        *(
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm",
+                             tool_input={"operation": f"step_{n}"}, risk_level=RiskLevel.LOW)
+            for n in range(3)
+        ),
         OperatorDecision(action=OperatorAction.DONE, final_answer="finished"),
     ])
 

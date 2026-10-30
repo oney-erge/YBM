@@ -110,7 +110,8 @@ A call that would create, change, move, delete or send something (the effect tab
 run again when the same call with the same input already succeeded in the task. The operator gets the earlier result
 back with "Not run again", and if it keeps asking, the no-progress guard stops the task. A small model can miss its
 own success: one live run created the same daily schedule nine times, each through its own approval. Reads and
-commands are not affected. `schedule.manage` also returns an existing enabled schedule with the same job, cadence and
+commands are not affected. The no-progress guard (three identical outcomes in a row) also covers calls that name no
+operation, such as `{"url": ...}` or `{"query": ...}`. A tool with a single operation uses it when none is named. `schedule.manage` also returns an existing enabled schedule with the same job, cadence and
 timezone instead of making a copy.
 
 ### References come from what the task already knows

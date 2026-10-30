@@ -67,6 +67,13 @@ def test_validate_input_defaults_missing_operation_to_default() -> None:
     assert out["operation"] == "read"
 
 
+def test_a_single_operation_tool_defaults_to_that_operation() -> None:
+    definition = build_tool_registry(AppSettings(), "http://127.0.0.1:8765").definition_index["web.search"]
+
+    assert definition.validate_input({"query": "new episodes"})["operation"] == "search"
+    assert _toy_definition().default_operation == "read"  # an explicit default is kept
+
+
 def test_validate_output_routes_by_operation() -> None:
     definition = _toy_definition()
     out = definition.validate_output({"operation": "read"})

@@ -1058,11 +1058,12 @@ class TaskWorker:
         repeated_call = _repeated_no_progress_call(history)
         if repeated_call is not None:
             tool_name, operation = repeated_call
+            called = f"{tool_name}:{operation}" if operation else tool_name
             metadata = {
                 **recorded.metadata,
                 "operator_history": history,
                 "last_worker_error": (
-                    f"Blocked after repeated {tool_name}:{operation} calls returned the same result; "
+                    f"Blocked after repeated {called} calls returned the same result; "
                     "stopped to avoid a no-progress loop. A different capability or user input is required."
                 ),
             }
@@ -3338,10 +3339,11 @@ def _repeated_no_progress_call(
     )
     outputs = {" ".join(str(entry.get(observation_key) or "").split()) for entry in recent}
     operation = next(iter(operations), "")
+    # A call without an operation counts too: {"url": ...} and {"query": ...} repeated with the
+    # same error used to slip past this guard (ten identical web.search failures in one live run).
     if (
         len(tool_names) != 1
         or len(operations) != 1
-        or not operation
         or len(outputs) != 1
         or not next(iter(outputs), "")
     ):
