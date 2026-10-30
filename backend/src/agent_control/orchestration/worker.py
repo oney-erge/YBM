@@ -675,6 +675,15 @@ class TaskWorker:
             },
         )
 
+        if decision.action == OperatorAction.ASK_USER and _still_asking_after_the_work_is_done(latest, history):
+            # Twice told that the work is done and to report the gap instead of asking, a live run
+            # put its question to the user anyway, got "go ahead", and asked it again. The request's
+            # work is done, so the task finishes with what was done and the question as a note.
+            decision = decision.model_copy(update={
+                "action": OperatorAction.DONE,
+                "final_answer": _answer_from_results(history, decision.question),
+            })
+
         if decision.action == OperatorAction.DONE:
             final_answer = _ground_operator_final_answer(decision.final_answer, history)
             # Skip the grounding pass on a task that made a single tool call:
@@ -2791,6 +2800,31 @@ def _satisfied_task_does_not_need_clarification(
     )
 
 
+def _still_asking_after_the_work_is_done(task: TaskRecord, history: list[dict[str, Any]]) -> bool:
+    """Whether a question comes after two rejections and the request's work is verifiably done."""
+    if int(task.metadata.get("operator_optional_question_recovery_count", 0)) < 2:
+        return False
+    candidate = task.model_copy(update={"metadata": {**task.metadata, "operator_history": history}})
+    return _satisfied_task_does_not_need_clarification(candidate, history)
+
+
+def _answer_from_results(history: list[dict[str, Any]], question: str | None) -> str:
+    """What the task did, in its own successful results, and the question the model still had."""
+    done = list(dict.fromkeys(
+        " ".join(str(entry.get("output_summary") or "").split())[:300]
+        for entry in history
+        if isinstance(entry, dict)
+        and entry.get("tool_name") not in CHECK_ENTRY_NAMES
+        and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+        and entry.get("output_summary")
+    ))
+    lines = ["Done:", *(f"- {line}" for line in done[-5:])]
+    asked = " ".join(str(question or "").split())
+    if asked:
+        lines += ["", f"Not settled: {asked}"]
+    return "\n".join(lines)
+
+
 def _clarification_recovery_reason(
     task: TaskRecord,
     history: list[dict[str, Any]],
@@ -3407,6 +3441,7 @@ def _ground_operator_final_answer(answer: str | None, history: list[dict[str, An
     """
     if not answer:
         return answer
+    answer = _answer_with_the_file_read(answer, history)
     source_path = ""
     for entry in reversed(history):
         tool_input = entry.get("input") if isinstance(entry, dict) else None
@@ -3425,6 +3460,47 @@ def _ground_operator_final_answer(answer: str | None, history: list[dict[str, An
     if source_path.lower() in lowered or (filename and filename.lower() in lowered):
         return answer
     return f"{answer.rstrip()}\n\nSource file: {source_path}"
+
+
+_FILE_READ_OPERATIONS = frozenset({"read_file", "inspect_document", "extract_text", "summarize_pdf"})
+_ANSWER_PATH = re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>|*?,;]+")
+
+
+def _answer_with_the_file_read(answer: str, history: list[dict[str, Any]]) -> str:
+    """Name the file that was read where the answer names one that does not exist beside it.
+
+    A live run read the right PDF (its made-up name had been replaced before the call) and then
+    told the user about the made-up one. A path in the answer that does not exist, has the same
+    extension and sits in the folder of the last file read is that file.
+    """
+    source = next(
+        (
+            Path(str(entry["input"]["path"]))
+            for entry in reversed(history)
+            if isinstance(entry, dict)
+            and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+            and isinstance(entry.get("input"), dict)
+            and entry["input"].get("operation") in _FILE_READ_OPERATIONS
+            and entry["input"].get("path")
+        ),
+        None,
+    )
+    if source is None:
+        return answer
+
+    def real_file(match: re.Match[str]) -> str:
+        text = match.group(0).rstrip(".:)")
+        named = Path(text)
+        if (
+            os.path.normcase(str(named.parent)) == os.path.normcase(str(source.parent))
+            and os.path.normcase(str(named)) != os.path.normcase(str(source))
+            and named.suffix.casefold() == source.suffix.casefold()
+            and not named.exists()
+        ):
+            return str(source) + match.group(0)[len(text):]
+        return match.group(0)
+
+    return _ANSWER_PATH.sub(real_file, answer)
 
 
 def _completed_coding_agent_answer(tool_name: str, result: ToolCallResult) -> str | None:

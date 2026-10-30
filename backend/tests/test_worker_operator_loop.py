@@ -3000,3 +3000,50 @@ def test_the_same_question_again_is_rejected_with_the_answer() -> None:
 def test_a_new_question_after_an_answer_can_still_be_asked() -> None:
     assert _clarification_recovery_reason(_answered_task(), [], "Which email address should the summary go to?") is None
 
+
+def _read(path: Path, operation: str = "summarize_pdf") -> dict:
+    return {"tool_name": "document.manage", "status": "succeeded", "input": {"operation": operation, "path": str(path)}}
+
+
+def test_the_answer_names_the_file_that_was_read_not_the_made_up_one(tmp_path) -> None:
+    folder = _folder_with(tmp_path, "agent-control-sample.pdf")
+    real, made_up = folder / "agent-control-sample.pdf", folder / "AgentControlE2E.pdf"
+
+    answer = _ground_operator_final_answer(f"The PDF located at {made_up} is about desktop automation.", [_read(real)])
+
+    assert answer == f"The PDF located at {real} is about desktop automation."
+
+
+@pytest.mark.parametrize("named", ["other.pdf", "notes.txt", "agent-control-sample.pdf"])
+def test_a_path_that_exists_or_is_another_kind_of_file_is_kept(tmp_path, named) -> None:
+    folder = _folder_with(tmp_path, "agent-control-sample.pdf", "other.pdf")
+    original = f"Compare it with {folder / named}."
+
+    assert _ground_operator_final_answer(original, [_read(folder / "agent-control-sample.pdf")]) == original
+
+
+@pytest.mark.asyncio
+async def test_a_question_after_two_rejections_on_finished_work_ends_the_task_with_the_results(tmp_path) -> None:
+    # Live: the schedule was created, the model was twice told to report instead of asking,
+    # then asked the user anyway and, after "go ahead", asked the same question again.
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Create a daily job that checks example.com for new episodes and sends me the summary.")
+    adapter = StaticToolAdapter(
+        {"summary": f"Created schedule {_SCHEDULE_ID}: daily -> Check example.com", "schedule_id": _SCHEDULE_ID}
+    )
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    question = "The URL is not on the HTTP allowlist. Should I use a local script instead?"
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question=question)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), ask, ask, ask]),
+                        operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    answer = result.metadata["synthesized_answer"]
+    assert f"Created schedule {_SCHEDULE_ID}" in answer
+    assert answer.endswith(f"Not settled: {question}")
+    assert "clarify_count" not in result.metadata  # the user was never asked
+
