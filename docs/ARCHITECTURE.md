@@ -348,6 +348,21 @@ line, secrets redacted, `task_id` on every line written during that task.
 > On Windows, `scripts\ybm.ps1` uses **two-word** subcommands (`ybm.ps1 trace <id>`) where the
 > cross-platform `ybm` CLI uses **hyphenated** ones (`ybm trace-task <id>`). Both are supported.
 
+## Local first: nothing leaves the machine unless you say so
+
+The local model does the work. If it does not answer and the configured fallback is a hosted model (OpenAI,
+Anthropic, any endpoint outside this machine and its private network), YBM does not call it. The task pauses
+and asks, for example "The local model is not answering (it timed out). Nothing has been sent anywhere. Do you want me
+to send this task to gpt-4.1 (openai_saved), a hosted model, instead?". Only a plain "yes" lets that one task use the
+hosted profile; any other reply stops the task, and "no" cancels it. A fallback on this machine or its network is
+still used without asking. The question and the reply are not added to the task's objective. Messages that are
+classified while the local model is down fall back to the built-in heuristic, never to a hosted model.
+
+Codex, Claude Code and GitHub Copilot are the other way to reach a larger model, and they run only when the user
+asks for one: a provider named in the request, or a coding agent asked for. If the local model tries to start one
+anyway, the call is refused and the model is told to use the local tools or ask. Looking at or stopping a running
+session is always allowed.
+
 ## Boundaries
 
 The maintained list of limitations is under [Known limits in the roadmap](ROADMAP.md#known-limits). In

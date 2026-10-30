@@ -15,6 +15,7 @@ from pydantic import BaseModel, ValidationError
 
 from agent_control.config import AppSettings, LLMProfileConfig
 from agent_control.config_sync import read_env_value
+from agent_control.llm.cloud_gate import CloudFallbackNeeded, is_allowed, is_hosted
 from agent_control.prompts import render_prompt
 
 
@@ -197,9 +198,21 @@ class FailoverLLMProvider:
     models on them would mask the real problem.
     """
 
-    def __init__(self, primary: LLMProvider, fallback: LLMProvider) -> None:
+    def __init__(
+        self,
+        primary: LLMProvider,
+        fallback: LLMProvider,
+        *,
+        fallback_name: str | None = None,
+        fallback_model: str = "",
+        fallback_hosted: bool = False,
+    ) -> None:
         self.primary = primary
         self.fallback = fallback
+        # A hosted fallback is never called on its own (llm/cloud_gate.py): the user is asked first.
+        self.fallback_name = fallback_name or "fallback"
+        self.fallback_model = fallback_model
+        self.fallback_hosted = fallback_hosted
         # Proxies whichever inner provider actually served the last call -
         # the fallback's usage after a failover, the primary's otherwise.
         self.last_usage: dict | None = None
@@ -235,6 +248,9 @@ class FailoverLLMProvider:
         except Exception as exc:
             if not _is_unavailability(exc):
                 raise
+            if self.fallback_hosted and not is_allowed(self.fallback_name):
+                logger.warning("primary LLM unavailable (%s); hosted fallback %r needs approval", exc, self.fallback_name)
+                raise CloudFallbackNeeded(self.fallback_name, self.fallback_model, _short_reason(exc)) from exc
             logger.warning("primary LLM unavailable (%s); using fallback profile", exc)
             result = await getattr(self.fallback, method)(*args, **kwargs)
             self._copy_last_call_state(self.fallback)
@@ -247,6 +263,17 @@ class FailoverLLMProvider:
         self.last_model = getattr(provider, "last_model", None)
         self.last_started_at = getattr(provider, "last_started_at", None)
         self.last_latency_ms = getattr(provider, "last_latency_ms", None)
+
+
+def _short_reason(exc: BaseException | None) -> str:
+    """Why the local model did not answer, in a few plain words for the question put to the user."""
+    if exc is None:
+        return "it did not answer"
+    if isinstance(exc, httpx.TimeoutException):
+        return "it timed out"
+    if isinstance(exc, httpx.TransportError):
+        return "it could not be reached"
+    return " ".join(str(exc).split())[:120] or type(exc).__name__
 
 
 def _is_unavailability(exc: Exception) -> bool:
@@ -294,11 +321,13 @@ def _build_profile_provider(settings: AppSettings, profile_name: str | None, rol
 
 
 class _ChainEntry:
-    __slots__ = ("name", "provider")
+    __slots__ = ("name", "provider", "hosted", "model")
 
-    def __init__(self, name: str, provider: LLMProvider) -> None:
+    def __init__(self, name: str, provider: LLMProvider, *, hosted: bool = False, model: str = "") -> None:
         self.name = name
         self.provider = provider
+        self.hosted = hosted
+        self.model = model
 
 
 class ChainLLMProvider:
@@ -357,6 +386,9 @@ class ChainLLMProvider:
             cooling_down = self._cooldown_until.get(entry.name, 0.0) > now
             if cooling_down and not is_last:
                 continue
+            if index > 0 and entry.hosted and not is_allowed(entry.name):
+                # Reached only after every earlier entry failed: ask the user rather than send it out.
+                raise CloudFallbackNeeded(entry.name, entry.model, _short_reason(last_exc)) from last_exc
             try:
                 result = await getattr(entry.provider, method)(*args, **kwargs)
                 self._cooldown_until.pop(entry.name, None)
@@ -413,7 +445,12 @@ def _build_chain_provider(settings: AppSettings, primary_name: str | None, *, ro
     for name in _chain_profile_names(settings, primary_name):
         profile = settings.llm.profiles.get(name)
         if profile is not None:
-            entries.append(_ChainEntry(name, build_provider_for_profile(profile, role=f"{role}_fallback")))
+            entries.append(
+                _ChainEntry(
+                    name, build_provider_for_profile(profile, role=f"{role}_fallback"),
+                    hosted=is_hosted(profile.provider, profile.base_url), model=profile.model,
+                )
+            )
     if len(entries) == 1:
         return entries[0].provider
     return ChainLLMProvider(entries)
@@ -450,7 +487,11 @@ def _with_fallback(settings: AppSettings, provider: LLMProvider | None, primary_
     fallback = _build_profile_provider(settings, fallback_name, "fallback")
     if fallback is None:
         return provider
-    return FailoverLLMProvider(provider, fallback)
+    profile = settings.llm.profiles[fallback_name]
+    return FailoverLLMProvider(
+        provider, fallback, fallback_name=fallback_name, fallback_model=profile.model,
+        fallback_hosted=is_hosted(profile.provider, profile.base_url),
+    )
 
 
 def build_default_llm_provider(settings: AppSettings) -> LLMProvider | None:
