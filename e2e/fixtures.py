@@ -31,11 +31,14 @@ class Fixtures:
         return dict(self.values)
 
 
-def prepare_fixtures(*, start_web_server: bool) -> Fixtures:
+def prepare_fixtures(*, start_web_server: bool, home: Path | None = None) -> Fixtures:
+    """Build the E2E fixtures. ``home`` replaces the user's home folder, so a test can keep
+    the Desktop folders it creates out of the real Desktop."""
     fixture_root = ROOT / ".agent_control" / "e2e_fixtures"
     fixture_root.mkdir(parents=True, exist_ok=True)
+    home = home or Path.home()
 
-    desktop_folder = Path.home() / "Desktop" / "AgentControlE2E"
+    desktop_folder = home / "Desktop" / "AgentControlE2E"
     desktop_folder.mkdir(parents=True, exist_ok=True)
     pdf_path = desktop_folder / "agent-control-sample.pdf"
     _write_minimal_pdf(
@@ -43,7 +46,7 @@ def prepare_fixtures(*, start_web_server: bool) -> Fixtures:
         "Agent Control E2E PDF. This file describes desktop automation, browser testing, and artifact delivery.",
     )
 
-    resumes_folder = Path.home() / "Desktop" / "resumes"
+    resumes_folder = home / "Desktop" / "resumes"
     resumes_folder.mkdir(parents=True, exist_ok=True)
     (resumes_folder / "oney-resume-notes.txt").write_text(
         "Oney resume notes: Python automation, local LLM orchestration, desktop control, browser automation.",

@@ -10,13 +10,19 @@ CLARIFYING forever.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 
-from agent_control.schemas import AuditEventType, TaskRecord, TaskStatus
+from agent_control.schemas import AuditEventType, TaskRecord, TaskStatus, utc_now
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
 
 CANCEL_WORDS = {"cancel", "stop", "drop it", "never mind", "nevermind", "forget it", "no"}
+
+# How long a question stays open for a reply. Without a limit, any task left in
+# CLARIFYING captures the next message in its conversation however old it is:
+# a question asked weeks ago turned a brand-new request into its "answer" and
+# the bot resumed the old task instead.
+CLARIFICATION_MAX_AGE = timedelta(hours=24)
 
 
 @dataclass
@@ -26,17 +32,59 @@ class ClarificationResumeResult:
 
 
 def find_clarifying_task(
-    repositories: Repositories, *, conversation_id: str | None, chat_id: str | None
+    repositories: Repositories,
+    *,
+    conversation_id: str | None,
+    chat_id: str | None,
+    max_age: timedelta = CLARIFICATION_MAX_AGE,
+    now: datetime | None = None,
 ) -> TaskRecord | None:
+    """The task in this conversation waiting on an answer, if its question is recent."""
+    cutoff = (now or utc_now()) - max_age
     return next(
         (
             candidate
             for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=20)
-            if (conversation_id is not None and candidate.conversation_id == conversation_id)
-            or (chat_id is not None and str(candidate.metadata.get("source_chat_id")) == str(chat_id))
+            if candidate.updated_at >= cutoff
+            and (
+                (conversation_id is not None and candidate.conversation_id == conversation_id)
+                or (chat_id is not None and str(candidate.metadata.get("source_chat_id")) == str(chat_id))
+            )
         ),
         None,
     )
+
+
+def expire_stale_clarifications(
+    repositories: Repositories,
+    audit: AuditLogger,
+    *,
+    max_age: timedelta = CLARIFICATION_MAX_AGE,
+    now: datetime | None = None,
+) -> list[TaskRecord]:
+    """Cancel tasks whose question went unanswered past `max_age`.
+
+    find_clarifying_task already ignores them; cancelling keeps the task list
+    honest (nothing sits "waiting for your answer" forever) and leaves an audit
+    trail for why.
+    """
+    cutoff = (now or utc_now()) - max_age
+    expired: list[TaskRecord] = []
+    for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=200):
+        if candidate.updated_at >= cutoff:
+            continue
+        expired.append(repositories.tasks.update_status(candidate.id, TaskStatus.CANCELLED))
+        audit.append(
+            AuditEventType.TASK_STATE_CHANGED,
+            actor="system",
+            task_id=candidate.id,
+            payload={
+                "reason": "clarification_expired",
+                "status": TaskStatus.CANCELLED.value,
+                "waiting_since": candidate.updated_at.isoformat(),
+            },
+        )
+    return expired
 
 
 def resume_clarifying_task(

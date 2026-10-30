@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_control.error_text import explain_for_user
+from agent_control.error_text import explain_for_user, explain_tool_input_error
 from agent_control.text import trim_text as _trim
 from agent_control.schemas import TaskRecord, TaskStatus
 from agent_control.storage.redaction import redact_text
@@ -365,7 +365,7 @@ def _failure_lines(task: TaskRecord) -> list[str]:
         lines.append(f"Retries: {retry_count}")
     error = _last_error(task)
     if error:
-        lines.append(f"Error: {_trim(error, 900)}")
+        lines.append(f"Error: {_trim(explain_tool_input_error(error), 900)}")
     return lines
 
 
@@ -415,7 +415,7 @@ def _latest_attempt_summary(task: TaskRecord) -> str | None:
         line += f"\nWhy: {_trim(reasoning, 300)}"
     detail = str(latest.get("error") or "").strip()
     if detail and status != "succeeded":
-        line += f"\nReason: {_trim(detail, 500)}"
+        line += f"\nReason: {_trim(explain_tool_input_error(detail), 500)}"
     return _trim(line, 900)
 
 

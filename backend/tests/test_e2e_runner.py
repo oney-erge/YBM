@@ -889,9 +889,13 @@ def test_human_autonomy_suite_contains_distinct_guarded_provider_flows() -> None
     }
 
 
-def test_every_case_template_variable_is_provided_by_fixtures() -> None:
+def test_every_case_template_variable_is_provided_by_fixtures(tmp_path) -> None:
     """A typo in a ``{{template}}`` name silently sends the literal braces to
-    the model, which then fails for a reason that looks like a model error."""
+    the model, which then fails for a reason that looks like a model error.
+
+    The fixtures are built under ``tmp_path``: building them for real writes
+    Desktop\\AgentControlE2E and Desktop\\resumes (including a file named
+    oney-resume-notes.txt) into whoever runs the test suite."""
     import re
 
     runner = _runner_module()
@@ -899,7 +903,8 @@ def test_every_case_template_variable_is_provided_by_fixtures() -> None:
     sys.path.insert(0, str(ROOT / "e2e"))
     from fixtures import prepare_fixtures  # type: ignore[import-not-found]
 
-    available = set(prepare_fixtures(start_web_server=False).values)
+    available = set(prepare_fixtures(start_web_server=False, home=tmp_path).values)
+    assert (tmp_path / "Desktop" / "AgentControlE2E").is_dir()  # it built them here, not on the real Desktop
     referenced: set[str] = set()
     for case in cases:
         texts = [case.get("message") or ""]

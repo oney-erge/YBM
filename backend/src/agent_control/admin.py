@@ -63,7 +63,7 @@ from agent_control.supervisor import read_log_tail
 from agent_control.channels.base import remember_standing_instruction
 from agent_control.channels.memory import detect_remember_request, memory_context
 from agent_control.llm.call_log import record_concierge_call
-from agent_control.clarification import find_clarifying_task, resume_clarifying_task
+from agent_control.clarification import expire_stale_clarifications, find_clarifying_task, resume_clarifying_task
 from agent_control.schemas import (
     ApprovalGrant,
     ApprovalStatus,
@@ -2558,6 +2558,7 @@ def create_admin_router(
             "; ".join(f"{a.content_preview or a.id} (at: {a.uri})" for a in attached) if attached else ""
         )
 
+        expire_stale_clarifications(repositories, audit)
         clarifying = find_clarifying_task(repositories, conversation_id=conversation_id, chat_id=WEB_CHAT_ID)
         if clarifying is not None and text:
             reply_text = f"{text}\n\n[Attached files: {attachment_note}]" if attachment_note else text
