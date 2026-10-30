@@ -225,6 +225,9 @@ class CodingAgentInput(ToolInputModel):
         return self
 
 
+SCHEDULE_ID_OPERATIONS = frozenset({"pause", "resume", "delete", "run_now"})
+
+
 class ScheduleManageInput(ToolInputModel):
     operation: Literal["create", "list", "pause", "resume", "delete", "run_now"] = "create"
     schedule_id: str | None = None
@@ -238,7 +241,7 @@ class ScheduleManageInput(ToolInputModel):
     def _require_inputs_per_operation(self) -> "ScheduleManageInput":
         if self.operation == "create" and not self.objective:
             raise ValueError("schedule.manage create requires 'objective'")
-        if self.operation in {"pause", "resume", "delete", "run_now"} and not self.schedule_id:
+        if self.operation in SCHEDULE_ID_OPERATIONS and not self.schedule_id:
             raise ValueError(f"schedule.manage {self.operation} requires 'schedule_id'")
         return self
 

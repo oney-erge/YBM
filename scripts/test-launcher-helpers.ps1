@@ -1,4 +1,4 @@
-# Checks the launcher helpers in scripts/install-utils.ps1 under the PowerShell that run.bat starts
+# Checks the launcher helpers in scripts/install-utils.ps1 and scripts/lib/common.ps1 under the PowerShell that run.bat starts
 # (Windows PowerShell 5.1). Run it with:  powershell -NoProfile -File scripts\test-launcher-helpers.ps1
 # The launchers were once only parsed, never executed, under 5.1, and a plain "Using CPython ..." line on
 # stderr aborted every first run.
@@ -47,5 +47,28 @@ try {
   Assert-That $true "a missing folder is a no-op"
 } finally {
   Remove-Item -LiteralPath $scratch -Recurse -Force -ErrorAction SilentlyContinue
+}
+
+# 4. A LocalDeploy that its own launcher started (logs\api_server.pid) is the user's, not a YBM orphan.
+. (Join-Path $PSScriptRoot "lib\common.ps1")
+$localDeploy = Join-Path ([IO.Path]::GetTempPath()) ("launcher-helper-localdeploy-" + [Guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path (Join-Path $localDeploy "logs") -Force | Out-Null
+$server = Start-Process -FilePath "cmd.exe" -ArgumentList "/c ping -n 30 127.0.0.1 > nul" -WindowStyle Hidden -PassThru
+try {
+  Set-Content -LiteralPath (Join-Path $localDeploy "logs\api_server.pid") -Value $server.Id
+  $deadline = (Get-Date).AddSeconds(10)
+  do {
+    $child = Get-CimInstance Win32_Process -Filter "ParentProcessId = $($server.Id)" -ErrorAction SilentlyContinue | Select-Object -First 1
+  } while (-not $child -and (Get-Date) -lt $deadline)
+  $kept = @(Get-YbmExternalLocalDeployIds -LocalDeployRoot $localDeploy)
+  Assert-That ($kept -contains $server.Id) "the recorded LocalDeploy server is kept"
+  Assert-That ($child -and ($kept -contains [int]$child.ProcessId)) "its child process is kept too"
+
+  Stop-YbmProcessTree -ProcessId $server.Id
+  Assert-That (@(Get-YbmExternalLocalDeployIds -LocalDeployRoot $localDeploy).Count -eq 0) "a stale pid file keeps nothing"
+  Assert-That (@(Get-YbmExternalLocalDeployIds -LocalDeployRoot "").Count -eq 0) "no LocalDeploy root keeps nothing"
+} finally {
+  Stop-YbmProcessTree -ProcessId $server.Id
+  Remove-Item -LiteralPath $localDeploy -Recurse -Force -ErrorAction SilentlyContinue
 }
 Write-Host "All launcher helper checks passed."

@@ -113,6 +113,8 @@ def test_telegram_reply_resumes_a_clarifying_task_instead_of_spawning_a_new_one(
     resumed = repos.tasks.get(task.id)
     assert resumed.status == TaskStatus.RECEIVED
     assert "[User clarification: the Downloads folder]" in resumed.objective
+    # The answer only makes sense next to the question; the Operator sees both.
+    assert resumed.objective.endswith("[Question to the user: Which folder?]\n[User clarification: the Downloads folder]")
     assert len(repos.tasks.list_recent(limit=10)) == 1
 
 

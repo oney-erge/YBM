@@ -49,6 +49,7 @@ from agent_control.schemas import (
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.redaction import redact_payload
 from agent_control.storage.repositories import Repositories
+from agent_control.tools.contracts import SCHEDULE_ID_OPERATIONS
 from agent_control.tools.effects import classify_effect
 from agent_control.tools.mcp_client import mcp_output_text
 
@@ -812,7 +813,7 @@ class TaskWorker:
             candidate = latest.model_copy(
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
-            clarification_recovery = _clarification_recovery_reason(candidate, history)
+            clarification_recovery = _clarification_recovery_reason(candidate, history, decision.question)
             if clarification_recovery:
                 recovery_count = int(
                     latest.metadata.get("operator_optional_question_recovery_count", 0)
@@ -914,6 +915,8 @@ class TaskWorker:
         )
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
+        tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
+        tool_input = _file_in_named_folder(latest, tool_name, tool_input)
         tool_name, tool_input = _stale_read_recovery_call(
             latest,
             tool_name,
@@ -2616,6 +2619,89 @@ def _document_summary_call(
     return "document.manage", {"operation": "summarize_pdf", "path": path}
 
 
+_SCHEDULE_ID = re.compile(r"\bschedule_[0-9a-f]{32}\b")
+
+
+def _schedule_id_from_this_task(
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Fill a missing schedule_id with the one schedule this task's own results name.
+
+    The model refers to a schedule it has just created by a name it made up ("task_name": "Daily
+    Episode Summary Checker") instead of the id the create result gave it, and repeats that call
+    until the no-progress guard stops the task: a live run created its schedule and still ended
+    blocked. When the successful schedule.manage results in this task name exactly one schedule,
+    that is the one meant. With none or several, the call goes through unchanged and the tool asks
+    for the id.
+    """
+    if tool_name != "schedule.manage" or tool_input.get("schedule_id"):
+        return tool_input
+    if tool_input.get("operation") not in SCHEDULE_ID_OPERATIONS:
+        return tool_input
+    named = {
+        schedule_id
+        for entry in history
+        if isinstance(entry, dict)
+        and entry.get("tool_name") == "schedule.manage"
+        and entry.get("status") in {ToolResultStatus.SUCCEEDED.value, ALREADY_DONE_STATUS}
+        for schedule_id in _SCHEDULE_ID.findall(str(entry.get("output_summary") or ""))
+    }
+    if len(named) != 1:
+        return tool_input
+    return {**tool_input, "schedule_id": next(iter(named))}
+
+
+# Operations that take an existing file at `path`. Writes are left out on purpose: a path that does
+# not exist yet is what they are for.
+_EXISTING_FILE_OPERATIONS = {
+    "document.manage": frozenset({"inspect_document", "extract_text", "summarize_pdf"}),
+    "filesystem.manage": frozenset({"read_file", "open_file"}),
+    "artifact.deliver": frozenset({"send_file"}),
+}
+
+
+def _file_in_named_folder(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Use the one matching file when the model made up a file name inside a folder the user named.
+
+    Asked to "find the PDF inside C:\\...\\AgentControlE2E", the model called summarize_pdf on
+    AgentControlE2E\\AgentControlE2E.pdf, a name built from the folder's, retried it, and only then
+    listed the folder. The failed guess stayed in the evidence, and the auditor took it for the file
+    the user wanted. When the path does not exist, the user's words name its folder but not the file,
+    and that folder holds exactly one file with the same extension, that file is the one meant. In
+    every other case the call goes through unchanged.
+    """
+    if tool_input.get("operation") not in _EXISTING_FILE_OPERATIONS.get(str(tool_name), ()):
+        return tool_input
+    raw_path = str(tool_input.get("path") or "").strip()
+    if not raw_path:
+        return tool_input
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() or not path.suffix or path.exists():
+        return tool_input
+    request_text = str(task.metadata.get("original_message_text") or task.objective).casefold()
+    folder = path.parent
+    # The folder itself, not the start of a deeper path the user named.
+    named_folder = re.escape(str(folder).rstrip("\\/").casefold()) + r"(?![\\/\w])"
+    if path.name.casefold() in request_text or not re.search(named_folder, request_text):
+        return tool_input
+    try:
+        matches = [
+            child for child in folder.iterdir()
+            if child.is_file() and child.suffix.casefold() == path.suffix.casefold()
+        ]
+    except OSError:
+        return tool_input
+    if len(matches) != 1:
+        return tool_input
+    return {**tool_input, "path": str(matches[0])}
+
+
 def _ordered_artifact_delivery_call(
     task: TaskRecord,
     tool_name: str | None,
@@ -2708,7 +2794,11 @@ def _satisfied_task_does_not_need_clarification(
 def _clarification_recovery_reason(
     task: TaskRecord,
     history: list[dict[str, Any]],
+    question: str | None = None,
 ) -> str | None:
+    answer = str(task.metadata.get("clarification_answer") or "").strip()
+    if answer and _same_question(question, task.metadata.get("answered_clarifying_question")):
+        return f"this question was already asked and the user answered: {answer!r}. Act on that answer."
     if _satisfied_task_does_not_need_clarification(task, history):
         return (
             "the requested work's inferred postconditions are already satisfied; "
@@ -2730,6 +2820,18 @@ def _clarification_recovery_reason(
             "scaffold the cache-only proposal with conservative defaults and report review gaps"
         )
     return None
+
+
+def _same_question(question: object, answered: object) -> bool:
+    """Whether a new question asks what an answered one already asked.
+
+    Compared on words, ignoring case and punctuation, with a high bar: a live run re-asked its
+    answered question with only the closing sentence reworded.
+    """
+    words = [set(re.findall(r"[a-z0-9]+", str(text or "").casefold())) for text in (question, answered)]
+    if not words[0] or not words[1]:
+        return False
+    return len(words[0] & words[1]) / len(words[0] | words[1]) >= 0.6
 
 
 def _known_written_file_path(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:

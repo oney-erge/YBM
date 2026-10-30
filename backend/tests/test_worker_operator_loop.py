@@ -22,6 +22,7 @@ from agent_control.orchestration.worker import (
     _document_summary_call,
     _coding_agent_input_with_explicit_workspace,
     _effective_operator_risk,
+    _file_in_named_folder,
     _filesystem_search_input_with_content_intent,
     _ground_operator_final_answer,
     _clarification_recovery_reason,
@@ -30,6 +31,7 @@ from agent_control.orchestration.worker import (
     _ordered_artifact_delivery_call,
     _required_named_coding_agent_call,
     _satisfied_task_does_not_need_clarification,
+    _schedule_id_from_this_task,
     _stale_read_recovery_call,
     _unsupported_write_claim,
     build_replay_plan,
@@ -2869,3 +2871,132 @@ def test_the_pdf_redirect_needs_the_document_tool(tmp_path) -> None:
     call = {"operation": "read_file", "path": "a.pdf"}
     assert _document_summary_call(task, "filesystem.manage", call, _document_definitions(enabled=False)) == ("filesystem.manage", call)
     assert _document_summary_call(task, "filesystem.manage", call, {}) == ("filesystem.manage", call)
+
+
+# ---- references the task already holds are filled in, not made up ----------
+# A live scheduled_jobs run created its schedule, then called run_now three
+# times with an invented "task_name" instead of the id it had just been given,
+# and ended blocked. A live pdf_open_summary run summarized a PDF name built
+# from the folder's before it looked inside the folder.
+
+_SCHEDULE_ID = "schedule_" + "a" * 32
+
+
+def _schedule_result(summary: str, status: str = "succeeded") -> dict:
+    return {"tool_name": "schedule.manage", "status": status, "input": {"operation": "create"}, "output_summary": summary}
+
+
+def test_a_missing_schedule_id_is_the_schedule_this_task_created() -> None:
+    history = [_schedule_result(f"Created schedule {_SCHEDULE_ID}: daily -> Check example.com")]
+    call = {"operation": "run_now", "task_name": "Daily Episode Summary Checker"}
+
+    assert _schedule_id_from_this_task("schedule.manage", call, history)["schedule_id"] == _SCHEDULE_ID
+
+
+@pytest.mark.parametrize(
+    "call, history",
+    [
+        ({"operation": "run_now"}, []),  # nothing created yet: the tool asks for the id
+        ({"operation": "run_now"}, [_schedule_result(f"{_SCHEDULE_ID} and schedule_{'b' * 32}")]),  # two: ambiguous
+        ({"operation": "run_now"}, [_schedule_result(f"Created schedule {_SCHEDULE_ID}", status="failed")]),
+        ({"operation": "run_now", "schedule_id": "schedule_given"}, [_schedule_result(_SCHEDULE_ID)]),
+        ({"operation": "create", "objective": "x"}, [_schedule_result(_SCHEDULE_ID)]),
+    ],
+)
+def test_a_schedule_id_is_only_filled_when_one_schedule_is_meant(call, history) -> None:
+    assert _schedule_id_from_this_task("schedule.manage", call, history) == call
+
+
+@pytest.mark.asyncio
+async def test_run_now_after_create_reaches_the_tool_with_the_created_id(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("create a daily job that checks example.com, then send me the summary")
+    adapter = StaticToolAdapter({"summary": f"Created schedule {_SCHEDULE_ID}: daily -> Check example.com"})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    run_now = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="schedule.manage",
+                               tool_input={"operation": "run_now", "task_name": "Daily checker"}, risk_level=RiskLevel.LOW)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), run_now]),
+                        operator_max_steps=8)
+
+    result = await worker.process_task(task.id)
+    await worker.process_task(result.id)
+
+    assert adapter.requests[1].input["schedule_id"] == _SCHEDULE_ID
+
+
+def _folder_with(tmp_path: Path, *names: str) -> Path:
+    folder = tmp_path / "AgentControlE2E"
+    folder.mkdir()
+    for name in names:
+        (folder / name).write_bytes(b"%PDF-1.4")
+    return folder
+
+
+def _task_saying(tmp_path: Path, message: str) -> TaskRecord:
+    repos, _ = make_repos(tmp_path / "db")
+    return repos.tasks.create(message, metadata={"original_message_text": message})
+
+
+def test_a_made_up_file_name_in_the_named_folder_becomes_the_one_file_there(tmp_path) -> None:
+    folder = _folder_with(tmp_path, "agent-control-sample.pdf", "notes.txt")
+    task = _task_saying(tmp_path, f"Open the desktop folder {folder}, find the PDF inside it, and tell me what it is about.")
+    call = {"operation": "summarize_pdf", "path": str(folder / "AgentControlE2E.pdf")}
+
+    assert _file_in_named_folder(task, "document.manage", call)["path"] == str(folder / "agent-control-sample.pdf")
+
+
+@pytest.mark.parametrize(
+    "files, guessed, message, tool, operation",
+    [
+        (("a.pdf", "b.pdf"), "guess.pdf", "find the PDF inside {folder}", "document.manage", "summarize_pdf"),  # two candidates
+        (("a.pdf",), "report.pdf", "summarize report.pdf in {folder}", "document.manage", "summarize_pdf"),  # the user named it
+        (("a.pdf",), "a.pdf", "find the PDF inside {folder}", "document.manage", "summarize_pdf"),  # it exists
+        (("a.pdf",), "guess.pdf", "find the PDF on my desktop", "document.manage", "summarize_pdf"),  # folder not named
+        (("a.pdf",), "guess.pdf", "find the PDF inside {folder}\\2026", "document.manage", "summarize_pdf"),  # a deeper one is
+        (("a.md",), "brief.md", "write a brief into {folder}", "filesystem.manage", "write_text_file"),  # writes create paths
+    ],
+)
+def test_a_file_path_is_only_replaced_when_one_file_is_meant(tmp_path, files, guessed, message, tool, operation) -> None:
+    folder = _folder_with(tmp_path, *files)
+    task = _task_saying(tmp_path, message.format(folder=folder))
+    call = {"operation": operation, "path": str(folder / guessed)}
+
+    assert _file_in_named_folder(task, tool, call) == call
+
+
+def test_a_relative_made_up_path_is_left_alone(tmp_path) -> None:
+    task = _task_saying(tmp_path, "find the PDF in this folder.")
+    call = {"operation": "summarize_pdf", "path": "guess.pdf"}
+
+    assert _file_in_named_folder(task, "document.manage", call) == call
+
+
+# ---- a question the user already answered is not asked again ---------------
+# After "yes, go ahead with what you proposed", a live run asked the same
+# question again and the task waited until it was cancelled.
+
+_ASKED = ("The requested PDF 'AgentControlE2E.pdf' does not exist in the specified folder. Did you mean to refer "
+          "to 'agent-control-sample.pdf', which was found and summarized? Or is there another file you intended?")
+
+
+def _answered_task() -> TaskRecord:
+    return TaskRecord(
+        objective="Find the PDF and summarize it.",
+        metadata={"answered_clarifying_question": _ASKED, "clarification_answer": "Yes, go ahead."},
+    )
+
+
+def test_the_same_question_again_is_rejected_with_the_answer() -> None:
+    asked_again = _ASKED.replace(
+        "Or is there another file you intended?", "Please confirm if this is correct or provide clarification."
+    )
+
+    reason = _clarification_recovery_reason(_answered_task(), [], asked_again)
+
+    assert reason is not None
+    assert "already asked" in reason and "Yes, go ahead." in reason
+
+
+def test_a_new_question_after_an_answer_can_still_be_asked() -> None:
+    assert _clarification_recovery_reason(_answered_task(), [], "Which email address should the summary go to?") is None
+

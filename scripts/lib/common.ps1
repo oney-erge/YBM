@@ -130,6 +130,27 @@ function Test-YbmPidAlive {
   return $null -ne (Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue)
 }
 
+function Get-YbmExternalLocalDeployIds {
+  # LocalDeploy's own launcher (its run.ps1) records the API server it started
+  # in logs\api_server.pid. That server is the user's, not a YBM orphan: before
+  # this, `ybm start` and `ybm stop` killed a LocalDeploy started on its own,
+  # because its command line looks like the one YBM's localdeploy service runs.
+  # Returns that process and its children (a venv python starts a child python).
+  param([string]$LocalDeployRoot = $env:YBM_LOCALDEPLOY_ROOT)
+  if (-not $LocalDeployRoot) { return @() }
+  $pidFile = Join-Path $LocalDeployRoot "logs\api_server.pid"
+  if (-not (Test-YbmPidAlive $pidFile)) { return @() }
+  $ids = @([int](Get-Content -LiteralPath $pidFile -TotalCount 1))
+  $all = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue)
+  do {
+    $added = @($all | Where-Object {
+      ($ids -contains [int]$_.ParentProcessId) -and ($ids -notcontains [int]$_.ProcessId)
+    } | ForEach-Object { [int]$_.ProcessId })
+    $ids += $added
+  } while ($added.Count -gt 0)
+  return $ids
+}
+
 function Stop-YbmProcessTree {
   param([int]$ProcessId)
   $children = Get-CimInstance Win32_Process -Filter "ParentProcessId = $ProcessId" -ErrorAction SilentlyContinue

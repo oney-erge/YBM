@@ -113,6 +113,15 @@ own success: one live run created the same daily schedule nine times, each throu
 commands are not affected. `schedule.manage` also returns an existing enabled schedule with the same job, cadence and
 timezone instead of making a copy.
 
+### References come from what the task already knows
+
+A small model fills a reference with a name it made up rather than one it was given. Two cases are settled before
+the call runs. A schedule operation without a `schedule_id` gets the one schedule this task's own results name (with
+none or several, the tool still asks for the id). A file that does not exist, inside a folder the user named, whose
+name the user never said, becomes the one file with that extension in that folder. When the task resumes after a
+question, the objective carries the question as well as the answer, and asking an answered question again is
+refused with the answer.
+
 ## Task states
 
 ```mermaid
