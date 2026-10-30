@@ -2560,6 +2560,8 @@ def create_admin_router(
                 "confidence": round(opinion.confidence, 4),
                 "top3": dict(sorted(opinion.probabilities.items(), key=lambda kv: -kv[1])[:3]),
                 "latency_ms": round(opinion.latency_ms),
+                # How sure it is that the message only asks what the bot can do; such messages go to the LLM.
+                "ability": round(opinion.ability, 4) if opinion.ability is not None else None,
                 # Under the saved mode, would this answer be used without the LLM?
                 "decides_alone": decides_alone(loaded.decision, opinion),
             }

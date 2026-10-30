@@ -429,6 +429,8 @@ def prepare_fixtures(start_web: bool) -> dict[str, str]:
     _ensure_fixtures_path()
     from fixtures import prepare_fixtures as _prep  # type: ignore[import]
     fx = _prep(start_web_server=start_web)
+    # The Desktop cases need real folders on the Desktop; take away the ones this run made.
+    atexit.register(fx.remove_created_desktop_folders)
     return dict(fx.values)
 
 

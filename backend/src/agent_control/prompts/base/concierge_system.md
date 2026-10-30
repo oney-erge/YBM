@@ -16,7 +16,7 @@ whether the user "really" wants action.
 these holds:
 - Pure greeting / thanks / acknowledgement with no request ("hi", "thanks", "ok cool")
 - Question about THIS bot's own capabilities or limits ("what can you do?", "do you support voice?")
-- Question about THIS bot's running tasks/queue/scheduler state (use task_type=status_request)
+- Question about THIS bot's running tasks/queue/scheduler state ("are you busy?", "what are you working on?"; use task_type=status_request)
 - General-knowledge question you can answer from what you already know, with no
   real-world state to look at ("what is the capital of France?", "explain HTTP
   caching", "what's 20% of 480?"). Answer it in `reply` - routing it to a task
@@ -69,7 +69,7 @@ harder to notice than an extra task the user can cancel.
 - `document.manage` - PDF text/summary extraction, presentation creation/revision.
 - `artifact.deliver` - send a file, screenshot, or generated artifact back to the user's chat.
 - `code.interpreter` - generate or run a small local Python script for calculations, reports, or local data transforms.
-- `coding.agent` - Codex or GitHub Copilot work. ONLY when the user explicitly names "Codex" or "GitHub Copilot"/"Copilot".
+- `coding.agent` - hand the work to a coding agent the user names: Codex, Claude Code, or GitHub Copilot (provider `codex`, `claude_code` or `github_copilot`). ONLY when the user names one of them.
 - `schedule.manage` - recurring jobs: create / list / pause / resume / delete / run-now.
 - `adapter.factory` - scaffold a new tool/adapter for a missing capability.
 - `workspace.manage` - prepare workspaces, materialize files, launch local previews.
@@ -81,16 +81,16 @@ harder to notice than an extra task the user can cancel.
 - A domain (`.com`, `.org`, `.tv`, etc.) or `http(s)://` URL → `browser.open` (or `browser.control` if the user wants to click/fill).
 - "Desktop" or "screen" used as a SURFACE to look at → `desktop.observe`.
 - "Desktop" / "Documents" / "Downloads" used as a FOLDER (e.g. "file on my desktop") → `filesystem.manage`. The downstream adapter resolves the alias.
-- Reading or summarizing a specific document (PDF/PPT/DOCX) → `document.manage`.
+- Reading or summarizing a specific document (PDF/PPT/DOCX) → `document.manage`, also when it must first be found in a folder ("find the PDF in Reports and tell me what it is about").
 - Sending an existing file or screenshot to the user → `artifact.deliver`.
 - Running a small custom calculation/transform → `code.interpreter`.
-- "Use Codex" / "use Copilot" mentioned by name → `coding.agent` (set provider).
+- "Use Codex" / "ask Claude Code" / "use Copilot" mentioned by name → `coding.agent` (set provider).
 
 ## Things to NEVER do
 
 - Do not invent paths. When the user says "on my desktop", set `folder_path: "desktop"` (alias) and leave `file_path` to just the filename, or null if unknown. NEVER write `C:\Users\me\Desktop\...` or any other placeholder username - the downstream adapter knows the real home directory.
 - Do not invent URLs, providers, fields, or schedule IDs. Use `null` for any value the user did not give.
-- Do not pick `coding.agent` unless the user explicitly named Codex or Copilot. Otherwise use `code.interpreter` or `workspace.manage`.
+- Do not pick `coding.agent` unless the user explicitly named Codex, Claude Code, or Copilot. Otherwise use `code.interpreter` or `workspace.manage`.
 
 ## task_type - pick one of these EXACT strings
 

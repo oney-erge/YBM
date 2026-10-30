@@ -241,3 +241,32 @@ def test_registry_rejects_invalid_schedule_operation(tmp_path) -> None:
     with pytest.raises(ValueError):
         definition.validate_input({"operation": "bogus", "objective": "check example.com"})
 
+
+
+@pytest.mark.asyncio
+async def test_creating_the_same_schedule_again_returns_the_existing_one(tmp_path) -> None:
+    """A repeated request, or a model repeating its own create, must not make a second identical job."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("check example.com every day")
+    adapter = ScheduleManageAdapter(repos, audit)
+
+    def create(objective: str, cadence: str | None = None):
+        payload = {"operation": "create", "objective": objective, **({"cadence": cadence} if cadence else {})}
+        return adapter.execute(ToolCallRequest(
+            task_id=task.id, tool_name="schedule.manage", capability=Capability.SCHEDULE_MANAGE,
+            risk_level=RiskLevel.MEDIUM, input=payload,
+        ))
+
+    first = await create("Check example.com for new episodes", "daily")
+    again = await create("check  example.com for new episodes", "daily")  # case and spacing differ
+    weekly = await create("Check example.com for new episodes", "weekly")
+
+    assert again.status == ToolResultStatus.SUCCEEDED
+    assert again.output["schedule_id"] == first.output["schedule_id"]
+    assert "no new schedule was created" in again.output["summary"]
+    assert weekly.output["schedule_id"] != first.output["schedule_id"]  # a different cadence is a different job
+    assert repos.schedules.count() == 2
+
+    repos.schedules.update_status(first.output["schedule_id"], ScheduleStatus.DELETED)
+    recreated = await create("Check example.com for new episodes", "daily")
+    assert recreated.output["schedule_id"] != first.output["schedule_id"]  # a deleted one does not count

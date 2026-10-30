@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from agent_control.config import AppSettings, DecisionConfig
 from agent_control.llm.classifier import CLASSIFIER_SYSTEM_PROMPT
 from agent_control.llm.decision import (
+    ABILITY_QUESTION,
     ROUTE_DESCRIPTIONS,
     ROUTE_QUESTION,
     DecisionModelClassifier,
@@ -32,6 +33,7 @@ from agent_control.schemas import (
     OrchestrationIntent,
     TaskType,
 )
+from agent_control.tools.coding_agent import PROVIDER_NAMES, PROVIDERS
 from helpers import make_repos
 
 
@@ -377,7 +379,40 @@ async def test_client_posts_the_route_question_and_reads_the_answer(monkeypatch)
     assert seen["url"] == "http://127.0.0.1:8000/v1/systemone" and seen["auth"] == "Bearer s3cret"
     assert seen["body"]["model"] == "d1_3b_decision" and seen["body"]["state"] == "list my downloads"
     assert seen["body"]["questions"]["route"] == ROUTE_QUESTION
+    assert seen["body"]["questions"]["ability"] == ABILITY_QUESTION
     assert opinion.route == IntentRoute.FILESYSTEM_MANAGE and opinion.confidence == 0.91
+    assert opinion.ability is None  # this server did not answer it; the route answer still counts
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ability", [{"noul": 0.95}, 0.95])
+async def test_client_reads_the_ability_answer(ability) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"answers": {
+            "route": {"choice": "document.manage", "confidence": 0.98}, "ability": ability,
+        }})
+
+    opinion = await _client(handler).route_of("can you read PDFs?")
+    assert opinion.ability == 0.95
+
+
+@pytest.mark.parametrize("mode", ["cascade", "decision"])
+def test_a_question_about_what_the_bot_can_do_goes_to_the_concierge(mode) -> None:
+    """d3-lite routed "can you read PDFs?" to documents at 0.98; the ability answer stops that."""
+    asks_ability = DecisionOpinion(IntentRoute.DOCUMENT_MANAGE, 0.98, {}, 600.0, ability=0.95)
+    asks_for_work = DecisionOpinion(IntentRoute.DOCUMENT_MANAGE, 0.98, {}, 600.0, ability=0.4)
+    assert decides_alone(DecisionConfig(mode=mode), asks_ability) is False
+    assert decides_alone(DecisionConfig(mode=mode), asks_for_work) is True
+
+
+def test_every_coding_agent_is_named_where_routes_are_chosen() -> None:
+    """The coding tool supports more agents than the routing text once named, so "ask Claude Code to ..." went elsewhere."""
+    coding_line = next(line for line in CLASSIFIER_SYSTEM_PROMPT.splitlines() if line.startswith("- `coding.agent`"))
+    for provider, name in PROVIDER_NAMES.items():
+        assert provider in PROVIDERS
+        assert name in coding_line, f"{name} is missing from the concierge's coding.agent route"
+        assert name in ROUTE_DESCRIPTIONS[IntentRoute.CODING_AGENT], f"{name} is missing from the decision route text"
+    assert set(PROVIDER_NAMES) == set(PROVIDERS)
 
 
 @pytest.mark.asyncio

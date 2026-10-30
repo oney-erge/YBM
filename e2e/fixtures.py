@@ -23,9 +23,21 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class Fixtures:
-    def __init__(self, values: dict[str, str], server: ThreadingHTTPServer | None = None) -> None:
+    def __init__(
+        self,
+        values: dict[str, str],
+        server: ThreadingHTTPServer | None = None,
+        created_on_desktop: list[Path] | None = None,
+    ) -> None:
         self.values = values
         self.server = server
+        #: Desktop folders this run created (not ones that were already there).
+        self.created_on_desktop = list(created_on_desktop or [])
+
+    def remove_created_desktop_folders(self) -> None:
+        """Remove the Desktop folders this run created, so a test run leaves the real Desktop as it was."""
+        for folder in self.created_on_desktop:
+            shutil.rmtree(folder, ignore_errors=True)
 
     def public(self) -> dict[str, str]:
         return dict(self.values)
@@ -39,6 +51,8 @@ def prepare_fixtures(*, start_web_server: bool, home: Path | None = None) -> Fix
     home = home or Path.home()
 
     desktop_folder = home / "Desktop" / "AgentControlE2E"
+    resumes_folder = home / "Desktop" / "resumes"
+    created_on_desktop = [folder for folder in (desktop_folder, resumes_folder) if not folder.exists()]
     desktop_folder.mkdir(parents=True, exist_ok=True)
     pdf_path = desktop_folder / "agent-control-sample.pdf"
     _write_minimal_pdf(
@@ -46,7 +60,6 @@ def prepare_fixtures(*, start_web_server: bool, home: Path | None = None) -> Fix
         "Agent Control E2E PDF. This file describes desktop automation, browser testing, and artifact delivery.",
     )
 
-    resumes_folder = home / "Desktop" / "resumes"
     resumes_folder.mkdir(parents=True, exist_ok=True)
     (resumes_folder / "oney-resume-notes.txt").write_text(
         "Oney resume notes: Python automation, local LLM orchestration, desktop control, browser automation.",
@@ -310,7 +323,7 @@ if __name__ == "__main__":
     else:
         values.update({"fixture_base_url": "", "episode_url": "", "form_url": ""})
 
-    return Fixtures(values, server)
+    return Fixtures(values, server, created_on_desktop)
 
 
 # ---------- internal helpers ----------

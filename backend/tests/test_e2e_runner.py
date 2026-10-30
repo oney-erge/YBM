@@ -944,3 +944,22 @@ def test_fixture_cleanup_handles_read_only_coding_agent_files(tmp_path) -> None:
     _remove_fixture_tree(fixture)
 
     assert not fixture.exists()
+
+
+def test_a_run_removes_the_desktop_folders_it_created_and_keeps_existing_ones(tmp_path) -> None:
+    """The live Desktop cases need real Desktop folders; a run must not leave them behind, nor take away a
+    folder of the same name that the user already had."""
+    sys.path.insert(0, str(ROOT / "e2e"))
+    from fixtures import prepare_fixtures  # type: ignore[import-not-found]
+
+    users_own = tmp_path / "Desktop" / "resumes"
+    users_own.mkdir(parents=True)
+    (users_own / "my-real-resume.docx").write_bytes(b"mine")
+
+    fixtures = prepare_fixtures(start_web_server=False, home=tmp_path)
+    assert (tmp_path / "Desktop" / "AgentControlE2E").is_dir()
+
+    fixtures.remove_created_desktop_folders()
+
+    assert not (tmp_path / "Desktop" / "AgentControlE2E").exists()  # this run made it
+    assert (users_own / "my-real-resume.docx").read_bytes() == b"mine"  # this one was already there
