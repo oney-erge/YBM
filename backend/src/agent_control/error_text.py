@@ -145,3 +145,37 @@ def _looks_diagnostic(text: str) -> bool:
     if head and head[:1].isupper() and " " not in head and ("Error" in head or "Exception" in head):
         return True
     return bool(re.match(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+", stripped))
+
+
+_TOOL_INPUT_HEADER = re.compile(r"^invalid input for (?P<tool>[\w.:-]+): \d+ validation errors? for \w+", re.IGNORECASE)
+
+
+def explain_tool_input_error(text: str) -> str:
+    """Turn a validation failure on a tool's input into a sentence.
+
+    The stored error is the raw pydantic report, URL and all
+    (``invalid input for filesystem.manage: 1 validation error for
+    FilesystemSearchInput / query / Field required [type=missing, ...]``), and
+    it used to go to the chat verbatim. The raw text stays in the task trace;
+    anything else is returned unchanged.
+    """
+    match = _TOOL_INPUT_HEADER.match((text or "").strip())
+    if match is None:
+        return text
+    missing: list[str] = []
+    invalid: list[str] = []
+    lines = text.strip().splitlines()[1:]
+    for index, line in enumerate(lines):
+        if not line.strip() or line[0].isspace():
+            continue  # only the unindented lines name a field
+        detail = lines[index + 1] if index + 1 < len(lines) else ""
+        (missing if "Field required" in detail or "type=missing" in detail else invalid).append(line.strip())
+    tool = match.group("tool")
+    parts = []
+    if missing:
+        parts.append(f"was missing required input ({', '.join(missing)})")
+    if invalid:
+        parts.append(f"was given an unusable value for {', '.join(invalid)}")
+    if not parts:
+        parts.append("was given input it could not use")
+    return f"The {tool} step " + " and ".join(parts) + "."

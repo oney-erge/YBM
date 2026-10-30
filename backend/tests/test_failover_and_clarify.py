@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from datetime import timedelta
+
 import httpx
 import pytest
 from pydantic import BaseModel
+
+from agent_control.clarification import expire_stale_clarifications, find_clarifying_task
 
 from agent_control.channels.telegram import TelegramAdapter, TelegramIntakeService
 from agent_control.config import AppSettings, LLMConfig, LLMProfileConfig, TelegramConfig
@@ -17,6 +21,7 @@ from agent_control.llm.providers import (
 from agent_control.schemas import (
     ChannelType,
     TaskStatus,
+    utc_now,
 )
 from helpers import make_repos
 
@@ -337,6 +342,62 @@ async def test_clarifying_reply_resumes_the_same_task(tmp_path) -> None:
     assert "resuming" in result.outbound_message.text.lower()
     # No new task was spawned for the reply.
     assert len(repos.tasks.list_recent(10)) == 1
+
+
+def _age_task(repos, task_id: str, *, hours: float) -> None:
+    """Make a task look like it last changed `hours` ago (there is no public setter)."""
+    when = (utc_now() - timedelta(hours=hours)).isoformat()
+    with repos.tasks.database.connect() as connection:
+        connection.execute("UPDATE tasks SET updated_at = ? WHERE id = ?", (when, task_id))
+
+
+@pytest.mark.asyncio
+async def test_stale_clarification_does_not_capture_a_new_message(tmp_path) -> None:
+    """A question nobody answered for days must not turn the next, unrelated
+    message into its "answer" (the bot used to reply "resuming the task with
+    your answer" and carry on with the old job)."""
+    repos, audit = make_repos(tmp_path)
+    config = TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100])
+    service = TelegramIntakeService(TelegramAdapter(config, audit), repos, audit)
+
+    task = repos.tasks.create(
+        "Summarize the report",
+        conversation_id=repos.conversations.get_or_create(ChannelType.TELEGRAM, "100"),
+        metadata={"source_chat_id": "100", "clarifying_question": "Which report?", "clarify_count": 1},
+    )
+    repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    _age_task(repos, task.id, hours=72)
+
+    result = await service.handle_update_async(
+        {"message": {"message_id": 7, "from": {"id": 42}, "chat": {"id": 100}, "text": "Inspect my Downloads folder"}}
+    )
+
+    old = repos.tasks.get(task.id)
+    assert old.status == TaskStatus.CANCELLED
+    assert old.objective == "Summarize the report"
+    assert "clarification_answer" not in old.metadata
+    assert result.outbound_message is None or "resuming" not in result.outbound_message.text.lower()
+    expired = [e for e in repos.audit.list_for_task(task.id) if e.payload.get("reason") == "clarification_expired"]
+    assert len(expired) == 1
+
+
+def test_expire_stale_clarifications_only_touches_old_questions(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    conversation_id = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
+    old = repos.tasks.create("old job", conversation_id=conversation_id, metadata={"source_chat_id": "100"})
+    fresh = repos.tasks.create("fresh job", conversation_id=conversation_id, metadata={"source_chat_id": "100"})
+    for task in (old, fresh):
+        repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    _age_task(repos, old.id, hours=25)
+    _age_task(repos, fresh.id, hours=1)
+
+    assert find_clarifying_task(repos, conversation_id=conversation_id, chat_id=None).id == fresh.id
+    expired = expire_stale_clarifications(repos, audit)
+
+    assert [t.id for t in expired] == [old.id]
+    assert repos.tasks.get(old.id).status == TaskStatus.CANCELLED
+    assert repos.tasks.get(fresh.id).status == TaskStatus.CLARIFYING
+    assert expire_stale_clarifications(repos, audit) == []  # nothing left to expire
 
 
 @pytest.mark.asyncio

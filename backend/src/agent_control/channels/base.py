@@ -35,7 +35,7 @@ from typing import Any, Protocol
 
 from agent_control.channels.memory import memory_context
 from agent_control.channels.responder import ChatResponder, gateway_context
-from agent_control.clarification import find_clarifying_task, resume_clarifying_task
+from agent_control.clarification import expire_stale_clarifications, find_clarifying_task, resume_clarifying_task
 from agent_control.config import AppSettings
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
@@ -161,6 +161,7 @@ def resume_clarifying_reply(
     text = (inbound.text or "").strip()
     if not text:
         return None
+    expire_stale_clarifications(repositories, audit)
     task = find_clarifying_task(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id)
     if task is None:
         return None

@@ -12,7 +12,10 @@ isolation these tests would read from and could move a real file.
 from __future__ import annotations
 
 import sqlite3
+from datetime import timedelta
 
+from agent_control.schemas import Capability, utc_now
+from agent_control.storage import Repositories
 from agent_control.storage.database import Database, _CURRENT_DEFAULT_PATH, _LEGACY_DEFAULT_PATH
 
 
@@ -83,3 +86,50 @@ def test_migrated_database_is_immediately_usable(tmp_path, monkeypatch) -> None:
     assert "marker" in tables  # the migrated file's own content survived, not a fresh empty db
     assert (tmp_path / _CURRENT_DEFAULT_PATH).exists()
     assert not legacy_path.exists()
+
+
+_LEGACY_APPROVAL_GRANTS = """
+CREATE TABLE approval_grants (
+    id TEXT PRIMARY KEY,
+    task_id TEXT NOT NULL,
+    tool_name TEXT NOT NULL,
+    capability TEXT NOT NULL,
+    granted_from_approval_id TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    FOREIGN KEY(task_id) REFERENCES tasks(id)
+)
+"""
+
+
+def test_upgrades_an_approval_grants_table_from_before_scope_and_revocation(tmp_path) -> None:
+    """A database created before approval_grants gained scope/max_operations/
+    operations_used/revoked kept the seven-column table, because CREATE TABLE IF
+    NOT EXISTS never alters it. Every tool call then died in find_matching with
+    "no such column: revoked"."""
+    url = f"sqlite:///{tmp_path / 'old.db'}"
+    database = Database(url)
+    database.initialize()
+    repositories = Repositories.for_database(database)
+    task = repositories.tasks.create("read the notes")
+    expires = (utc_now() + timedelta(minutes=10)).isoformat()
+    with database.connect() as connection:
+        connection.execute("DROP TABLE approval_grants")
+        connection.execute(_LEGACY_APPROVAL_GRANTS)
+        connection.execute(
+            "INSERT INTO approval_grants VALUES (?, ?, ?, ?, ?, ?, ?)",
+            ("grant_old", task.id, "filesystem.manage", Capability.FILESYSTEM_READ.value, "seed", utc_now().isoformat(), expires),
+        )
+
+    database.initialize()
+
+    with database.connect() as connection:
+        columns = {row["name"] for row in connection.execute("PRAGMA table_info(approval_grants)")}
+    assert {"scope", "max_operations", "operations_used", "revoked"} <= columns
+    grant = Repositories.for_database(database).approval_grants.find_matching(
+        task.id, "filesystem.manage", Capability.FILESYSTEM_READ
+    )
+    assert grant is not None and grant.id == "grant_old"
+    assert grant.revoked is False and grant.operations_used == 0 and grant.max_operations is None
+
+    database.initialize()  # idempotent: a second start must not fail on the now-present columns
