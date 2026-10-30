@@ -89,22 +89,21 @@ class ConversationRepository:
     def get_or_create(self, channel: ChannelType, external_id: str) -> str:
         now = _dt(utc_now())
         with self.database.connect() as connection:
+            # Insert-or-ignore, then read: with check-then-insert, two threads creating the same
+            # conversation (two folder-watch ticks at once) both passed the check and the second
+            # insert failed on the (channel, external_id) unique constraint.
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO conversations (id, channel, external_id, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (f"conv_{channel.value}_{external_id}", channel.value, external_id, now, now),
+            )
             row = connection.execute(
                 "SELECT id FROM conversations WHERE channel = ? AND external_id = ?",
                 (channel.value, external_id),
             ).fetchone()
-            if row:
-                return str(row["id"])
-
-            conversation_id = f"conv_{channel.value}_{external_id}"
-            connection.execute(
-                """
-                INSERT INTO conversations (id, channel, external_id, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (conversation_id, channel.value, external_id, now, now),
-            )
-            return conversation_id
+            return str(row["id"])
 
 
 class MessageRepository:
