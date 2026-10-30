@@ -1390,6 +1390,71 @@ export function updateVoiceConfig(enabled: boolean) {
   })
 }
 
+/** Which classifier routes incoming messages: the LLM, a local decision model, or both (llm/decision.py). */
+export const DecisionModeSchema = z.enum(["off", "shadow", "cascade", "decision"])
+export type DecisionMode = z.infer<typeof DecisionModeSchema>
+
+export const DecisionConfigSchema = z.object({
+  decision: z
+    .object({
+      mode: DecisionModeSchema,
+      base_url: z.string(),
+      profile: z.string().nullable(),
+      min_confidence: z.number(),
+      cascade_routes: z.array(z.string()),
+    })
+    .passthrough(),
+  routes: z.record(z.string(), z.string()),
+  concierge_only_routes: z.array(z.string()),
+  stats: z.object({
+    messages: z.number(),
+    decided_alone: z.number(),
+    unanswered: z.number(),
+    compared: z.number(),
+    agreed: z.number(),
+    agreement: z.number().nullable(),
+    median_ms: z.number().nullable(),
+    recent_disagreements: z.array(
+      z.object({
+        text: z.string(),
+        decision_route: z.string().nullable(),
+        decision_confidence: z.number().nullable(),
+        llm_route: z.string().nullable(),
+      }),
+    ),
+  }),
+})
+export type DecisionSettings = z.infer<typeof DecisionConfigSchema>
+
+export function fetchDecisionConfig() {
+  return apiFetch("/api/config/decision", DecisionConfigSchema)
+}
+
+export function updateDecisionConfig(input: { mode: DecisionMode; profile: string | null; min_confidence: number }) {
+  return apiFetch("/api/config/decision", ConfigUpdateResponseSchema, {
+    method: "POST",
+    body: JSON.stringify(input),
+  })
+}
+
+const RouteAnswerSchema = z.object({ route: z.string(), confidence: z.number(), latency_ms: z.number() })
+const RouteErrorSchema = z.object({ error: z.string() })
+
+export const DecisionTestSchema = z.object({
+  text: z.string(),
+  mode: DecisionModeSchema,
+  decision: z.union([RouteAnswerSchema.extend({ decides_alone: z.boolean() }), RouteErrorSchema]),
+  llm: z.union([RouteAnswerSchema, RouteErrorSchema]).optional(),
+})
+export type DecisionTest = z.infer<typeof DecisionTestSchema>
+
+export function testDecision(text: string, includeLlm: boolean) {
+  return apiFetch("/api/config/decision/test", DecisionTestSchema, {
+    method: "POST",
+    body: JSON.stringify({ text, include_llm: includeLlm }),
+  })
+}
+
 /** The channel catalog. Adding a way to reach YBM is a backend table row. */
 const ChannelSchema = z.object({
   key: z.string(),
