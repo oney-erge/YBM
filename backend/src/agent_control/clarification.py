@@ -25,6 +25,19 @@ CANCEL_WORDS = {"cancel", "stop", "drop it", "never mind", "nevermind", "forget 
 CLARIFICATION_MAX_AGE = timedelta(hours=24)
 
 
+def objective_with_answer(objective: str, question: str | None, answer: str) -> str:
+    """The objective with the user's answer folded in, after the question it answers.
+
+    An answer such as "yes, go ahead with what you proposed" means nothing without the question, and
+    the Operator never saw its own question once the task resumed: in a live run it asked the same
+    question again and the task waited until it was cancelled.
+    """
+    asked = " ".join(str(question or "").split())
+    if asked:
+        return f"{objective}\n[Question to the user: {asked}]\n[User clarification: {answer}]"
+    return f"{objective}\n[User clarification: {answer}]"
+
+
 @dataclass
 class ClarificationResumeResult:
     task: TaskRecord
@@ -113,7 +126,7 @@ def resume_clarifying_task(
 
     # Fold the answer into the objective so replanning sees it, and reset
     # the attempt counters - the user's input makes this a fresh attempt.
-    objective = f"{task.objective}\n[User clarification: {text}]"
+    objective = objective_with_answer(task.objective, task.metadata.get("clarifying_question"), text)
     repositories.tasks.update_objective(task.id, objective)
     answers = list(task.metadata.get("clarification_answers") or [])
     answers.append(

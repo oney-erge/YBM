@@ -49,6 +49,7 @@ from agent_control.schemas import (
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.redaction import redact_payload
 from agent_control.storage.repositories import Repositories
+from agent_control.tools.contracts import SCHEDULE_ID_OPERATIONS
 from agent_control.tools.effects import classify_effect
 from agent_control.tools.mcp_client import mcp_output_text
 
@@ -674,6 +675,17 @@ class TaskWorker:
             },
         )
 
+        answer_copied_from_results = False
+        if decision.action == OperatorAction.ASK_USER and _still_asking_after_the_work_is_done(latest, history):
+            # Twice told that the work is done and to report the gap instead of asking, a live run
+            # put its question to the user anyway, got "go ahead", and asked it again. The request's
+            # work is done, so the task finishes with what was done and the question as a note.
+            decision = decision.model_copy(update={
+                "action": OperatorAction.DONE,
+                "final_answer": _answer_from_results(history, decision.question),
+            })
+            answer_copied_from_results = True
+
         if decision.action == OperatorAction.DONE:
             final_answer = _ground_operator_final_answer(decision.final_answer, history)
             # Skip the grounding pass on a task that made a single tool call:
@@ -681,8 +693,11 @@ class TaskWorker:
             # final_answer from it, and the Auditor costs ~11s against a whole
             # request that is often ~12s. Governed by
             # operator.audit_min_tool_calls (1 restores auditing everything),
-            # because it is a real trade - see that setting's comment.
-            worth_auditing = _tool_call_count(history) >= self.audit_min_tool_calls
+            # because it is a real trade - see that setting's comment. An answer
+            # copied line by line from the results has nothing synthesized to audit.
+            worth_auditing = (
+                _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
+            )
             evidence_offset = _post_clarification_history_offset(latest, history)
             content_entry = (
                 _last_content_tool_history_entry(history[evidence_offset:])
@@ -812,7 +827,7 @@ class TaskWorker:
             candidate = latest.model_copy(
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
-            clarification_recovery = _clarification_recovery_reason(candidate, history)
+            clarification_recovery = _clarification_recovery_reason(candidate, history, decision.question)
             if clarification_recovery:
                 recovery_count = int(
                     latest.metadata.get("operator_optional_question_recovery_count", 0)
@@ -914,6 +929,9 @@ class TaskWorker:
         )
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
+        tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
+        tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
+        tool_input = _file_in_named_folder(latest, tool_name, tool_input)
         tool_name, tool_input = _stale_read_recovery_call(
             latest,
             tool_name,
@@ -1040,11 +1058,12 @@ class TaskWorker:
         repeated_call = _repeated_no_progress_call(history)
         if repeated_call is not None:
             tool_name, operation = repeated_call
+            called = f"{tool_name}:{operation}" if operation else tool_name
             metadata = {
                 **recorded.metadata,
                 "operator_history": history,
                 "last_worker_error": (
-                    f"Blocked after repeated {tool_name}:{operation} calls returned the same result; "
+                    f"Blocked after repeated {called} calls returned the same result; "
                     "stopped to avoid a no-progress loop. A different capability or user input is required."
                 ),
             }
@@ -2636,6 +2655,118 @@ def _document_summary_call(
     return "document.manage", {"operation": "summarize_pdf", "path": path}
 
 
+_SCHEDULE_ID = re.compile(r"\bschedule_[0-9a-f]{32}\b")
+
+
+def _schedule_id_from_this_task(
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Fill a missing schedule_id with the one schedule this task's own results name.
+
+    The model refers to a schedule it has just created by a name it made up ("task_name": "Daily
+    Episode Summary Checker") instead of the id the create result gave it, and repeats that call
+    until the no-progress guard stops the task: a live run created its schedule and still ended
+    blocked. When the successful schedule.manage results in this task name exactly one schedule,
+    that is the one meant. With none or several, the call goes through unchanged and the tool asks
+    for the id.
+    """
+    if tool_name != "schedule.manage" or tool_input.get("schedule_id"):
+        return tool_input
+    if tool_input.get("operation") not in SCHEDULE_ID_OPERATIONS:
+        return tool_input
+    named = {
+        schedule_id
+        for entry in history
+        if isinstance(entry, dict)
+        and entry.get("tool_name") == "schedule.manage"
+        and entry.get("status") in {ToolResultStatus.SUCCEEDED.value, ALREADY_DONE_STATUS}
+        for schedule_id in _SCHEDULE_ID.findall(str(entry.get("output_summary") or ""))
+    }
+    if len(named) != 1:
+        return tool_input
+    return {**tool_input, "schedule_id": next(iter(named))}
+
+
+_REQUEST_URL = re.compile(r"https?://[^\s<>\"')\]]+")
+
+
+def _schedule_objective_with_request_urls(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep the user's URLs in the job a schedule will run.
+
+    The scheduled run sees only this objective. A live run asked for a daily check of an episode
+    page and created "Check for new episodes daily at 9 AM and send summaries.", a job with nothing
+    to check. A URL from the user's message that the objective leaves out is added back.
+    """
+    if tool_name != "schedule.manage" or tool_input.get("operation") != "create":
+        return tool_input
+    objective = str(tool_input.get("objective") or "").strip()
+    if not objective:
+        return tool_input
+    request_text = str(task.metadata.get("original_message_text") or task.objective)
+    missing = [
+        url for url in dict.fromkeys(match.rstrip(".,;:!?") for match in _REQUEST_URL.findall(request_text))
+        if url not in objective
+    ]
+    if not missing:
+        return tool_input
+    return {**tool_input, "objective": f"{objective} [from the request: {' '.join(missing)}]"}
+
+
+# Operations that take an existing file at `path`. Writes are left out on purpose: a path that does
+# not exist yet is what they are for.
+_EXISTING_FILE_OPERATIONS = {
+    "document.manage": frozenset({"inspect_document", "extract_text", "summarize_pdf"}),
+    "filesystem.manage": frozenset({"read_file", "open_file"}),
+    "artifact.deliver": frozenset({"send_file"}),
+}
+
+
+def _file_in_named_folder(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Use the one matching file when the model made up a file name inside a folder the user named.
+
+    Asked to "find the PDF inside C:\\...\\AgentControlE2E", the model called summarize_pdf on
+    AgentControlE2E\\AgentControlE2E.pdf, a name built from the folder's, retried it, and only then
+    listed the folder. The failed guess stayed in the evidence, and the auditor took it for the file
+    the user wanted. When the path does not exist, the user's words name its folder but not the file,
+    and that folder holds exactly one file with the same extension, that file is the one meant. In
+    every other case the call goes through unchanged.
+    """
+    if tool_input.get("operation") not in _EXISTING_FILE_OPERATIONS.get(str(tool_name), ()):
+        return tool_input
+    raw_path = str(tool_input.get("path") or "").strip()
+    if not raw_path:
+        return tool_input
+    path = Path(raw_path).expanduser()
+    if not path.is_absolute() or not path.suffix or path.exists():
+        return tool_input
+    request_text = str(task.metadata.get("original_message_text") or task.objective).casefold()
+    folder = path.parent
+    # The folder itself, not the start of a deeper path the user named.
+    named_folder = re.escape(str(folder).rstrip("\\/").casefold()) + r"(?![\\/\w])"
+    if path.name.casefold() in request_text or not re.search(named_folder, request_text):
+        return tool_input
+    try:
+        matches = [
+            child for child in folder.iterdir()
+            if child.is_file() and child.suffix.casefold() == path.suffix.casefold()
+        ]
+    except OSError:
+        return tool_input
+    if len(matches) != 1:
+        return tool_input
+    return {**tool_input, "path": str(matches[0])}
+
+
 def _ordered_artifact_delivery_call(
     task: TaskRecord,
     tool_name: str | None,
@@ -2725,10 +2856,50 @@ def _satisfied_task_does_not_need_clarification(
     )
 
 
+def _still_asking_after_the_work_is_done(task: TaskRecord, history: list[dict[str, Any]]) -> bool:
+    """Whether a question comes after two rejections and the request's work is verifiably done."""
+    if int(task.metadata.get("operator_optional_question_recovery_count", 0)) < 2:
+        return False
+    candidate = task.model_copy(update={"metadata": {**task.metadata, "operator_history": history}})
+    return _satisfied_task_does_not_need_clarification(candidate, history)
+
+
+def _answer_from_results(history: list[dict[str, Any]], question: str | None) -> str:
+    """What the task did, in its own successful results, and the question the model still had.
+
+    What it changed (the effect table in tools/effects.py), or its last result when it only read.
+    """
+    succeeded = [
+        entry for entry in history
+        if isinstance(entry, dict)
+        and entry.get("tool_name") not in CHECK_ENTRY_NAMES
+        and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+        and entry.get("output_summary")
+    ]
+    changed = [
+        entry for entry in succeeded
+        if classify_effect(
+            str(entry.get("tool_name")), str((entry.get("input") or {}).get("operation") or "") or None
+        ) in _REPEAT_SENSITIVE_EFFECTS
+    ]
+    done = list(dict.fromkeys(
+        " ".join(str(entry["output_summary"]).split())[:300] for entry in (changed or succeeded[-1:])
+    ))
+    lines = ["Done:", *(f"- {line}" for line in done[-5:])]
+    asked = " ".join(str(question or "").split())
+    if asked:
+        lines += ["", f"Not settled: {asked}"]
+    return "\n".join(lines)
+
+
 def _clarification_recovery_reason(
     task: TaskRecord,
     history: list[dict[str, Any]],
+    question: str | None = None,
 ) -> str | None:
+    answer = str(task.metadata.get("clarification_answer") or "").strip()
+    if answer and _same_question(question, task.metadata.get("answered_clarifying_question")):
+        return f"this question was already asked and the user answered: {answer!r}. Act on that answer."
     if _satisfied_task_does_not_need_clarification(task, history):
         return (
             "the requested work's inferred postconditions are already satisfied; "
@@ -2750,6 +2921,18 @@ def _clarification_recovery_reason(
             "scaffold the cache-only proposal with conservative defaults and report review gaps"
         )
     return None
+
+
+def _same_question(question: object, answered: object) -> bool:
+    """Whether a new question asks what an answered one already asked.
+
+    Compared on words, ignoring case and punctuation, with a high bar: a live run re-asked its
+    answered question with only the closing sentence reworded.
+    """
+    words = [set(re.findall(r"[a-z0-9]+", str(text or "").casefold())) for text in (question, answered)]
+    if not words[0] or not words[1]:
+        return False
+    return len(words[0] & words[1]) / len(words[0] | words[1]) >= 0.6
 
 
 def _known_written_file_path(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
@@ -3176,10 +3359,11 @@ def _repeated_no_progress_call(
     )
     outputs = {" ".join(str(entry.get(observation_key) or "").split()) for entry in recent}
     operation = next(iter(operations), "")
+    # A call without an operation counts too: {"url": ...} and {"query": ...} repeated with the
+    # same error used to slip past this guard (ten identical web.search failures in one live run).
     if (
         len(tool_names) != 1
         or len(operations) != 1
-        or not operation
         or len(outputs) != 1
         or not next(iter(outputs), "")
     ):
@@ -3325,6 +3509,7 @@ def _ground_operator_final_answer(answer: str | None, history: list[dict[str, An
     """
     if not answer:
         return answer
+    answer = _answer_with_the_file_read(answer, history)
     source_path = ""
     for entry in reversed(history):
         tool_input = entry.get("input") if isinstance(entry, dict) else None
@@ -3343,6 +3528,47 @@ def _ground_operator_final_answer(answer: str | None, history: list[dict[str, An
     if source_path.lower() in lowered or (filename and filename.lower() in lowered):
         return answer
     return f"{answer.rstrip()}\n\nSource file: {source_path}"
+
+
+_FILE_READ_OPERATIONS = frozenset({"read_file", "inspect_document", "extract_text", "summarize_pdf"})
+_ANSWER_PATH = re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>|*?,;]+")
+
+
+def _answer_with_the_file_read(answer: str, history: list[dict[str, Any]]) -> str:
+    """Name the file that was read where the answer names one that does not exist beside it.
+
+    A live run read the right PDF (its made-up name had been replaced before the call) and then
+    told the user about the made-up one. A path in the answer that does not exist, has the same
+    extension and sits in the folder of the last file read is that file.
+    """
+    source = next(
+        (
+            Path(str(entry["input"]["path"]))
+            for entry in reversed(history)
+            if isinstance(entry, dict)
+            and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+            and isinstance(entry.get("input"), dict)
+            and entry["input"].get("operation") in _FILE_READ_OPERATIONS
+            and entry["input"].get("path")
+        ),
+        None,
+    )
+    if source is None:
+        return answer
+
+    def real_file(match: re.Match[str]) -> str:
+        text = match.group(0).rstrip(".:)")
+        named = Path(text)
+        if (
+            os.path.normcase(str(named.parent)) == os.path.normcase(str(source.parent))
+            and os.path.normcase(str(named)) != os.path.normcase(str(source))
+            and named.suffix.casefold() == source.suffix.casefold()
+            and not named.exists()
+        ):
+            return str(source) + match.group(0)[len(text):]
+        return match.group(0)
+
+    return _ANSWER_PATH.sub(real_file, answer)
 
 
 def _completed_coding_agent_answer(tool_name: str, result: ToolCallResult) -> str | None:
