@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+import threading
 
 from agent_control.schemas import (
     ApprovalRequest,
@@ -259,3 +261,23 @@ def test_rows_created_in_the_same_clock_tick_keep_their_insertion_order(tmp_path
 
     assert [t.id for t in repos.tasks.list_recent(2)] == [second.id, first.id]
     assert [t.id for t in repos.tasks.list_for_conversation(conversation_id)] == [first.id, second.id]
+
+
+def test_concurrent_get_or_create_returns_one_conversation(tmp_path) -> None:
+    # Check-then-insert let two threads both miss the row; the second insert then failed on the
+    # unique (channel, external_id) constraint. Seen with two folder-watch ticks at once.
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    for round_number in range(20):
+        start = threading.Barrier(8)
+
+        def create(_: int) -> str:
+            start.wait()
+            return repos.conversations.get_or_create(ChannelType.WEB, f"chat-{round_number}")
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            ids = set(pool.map(create, range(8)))
+
+        assert ids == {f"conv_web_chat-{round_number}"}
+
