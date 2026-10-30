@@ -8,7 +8,7 @@ from pydantic import Field, SecretStr, ValidationError, field_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 
 from agent_control.config_sync import read_env_value
-from agent_control.schemas import Capability, RiskLevel, StrictBaseModel
+from agent_control.schemas import Capability, IntentRoute, RiskLevel, StrictBaseModel
 
 
 class ServerConfig(StrictBaseModel):
@@ -185,6 +185,53 @@ class SchedulerConfig(StrictBaseModel):
     # (docs/archive/HISTORY.md P6 - the motivating case was 7 real schedules whose
     # target had gone away, still firing and failing every day for weeks).
     max_consecutive_failures: int = Field(default=5, ge=1, le=100)
+
+
+class DecisionConfig(StrictBaseModel):
+    """A local decision model that classifies incoming messages (llm/decision.py).
+
+    It answers "which route is this message?" in one pass with a real
+    probability, served by LocalDeploy at /v1/systemone. `off` changes nothing.
+    `shadow` runs it beside the LLM concierge and records whether they agree,
+    without using its answer. `cascade` lets it decide on its own when it is
+    confident about a route listed in `cascade_routes`; everything else, and
+    every failure, goes to the LLM concierge exactly as before. `decision` lets
+    it decide every message it is confident about, chat and status included.
+    """
+
+    mode: Literal["off", "shadow", "cascade", "decision"] = "off"
+    base_url: str = "http://127.0.0.1:8000"
+    # A LocalDeploy decision profile. None uses LocalDeploy's default decision profile.
+    profile: str | None = None
+    api_token_env: str | None = None
+    # A warm answer takes well under a second on a CPU. The first message after LocalDeploy
+    # starts also waits for llama-server to start and load the model, so allow for that.
+    timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    min_confidence: float = Field(default=0.9, ge=0.5, le=1.0)
+    # The routes `cascade` may decide without the LLM concierge: tasks that need
+    # nothing it extracts (a provider name, a schedule, a delivery kind). Chat and
+    # status stay with the concierge there because it also writes the reply.
+    # `decision` mode does not use this list.
+    cascade_routes: list[IntentRoute] = Field(
+        default_factory=lambda: [
+            IntentRoute.FILESYSTEM_MANAGE, IntentRoute.DESKTOP_OBSERVE, IntentRoute.DOCUMENT_MANAGE,
+            IntentRoute.CODE_INTERPRETER, IntentRoute.WORKSPACE_MANAGE, IntentRoute.ADAPTER_FACTORY,
+            IntentRoute.BROWSER_OPEN,
+        ]
+    )
+    # After a failure, skip the decision model for this long instead of paying the
+    # timeout on every message.
+    cooldown_seconds: float = Field(default=60.0, ge=0, le=3600)
+
+    @field_validator("base_url")
+    @classmethod
+    def _local_only(cls, value: str) -> str:
+        from urllib.parse import urlparse
+
+        parsed = urlparse(value)
+        if parsed.scheme not in {"http", "https"} or not is_loopback_host(parsed.hostname or ""):
+            raise ValueError("decision.base_url must be a loopback address such as http://127.0.0.1:8000")
+        return value.rstrip("/")
 
 
 class LoggingConfig(StrictBaseModel):
@@ -650,6 +697,7 @@ class AppSettings(BaseSettings):
     storage: StorageConfig = Field(default_factory=StorageConfig)
     secrets: SecretVaultConfig = Field(default_factory=SecretVaultConfig)
     scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)
+    decision: DecisionConfig = Field(default_factory=DecisionConfig)
     logging: LoggingConfig = Field(default_factory=LoggingConfig)
     limits: LimitsConfig = Field(default_factory=LimitsConfig)
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)

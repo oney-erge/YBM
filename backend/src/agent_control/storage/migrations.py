@@ -224,6 +224,16 @@ ADDITIVE_MIGRATIONS = [
     # llm_calls itself - a database created between those two commits (this
     # machine's own included) has the table but not the column yet.
     ("llm_calls", "step_id",       "ALTER TABLE llm_calls ADD COLUMN step_id TEXT"),
+    # approval_grants gained scope/usage/revocation after the table first
+    # shipped (Release gate + Proof v2), with the new columns added only to the
+    # CREATE TABLE above. CREATE TABLE IF NOT EXISTS never alters an existing
+    # table, so a database from before that change kept the old seven columns
+    # and every grant lookup (ApprovalGrantRepository.find_matching, which runs
+    # before each tool call) failed with "no such column: revoked".
+    ("approval_grants", "scope",             "ALTER TABLE approval_grants ADD COLUMN scope TEXT"),
+    ("approval_grants", "max_operations",    "ALTER TABLE approval_grants ADD COLUMN max_operations INTEGER"),
+    ("approval_grants", "operations_used",   "ALTER TABLE approval_grants ADD COLUMN operations_used INTEGER NOT NULL DEFAULT 0"),
+    ("approval_grants", "revoked",           "ALTER TABLE approval_grants ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

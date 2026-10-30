@@ -205,6 +205,10 @@ class AuditEventType(StrEnum):
     # Telegram's name for an event that isn't about Telegram.
     CHANNEL_ACCESS_DECISION = "channel_access_decision"
     MESSAGE_CLASSIFIED = "message_classified"
+    # What the local decision model said about a message, and whether the LLM
+    # concierge agreed (llm/decision.py). Recorded in shadow and cascade modes so
+    # the model can be judged on real traffic before it is trusted with any.
+    INTAKE_DECISION = "intake_decision"
     TASK_SPAWN_FAILED = "task_spawn_failed"
     TASK_CREATED = "task_created"
     TASK_STATE_CHANGED = "task_state_changed"

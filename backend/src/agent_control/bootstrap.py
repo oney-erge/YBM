@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 from urllib.error import URLError
 from urllib.parse import quote
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 from agent_control.config import AppSettings, backend_base_url, is_loopback_host, load_settings
 from agent_control.config_sync import ConfigManager, read_env_value
@@ -301,6 +301,43 @@ def check_localdeploy(settings: AppSettings) -> Check:
     return Check("LocalDeploy", "warn", detail)
 
 
+def check_decision_model(settings: AppSettings) -> Check:
+    """Whether the decision model that routes messages (config ``decision``) can be asked.
+
+    A warning, never a failure: without it every message goes to the LLM, as with ``off``.
+    """
+    decision = settings.decision
+    if decision.mode == "off":
+        return Check("Decision model", "ok", "off - the LLM routes every message")
+    url = f"{decision.base_url}/v1/models"
+    request = Request(url)
+    token = read_env_value(decision.api_token_env) if decision.api_token_env else None
+    if token:
+        request.add_header("Authorization", f"Bearer {token}")
+    try:
+        with urlopen(request, timeout=6.0) as resp:  # noqa: S310 - loopback only (DecisionConfig validates it)
+            listing = json.loads(resp.read().decode("utf-8"))
+    except (URLError, OSError, ValueError):
+        return Check("Decision model", "warn", f"mode {decision.mode}, but {url} is not reachable; the LLM routes every message until it is")
+    names = [
+        str(model.get("id"))
+        for model in listing.get("data", [])
+        if isinstance(model, dict) and (model.get("localdeploy") or {}).get("kind") == "decision"
+    ]
+    if decision.profile and decision.profile not in names:
+        return Check(
+            "Decision model", "warn",
+            f"mode {decision.mode}, but LocalDeploy has no enabled decision profile '{decision.profile}'"
+            + (f" (enabled: {', '.join(names)})" if names else ""),
+        )
+    if not names:
+        return Check(
+            "Decision model", "warn",
+            f"mode {decision.mode}, but LocalDeploy has no enabled decision profile; enable d3_lite_decision in its config.json",
+        )
+    return Check("Decision model", "ok", f"mode {decision.mode}, profile {decision.profile or names[0]}")
+
+
 OLLAMA_TAGS_URL = "http://127.0.0.1:11434/api/tags"
 
 
@@ -480,6 +517,7 @@ def collect_checks() -> list[Check]:
         checks.append(_check_voice_modules(settings))
         checks.append(_check_db(settings))
         checks.append(check_localdeploy(settings))
+        checks.append(check_decision_model(settings))
         checks.append(_check_telegram(settings))
         checks.append(_check_whatsapp(settings))
         checks.append(_check_admin_token(settings))

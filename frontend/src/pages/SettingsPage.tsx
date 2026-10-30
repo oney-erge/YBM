@@ -1,6 +1,7 @@
 import { LLMSettingsCard } from "@/components/settings/LLMSettingsCard"
 import { LLMRolesCard } from "@/components/settings/LLMRolesCard"
 import { VoiceSettingsCard } from "@/components/settings/VoiceSettingsCard"
+import { DecisionSettingsCard } from "@/components/settings/DecisionSettingsCard"
 import { TelegramSettingsCard } from "@/components/settings/TelegramSettingsCard"
 import { VSCodeSettingsCard } from "@/components/settings/VSCodeSettingsCard"
 import { WorkspaceSettingsCard } from "@/components/settings/WorkspaceSettingsCard"
@@ -34,6 +35,7 @@ export function SettingsPage({ onRerunWizard }: { onRerunWizard: () => void }) {
       />
 
       <LLMSettingsCard />
+      <DecisionSettingsCard />
       <VoiceSettingsCard />
       <TelegramSettingsCard />
 

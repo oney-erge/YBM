@@ -9,7 +9,7 @@ trace after the fact.
 
 from __future__ import annotations
 
-from agent_control.channels.task_notify import _latest_attempt_summary
+from agent_control.channels.task_notify import _latest_attempt_summary, format_task_message
 from agent_control.schemas import TaskRecord, TaskStatus
 
 
@@ -71,3 +71,37 @@ def test_a_step_with_no_input_still_summarises() -> None:
 
 def test_no_history_yields_nothing() -> None:
     assert _latest_attempt_summary(_task([])) is None
+
+
+_RAW_REPORT = (
+    "invalid input for filesystem.manage: 1 validation error for FilesystemSearchInput\n"
+    "query\n"
+    "  Field required [type=missing, input_value={'operation': 'search'}, input_type=dict]\n"
+    "    For further information visit https://errors.pydantic.dev/2.14/v/missing"
+)
+
+
+def test_a_failed_step_does_not_leak_the_raw_validation_report() -> None:
+    summary = _latest_attempt_summary(_task([
+        {
+            "tool_name": "filesystem.manage",
+            "input": {"operation": "search", "root": "desktop"},
+            "status": "failed",
+            "error": _RAW_REPORT,
+        }
+    ]))
+
+    assert "missing required input (query)" in summary
+    assert "pydantic" not in summary and "input_value" not in summary
+
+
+def test_a_failed_task_message_uses_the_plain_sentence_too() -> None:
+    task = TaskRecord(
+        id="task_2", objective="find a txt", status=TaskStatus.FAILED,
+        metadata={"last_worker_error": _RAW_REPORT},
+    )
+
+    message = format_task_message(task)
+
+    assert "The filesystem.manage step was missing required input (query)." in message
+    assert "pydantic" not in message and "type=missing" not in message

@@ -238,7 +238,7 @@ def _web(monkeypatch, tmp_path, concierge=None):
     repositories = Repositories.for_database(database)
     calls: list[str] = []
 
-    async def fake_concierge(settings, objective):
+    async def fake_concierge(settings, objective, *_):
         calls.append(objective)
         return concierge if concierge is not None else (None, None)
 
