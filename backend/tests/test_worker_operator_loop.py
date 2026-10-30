@@ -17,6 +17,7 @@ from agent_control.orchestration.auditor import AuditResult
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.orchestration.worker import (
     CHECK_ENTRY_FULFILLMENT,
+    _answer_from_results,
     _canonical_operator_tool_call,
     _coding_agent_input_with_task_defaults,
     _document_summary_call,
@@ -32,6 +33,7 @@ from agent_control.orchestration.worker import (
     _required_named_coding_agent_call,
     _satisfied_task_does_not_need_clarification,
     _schedule_id_from_this_task,
+    _schedule_objective_with_request_urls,
     _stale_read_recovery_call,
     _unsupported_write_claim,
     build_replay_plan,
@@ -3046,4 +3048,72 @@ async def test_a_question_after_two_rejections_on_finished_work_ends_the_task_wi
     assert f"Created schedule {_SCHEDULE_ID}" in answer
     assert answer.endswith(f"Not settled: {question}")
     assert "clarify_count" not in result.metadata  # the user was never asked
+
+
+
+@pytest.mark.asyncio
+async def test_the_finished_answer_is_not_audited_as_a_synthesis(tmp_path) -> None:
+    # Live: the converted finish was audited against a stray read and blocked twice.
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Create a daily job that checks example.com for new episodes and sends me the summary.")
+    settings = _settings()
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={
+            "schedule.manage": StaticToolAdapter({"summary": f"Created schedule {_SCHEDULE_ID}", "schedule_id": _SCHEDULE_ID}),
+            "http.request": StaticToolAdapter({"summary": "Not Found"}),
+        },
+        tool_definitions={
+            name: ToolDefinition(name=name, capability=Capability.LLM_GENERATE, enabled=True, description="test tool")
+            for name in ("schedule.manage", "http.request")
+        },
+    )
+    fetch = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="http.request",
+                             tool_input={"url": "https://example.com"}, risk_level=RiskLevel.LOW)
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="Should I use a browser instead?")
+    auditor = QueueAuditor([AuditResult(sufficient=False, reason="no summary was sent")] * 3)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), fetch, ask, ask, ask]),
+                        auditor=auditor, operator_max_steps=8, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(5):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert auditor.calls == []
+
+def test_the_finished_answer_lists_what_changed_or_the_last_read() -> None:
+    created = {"tool_name": "schedule.manage", "status": "succeeded", "input": {"operation": "create"},
+               "output_summary": "Created schedule s1"}
+    read = {"tool_name": "http.request", "status": "succeeded", "input": {"url": "https://x"}, "output_summary": "Not Found"}
+
+    assert _answer_from_results([created, read], None) == "Done:\n- Created schedule s1"
+    assert _answer_from_results([read], "Which page?") == "Done:\n- Not Found\n\nNot settled: Which page?"
+
+
+def test_a_scheduled_job_keeps_the_url_the_user_gave() -> None:
+    message = "Create a job that runs every day and checks http://127.0.0.1:52308/episode.html for a new episode."
+    task = TaskRecord(objective=message, metadata={"original_message_text": message})
+    call = {"operation": "create", "objective": "Check for new episodes daily at 9 AM and send summaries."}
+
+    objective = _schedule_objective_with_request_urls(task, "schedule.manage", call)["objective"]
+
+    assert objective == (
+        "Check for new episodes daily at 9 AM and send summaries. "
+        "[from the request: http://127.0.0.1:52308/episode.html]"
+    )
+
+
+@pytest.mark.parametrize(
+    "message, call",
+    [
+        ("check https://example.com/feed daily", {"operation": "create", "objective": "Check https://example.com/feed"}),
+        ("remind me to stretch every hour", {"operation": "create", "objective": "Remind the user to stretch"}),
+        ("check https://example.com daily", {"operation": "list"}),
+    ],
+)
+def test_a_scheduled_job_objective_is_otherwise_left_alone(message, call) -> None:
+    task = TaskRecord(objective=message, metadata={"original_message_text": message})
+
+    assert _schedule_objective_with_request_urls(task, "schedule.manage", call) == call
 

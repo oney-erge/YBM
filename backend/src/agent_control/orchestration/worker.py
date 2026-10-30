@@ -675,6 +675,7 @@ class TaskWorker:
             },
         )
 
+        answer_copied_from_results = False
         if decision.action == OperatorAction.ASK_USER and _still_asking_after_the_work_is_done(latest, history):
             # Twice told that the work is done and to report the gap instead of asking, a live run
             # put its question to the user anyway, got "go ahead", and asked it again. The request's
@@ -683,6 +684,7 @@ class TaskWorker:
                 "action": OperatorAction.DONE,
                 "final_answer": _answer_from_results(history, decision.question),
             })
+            answer_copied_from_results = True
 
         if decision.action == OperatorAction.DONE:
             final_answer = _ground_operator_final_answer(decision.final_answer, history)
@@ -691,8 +693,11 @@ class TaskWorker:
             # final_answer from it, and the Auditor costs ~11s against a whole
             # request that is often ~12s. Governed by
             # operator.audit_min_tool_calls (1 restores auditing everything),
-            # because it is a real trade - see that setting's comment.
-            worth_auditing = _tool_call_count(history) >= self.audit_min_tool_calls
+            # because it is a real trade - see that setting's comment. An answer
+            # copied line by line from the results has nothing synthesized to audit.
+            worth_auditing = (
+                _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
+            )
             evidence_offset = _post_clarification_history_offset(latest, history)
             content_entry = (
                 _last_content_tool_history_entry(history[evidence_offset:])
@@ -925,6 +930,7 @@ class TaskWorker:
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
+        tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
         tool_input = _file_in_named_folder(latest, tool_name, tool_input)
         tool_name, tool_input = _stale_read_recovery_call(
             latest,
@@ -2662,6 +2668,35 @@ def _schedule_id_from_this_task(
     return {**tool_input, "schedule_id": next(iter(named))}
 
 
+_REQUEST_URL = re.compile(r"https?://[^\s<>\"')\]]+")
+
+
+def _schedule_objective_with_request_urls(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Keep the user's URLs in the job a schedule will run.
+
+    The scheduled run sees only this objective. A live run asked for a daily check of an episode
+    page and created "Check for new episodes daily at 9 AM and send summaries.", a job with nothing
+    to check. A URL from the user's message that the objective leaves out is added back.
+    """
+    if tool_name != "schedule.manage" or tool_input.get("operation") != "create":
+        return tool_input
+    objective = str(tool_input.get("objective") or "").strip()
+    if not objective:
+        return tool_input
+    request_text = str(task.metadata.get("original_message_text") or task.objective)
+    missing = [
+        url for url in dict.fromkeys(match.rstrip(".,;:!?") for match in _REQUEST_URL.findall(request_text))
+        if url not in objective
+    ]
+    if not missing:
+        return tool_input
+    return {**tool_input, "objective": f"{objective} [from the request: {' '.join(missing)}]"}
+
+
 # Operations that take an existing file at `path`. Writes are left out on purpose: a path that does
 # not exist yet is what they are for.
 _EXISTING_FILE_OPERATIONS = {
@@ -2809,14 +2844,25 @@ def _still_asking_after_the_work_is_done(task: TaskRecord, history: list[dict[st
 
 
 def _answer_from_results(history: list[dict[str, Any]], question: str | None) -> str:
-    """What the task did, in its own successful results, and the question the model still had."""
-    done = list(dict.fromkeys(
-        " ".join(str(entry.get("output_summary") or "").split())[:300]
-        for entry in history
+    """What the task did, in its own successful results, and the question the model still had.
+
+    What it changed (the effect table in tools/effects.py), or its last result when it only read.
+    """
+    succeeded = [
+        entry for entry in history
         if isinstance(entry, dict)
         and entry.get("tool_name") not in CHECK_ENTRY_NAMES
         and entry.get("status") == ToolResultStatus.SUCCEEDED.value
         and entry.get("output_summary")
+    ]
+    changed = [
+        entry for entry in succeeded
+        if classify_effect(
+            str(entry.get("tool_name")), str((entry.get("input") or {}).get("operation") or "") or None
+        ) in _REPEAT_SENSITIVE_EFFECTS
+    ]
+    done = list(dict.fromkeys(
+        " ".join(str(entry["output_summary"]).split())[:300] for entry in (changed or succeeded[-1:])
     ))
     lines = ["Done:", *(f"- {line}" for line in done[-5:])]
     asked = " ".join(str(question or "").split())

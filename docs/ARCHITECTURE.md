@@ -117,12 +117,13 @@ timezone instead of making a copy.
 
 A small model fills a reference with a name it made up rather than one it was given. Two cases are settled before
 the call runs. A schedule operation without a `schedule_id` gets the one schedule this task's own results name (with
-none or several, the tool still asks for the id). A file that does not exist, inside a folder the user named, whose
+none or several, the tool still asks for the id). A new schedule's job keeps every URL from the user's message, since
+the scheduled run sees nothing else. A file that does not exist, inside a folder the user named, whose
 name the user never said, becomes the one file with that extension in that folder. The final answer names the file
 that was read where it names a made-up one beside it. When the task resumes after a question, the objective carries
 the question as well as the answer, and asking an answered question again is refused with the answer. A question
-that still comes after two refusals, once the request's work is verifiably done, ends the task with what was done
-and the question as a note, instead of pausing on the user.
+that still comes after two refusals, once the request's work is verifiably done, ends the task with what it changed
+and the question as a note, instead of pausing on the user. That answer is copied from results, so it is not audited.
 
 ## Task states
 
