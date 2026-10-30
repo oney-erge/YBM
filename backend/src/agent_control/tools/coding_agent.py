@@ -31,6 +31,10 @@ from agent_control.tools.spec import (
 logger = logging.getLogger(__name__)
 
 PROVIDERS = ("codex", "github_copilot", "claude_code")
+#: The names people use for each provider. The intake prompt and the decision model's route text must
+#: name every one, or a request like "ask Claude Code to ..." is routed somewhere else
+#: (tests/test_decision_classifier.py checks this).
+PROVIDER_NAMES = {"codex": "Codex", "github_copilot": "Copilot", "claude_code": "Claude Code"}
 
 RUN_OPERATIONS = {"start", "plan", "run_step", "run_goal", "resume"}
 

@@ -48,13 +48,14 @@ from agent_control.storage.audit import AuditLogger
 
 logger = structlog.get_logger(__name__)
 
-#: One short line per route, in the words the decision model was measured with
-#: (LocalDeploy examples/decision/routing_eval_compact.json). Short on purpose: on a CPU a decision
-#: takes time in proportion to the prompt, and d3-lite scored the same with these lines as with
-#: full sentences at about 60% of the time. ``unknown`` is absent: a decision model should pick a
-#: real route or hand the message to the concierge.
+#: One short line per route, in the words the decision model was measured with (LocalDeploy
+#: examples/decision/routing_eval_compact.json, with "what the bot can do" and "Claude Code" added:
+#: d3-lite stayed at 93% on those 98 messages and went from 84% to 86% on the 43 held-out ones).
+#: Short on purpose: on a CPU a decision takes time in proportion to the prompt, and d3-lite scored
+#: the same with these lines as with full sentences at about 60% of the time. ``unknown`` is absent:
+#: a decision model should pick a real route or hand the message to the concierge.
 ROUTE_DESCRIPTIONS: dict[IntentRoute, str] = {
-    IntentRoute.CONVERSATION: "chat, thanks, general knowledge, questions about the bot",
+    IntentRoute.CONVERSATION: "chat, thanks, general knowledge, questions about what the bot can do",
     IntentRoute.STATUS: "the bot's own tasks and progress",
     IntentRoute.DESKTOP_OBSERVE: "screenshot, what is on screen",
     IntentRoute.COMPUTER_USE: "open apps, click, type, press keys",
@@ -64,7 +65,7 @@ ROUTE_DESCRIPTIONS: dict[IntentRoute, str] = {
     IntentRoute.DOCUMENT_MANAGE: "PDF or slide deck work",
     IntentRoute.ARTIFACT_DELIVERY: "send a file back to the chat",
     IntentRoute.CODE_INTERPRETER: "write and run a small script",
-    IntentRoute.CODING_AGENT: "hand coding to Codex or Copilot",
+    IntentRoute.CODING_AGENT: "hand coding to Codex, Claude Code or Copilot",
     IntentRoute.SCHEDULE_MANAGE: "reminders and recurring jobs",
     IntentRoute.ADAPTER_FACTORY: "build a new tool or integration",
     IntentRoute.WORKSPACE_MANAGE: "set up a project workspace or preview",
@@ -82,6 +83,17 @@ ROUTE_QUESTION: dict[str, Any] = {
     "criteria": {route.value: description for route, description in ROUTE_DESCRIPTIONS.items()},
 }
 
+#: Asked in the same call. A route says which tool a request needs, so "can you read PDFs?" looks like
+#: document work to it (d3-lite: 98% sure). This yes/no question separates asking about an ability
+#: from asking for the work: on LocalDeploy's 141 routing messages the three ability questions scored
+#: 0.93 to 0.95 and no request scored above 0.81. Such a message goes to the concierge, which knows
+#: what is enabled and writes the answer.
+ABILITY_QUESTION: dict[str, Any] = {
+    "type": "noul",
+    "instructions": "Is the message only asking whether the bot is able to do something, rather than asking it to do something now?",
+}
+ABILITY_THRESHOLD = 0.9
+
 
 @dataclass(frozen=True)
 class DecisionOpinion:
@@ -89,6 +101,8 @@ class DecisionOpinion:
     confidence: float
     probabilities: dict[str, float]
     latency_ms: float
+    #: Probability that the message only asks what the bot can do (ABILITY_QUESTION); None if not answered.
+    ability: float | None = None
 
 
 class DecisionModelError(RuntimeError):
@@ -98,6 +112,8 @@ class DecisionModelError(RuntimeError):
 def decides_alone(config: DecisionConfig, opinion: DecisionOpinion) -> bool:
     """Whether this opinion is used without the concierge under ``config.mode``."""
     if opinion.confidence < config.min_confidence:
+        return False
+    if opinion.ability is not None and opinion.ability >= ABILITY_THRESHOLD:
         return False
     if config.mode == "cascade":
         return opinion.route in config.cascade_routes
@@ -146,7 +162,7 @@ class DecisionModelClient:
         self._transport = transport
 
     async def route_of(self, text: str) -> DecisionOpinion:
-        body: dict[str, Any] = {"state": text, "questions": {"route": ROUTE_QUESTION}}
+        body: dict[str, Any] = {"state": text, "questions": {"route": ROUTE_QUESTION, "ability": ABILITY_QUESTION}}
         if self.config.profile:
             body["model"] = self.config.profile
         headers = {}
@@ -162,13 +178,25 @@ class DecisionModelClient:
         if response.status_code != 200:
             raise DecisionModelError(f"decision model answered HTTP {response.status_code}: {response.text[:200]}")
         try:
-            answer = response.json()["answers"]["route"]
+            answers = response.json()["answers"]
+            answer = answers["route"]
             route = IntentRoute(answer["choice"])
             probabilities = {str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()}
             confidence = float(answer.get("confidence", probabilities.get(route.value, 0.0)))
         except (KeyError, TypeError, ValueError) as exc:
             raise DecisionModelError(f"decision model returned an unusable answer: {exc}") from exc
-        return DecisionOpinion(route, confidence, probabilities, (time.monotonic() - started) * 1000)
+        return DecisionOpinion(
+            route, confidence, probabilities, (time.monotonic() - started) * 1000, ability=_yes_probability(answers.get("ability"))
+        )
+
+
+def _yes_probability(answer: Any) -> float | None:
+    """A yes/no answer as a probability: ``{"noul": p}`` from /v1/systemone, or a bare number. None if absent."""
+    value = answer.get("noul") if isinstance(answer, dict) else answer
+    try:
+        return float(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
 
 
 class DecisionModelClassifier:
@@ -280,6 +308,8 @@ class DecisionModelClassifier:
                 "chat_busy": busy,
                 "decision_route": opinion.route.value if opinion else None,
                 "decision_confidence": round(opinion.confidence, 4) if opinion else None,
+                # How sure the model is that the message only asks what the bot can do (ABILITY_QUESTION).
+                "decision_ability": round(opinion.ability, 4) if opinion and opinion.ability is not None else None,
                 "decision_top3": (
                     dict(sorted(opinion.probabilities.items(), key=lambda kv: -kv[1])[:3]) if opinion else None
                 ),

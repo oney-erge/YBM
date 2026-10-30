@@ -225,7 +225,7 @@ class TaskRepository:
     def list_recent(self, limit: int = 20, offset: int = 0) -> list[TaskRecord]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM tasks ORDER BY created_at DESC LIMIT ? OFFSET ?",
+                "SELECT * FROM tasks ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?",
                 (limit, offset),
             ).fetchall()
         return [self._row_to_task(row) for row in rows]
@@ -237,7 +237,7 @@ class TaskRepository:
         """
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM tasks WHERE conversation_id = ? ORDER BY created_at ASC LIMIT ?",
+                "SELECT * FROM tasks WHERE conversation_id = ? ORDER BY created_at ASC, rowid ASC LIMIT ?",
                 (conversation_id, limit),
             ).fetchall()
         return [self._row_to_task(row) for row in rows]
@@ -283,7 +283,7 @@ class TaskRepository:
         placeholders = ",".join("?" for _ in statuses)
         with self.database.connect() as connection:
             rows = connection.execute(
-                f"SELECT * FROM tasks WHERE status IN ({placeholders}) ORDER BY created_at ASC LIMIT ?",
+                f"SELECT * FROM tasks WHERE status IN ({placeholders}) ORDER BY created_at ASC, rowid ASC LIMIT ?",
                 [*(status.value for status in statuses), limit],
             ).fetchall()
         return [self._row_to_task(row) for row in rows]
@@ -295,7 +295,7 @@ class TaskRepository:
         """
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM tasks WHERE created_at >= ? ORDER BY created_at ASC LIMIT ?",
+                "SELECT * FROM tasks WHERE created_at >= ? ORDER BY created_at ASC, rowid ASC LIMIT ?",
                 (_dt(cutoff), limit),
             ).fetchall()
         return [self._row_to_task(row) for row in rows]
@@ -338,7 +338,9 @@ class TaskRepository:
                       claimed_by IS NULL
                       OR claimed_by = ?
                       OR claim_expires_at IS NULL
-                      OR claim_expires_at < ?
+                      -- A claim that expires at T is expired at T. With < a claim
+                      -- read in the same clock tick (common on Windows) stayed held.
+                      OR claim_expires_at <= ?
                   )
                   -- Skip a task that is deliberately waiting (retry backoff,
                   -- or a usage limit that resets hours from now). Without
@@ -351,7 +353,7 @@ class TaskRepository:
                       json_extract(metadata_json, '$.next_retry_at') IS NULL
                       OR json_extract(metadata_json, '$.next_retry_at') <= ?
                   )
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, rowid ASC
                 LIMIT 1
             )
             RETURNING *
@@ -483,7 +485,7 @@ class TaskSignalRepository:
     def list_for_task(self, task_id: str) -> list[TaskSignal]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM task_signals WHERE task_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM task_signals WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
                 (task_id,),
             ).fetchall()
         return [
@@ -618,7 +620,7 @@ class ApprovalRepository:
     def list_for_task(self, task_id: str) -> list[ApprovalRequest]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM approvals WHERE task_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM approvals WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
                 (task_id,),
             ).fetchall()
         return [self._row_to_approval(row) for row in rows]
@@ -748,7 +750,7 @@ class ApprovalGrantRepository:
                 SELECT * FROM approval_grants
                 WHERE task_id = ? AND tool_name = ? AND capability = ? AND expires_at > ?
                     AND revoked = 0 AND (max_operations IS NULL OR operations_used < max_operations)
-                ORDER BY created_at DESC LIMIT 1
+                ORDER BY created_at DESC, rowid DESC LIMIT 1
                 """,
                 (task_id, tool_name, capability.value, now),
             ).fetchone()
@@ -798,7 +800,7 @@ class ApprovalGrantRepository:
     def list_for_task(self, task_id: str) -> list[ApprovalGrant]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM approval_grants WHERE task_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM approval_grants WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
                 (task_id,),
             ).fetchall()
         return [self._row_to_grant(row) for row in rows]
@@ -814,7 +816,7 @@ class ApprovalGrantRepository:
                 """
                 SELECT * FROM approval_grants
                 WHERE expires_at > ? AND revoked = 0 AND (max_operations IS NULL OR operations_used < max_operations)
-                ORDER BY created_at DESC LIMIT ?
+                ORDER BY created_at DESC, rowid DESC LIMIT ?
                 """,
                 (now, limit),
             ).fetchall()
@@ -884,7 +886,7 @@ class WorkflowRepository:
     def list_all(self, limit: int = 200) -> list[TaskWorkflow]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM workflows ORDER BY created_at DESC LIMIT ?", (limit,)
+                "SELECT * FROM workflows ORDER BY created_at DESC, rowid DESC LIMIT ?", (limit,)
             ).fetchall()
         return [self._row_to_workflow(row) for row in rows]
 
@@ -956,7 +958,7 @@ class ToolInvocationRepository:
                 SELECT *
                 FROM tool_invocations
                 WHERE task_id = ?
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, rowid ASC
                 """,
                 (task_id,),
             ).fetchall()
@@ -1024,7 +1026,7 @@ class LLMCallRepository:
     def list_for_task(self, task_id: str) -> list[dict[str, Any]]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM llm_calls WHERE task_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM llm_calls WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
                 (task_id,),
             ).fetchall()
         return [
@@ -1086,7 +1088,7 @@ class ArtifactRepository:
     def list_for_task(self, task_id: str) -> list[Artifact]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM artifacts WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
                 (task_id,),
             ).fetchall()
         return [
@@ -1108,7 +1110,7 @@ class ArtifactRepository:
         if artifact_type:
             query += " WHERE artifact_type = ?"
             params.append(artifact_type)
-        query += " ORDER BY created_at DESC LIMIT ?"
+        query += " ORDER BY created_at DESC, rowid DESC LIMIT ?"
         params.append(limit)
         with self.database.connect() as connection:
             rows = connection.execute(query, tuple(params)).fetchall()
@@ -1254,7 +1256,7 @@ class ScheduleRepository:
     def list_recent(self, limit: int = 50) -> list[ScheduleRecord]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM schedules ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM schedules ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self._row_to_schedule(row) for row in rows]
@@ -1365,7 +1367,7 @@ class AuditRepository:
     def list_for_task(self, task_id: str) -> list[AuditEvent]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM audit_events WHERE task_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM audit_events WHERE task_id = ? ORDER BY created_at ASC, rowid ASC",
                 (task_id,),
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
@@ -1373,7 +1375,7 @@ class AuditRepository:
     def list_by_correlation_id(self, correlation_id: str) -> list[AuditEvent]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM audit_events WHERE correlation_id = ? ORDER BY created_at ASC",
+                "SELECT * FROM audit_events WHERE correlation_id = ? ORDER BY created_at ASC, rowid ASC",
                 (correlation_id,),
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
@@ -1386,7 +1388,7 @@ class AuditRepository:
                 SELECT *
                 FROM audit_events
                 WHERE payload_json LIKE ?
-                ORDER BY created_at ASC
+                ORDER BY created_at ASC, rowid ASC
                 LIMIT ?
                 """,
                 (pattern, limit),
@@ -1396,7 +1398,7 @@ class AuditRepository:
     def list_recent(self, limit: int = 50) -> list[AuditEvent]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM audit_events ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM audit_events ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
@@ -1411,7 +1413,7 @@ class AuditRepository:
     def list_by_type(self, event_type: AuditEventType) -> list[AuditEvent]:
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM audit_events WHERE event_type = ? ORDER BY created_at ASC",
+                "SELECT * FROM audit_events WHERE event_type = ? ORDER BY created_at ASC, rowid ASC",
                 (event_type.value,),
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
@@ -1424,7 +1426,7 @@ class AuditRepository:
         """
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT * FROM audit_events WHERE event_type = ? ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM audit_events WHERE event_type = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
                 (event_type.value, limit),
             ).fetchall()
         return [self._row_to_event(row) for row in rows]
