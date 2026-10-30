@@ -19,6 +19,7 @@ from agent_control.orchestration.worker import (
     CHECK_ENTRY_FULFILLMENT,
     _canonical_operator_tool_call,
     _coding_agent_input_with_task_defaults,
+    _document_summary_call,
     _coding_agent_input_with_explicit_workspace,
     _effective_operator_risk,
     _filesystem_search_input_with_content_intent,
@@ -2757,3 +2758,114 @@ async def test_replay_plan_blocks_on_a_permanently_failing_step(tmp_path) -> Non
 
     assert result.status == TaskStatus.BLOCKED
     assert "1/1" in result.metadata["last_worker_error"]
+
+
+# ---- a side effect that already succeeded is not run a second time ---------
+# One live run created the same daily schedule nine times: the model did not
+# recognise its own successful create and asked again after every approval.
+
+
+def _create_call(objective: str = "Check example.com for new episodes") -> OperatorDecision:
+    return OperatorDecision(
+        action=OperatorAction.CALL_TOOL,
+        tool_name="schedule.manage",
+        tool_input={"operation": "create", "objective": objective},
+        risk_level=RiskLevel.LOW,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_repeated_successful_create_is_answered_from_history_not_run_again(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("create a daily job that checks example.com")
+    adapter = StaticToolAdapter({"summary": "Created schedule schedule_1: daily -> Check example.com"})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call(), _create_call()]),
+                        operator_max_steps=8)
+
+    result = await worker.process_task(task.id)
+    result = await worker.process_task(result.id)
+
+    assert len(adapter.requests) == 1
+    history = result.metadata["operator_history"]
+    assert [entry["status"] for entry in history] == ["succeeded", "already_done"]
+    assert "already succeeded at step 1" in history[-1]["output_summary"]
+    assert "schedule_1" in history[-1]["output_summary"]  # the model is told what the first call produced
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_keeps_repeating_a_done_side_effect_is_stopped(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("create a daily job that checks example.com")
+    adapter = StaticToolAdapter({"summary": "Created schedule schedule_1"})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_create_call() for _ in range(5)]),
+                        operator_max_steps=10)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    assert len(adapter.requests) == 1
+    assert result.status == TaskStatus.BLOCKED
+    assert "had already succeeded" in result.metadata["last_worker_error"]
+    assert "Nothing was done twice" in result.metadata["last_worker_error"]
+
+
+@pytest.mark.asyncio
+async def test_a_different_create_and_a_repeated_read_still_run(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("two jobs")
+    adapter = StaticToolAdapter({"summary": "ok"})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="schedule.manage")
+    listing = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="schedule.manage",
+                               tool_input={"operation": "list"}, risk_level=RiskLevel.LOW)
+    operator = QueueOperator([_create_call("job A"), _create_call("job B"), listing, listing])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=10)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    assert len(adapter.requests) == 4  # a new input is a new action, and reading twice changes nothing
+    assert all(entry["status"] == "succeeded" for entry in result.metadata["operator_history"])
+
+
+# ---- "what is this PDF about" goes to the PDF summarizer -------------------
+
+
+def _document_definitions(enabled: bool = True) -> dict:
+    return {
+        "document.manage": ToolDefinition(
+            name="document.manage", capability=Capability.FILESYSTEM_READ, enabled=enabled,
+            description="documents", operations=("inspect_document", "extract_text", "summarize_pdf"),
+        )
+    }
+
+
+@pytest.mark.parametrize(
+    "message, path, expected_tool",
+    [
+        ("Open the folder Reports, find the PDF inside it, and tell me what the PDF is about.", "C:/Reports/a.pdf", "document.manage"),
+        ("summarize the contract PDF on my desktop", "desktop/contract.PDF", "document.manage"),
+        ("read me the whole PDF word for word", "C:/Reports/a.pdf", "filesystem.manage"),  # full text, not a summary
+        ("tell me what this file is about", "C:/Reports/notes.txt", "filesystem.manage"),  # not a PDF
+    ],
+)
+def test_a_pdf_read_for_its_meaning_uses_the_summarizer(tmp_path, message, path, expected_tool) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create(message, metadata={"original_message_text": message})
+    tool, tool_input = _document_summary_call(
+        task, "filesystem.manage", {"operation": "read_file", "path": path}, _document_definitions()
+    )
+    assert tool == expected_tool
+    if expected_tool == "document.manage":
+        assert tool_input == {"operation": "summarize_pdf", "path": path}
+
+
+def test_the_pdf_redirect_needs_the_document_tool(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("summarize the PDF")
+    call = {"operation": "read_file", "path": "a.pdf"}
+    assert _document_summary_call(task, "filesystem.manage", call, _document_definitions(enabled=False)) == ("filesystem.manage", call)
+    assert _document_summary_call(task, "filesystem.manage", call, {}) == ("filesystem.manage", call)

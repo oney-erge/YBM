@@ -62,6 +62,18 @@ class ScheduleManageAdapter:
         cadence = str(request.input.get("cadence") or cadence_from_text(raw_objective))
         objective = objective_from_schedule_text(raw_objective)
         timezone_name = str(request.input.get("timezone") or self.default_timezone)
+        # A model that does not see its create succeeded asks again (one live run made the same
+        # daily job nine times), and people repeat requests. An enabled schedule with the same job,
+        # cadence and timezone already does what was asked, so it is returned instead of a copy.
+        existing = _matching_enabled_schedule(self.repositories, objective, cadence, timezone_name)
+        if existing is not None:
+            return {
+                "schedule_id": existing.id,
+                "schedules": [schedule_to_output(existing)],
+                "next_run_at": existing.next_run_at.isoformat(),
+                "summary": f"Schedule {existing.id} already does this ({existing.cadence} -> {existing.objective}); "
+                "no new schedule was created.",
+            }
         schedule = self.repositories.schedules.create(
             ScheduleRecord(
                 source_channel=ChannelType.TELEGRAM,
@@ -115,6 +127,23 @@ class ScheduleManageAdapter:
             "next_run_at": updated.next_run_at.isoformat(),
             "summary": f"Created task {task.id} from schedule {schedule.id}.",
         }
+
+
+def _matching_enabled_schedule(
+    repositories: Repositories, objective: str, cadence: str, timezone_name: str
+) -> ScheduleRecord | None:
+    def norm(text: str) -> str:
+        return " ".join(str(text or "").split()).casefold()
+
+    for schedule in repositories.schedules.list_recent(200):
+        if (
+            schedule.status == ScheduleStatus.ENABLED
+            and norm(schedule.objective) == norm(objective)
+            and norm(schedule.cadence) == norm(cadence)
+            and schedule.timezone == timezone_name
+        ):
+            return schedule
+    return None
 
 
 def _terminal_output(operation: str, output: dict) -> dict:

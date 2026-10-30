@@ -49,6 +49,7 @@ from agent_control.schemas import (
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.redaction import redact_payload
 from agent_control.storage.repositories import Repositories
+from agent_control.tools.effects import classify_effect
 from agent_control.tools.mcp_client import mcp_output_text
 
 logger = logging.getLogger(__name__)
@@ -912,6 +913,7 @@ class TaskWorker:
             self.executor.tool_definitions,
         )
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
+        tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_name, tool_input = _stale_read_recovery_call(
             latest,
             tool_name,
@@ -924,6 +926,36 @@ class TaskWorker:
         normalization = _normalization_history_fields(
             requested_tool_name, requested_tool_input, tool_name, tool_input
         )
+        earlier = _succeeded_side_effect(history, tool_name, tool_input)
+        if earlier is not None:
+            # The call would create, change, move, delete or send something a second time. A model that
+            # does not recognise its own earlier success repeats it (one live run created the same
+            # schedule nine times, each through a separate approval). The earlier result is returned
+            # instead; if the model still insists, _repeated_no_progress_call stops the loop.
+            history.append({
+                "tool_name": tool_name,
+                "input": tool_input,
+                "status": ALREADY_DONE_STATUS,
+                "output_summary": _already_done_summary(*earlier),
+                "step_id": step_id,
+                **normalization,
+            })
+            repeated_call = _repeated_no_progress_call(history)
+            if repeated_call is not None:
+                return self._transition_operator(
+                    latest,
+                    {
+                        **latest.metadata,
+                        "operator_history": history,
+                        "last_worker_error": (
+                            f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
+                            "model kept asking to repeat it. Nothing was done twice."
+                        ),
+                    },
+                    TaskStatus.BLOCKED,
+                    "operator_repeated_no_progress",
+                )
+            return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
         tool_def = self.executor.tool_definitions.get(tool_name)
         if tool_def is None:
             history.append({
@@ -1225,6 +1257,8 @@ class TaskWorker:
         property of a parallel batch, not a bug.
         """
         batch_origin = f"{origin_prefix}parallel_batch:{uuid4().hex[:12]}"
+        task = self.repositories.tasks.get(task_id)
+        prior_history = list((task.metadata.get("operator_history") or []) if task is not None else [])
 
         async def _one(call: ParallelToolCall) -> dict[str, Any]:
             tool_name, tool_input = _canonical_operator_tool_call(
@@ -1235,6 +1269,14 @@ class TaskWorker:
             normalization = _normalization_history_fields(
                 call.tool_name, call.tool_input, tool_name, tool_input
             )
+            earlier = _succeeded_side_effect(prior_history, tool_name, tool_input)
+            if earlier is not None:
+                return {
+                    "tool_name": tool_name, "input": tool_input,
+                    "status": ALREADY_DONE_STATUS, "output_summary": _already_done_summary(*earlier),
+                    "parallel": True, "origin": batch_origin, "step_id": step_id,
+                    **normalization,
+                }
             tool_def = self.executor.tool_definitions.get(tool_name)
             if tool_def is None:
                 return {
@@ -2537,6 +2579,43 @@ def _required_named_coding_agent_call(
     }
 
 
+_DOCUMENT_UNDERSTANDING = re.compile(
+    r"\b(?:summar\w*|explain\w*|overview|gist|main points|what\b[^.?!\n]{0,40}\babout)\b", re.IGNORECASE
+)
+
+
+def _document_summary_call(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+    definitions: dict[str, Any],
+) -> tuple[str | None, dict[str, Any]]:
+    """Read a PDF with the document tool when the request is to understand it.
+
+    filesystem.manage:read_file also extracts a PDF's text, so a model that picks it is not wrong,
+    but "find the PDF and tell me what it is about" then gets no summary and no artifact (the live
+    pdf_open_summary run read the file three times and produced neither). When the target is a PDF
+    and the request asks what it says, document.manage:summarize_pdf is the tool for that job; its
+    normal schema, root and policy checks still apply. "Read me the PDF" keeps the full-text read.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") != "read_file":
+        return tool_name, tool_input
+    path = str(tool_input.get("path") or "")
+    if not path.lower().endswith(".pdf"):
+        return tool_name, tool_input
+    definition = definitions.get("document.manage")
+    if (
+        definition is None
+        or not getattr(definition, "enabled", False)
+        or "summarize_pdf" not in set(getattr(definition, "operations", ()) or ())
+    ):
+        return tool_name, tool_input
+    request_text = str(task.metadata.get("original_message_text") or task.objective)
+    if not _DOCUMENT_UNDERSTANDING.search(request_text):
+        return tool_name, tool_input
+    return "document.manage", {"operation": "summarize_pdf", "path": path}
+
+
 def _ordered_artifact_delivery_call(
     task: TaskRecord,
     tool_name: str | None,
@@ -2997,6 +3076,43 @@ def _fulfilled_step_budget_answer(task: TaskRecord, history: list[dict[str, Any]
     return "Completed the requested work and recorded the required result."
 
 
+#: History status of a side-effecting call that was not run again because it already succeeded.
+ALREADY_DONE_STATUS = "already_done"
+
+#: Effects a second identical call would repeat (tools/effects.py). Reads, commands and visits are left
+#: alone: reading a file twice is harmless, and running the same command again can be the point.
+_REPEAT_SENSITIVE_EFFECTS = frozenset({"created", "modified", "moved", "deleted", "message_sent"})
+
+
+def _succeeded_side_effect(
+    history: list[dict[str, Any]], tool_name: str | None, tool_input: dict[str, Any]
+) -> tuple[int, dict[str, Any]] | None:
+    """The 1-based step and entry where this exact side-effecting call already succeeded in this task."""
+    if not tool_name or not isinstance(tool_input, dict):
+        return None
+    operation = str(tool_input.get("operation") or "") or None
+    if classify_effect(tool_name, operation) not in _REPEAT_SENSITIVE_EFFECTS:
+        return None
+    wanted = json.dumps(tool_input, sort_keys=True, default=str)
+    for index, entry in enumerate(history, start=1):
+        if (
+            isinstance(entry, dict)
+            and entry.get("tool_name") == tool_name
+            and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+            and json.dumps(entry.get("input"), sort_keys=True, default=str) == wanted
+        ):
+            return index, entry
+    return None
+
+
+def _already_done_summary(step_number: int, entry: dict[str, Any]) -> str:
+    return (
+        f"Not run again: this exact call already succeeded at step {step_number}. "
+        f"Its result: {str(entry.get('output_summary') or 'succeeded')[:600]} "
+        "Running it again would do it twice. Continue with what the request still needs, or finish."
+    )
+
+
 def _repeated_no_progress_call(
     history: list[dict[str, Any]],
     *,
@@ -3024,6 +3140,7 @@ def _repeated_no_progress_call(
         ToolResultStatus.SUCCEEDED.value,
         ToolResultStatus.FAILED.value,
         ToolResultStatus.DENIED.value,
+        ALREADY_DONE_STATUS,
     }:
         return None
     tool_names = {str(entry.get("tool_name") or "") for entry in recent}
@@ -3034,7 +3151,7 @@ def _repeated_no_progress_call(
     }
     observation_key = (
         "output_summary"
-        if next(iter(statuses)) == ToolResultStatus.SUCCEEDED.value
+        if next(iter(statuses)) in {ToolResultStatus.SUCCEEDED.value, ALREADY_DONE_STATUS}
         else "error"
     )
     outputs = {" ".join(str(entry.get(observation_key) or "").split()) for entry in recent}

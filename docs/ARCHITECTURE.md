@@ -55,7 +55,10 @@ After a failure the model is skipped for `cooldown_seconds`, so a stopped LocalD
 one per message. Telegram, WhatsApp and the console chat all route through the same classifier, and the mode
 can be changed in the console (Settings, "Message routing"), which also tries a message against both and
 shows how often they agreed. The route table in `llm/decision.py` is checked by a test against the Concierge
-prompt, so the two cannot drift apart. See `docs/INSTALL.md` for enabling it.
+prompt, so the two cannot drift apart, and the coding agents the tool supports are checked against both texts.
+The same call asks a second, yes/no question: does the message only ask what the bot can do? A route says which tool
+a request needs, so "can you read PDFs?" looks like document work; when that answer is 0.9 or more the Concierge
+decides. See `docs/INSTALL.md` for enabling it.
 
 ## The Operator loop
 
@@ -100,6 +103,15 @@ next `decide()` sees it in context and chooses what to do. There is no separate 
   recurse, request approval, wait on background work, or ask the user.
 
 Neither is a general replacement for `call_tool`; the Operator prompt says so directly.
+
+### Side effects are not repeated
+
+A call that would create, change, move, delete or send something (the effect table in `tools/effects.py`) is not
+run again when the same call with the same input already succeeded in the task. The operator gets the earlier result
+back with "Not run again", and if it keeps asking, the no-progress guard stops the task. A small model can miss its
+own success: one live run created the same daily schedule nine times, each through its own approval. Reads and
+commands are not affected. `schedule.manage` also returns an existing enabled schedule with the same job, cadence and
+timezone instead of making a copy.
 
 ## Task states
 
