@@ -112,6 +112,17 @@ def test_document_manage_create_presentation_requires_at_least_one_field() -> No
     DocumentManageInput(operation="create_presentation", instructions="i")
 
 
+def test_document_manage_compare_requires_sources_and_criteria() -> None:
+    with pytest.raises(ValidationError):
+        DocumentManageInput(operation="compare_documents", source_paths=["a.txt"], criteria=["cost"])
+    with pytest.raises(ValidationError):
+        DocumentManageInput(operation="compare_documents", source_paths=["a.txt", "b.txt"])
+    model = DocumentManageInput(
+        operation="compare_documents", source_paths=["a.txt", "b.txt"], criteria=["cost"]
+    )
+    assert model.criteria == ["cost"]
+
+
 # ----- coding.agent ---------------------------------------------------------
 
 

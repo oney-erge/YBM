@@ -185,6 +185,29 @@ SCHEMA_STATEMENTS = [
         FOREIGN KEY(source_task_id) REFERENCES tasks(id)
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS projects (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        instructions TEXT NOT NULL,
+        root_paths_json TEXT NOT NULL,
+        criteria_json TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS folder_watch_files (
+        schedule_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        signature TEXT NOT NULL,
+        stable_since TEXT NOT NULL,
+        delivered_signature TEXT,
+        delivered_digest TEXT,
+        PRIMARY KEY(schedule_id, path),
+        FOREIGN KEY(schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
+    )
+    """,
 ]
 
 

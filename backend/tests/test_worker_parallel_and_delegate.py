@@ -34,10 +34,12 @@ class QueueOperator:
         self.decisions = list(decisions)
         self._usages = list(usages) if usages is not None else None
         self.calls = 0
+        self.contexts: list[str] = []
         self.last_usage: dict | None = None
 
     async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
         self.calls += 1
+        self.contexts.append(config_context)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
         return self.decisions.pop(0)
@@ -384,7 +386,9 @@ async def test_delegate_isolates_sub_task_history_from_parent(tmp_path) -> None:
     """The whole point of delegation: the sub-agent's own step-by-step
     history never appears in the parent's history - only the summary does."""
     repos, audit = make_repos(tmp_path)
-    task = repos.tasks.create("summarize a file via a sub-task")
+    task = repos.tasks.create("summarize a file via a sub-task", metadata={
+        "project_context": {"name": "Review", "instructions": "Keep exact source references."},
+    })
     settings = _settings(Capability.LLM_GENERATE)
     executor = _executor(settings, audit, repos, {"filesystem.manage": RecordingAdapter("filesystem.manage", delay=0.0, output={"text": "file contents here"})})
     parent_operator = QueueOperator([
@@ -413,6 +417,8 @@ async def test_delegate_isolates_sub_task_history_from_parent(tmp_path) -> None:
     # The sub-task's own filesystem.manage call must NOT appear at the
     # parent level - only the one "delegate" summary entry does.
     assert all(entry["tool_name"] != "filesystem.manage" for entry in history)
+    assert len(parent_operator.contexts) == 3
+    assert all("Keep exact source references." in context for context in parent_operator.contexts)
 
 
 @pytest.mark.asyncio

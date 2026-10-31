@@ -82,6 +82,9 @@ async function mockCommonRoutes(page: Page, task: ReturnType<typeof chatTask>) {
     if (path === "/api/approvals") {
       return route.fulfill({ json: { approvals: [] } })
     }
+    if (path === "/api/schedules") {
+      return route.fulfill({ json: { enabled: true, schedules: [] } })
+    }
     if (path === "/api/summary") {
       return route.fulfill({ json: minimalSummary([task]) })
     }
@@ -155,6 +158,7 @@ test.describe("saving a workflow from a completed task", () => {
 test.describe("the workflows page", () => {
   test("lists a saved workflow and runs it with a filled-in parameter value", async ({ page }) => {
     let runRequestBody: unknown = null
+    await mockCommonRoutes(page, chatTask("completed"))
     await page.route("**/admin/api/**", async (route) => {
       const url = new URL(route.request().url())
       const path = url.pathname.replace(/^\/admin/, "")
@@ -231,6 +235,7 @@ test.describe("the workflows page", () => {
 
   test("deleting a workflow removes it from the list after confirming", async ({ page }) => {
     let deleted = false
+    await mockCommonRoutes(page, chatTask("completed"))
     await page.route("**/admin/api/**", async (route) => {
       const url = new URL(route.request().url())
       const path = url.pathname.replace(/^\/admin/, "")

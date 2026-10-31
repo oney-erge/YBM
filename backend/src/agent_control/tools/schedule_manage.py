@@ -56,6 +56,8 @@ class ScheduleManageAdapter:
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
     def _create(self, request: ToolCallRequest) -> dict:
+        if {'folder_trigger', 'workflow_plan_template'} & set(request.input.get('metadata') or {}):
+            raise ValueError('Configure folder automations from a saved workflow in Workflows.')
         raw_objective = str(request.input.get("objective") or request.input.get("prompt") or "").strip()
         if not raw_objective:
             raise ValueError("objective is required")
@@ -118,6 +120,8 @@ class ScheduleManageAdapter:
         schedule = self.repositories.schedules.get(schedule_id)
         if schedule is None:
             raise ValueError(f"schedule not found: {schedule_id}")
+        if schedule.metadata.get('folder_trigger'):
+            raise ValueError('Folder automations run when a matching file changes; use Workflows to manage them.')
         task = create_due_task(self.repositories, self.audit, schedule)
         updated = self.repositories.schedules.get(schedule.id) or schedule
         return {

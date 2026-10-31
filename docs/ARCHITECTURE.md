@@ -256,6 +256,22 @@ tab's session storage (never `localStorage`), and exchanges it (`POST /admin/api
 cookie is what keeps a later visit, a bookmark, or the tray icon signed in. `ybm admin-url` prints a
 fresh signed-in link at any time, and the same-origin check on state-changing requests still applies.
 
+## Folder-triggered workflows
+
+The existing scheduler also polls saved workflows configured with `folder_trigger` metadata. The admin
+API validates the chosen folder against filesystem roots and read policy, then records the current
+files as a baseline. Each poll rechecks access, observes bounded top-level file metadata, and waits for
+the configured stability period before hashing a pending input. Registered artifact outputs are
+excluded so generated files do not feed other watchers.
+
+`folder_watch_files` persists the latest observed signature, stability time, and last delivered
+signature/hash per path. A SQLite transaction acknowledges one input version, inserts its replay
+task, and records the schedule's last task together. A failed insertion rolls back acknowledgement;
+duplicate pollers cannot consume the same observation twice. Pending paths continue to be observed
+while the previous task is active, but only one run per watcher is created at a time. File paths and
+the observed fingerprint are recorded in task metadata; subsequent file contents remain live until
+the normal tool execution reads them. No filesystem event daemon or new execution engine is involved.
+
 ## Key components
 
 | Component | File | Role |

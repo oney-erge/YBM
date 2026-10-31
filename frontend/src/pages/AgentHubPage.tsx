@@ -1,5 +1,5 @@
 import { Link } from "react-router"
-import { ArrowRight, BrainCircuit, Sparkles, Workflow, Wrench } from "lucide-react"
+import { ArrowRight, BrainCircuit, FolderKanban, Sparkles, Workflow, Wrench } from "lucide-react"
 import { Card, CardContent } from "@/components/ui/card"
 import { PageHeader } from "@/components/layout/PageHeader"
 import { useMemoryFacts, useSettingsSummary, useSkills, useWorkflows } from "@/lib/queries"
@@ -28,7 +28,7 @@ export function AgentHubPage() {
           description="What YBM is made of: what it knows, what it can be told to do, and what it can act with."
         />
 
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <HubCard
             to="/memory"
             icon={BrainCircuit}
@@ -53,6 +53,12 @@ export function AgentHubPage() {
                 ? `${settings.data.tool_registry.enabled} of ${settings.data.tool_registry.total} enabled`
                 : undefined
             }
+          />
+          <HubCard
+            to="/projects"
+            icon={FolderKanban}
+            title="Projects"
+            description="Folders, goals, and criteria reused across tasks."
           />
           <HubCard
             to="/workflows"
