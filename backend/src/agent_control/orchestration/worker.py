@@ -14,6 +14,7 @@ from uuid import uuid4
 from agent_control.channels.memory import ConversationMemoryService
 from agent_control.error_text import describe_exception
 from agent_control.llm.call_log import cap_messages, merge_token_usage
+from agent_control.llm.cloud_gate import CloudFallbackNeeded, hosted_allowed, is_yes
 from agent_control.logging_setup import bind_task_context
 from agent_control.orchestration.auditor import AuditorService
 from agent_control.orchestration.executor import ToolExecutor
@@ -608,6 +609,28 @@ class TaskWorker:
                 TaskStatus.BLOCKED, "operator_step_budget_exhausted",
             )
 
+        pending_hosted = latest.metadata.get("cloud_fallback_pending")
+        if isinstance(pending_hosted, dict) and latest.metadata.get("answered_clarifying_question") == pending_hosted.get("question"):
+            if is_yes(latest.metadata.get("clarification_answer")):
+                approved = sorted({*(latest.metadata.get("cloud_allowed_profiles") or []), str(pending_hosted.get("profile"))})
+                latest = self.repositories.tasks.update_metadata(
+                    latest.id, {**latest.metadata, "cloud_allowed_profiles": approved, "cloud_fallback_pending": None}
+                )
+                self.audit.append(
+                    AuditEventType.TASK_STATE_CHANGED, actor="user", task_id=latest.id,
+                    payload={"reason": "hosted_model_approved", "profile": pending_hosted.get("profile"), "model": pending_hosted.get("model")},
+                )
+            else:
+                return self._transition_operator(
+                    latest,
+                    {
+                        **latest.metadata, "cloud_fallback_pending": None,
+                        "last_worker_error": "Stopped: the hosted model was not approved, so nothing was sent outside this machine.",
+                    },
+                    TaskStatus.BLOCKED,
+                    "hosted_model_declined",
+                )
+
         memory_context = str(latest.metadata.get("memory_context") or "")
         # docs/archive/HISTORY.md Part 4 T2.6: a done that was already rejected once
         # (audit-gap or fulfillment-gap retry marker in history) is a
@@ -643,15 +666,18 @@ class TaskWorker:
             return self._transition_operator(latest, latest.metadata, TaskStatus.BLOCKED, "operator_loop_not_configured")
         else:
             try:
-                decision = await self.operator.decide(
-                    latest.objective, self._planner_context(self._project_planner_context(latest.metadata)), history,
-                    memory_context=memory_context, prefer_major=prefer_major,
-                )
+                with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
+                    decision = await self.operator.decide(
+                        latest.objective, self._planner_context(self._project_planner_context(latest.metadata)), history,
+                        memory_context=memory_context, prefer_major=prefer_major,
+                    )
                 latest = self._record_llm_usage(
                     latest, "operator", getattr(self.operator, "last_usage", None),
                     fallback_used=getattr(self.operator, "last_fallback_used", False),
                 )
                 self._record_llm_call(latest.id, "operator", len(history), self.operator, step_id=step_id)
+            except CloudFallbackNeeded as exc:
+                return self._ask_hosted_permission(latest, history, exc)
             except Exception as exc:
                 # describe_exception, not str(exc): an empty message here produced
                 # "operator_decide_failed: " with nothing after it, which is what a
@@ -723,13 +749,17 @@ class TaskWorker:
                     audit_evidence = _operator_audit_evidence(
                         history[evidence_offset:], content_entry, raw_output
                     )
-                    audit_result = await self.auditor.audit(
-                        latest.objective,
-                        audit_evidence,
-                        original_message=str(latest.metadata.get("original_message_text") or "") or None,
-                        deliverable_evidence=deliverable_evidence(latest) if self._auditor_owns_fulfillment else "",
-                        response_context=_auditor_response_context(latest, memory_context),
-                    )
+                    try:
+                        with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
+                            audit_result = await self.auditor.audit(
+                                latest.objective,
+                                audit_evidence,
+                                original_message=str(latest.metadata.get("original_message_text") or "") or None,
+                                deliverable_evidence=deliverable_evidence(latest) if self._auditor_owns_fulfillment else "",
+                                response_context=_auditor_response_context(latest, memory_context),
+                            )
+                    except CloudFallbackNeeded as exc:
+                        return self._ask_hosted_permission(latest, history, exc)
                     latest = self._record_llm_usage(
                         latest, "auditor", getattr(self.auditor, "last_usage", None),
                         fallback_used=getattr(self.auditor, "last_fallback_used", False),
@@ -920,6 +950,8 @@ class TaskWorker:
             tool_input,
             self.executor.tool_definitions,
         )
+        if tool_name == "coding.agent" and not _coding_agent_requested(latest, tool_input):
+            return self._refuse_unrequested_coding_agent(latest, history, tool_input, step_id)
         tool_name, tool_input = _ordered_artifact_delivery_call(
             latest,
             tool_name,
@@ -1992,6 +2024,48 @@ class TaskWorker:
             )
         return updated
 
+    def _refuse_unrequested_coding_agent(
+        self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
+    ) -> TaskRecord:
+        """Codex, Claude Code and Copilot run only when the user asked for one; the model chose it alone here."""
+        history.append({
+            "tool_name": "coding.agent", "input": tool_input, "status": ToolResultStatus.DENIED.value,
+            "error": (
+                "Not started: Codex, Claude Code and Copilot run only when the user asks for one. "
+                "Do the work with the local tools, or ask the user whether they want a coding agent."
+            ),
+            "step_id": step_id,
+        })
+        if _repeated_no_progress_call(history) is not None:
+            return self._transition_operator(
+                task,
+                {
+                    **task.metadata, "operator_history": history,
+                    "last_worker_error": "Stopped: a coding agent was not requested, and the model kept asking to start one.",
+                },
+                TaskStatus.BLOCKED,
+                "operator_repeated_no_progress",
+            )
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
+    def _ask_hosted_permission(self, task: TaskRecord, history: list[dict[str, Any]], exc: CloudFallbackNeeded) -> TaskRecord:
+        """The local model did not answer and the only fallback is a hosted one: nothing is sent, the user is asked."""
+        question = (
+            f"The local model is not answering ({exc.reason}). Nothing has been sent anywhere. "
+            f"Do you want me to send this task to {exc.model} ({exc.profile}), a hosted model, instead? "
+            "That would share your request and any file contents involved with them. Reply yes to send it, or no to stop."
+        )
+        metadata = {
+            **task.metadata, "operator_history": history,
+            "cloud_fallback_pending": {"profile": exc.profile, "model": exc.model, "question": question},
+        }
+        updated = self.repositories.tasks.update_metadata(task.id, metadata)
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor="worker", task_id=task.id,
+            payload={"reason": "hosted_model_approval_requested", "profile": exc.profile, "model": exc.model, "why": exc.reason},
+        )
+        return self._operator_ask_user(updated, question)
+
     def _operator_ask_user(self, task: TaskRecord, question: str) -> TaskRecord:
         """The question is used verbatim - the operator already composed a
         specific question because it decided it needs one, so there's nothing
@@ -2443,6 +2517,19 @@ def _coding_agent_input_with_task_defaults(
     if not enriched.get("prompt") and not enriched.get("objective"):
         enriched["objective"] = task.objective
     return enriched
+
+
+# Operations that start or continue work in an outside coding agent. The rest only look or stop.
+_CODING_AGENT_STARTING_OPERATIONS = frozenset({"start", "plan", "run_step", "run_goal", "resume"})
+_CODING_AGENT_MENTION = re.compile(r"\b(?:coding|external|code)\s+(?:agent|assistant|session)\b", re.IGNORECASE)
+
+
+def _coding_agent_requested(task: TaskRecord, tool_input: dict[str, Any]) -> bool:
+    """Whether the user asked for an outside coding agent: a provider named, or a coding agent asked for."""
+    if str(tool_input.get("operation") or "start") not in _CODING_AGENT_STARTING_OPERATIONS:
+        return True
+    request_text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    return bool(_named_coding_providers(task) or _CODING_AGENT_MENTION.search(request_text))
 
 
 def _named_coding_providers(task: TaskRecord) -> list[str]:

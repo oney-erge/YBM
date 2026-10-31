@@ -103,6 +103,10 @@ class LLMConfig(StrictBaseModel):
     # model is down or still warming up. Superseded by fallback_chain when
     # that is non-empty; kept working on its own so an existing config with
     # only this set is unaffected (see providers.py's _chain_profile_names).
+    # A fallback on a hosted server (OpenAI, Anthropic, any non-local endpoint)
+    # is never called on its own: the task pauses and asks the user first
+    # (llm/cloud_gate.py). A fallback on this machine or its network is used
+    # as before.
     fallback_profile: str | None = None
     # Ordered list of profiles to try, in order, after default_profile fails
     # - each entry gets its own cooldown window on failure (providers.py's

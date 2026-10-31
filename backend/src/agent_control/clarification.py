@@ -38,6 +38,19 @@ def objective_with_answer(objective: str, question: str | None, answer: str) -> 
     return f"{objective}\n[User clarification: {answer}]"
 
 
+def objective_after_answer(task: TaskRecord, answer: str) -> str:
+    """The task's objective once `answer` is in: the question and answer folded in, except for a permission question.
+
+    "May I send this to a hosted model?" and its "yes" are not part of what the user asked for, and the word "send"
+    in it would make the fulfillment check expect a delivery. The worker reads that answer from the task's
+    metadata (llm/cloud_gate.py) instead.
+    """
+    pending = task.metadata.get("cloud_fallback_pending")
+    if isinstance(pending, dict) and pending.get("question") == task.metadata.get("clarifying_question"):
+        return task.objective
+    return objective_with_answer(task.objective, task.metadata.get("clarifying_question"), answer)
+
+
 @dataclass
 class ClarificationResumeResult:
     task: TaskRecord
@@ -126,7 +139,7 @@ def resume_clarifying_task(
 
     # Fold the answer into the objective so replanning sees it, and reset
     # the attempt counters - the user's input makes this a fresh attempt.
-    objective = objective_with_answer(task.objective, task.metadata.get("clarifying_question"), text)
+    objective = objective_after_answer(task, text)
     repositories.tasks.update_objective(task.id, objective)
     answers = list(task.metadata.get("clarification_answers") or [])
     answers.append(
