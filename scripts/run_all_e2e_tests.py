@@ -1923,7 +1923,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",

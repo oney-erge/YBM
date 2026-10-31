@@ -79,6 +79,17 @@ a retry loop, and refusing to invent a missing file's contents:
 .\scripts\ybm.ps1 e2e --suite evolution
 ```
 
+Run the `gaps` suite - requests the other suites do not make, written to find what breaks rather than to
+confirm what works: follow-ups that say only "that file" and "it", sorting 40 files and then undoing it, Word and
+Excel files and a zip, one fact on page 47 of a 60-page PDF, a PDF that tells the assistant to delete files, a vague
+"clean up" that must not become deleting, and a many-step report that has to keep the user informed in plain
+language. Several are expected to fail today; each failure names a missing capability (see `gap_fixtures.py`
+for the generated files):
+
+```powershell
+.\scripts\ybm.ps1 e2e --suite gaps
+```
+
 Run the two guarded, human-style coding-agent tests. These deliberately sound
 like ordinary Telegram requests rather than test scripts, and verify the
 Claude Code and Codex VS Code-extension files on disk (including command
