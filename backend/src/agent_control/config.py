@@ -286,6 +286,10 @@ class OperatorConfig(StrictBaseModel):
     # it has just read that one result directly. Set to 1 to audit everything,
     # as before.
     audit_min_tool_calls: int = Field(default=2, ge=1, le=10)
+    # List only the tools the request's route needs (orchestration/tool_scope.py) instead of every tool at every step.
+    # A task that goes badly gets the full list back. Off by default: on 72 recorded steps with Qwen3.5-9B it did not
+    # change accuracy (46% against 49%, within noise), so it is here to try, not because it was shown to help.
+    scope_tools: bool = False
 
 
 class VSCodeAdapterConfig(StrictBaseModel):

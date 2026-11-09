@@ -37,10 +37,17 @@ Needs `llama-server` (`winget install ggml.llamacpp`), GGUF files for the candid
 
 ```powershell
 $env:PYTHONPATH = "<repo>\backend\src"; Set-Location <ybm checkout>   # config.yaml and the database are read from here
-python <repo>\scripts\agent_benchmark\steps.py  --db .agent_control\agent_control.db --count 120 --out steps.json
+python <repo>\scripts\agent_benchmark\rebuild.py --db .agent_control\agent_control.db --count 120 --out steps.json
 python <repo>\scripts\agent_benchmark\matrix.py --models-dir D:\LocalModels\gguf --steps steps.json --out results
 python <repo>\scripts\agent_benchmark\report.py results
 ```
+
+Use `rebuild.py`, not `steps.py` alone, to make the cases. YBM stores each model call's prompt cut to its first 8,000
+characters, while an Operator prompt is about 17,000, so the stored text lacks the end of the tool list or, in the current
+layout, the objective and history. `rebuild.py` rebuilds each prompt in full from the task's stored history, the way the
+worker does, and drops steps whose recorded call can no longer be made with today's tools. (An earlier version of this
+benchmark replayed the truncated prompts; see the correction in LocalDeploy's `benchmarks/agent-operator`.)
+`replay.py --scope` narrows each prompt's tool list as the worker now does, to compare with and without.
 
 `candidates.py` lists the models and the llama-server settings (flash attention, 8-bit KV cache, thinking off, 16K
 context). Layer placement is left to llama-server's `--fit`; mixture-of-experts models are also run with the experts

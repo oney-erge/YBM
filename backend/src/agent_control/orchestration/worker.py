@@ -24,6 +24,7 @@ from agent_control.orchestration.fulfillment import (
     validate_fulfillment,
 )
 from agent_control.orchestration.operator import OperatorLoopService
+from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.orchestration.signals import sweep_expired_approvals
 from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
@@ -250,6 +251,7 @@ class TaskWorker:
         redact_patterns: list[str] | tuple[str, ...] | None = None,
         fulfillment_mode: str = "auditor",
         audit_min_tool_calls: int = 2,
+        scope_tools: bool = False,
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
@@ -279,6 +281,7 @@ class TaskWorker:
         # keeps the legacy gate rather than silently losing the check entirely.
         self._auditor_owns_fulfillment = fulfillment_mode == "auditor" and auditor is not None
         self.audit_min_tool_calls = max(1, int(audit_min_tool_calls))
+        self.scope_tools = scope_tools
         # None disables the persona learning pass entirely (tests, and any
         # embedder that never configured a persona file).
         self.persona_config = persona_config
@@ -668,7 +671,7 @@ class TaskWorker:
             try:
                 with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
                     decision = await self.operator.decide(
-                        latest.objective, self._planner_context(), history,
+                        latest.objective, self._planner_context(metadata=latest.metadata), history,
                         memory_context=memory_context, prefer_major=prefer_major,
                     )
                 latest = self._record_llm_usage(
@@ -977,19 +980,31 @@ class TaskWorker:
             requested_tool_name, requested_tool_input, tool_name, tool_input
         )
         earlier = _succeeded_side_effect(history, tool_name, tool_input)
+        read_again = False
+        if earlier is None:
+            earlier = _redundant_read(history, tool_name, tool_input)
+            read_again = earlier is not None
         if earlier is not None:
             # The call would create, change, move, delete or send something a second time. A model that
             # does not recognise its own earlier success repeats it (one live run created the same
             # schedule nine times, each through a separate approval). The earlier result is returned
             # instead; if the model still insists, _repeated_no_progress_call stops the loop.
+            # The same goes for a read whose answer cannot have changed: the model already has what it asked for.
             history.append({
                 "tool_name": tool_name,
                 "input": tool_input,
                 "status": ALREADY_DONE_STATUS,
-                "output_summary": _already_done_summary(*earlier),
+                "output_summary": _already_done_summary(*earlier, read=read_again),
                 "step_id": step_id,
                 **normalization,
             })
+            if read_again and sum(
+                1 for item in history if isinstance(item, dict) and item.get("status") == ALREADY_DONE_STATUS
+                and item.get("tool_name") == tool_name and item.get("input") == tool_input
+            ) >= 2:
+                finished = self._finish_with_read_result(latest, history, earlier[1])
+                if finished is not None:
+                    return finished
             repeated_call = _repeated_no_progress_call(history)
             if repeated_call is not None:
                 return self._transition_operator(
@@ -2048,6 +2063,23 @@ class TaskWorker:
             )
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
 
+    def _finish_with_read_result(
+        self, task: TaskRecord, history: list[dict[str, Any]], entry: dict[str, Any]
+    ) -> TaskRecord | None:
+        """The model asked for the same read a third time: answer with what it read instead of stopping the task.
+
+        Only for a request that needs nothing more (no file to write, nothing to send); otherwise the caller stops it.
+        """
+        candidate = task.model_copy(update={"metadata": {**task.metadata, "operator_history": history}})
+        validation = validate_fulfillment(candidate)
+        if validation.expected and not validation.ok:
+            return None
+        answer = " ".join(str(entry.get("output_summary") or "").split())[:1500]
+        if not answer:
+            return None
+        metadata = {**task.metadata, "operator_history": history, "synthesized_answer": answer}
+        return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "operator_redundant_read_finished")
+
     def _ask_hosted_permission(self, task: TaskRecord, history: list[dict[str, Any]], exc: CloudFallbackNeeded) -> TaskRecord:
         """The local model did not answer and the only fallback is a hosted one: nothing is sent, the user is asked."""
         question = (
@@ -2095,14 +2127,21 @@ class TaskWorker:
         )
         return updated
 
-    def _planner_context(self, extra: str = "") -> str:
+    def _planner_context(self, extra: str = "", *, metadata: dict[str, Any] | None = None) -> str:
+        """The tool catalog and advice for an Operator step, narrowed to the task's route when ``metadata`` is given."""
         if self.config_context_factory is None:
-            return self.config_context + extra
-        try:
-            base = self.config_context_factory()
-        except Exception:
-            logger.warning("config context factory failed; falling back to startup context", exc_info=True)
             base = self.config_context
+        else:
+            try:
+                base = self.config_context_factory()
+            except Exception:
+                logger.warning("config context factory failed; falling back to startup context", exc_info=True)
+                base = self.config_context
+        if metadata is not None and self.scope_tools:
+            intent = metadata.get("orchestration_intent")
+            base = scope_catalog_text(
+                base, scope_for_task(metadata), intent.get("route") if isinstance(intent, dict) else None
+            )
         return base + extra
 
     async def _notify_if_needed(self, task: TaskRecord) -> None:
@@ -3375,12 +3414,64 @@ def _succeeded_side_effect(
     return None
 
 
-def _already_done_summary(step_number: int, entry: dict[str, Any]) -> str:
+def _already_done_summary(step_number: int, entry: dict[str, Any], *, read: bool = False) -> str:
+    result = str(entry.get("output_summary") or "succeeded")[:600]
+    if read:
+        return (
+            f"Not run again: this exact read already succeeded at step {step_number} and nothing has changed since. "
+            f"Its result: {result} Use that result: finish with action done and a final_answer drawn from it, "
+            "or call a different tool."
+        )
     return (
         f"Not run again: this exact call already succeeded at step {step_number}. "
-        f"Its result: {str(entry.get('output_summary') or 'succeeded')[:600]} "
+        f"Its result: {result} "
         "Running it again would do it twice. Continue with what the request still needs, or finish."
     )
+
+
+# Reads whose answer cannot change unless something was written in between. Browsers, screenshots, HTTP, searches and
+# task status are left out on purpose: asking again can be exactly what the user wants.
+_STABLE_READS: dict[str, frozenset[str]] = {
+    "filesystem.manage": frozenset(
+        {"read_file", "inspect_folder", "search", "describe_folder", "find_by_description", "resolve_desktop_item", "collect_folder_snapshot"}
+    ),
+    "document.manage": frozenset({"inspect_document", "extract_text", "summarize_pdf"}),
+    "knowledge.search": frozenset({"search", "list_sources"}),
+}
+
+
+def _redundant_read(
+    history: list[dict[str, Any]], tool_name: str | None, tool_input: dict[str, Any]
+) -> tuple[int, dict[str, Any]] | None:
+    """The earlier step where this exact read already succeeded, when nothing written since could change its answer.
+
+    A small model that has the result it needs often asks for it again instead of answering; in live runs a PDF
+    summary, a file read and a document extraction each ended blocked that way.
+    """
+    operation = str(tool_input.get("operation") or "") if isinstance(tool_input, dict) else ""
+    if operation not in _STABLE_READS.get(tool_name or "", ()):
+        return None
+    wanted = json.dumps(tool_input, sort_keys=True, default=str)
+    found: tuple[int, dict[str, Any]] | None = None
+    for index, entry in enumerate(history, start=1):
+        if (
+            isinstance(entry, dict)
+            and entry.get("tool_name") == tool_name
+            and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+            and json.dumps(entry.get("input"), sort_keys=True, default=str) == wanted
+        ):
+            found = (index, entry)
+    if found is None:
+        return None
+    for entry in history[found[0]:]:
+        if (
+            isinstance(entry, dict)
+            and entry.get("status") == ToolResultStatus.SUCCEEDED.value
+            and classify_effect(str(entry.get("tool_name")), str((entry.get("input") or {}).get("operation") or "") or None)
+            in _REPEAT_SENSITIVE_EFFECTS
+        ):
+            return None  # something was written since: the read may now return something else
+    return found
 
 
 def _repeated_no_progress_call(
