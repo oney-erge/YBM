@@ -2431,6 +2431,12 @@ def _canonical_operator_tool_call(
             tool_input["operation"] = operation_alias
             if operation_alias == "inspect_folder" and "root" not in tool_input and "path" in tool_input:
                 tool_input["root"] = tool_input.pop("path")
+    if tool_name == "document.manage" and "path" not in tool_input and "artifact_id" not in tool_input:
+        # The file tool calls it file_path; a model moving between the two sends the wrong one.
+        for alias in ("file_path", "filepath", "file", "document_path"):
+            if tool_input.get(alias):
+                tool_input["path"] = tool_input.pop(alias)
+                break
     if tool_name == "filesystem.manage":
         operation = tool_input.get("operation")
         if operation in {"inspect_folder", "search"} and "root" not in tool_input:
