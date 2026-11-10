@@ -573,3 +573,41 @@ def test_expected_postconditions_declared_list_is_checked_the_same_way_as_inferr
     )
 
     assert validate_fulfillment(task).ok
+
+
+# ---- a declared postcondition the request's words cannot support ----------------------------------------------------
+# Live: the local 9B declared file_organization for "find the file and tell me its header line" and for "rewrite this file",
+# and the task was then pushed toward organize_plan, which moves files, before it could finish.
+
+
+def test_a_declared_file_organization_is_dropped_when_the_request_never_asks_for_it() -> None:
+    task = TaskRecord(
+        objective="Somewhere under the heldout folder there is a file called budget-2026.csv. Find it and tell me its header line.",
+        metadata={"expected_postconditions": ["file_organization"]},
+    )
+
+    assert PostconditionType.FILE_ORGANIZATION not in [item.type for item in expected_postconditions(task)]
+
+
+def test_a_declared_file_organization_is_kept_when_the_request_asks_for_it() -> None:
+    task = TaskRecord(
+        objective="Move the .jpg files in the photos folder into a subfolder called pics.",
+        metadata={"expected_postconditions": ["file_organization"]},
+    )
+
+    assert [item.type for item in expected_postconditions(task)] == [PostconditionType.FILE_ORGANIZATION]
+
+
+def test_a_declared_type_the_keyword_rules_cannot_judge_is_kept_as_declared() -> None:
+    task = TaskRecord(objective="make me a slide deck about ferrets", metadata={"expected_postconditions": ["presentation_file"]})
+
+    assert [item.type for item in expected_postconditions(task)] == [PostconditionType.PRESENTATION_FILE]
+
+
+def test_the_keyword_expectation_replaces_a_declaration_that_was_all_dropped() -> None:
+    task = TaskRecord(
+        objective="Send me the report file.",
+        metadata={"expected_postconditions": ["file_organization"]},
+    )
+
+    assert PostconditionType.ARTIFACT_DELIVERED in [item.type for item in expected_postconditions(task)]

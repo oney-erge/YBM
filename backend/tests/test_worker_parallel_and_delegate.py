@@ -37,7 +37,7 @@ class QueueOperator:
         self.contexts: list[str] = []
         self.last_usage: dict | None = None
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False):
         self.calls += 1
         self.contexts.append(config_context)
         if self._usages is not None:
@@ -231,6 +231,11 @@ async def test_call_tools_parallel_counts_as_n_steps_toward_the_budget(tmp_path)
             action=OperatorAction.CALL_TOOLS_PARALLEL,
             parallel_calls=[ParallelToolCall(tool_name=n, tool_input={}) for n in ("a", "b", "c")],
         ),
+        # Offered a last answer, the model asks for yet another batch instead: it is not run.
+        OperatorDecision(
+            action=OperatorAction.CALL_TOOLS_PARALLEL,
+            parallel_calls=[ParallelToolCall(tool_name=n, tool_input={}) for n in ("a", "b")],
+        ),
     ])
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=3)
 
@@ -238,7 +243,11 @@ async def test_call_tools_parallel_counts_as_n_steps_toward_the_budget(tmp_path)
 
     # 3 history entries already consumes the whole budget of 3.
     assert len(running.metadata["operator_history"]) == 3
-    exhausted = await worker.process_task(running.id)
+    offered = await worker.process_task(running.id)
+    assert offered.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+    refused = await worker.process_task(offered.id)
+    exhausted = await worker.process_task(refused.id)
+    assert [entry["tool_name"] for entry in exhausted.metadata["operator_history"]].count("a") == 1  # the second batch never ran
     assert exhausted.status.value == "blocked"
     events = repos.audit.list_for_task(exhausted.id)
     assert any(event.payload.get("error") == "operator_step_budget_exhausted" for event in events)

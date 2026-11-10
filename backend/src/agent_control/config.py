@@ -290,6 +290,9 @@ class OperatorConfig(StrictBaseModel):
     # A task that goes badly gets the full list back. Off by default: on 72 recorded steps with Qwen3.5-9B it did not
     # change accuracy (46% against 49%, within noise), so it is here to try, not because it was shown to help.
     scope_tools: bool = False
+    # A number in the final answer to a request that asks for a calculation must appear in a tool result; otherwise the
+    # model is sent back once to calculate it with code (orchestration/number_check.py).
+    verify_numbers: bool = True
     # Hold the Operator's reply to one JSON schema in which every tool call is a real tool, a real operation and its real
     # arguments (tools/call_schema.py), enforced by the local server while the model writes. Local servers only: a hosted
     # profile keeps the plain schema. A server that refuses the schema gets the plain one for that call.
