@@ -5,6 +5,19 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
+  what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
+  the task as before.
+- A request that says to ask first ("Ask me before changing anything on disk") keeps its question: the guard that turns away
+  optional questions judged "Rewrite this file" satisfied once the file was read and ended the task with a summary of the read.
+- `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
+  there is nothing to read.
+- A failed script shows the end of its traceback (the line that says why) and a missing package says what to do instead.
+- A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
+  result; otherwise the model is sent back once to calculate it with code.
+
 ### Added
 
 - `operator.constrain_calls` (off by default) holds the Operator's reply to a JSON schema built from the tool definitions, so a
