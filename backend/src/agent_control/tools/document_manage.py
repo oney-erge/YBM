@@ -23,6 +23,7 @@ from agent_control.schemas import (
 )
 from agent_control.storage.repositories import ArtifactRepository
 from agent_control.tools.contracts import DocumentManageInput, DocumentManageOutput
+from agent_control.tools.office_text import office_text
 from agent_control.tools.spec import (
     UNTRUSTED_EXTERNAL,
     Adapters,
@@ -93,7 +94,7 @@ class DocumentManageAdapter:
         return {
             "path": str(path),
             "text": text,
-            "summary": f"Extracted {len(text)} character(s) from {path.name}.",
+            "summary": _extraction_summary(path.name, text),
         }
 
     def _summarize_pdf(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -290,6 +291,9 @@ class DocumentManageAdapter:
 
 
 def _extract_text(path: Path) -> str:
+    office = office_text(path)
+    if office is not None:
+        return office
     if path.suffix.lower() == ".pdf":
         try:
             from pypdf import PdfReader
@@ -303,6 +307,23 @@ def _extract_text(path: Path) -> str:
             logger.warning("pypdf extraction failed for %s; falling back to raw bytes decode", path, exc_info=True)
             return path.read_bytes().decode("utf-8", errors="ignore")
     return path.read_text(encoding="utf-8", errors="ignore")
+
+
+PREVIEW_CHARS = 3000
+
+
+def _extraction_summary(name: str, text: str) -> str:
+    """What the model and the Auditor are shown of an extraction: the text itself, not only how long it is.
+
+    "Extracted 623 characters" alone left the model asking again and the Auditor unable to check any answer.
+    """
+    head = f"Extracted {len(text)} character(s) from {name}."
+    if not text.strip():
+        return head
+    preview = text[:PREVIEW_CHARS]
+    more = len(text) - len(preview)
+    tail = f"\n[... {more} more character(s); the full text is in this result's text field]" if more > 0 else ""
+    return f"{head} Text:\n{preview}{tail}"
 
 
 def _simple_summary(text: str, *, fallback: str) -> str:
