@@ -79,6 +79,7 @@ GUARDED_TAGS = {"codex", "copilot", "external", "quota", "limit", "presentation"
 HARD_CEILING_S = 1260
 TASK_SPAWN_TIMEOUT_S = 180
 AUTO_SPAWN_TIMEOUT_S = 60  # expects_task "auto": how long to wait for a task before taking a chat reply
+SECOND_QUESTION_GRACE_S = 120  # how long to wait after answering a question for the task to move on, before failing it
 
 # The runner must wait AT LEAST this long after the case's declared timeout so
 # the worker's own per-task budget (settings.limits.task_budget_seconds,
@@ -1447,6 +1448,7 @@ async def _run_turn(
         last_status = None
         last_step = None
         last_replan = None
+        clarification_sent_at = 0.0
         ceiling, clipped = _turn_ceiling_seconds(max_seconds)
         if clipped:
             print(
@@ -1492,8 +1494,18 @@ async def _run_turn(
             # One neutral confirmation per turn, echoing the original request
             # so the answer cannot smuggle in new instructions, and logged
             # loudly so a pass here is never mistaken for an unprompted one.
+            # A second question after that answer means the agent is not finishing. Waiting out the whole ceiling (about 11
+            # minutes a case, three cases in one run) only delays the same failure, so the wait ends shortly after the reply.
+            if (
+                status == "clarifying"
+                and turn.clarification_sent
+                and time.monotonic() - clarification_sent_at > SECOND_QUESTION_GRACE_S
+            ):
+                print(f"    [clarify] asked again after the reply; not waiting {SECOND_QUESTION_GRACE_S:.0f}s more")
+                break
             if status == "clarifying" and not turn.clarification_sent:
                 turn.clarification_sent = True
+                clarification_sent_at = time.monotonic()
                 answer = (
                     "Yes, please go ahead with what you proposed, staying within the "
                     "constraints in my original message."
