@@ -3252,3 +3252,30 @@ async def test_an_answer_now_offer_spent_on_an_already_answered_question_is_offe
     assert result.metadata["synthesized_answer"].startswith("I cannot place orders")
     assert [e["status"] for e in result.metadata["operator_history"] if e["tool_name"] == "_stuck_check"] == ["stuck", "stuck"]
     assert operator.finish_only_calls[-2:] == [True, True]
+
+
+
+def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    folder = tmp_path / "Desktop"
+    (folder / "resumes").mkdir(parents=True)
+    (folder / "resumes" / "notes.txt").write_text("resume notes", encoding="utf-8")
+    other = tmp_path / "Elsewhere"
+    other.mkdir()
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "search", "root": "desktop"}, "status": "succeeded",
+              "output_root": str(folder)}
+    read = {"operation": "read_file", "path": "resumes\\notes.txt"}
+
+    assert complete("filesystem.manage", read, [listing])["path"] == str(folder / "resumes" / "notes.txt")
+    # the most recent listing that has the file wins; a folder that does not have it is skipped
+    older = {**listing, "output_root": str(other)}
+    assert complete("filesystem.manage", read, [listing, older])["path"] == str(folder / "resumes" / "notes.txt")
+    # nothing changes: no listing, an absolute path, a file that exists as given, another tool, another operation
+    assert complete("filesystem.manage", read, []) == read
+    absolute = {"operation": "read_file", "path": str(folder / "resumes" / "notes.txt")}
+    assert complete("filesystem.manage", absolute, [listing]) == absolute
+    assert complete("filesystem.manage", {"operation": "read_file", "path": "missing.txt"}, [listing]) == {"operation": "read_file", "path": "missing.txt"}
+    assert complete("browser.open", read, [listing]) == read
+    written = {"operation": "write_text_file", "path": "resumes\\notes.txt"}
+    assert complete("filesystem.manage", written, [listing]) == written
