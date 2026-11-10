@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 import json
 
@@ -29,9 +30,16 @@ _MAX_OPERATOR_REQUEST_CHARS = 27_000
 
 
 class OperatorLoopService:
-    def __init__(self, provider: LLMProvider, major_provider: LLMProvider | None = None) -> None:
+    def __init__(
+        self,
+        provider: LLMProvider,
+        major_provider: LLMProvider | None = None,
+        response_schema: Callable[[], dict] | None = None,
+    ) -> None:
         self.provider = provider
         self.major_provider = major_provider
+        # Builds the strict schema for the next reply (tools/call_schema.py); None keeps OperatorDecision's own.
+        self.response_schema = response_schema
         # Usage from the most recent decide() call, read by worker.py right
         # after each call to accumulate per-task token/cost totals. See
         # docs/archive/HISTORY.md Part 4 T1.4.
@@ -81,8 +89,9 @@ class OperatorLoopService:
         current_prompt = user_prompt
         for _attempt in range(3):
             try:
+                strict = {} if self.response_schema is None else {"response_schema": self.response_schema()}
                 candidate = await provider.generate_structured(
-                    OPERATOR_SYSTEM_PROMPT, current_prompt, OperatorDecision, temperature=0.1
+                    OPERATOR_SYSTEM_PROMPT, current_prompt, OperatorDecision, temperature=0.1, **strict
                 )
                 self.last_usage = getattr(provider, "last_usage", None)
                 self.last_request = getattr(provider, "last_request", None)
