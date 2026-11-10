@@ -3279,3 +3279,19 @@ def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder
     assert complete("browser.open", read, [listing]) == read
     written = {"operation": "write_text_file", "path": "resumes\\notes.txt"}
     assert complete("filesystem.manage", written, [listing]) == written
+
+
+def test_the_document_and_delivery_tools_get_the_same_completion(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "memo.pdf").write_bytes(b"%PDF-1.4")
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder"}, "status": "succeeded", "output_root": str(tmp_path)}
+    wanted = str(tmp_path / "docs" / "memo.pdf")
+
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "extract_text", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    assert complete("artifact.deliver", {"operation": "send_file", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    # an operation that is not a read of one file is left alone
+    create = {"operation": "create_presentation", "path": "docs/memo.pdf"}
+    assert complete("document.manage", create, [listing]) == create

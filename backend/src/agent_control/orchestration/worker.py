@@ -2754,6 +2754,14 @@ _RECENCY_INTENT = re.compile(
 )
 
 
+# The operations that take one file by path and are given a listing's relative path: reading it, opening a document, sending it.
+_READS_OF_A_LISTED_FILE = {
+    "filesystem.manage": frozenset({"read_file", "open_file"}),
+    "document.manage": frozenset({"inspect_document", "extract_text", "summarize_pdf"}),
+    "artifact.deliver": frozenset({"send_file"}),
+}
+
+
 def _filesystem_path_relative_to_a_listed_root(
     tool_name: str | None, tool_input: dict[str, Any], history: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -2764,7 +2772,7 @@ def _filesystem_path_relative_to_a_listed_root(
     exist, three times, until the task was stopped. The path is completed with the most recent listed folder it exists under;
     anything that does not exist there is left exactly as given.
     """
-    if tool_name != "filesystem.manage" or tool_input.get("operation") not in {"read_file", "open_file"}:
+    if tool_input.get("operation") not in _READS_OF_A_LISTED_FILE.get(str(tool_name), frozenset()):
         return tool_input
     raw = str(tool_input.get("path") or "").strip().strip("\"'")
     if not raw or Path(raw).is_absolute() or Path(raw).exists():
