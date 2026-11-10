@@ -3265,7 +3265,7 @@ def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder
     other.mkdir()
     listing = {"tool_name": "filesystem.manage", "input": {"operation": "search", "root": "desktop"}, "status": "succeeded",
               "output_root": str(folder)}
-    read = {"operation": "read_file", "path": "resumes\\notes.txt"}
+    read = {"operation": "read_file", "path": "resumes/notes.txt"}
 
     assert complete("filesystem.manage", read, [listing])["path"] == str(folder / "resumes" / "notes.txt")
     # the most recent listing that has the file wins; a folder that does not have it is skipped
@@ -3277,7 +3277,7 @@ def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder
     assert complete("filesystem.manage", absolute, [listing]) == absolute
     assert complete("filesystem.manage", {"operation": "read_file", "path": "missing.txt"}, [listing]) == {"operation": "read_file", "path": "missing.txt"}
     assert complete("browser.open", read, [listing]) == read
-    written = {"operation": "write_text_file", "path": "resumes\\notes.txt"}
+    written = {"operation": "write_text_file", "path": "resumes/notes.txt"}
     assert complete("filesystem.manage", written, [listing]) == written
 
 
