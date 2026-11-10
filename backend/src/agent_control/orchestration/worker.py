@@ -800,6 +800,7 @@ class TaskWorker:
                 if self.auditor is not None and worth_auditing
                 else None
             )
+            audit_unconfirmed = False
             if content_entry is not None:
                 audit_gap_count = int(latest.metadata.get("operator_audit_gap_count", 0))
                 if audit_gap_count < 2:
@@ -856,6 +857,15 @@ class TaskWorker:
                         return self.repositories.tasks.update_metadata(latest.id, metadata, TaskStatus.RUNNING)
                     if audit_result.answer:
                         final_answer = _ground_operator_final_answer(audit_result.answer, history)
+                elif self._answer_is_grounded_though_unconfirmed(latest, history, final_answer, memory_context):
+                    # The Auditor turned the answer down twice, and the answer holds no number or address that nothing read
+                    # produced. A small Auditor rejected a correct two-sentence summary of a 159-character document for being
+                    # short, and the task ended "Blocked". The answer is delivered, with a plain note that it was not confirmed.
+                    audit_unconfirmed = True
+                    final_answer = (
+                        f"{final_answer}\n\n(Not fully confirmed: an automatic check could not verify this from what I read, "
+                        "so please double-check it.)"
+                    )
                 else:
                     metadata = {
                         **latest.metadata,
@@ -872,7 +882,10 @@ class TaskWorker:
                         "operator_audit_gap_exhausted",
                     )
 
-            metadata = {**latest.metadata, "operator_history": history, "synthesized_answer": final_answer}
+            metadata = {
+                **latest.metadata, "operator_history": history, "synthesized_answer": final_answer,
+                **({"operator_audit_unconfirmed": True} if audit_unconfirmed else {}),
+            }
             # With the Auditor owning fulfillment, its INSUFFICIENT verdict
             # above is already the gap check - it saw the user's own words and
             # the factual deliverable list. Re-running the word-set gate here
@@ -1051,6 +1064,7 @@ class TaskWorker:
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_path_relative_to_a_listed_root(tool_name, tool_input, history)
+        tool_input = _filesystem_overwrite_when_asked_to_change(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
         tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
@@ -2127,6 +2141,21 @@ class TaskWorker:
             )
         return updated
 
+    def _answer_is_grounded_though_unconfirmed(
+        self, task: TaskRecord, history: list[dict[str, Any]], answer: str | None, memory_context: str
+    ) -> bool:
+        """Whether an answer the Auditor would not confirm at least invents no address and no calculated number.
+
+        Those are the two kinds of made-up value a script can check, so they stand in for the Auditor's second opinion once it
+        has been asked twice. Off with ``operator.verify_numbers``, which owns the same checks.
+        """
+        if not self.verify_numbers or not answer or not answer.strip():
+            return False
+        request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+        if ungrounded_addresses(request, answer, history, memory_context):
+            return False
+        return not ungrounded_numbers(request, answer, history)
+
     def _values_no_tool_produced(
         self, task: TaskRecord, history: list[dict[str, Any]], answer: str | None, copied_from_results: bool
     ) -> tuple[list[str], list[str]]:
@@ -2755,6 +2784,31 @@ _RECENCY_INTENT = re.compile(
     r"modified (?:most )?recently|(?:when|what time) (?:was|were) \w+(?: \w+){0,4} (?:last )?(?:modified|changed|updated|edited))\b",
     re.IGNORECASE,
 )
+
+
+# "Change it", "update the file", "replace the text": the request is about an existing file, not a new one.
+_CHANGE_INTENT = re.compile(r"\b(?:change|update|edit|modify|replace|overwrite|rewrite|revise|correct)\b", re.IGNORECASE)
+
+
+def _filesystem_overwrite_when_asked_to_change(
+    task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]
+) -> dict[str, Any]:
+    """Write over a file that exists when the request is to change it.
+
+    write_text_file keeps an existing file and saves a copy (greeting_2.txt) unless overwrite is set, which is the right
+    default for "create a file". For "change it to say goodbye" the copy is not what was asked: the model wrote the copy, read the
+    original (still "hello") and repeated the same call until the task was blocked. Only a request that names a change, and only
+    a path that exists, turns overwrite on.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file" or tool_input.get("overwrite"):
+        return tool_input
+    path = str(tool_input.get("path") or "").strip()
+    if not path or not Path(path).is_file():
+        return tool_input
+    request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    if not _CHANGE_INTENT.search(request):
+        return tool_input
+    return {**tool_input, "overwrite": True}
 
 
 # The operations that take one file by path and are given a listing's relative path: reading it, opening a document, sending it.
