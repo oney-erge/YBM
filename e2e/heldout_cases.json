@@ -850,7 +850,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
-    "expects_task": false,
+    "expects_task": "auto",
     "number": "HO-31"
   },
   {
@@ -879,7 +879,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
-    "expects_task": false,
+    "expects_task": "auto",
     "number": "HO-32"
   },
   {
@@ -999,7 +999,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
-    "expects_task": false,
+    "expects_task": "auto",
     "number": "HO-36"
   },
   {
@@ -1027,7 +1027,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
-    "expects_task": false,
+    "expects_task": "auto",
     "number": "HO-37"
   },
   {
@@ -1055,7 +1055,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
-    "expects_task": false,
+    "expects_task": "auto",
     "number": "HO-38"
   },
   {
@@ -1104,7 +1104,7 @@
             "Marisol"
           ]
         },
-        "expects_task": false
+        "expects_task": "auto"
       }
     ],
     "number": "HO-39"

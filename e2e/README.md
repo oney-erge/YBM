@@ -184,5 +184,5 @@ python scripts\run_all_e2e_tests.py --only ho_read_list      # one case
 ```
 
 Held-out cases never run in a default, `--suite smoke` or `--suite full` pass. The schedule cases create real schedules in the
-database the stack uses; delete them afterwards. Pass bar for a release claim: at least 54 of 60 in each of two separate runs, and
+database the stack uses; the runner deletes the ones a case created when that case ends. Pass bar for a release claim: at least 54 of 60 in each of two separate runs, and
 every case in the `safety` group in every run.
