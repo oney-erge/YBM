@@ -902,6 +902,10 @@ class TaskWorker:
                 if self._auditor_owns_fulfillment
                 else validate_fulfillment(candidate_task).first_gap
             ) or _unsupported_write_claim(final_answer, history, metadata)
+            if gap and _named_target_not_found(candidate_task, history):
+                # The request named something that is not there. "It does not exist" is the answer, and it cannot also be
+                # required to hold the contents the request expected: the check sent the honest answer back and ended in "Blocked".
+                gap = None
             if gap:
                 gap_count = int(latest.metadata.get("operator_fulfillment_gap_count", 0))
                 if gap_count < 2:
@@ -1054,6 +1058,8 @@ class TaskWorker:
         )
         if tool_name == "coding.agent" and not _coding_agent_requested(latest, tool_input):
             return self._refuse_unrequested_coding_agent(latest, history, tool_input, step_id)
+        if _is_simulated_delete(latest, tool_name, tool_input):
+            return self._refuse_simulated_delete(latest, history, tool_name, tool_input, step_id)
         tool_name, tool_input = _ordered_artifact_delivery_call(
             latest,
             tool_name,
@@ -2207,6 +2213,21 @@ class TaskWorker:
         })
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
 
+    def _refuse_simulated_delete(
+        self, task: TaskRecord, history: list[dict[str, Any]], tool_name: str | None, tool_input: dict[str, Any], step_id: str
+    ) -> TaskRecord:
+        """Not run: the request is to delete files, there is no delete operation, and a move or rename is not a delete."""
+        history.append({
+            "tool_name": tool_name, "input": tool_input, "status": ToolResultStatus.DENIED.value,
+            "error": (
+                "Not run: this request is to delete files, YBM has no delete operation, and moving or renaming files to look "
+                "like a deletion changes them without deleting them. Tell the user plainly that you cannot delete files, and "
+                "offer to move them into a folder they name instead (action done, or action ask_user for that folder)."
+            ),
+            "step_id": step_id,
+        })
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
     def _refuse_unrequested_coding_agent(
         self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
     ) -> TaskRecord:
@@ -3286,6 +3307,53 @@ def _answer_from_results(history: list[dict[str, Any]], question: str | None) ->
     return "\n".join(lines)
 
 
+_DELETE_INTENT = re.compile(r"\b(?:delete|erase|wipe|trash|get rid of|remove all|throw away|destroy)\b", re.IGNORECASE)
+_MOVE_INTENT = re.compile(r"\b(?:move|organi[sz]e|rename|sort|tidy|clean ?up|archive|copy|group|put (?:them|it|these|those)? ?(?:in|into|under))\b", re.IGNORECASE)
+_FILE_REARRANGING_OPERATIONS = frozenset({"organize_plan", "rename_plan", "apply_manifest"})
+
+
+def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]) -> bool:
+    """A move or rename planned for a request that only asks to delete.
+
+    Asked to "delete all the files in the junk folder", the local model organized them into folders called "other", "deleted"
+    and "trash", renamed them, and reported "Renamed 3 file(s)": the files were altered and not deleted, and nobody was told
+    there is no delete operation. A request that also asks to move, organize or rename keeps those operations.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") not in _FILE_REARRANGING_OPERATIONS:
+        return False
+    request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    return bool(_DELETE_INTENT.search(request)) and not _MOVE_INTENT.search(request)
+
+
+_NOT_FOUND_ERROR = re.compile(
+    r"does not exist|doesn't exist|not found|no such file|could not find|couldn't find|cannot find|can't find|unable to find|"
+    r"no deliverable artifact or file path was found",
+    re.IGNORECASE,
+)
+
+
+def _named_target_not_found(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
+    """A reason to turn down a question when the last real step failed because the thing asked about is not there.
+
+    Asked to read, open or send a file that does not exist, the local model asked the user which of four other files it meant,
+    or to paste the contents, and the question waited. The honest answer is that the file is not there (and what similar items
+    were found), which the user can reply to just as well. A request that says to ask first keeps its question.
+    """
+    if _user_asked_to_be_asked_first(task):
+        return None
+    real = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
+    if not real:
+        return None
+    last = real[-1]
+    if last.get("status") != ToolResultStatus.FAILED.value or not _NOT_FOUND_ERROR.search(str(last.get("error") or "")):
+        return None
+    return (
+        "the last step failed because what the request named does not exist, so the answer is that it is not there; tell the "
+        "user so plainly in a final answer (action done), naming any similar items you found, instead of asking them to choose "
+        "or to paste its contents"
+    )
+
+
 def _clarification_recovery_reason(
     task: TaskRecord,
     history: list[dict[str, Any]],
@@ -3299,6 +3367,9 @@ def _clarification_recovery_reason(
             "the requested work's inferred postconditions are already satisfied; "
             "report optional review or verification gaps instead of asking the user"
         )
+    not_found = _named_target_not_found(task, history)
+    if not_found:
+        return not_found
 
     validation = validate_fulfillment(task)
     missing = set(validation.missing)

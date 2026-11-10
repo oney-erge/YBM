@@ -7,6 +7,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
+  all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
+  The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
+  request that also asks to move, organize, rename, sort, tidy or clean up keeps those operations.
+- Asked to read, open or send a file that does not exist, the model now says so instead of asking the user which other file they
+  meant or to paste its contents. A question after a step that failed because the target is missing is turned down with "say so
+  plainly in a final answer", and that honest answer is no longer sent back by the fulfillment check for lacking the contents the
+  request expected (which ended in "Blocked"). A request that says to ask first keeps its question.
 - The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
   filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
 - An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is

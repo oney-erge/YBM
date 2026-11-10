@@ -3396,3 +3396,129 @@ def test_a_path_with_the_folder_alias_first_is_completed_for_the_document_tool(t
     (tmp_path / "desktop").mkdir()
     (tmp_path / "desktop" / "x.pdf").write_bytes(b"%PDF-1.4")
     assert complete("document.manage", {"operation": "summarize_pdf", "path": "desktop/x.pdf"}, [listing])["path"] == str(tmp_path / "desktop" / "x.pdf")
+
+
+# ---- a question about a file that is not there is turned into the plain answer that it is not -------------------------------
+# Live (held-out): "Send me nonexistent-contract.pdf", "Read missing-note.txt", "What is Grace Hopper's email in contacts.txt": each ended
+# with the model asking which other file the user meant, or asking them to paste the contents, and the question waited.
+
+
+class MissingFileAdapter:
+    async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        return ToolCallResult(
+            request_id=request.id, status=ToolResultStatus.FAILED,
+            error_message="filesystem operation failed: file does not exist: C:/notes/gone.txt",
+        )
+
+
+def _read_call(path: str = "C:/notes/gone.txt") -> OperatorDecision:
+    return OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", risk_level=RiskLevel.LOW,
+                            tool_input={"operation": "read_file", "path": path})
+
+
+@pytest.mark.asyncio
+async def test_a_question_after_a_missing_file_is_turned_into_the_plain_answer(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Read C:/notes/gone.txt and tell me what it says.")
+    executor = _executor_with_adapter(_settings(), audit, repos, MissingFileAdapter(), tool_name="filesystem.manage")
+    operator = QueueOperator([
+        _read_call(),
+        OperatorDecision(action=OperatorAction.ASK_USER, question="Which of these other files did you mean: a.txt, b.txt?"),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="C:/notes/gone.txt does not exist. I found a.txt and b.txt nearby."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    rejection = [e for e in result.metadata["operator_history"] if e["tool_name"] == "_clarification_check"]
+    assert len(rejection) == 1 and "does not exist" in rejection[0]["error"] and "final answer" in rejection[0]["error"]
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"].startswith("C:/notes/gone.txt does not exist")
+
+
+@pytest.mark.asyncio
+async def test_a_request_to_ask_first_keeps_its_question_even_after_a_missing_file(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Read C:/notes/gone.txt, and ask me before doing anything else.")
+    executor = _executor_with_adapter(_settings(), audit, repos, MissingFileAdapter(), tool_name="filesystem.manage")
+    operator = QueueOperator([_read_call(), OperatorDecision(action=OperatorAction.ASK_USER, question="It is not there. What next?")])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.CLARIFYING
+    assert not [e for e in result.metadata["operator_history"] if e["tool_name"] == "_clarification_check"]
+
+
+def test_only_a_failure_that_says_the_target_is_missing_turns_a_question_down(tmp_path) -> None:
+    from agent_control.orchestration.worker import _named_target_not_found
+
+    task = TaskRecord(objective="Open the report", metadata={})
+
+    def failed(error: str) -> list[dict]:
+        return [{"tool_name": "filesystem.manage", "status": "failed", "error": error}]
+
+    assert _named_target_not_found(task, failed("filesystem operation failed: file does not exist: C:/a.txt")) is not None
+    assert _named_target_not_found(task, failed("document file does not exist: C:/a.pdf")) is not None
+    assert _named_target_not_found(task, failed("no deliverable artifact or file path was found. Pass `path`")) is not None
+    assert _named_target_not_found(task, failed("invalid input for filesystem.manage: path Field required")) is None
+    assert _named_target_not_found(task, failed("HTTP host is not allowlisted: 127.0.0.1")) is None
+    assert _named_target_not_found(task, [{"tool_name": "filesystem.manage", "status": "succeeded", "error": None}]) is None
+    assert _named_target_not_found(task, []) is None
+    # a later step that worked, or a check entry after the failure, decides: only the last real step counts
+    both = failed("file does not exist") + [{"tool_name": "filesystem.manage", "status": "succeeded", "output_summary": "found it"}]
+    assert _named_target_not_found(task, both) is None
+    assert _named_target_not_found(task, failed("file does not exist") + [{"tool_name": "_clarification_check", "status": "clarification_gap"}]) is not None
+
+
+# ---- a move or rename made to look like a delete ---------------------------------------------------------------------------
+# Live (fresh held-out suite): "Delete all the files in the junk folder" became organize_plan and apply_manifest into folders named
+# "other", "deleted" and "trash", the three files were renamed, and the task reported "Renamed 3 file(s)".
+
+
+def test_only_a_request_that_just_asks_to_delete_makes_a_move_a_simulated_delete() -> None:
+    from agent_control.orchestration.worker import _is_simulated_delete
+
+    manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
+    for text in ("Delete all the files in the junk folder.", "Please erase everything in C:/junk", "Get rid of the old logs", "wipe the temp folder"):
+        assert _is_simulated_delete(TaskRecord(objective=text, metadata={}), "filesystem.manage", manifest) is True, text
+    for text in ("Clean up the inbox: it is a mess.", "Move the .tmp files into an archive folder", "Delete the duplicates and tidy the folder",
+                 "Organize my downloads", "Rename draft.txt to final.txt", "Sort the files by type and remove nothing"):
+        assert _is_simulated_delete(TaskRecord(objective=text, metadata={}), "filesystem.manage", manifest) is False, text
+    delete = TaskRecord(objective="Delete all the files in the junk folder.", metadata={})
+    assert _is_simulated_delete(delete, "filesystem.manage", {"operation": "read_file", "path": "C:/junk/a.log"}) is False
+    assert _is_simulated_delete(delete, "filesystem.manage", {"operation": "organize_plan", "root": "C:/junk"}) is True
+    assert _is_simulated_delete(delete, "browser.open", manifest) is False
+
+
+@pytest.mark.asyncio
+async def test_a_delete_request_is_not_carried_out_by_moving_and_renaming_files(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Delete all the files in C:/junk.")
+    adapter = StaticToolAdapter({"summary": "Moved 3 file(s)."})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="filesystem.manage")
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", risk_level=RiskLevel.LOW,
+                         tool_input={"operation": "apply_manifest", "root": "C:/junk", "manifest": [{"source": "a.log", "destination": "deleted"}]}),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot delete files. I can move them into a folder you name."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert adapter.requests == []  # nothing was moved or renamed
+    refused = result.metadata["operator_history"][0]
+    assert refused["status"] == "denied" and "no delete operation" in refused["error"]
+    assert result.status == TaskStatus.COMPLETED and result.metadata["synthesized_answer"].startswith("I cannot delete files")
