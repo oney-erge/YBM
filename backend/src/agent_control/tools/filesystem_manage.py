@@ -41,6 +41,9 @@ from agent_control.tools.spec import (
 
 logger = logging.getLogger(__name__)
 
+# A search for a word that no file name contains reads files up to this size to look for it in their text.
+_TEXT_SEARCH_MAX_BYTES = 1_000_000
+
 
 class FilesystemManageAdapter:
     """Scoped filesystem inspection, search, and organization tool."""
@@ -106,16 +109,40 @@ class FilesystemManageAdapter:
 
     def _search(self, request: ToolCallRequest) -> dict[str, Any]:
         root = self._safe_path(str(request.input["root"]))
-        query = str(request.input["query"]).lower()
+        query = str(request.input["query"]).lower().replace("\\", "/")
         wildcard_query = any(char in query for char in "*?[")
+        # A model writes the pattern the way a shell would: "**/budget*.csv", "docs/*.pdf". The match is on a file's name
+        # and on its path under the root, so the folder prefix cannot make a name that is there match nothing.
+        name_pattern = query.rsplit("/", 1)[-1] if wildcard_query else query
         include_content = bool(request.input.get("include_content", False))
         max_results = int(request.input.get("max_results") or 100)
-        results = []
+        results = self._search_pass(root, query, name_pattern, wildcard_query, include_content, max_results)
+        in_text = False
+        if not results and not include_content and not wildcard_query:
+            # "Which file mentions tangerine?" names no file. A search by word that matches no file name is looked for in
+            # the text of the files instead of coming back empty, which the model then repeated until it was stopped.
+            results = self._search_pass(root, query, name_pattern, wildcard_query, True, max_results, text_only=True)
+            in_text = bool(results)
+        where = " (no file name matched; found in the text of the file)" if in_text else ""
+        return {
+            "root": str(root),
+            "entries": results,
+            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}{where}.",
+        }
+
+    def _search_pass(
+        self, root: Path, query: str, name_pattern: str, wildcard_query: bool, include_content: bool, max_results: int,
+        *, text_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         for path in _walk_limited(root, max_depth=20):
             if path == root:
                 continue
-            matched = (
-                fnmatch.fnmatch(path.name.lower(), query)
+            if text_only and not (path.is_file() and path.stat().st_size <= _TEXT_SEARCH_MAX_BYTES):
+                continue
+            matched = False if text_only else (
+                fnmatch.fnmatch(path.name.lower(), name_pattern)
+                or fnmatch.fnmatch(path.relative_to(root).as_posix().lower(), query)
                 if wildcard_query
                 else query in path.name.lower()
             )
@@ -146,11 +173,7 @@ class FilesystemManageAdapter:
                 results.append(item)
                 if len(results) >= max_results:
                     break
-        return {
-            "root": str(root),
-            "entries": results,
-            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}.",
-        }
+        return results
 
     def _resolve_desktop_item(self, request: ToolCallRequest) -> dict[str, Any]:
         query = str(request.input.get("query") or request.input.get("name") or "").lower().strip()

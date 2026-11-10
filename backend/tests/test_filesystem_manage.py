@@ -415,3 +415,73 @@ async def test_read_file_on_a_binary_file_says_there_is_nothing_to_read(tmp_path
 
     assert result.status.value == "succeeded"
     assert result.output["text"] == "" and "No readable text" in result.output["summary"]
+
+
+
+# ---- search accepts the glob patterns a model writes -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "budget-2026.csv", "**/budget-2026.csv", "**/budget*.csv", "**/*.csv", "*.CSV", "finance/archive/*.csv",
+    "finance\\archive\\budget*.csv",
+])
+async def test_a_search_pattern_with_a_folder_prefix_finds_the_file(tmp_path, query) -> None:
+    nested = tmp_path / "finance" / "archive"
+    nested.mkdir(parents=True)
+    (nested / "budget-2026.csv").write_text("month,income\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("not a csv", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query=query))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["budget-2026.csv"]
+
+
+@pytest.mark.asyncio
+async def test_a_pattern_that_matches_nothing_still_finds_nothing(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="**/*.csv"))
+
+    assert result.output["entries"] == []
+
+
+# ---- a word that no file name contains is looked for in the files' text ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_search_by_word_looks_in_file_text_when_no_name_matches(tmp_path) -> None:
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "alpha" / "plan.txt").write_text("Alpha: ship the parser.\n", encoding="utf-8")
+    (tmp_path / "beta" / "kitchen-plan.txt").write_text("Beta: repaint the kitchen, tangerine walls.\n", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["kitchen-plan.txt"]
+    assert "found in the text" in result.output["summary"] and "tangerine" in result.output["entries"][0]["content_preview"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_match_does_not_trigger_the_text_search(tmp_path) -> None:
+    (tmp_path / "tangerine-notes.txt").write_text("nothing about fruit", encoding="utf-8")
+    (tmp_path / "other.txt").write_text("a tangerine here", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["tangerine-notes.txt"]
+    assert "found in the text" not in result.output["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_large_file_is_not_read_by_the_text_search(tmp_path) -> None:
+    (tmp_path / "huge.txt").write_text("tangerine " + "x" * 1_100_000, encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert result.output["entries"] == []

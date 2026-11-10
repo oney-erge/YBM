@@ -74,6 +74,28 @@ def _declared_postconditions(task: TaskRecord) -> list[PlanPostcondition]:
     return result
 
 
+# The postcondition types the keyword rules in _postconditions_from_objective can also judge.
+_KEYWORD_JUDGED = frozenset({
+    PostconditionType.SOURCE_CONTENT, PostconditionType.PREVIEW_URL, PostconditionType.WORKSPACE_DIR,
+    PostconditionType.WORKSPACE_FILES, PostconditionType.CODING_AGENT_STEP, PostconditionType.ADAPTER_PROPOSAL,
+    PostconditionType.ARTIFACT_DELIVERED, PostconditionType.BROWSER_STATE, PostconditionType.DESKTOP_OBSERVATION,
+    PostconditionType.SCREENSHOT_DELIVERED, PostconditionType.FILE_ORGANIZATION, PostconditionType.GITHUB_PR,
+    PostconditionType.EXTERNAL_COMMAND, PostconditionType.SCHEDULE_CREATED,
+})
+
+
+def _corroborated(declared: list[PlanPostcondition], inferred: list[PlanPostcondition]) -> list[PlanPostcondition]:
+    """The declared postconditions the request's own words do not contradict.
+
+    A small model declaring what a request "objectively requires" overfills: for a find-and-read request and for a rewrite
+    request it declared file_organization, and the task was then sent to organize_plan before it could finish, a step that
+    moves files and that nobody asked for. A declared type the keyword rules can judge is kept only when they find it in the
+    request too; a type they cannot judge (a presentation file, a document summary) is kept as declared.
+    """
+    supported = {item.type for item in inferred}
+    return [item for item in declared if item.type not in _KEYWORD_JUDGED or item.type in supported]
+
+
 def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
     """What this task needs to show to count as done, preferring a
     declaration the classifier made at intake (docs/ROADMAP.md "Finish the
@@ -103,14 +125,14 @@ def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
     results unioned - a paraphrase can add an obligation it makes explicit,
     but can no longer drop one the request already established.
     """
-    declared = _declared_postconditions(task)
-    if declared:
-        return tuple(_dedupe(declared))
-    expected: list[PlanPostcondition] = list(_postconditions_from_objective(task.objective))
+    inferred: list[PlanPostcondition] = list(_postconditions_from_objective(task.objective))
     original_message = task.metadata.get("original_message_text") if isinstance(task.metadata, dict) else None
     if isinstance(original_message, str) and original_message.strip():
-        expected.extend(_postconditions_from_objective(original_message))
-    return tuple(_dedupe(expected))
+        inferred.extend(_postconditions_from_objective(original_message))
+    declared = _corroborated(_declared_postconditions(task), inferred)
+    if declared:
+        return tuple(_dedupe(declared))
+    return tuple(_dedupe(inferred))
 
 
 def validate_fulfillment(task: TaskRecord) -> FulfillmentValidation:
