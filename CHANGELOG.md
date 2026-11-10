@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `read_file` keeps the lines of the file it reads. Every run of whitespace, line breaks included, became one space, so a CSV reached
+  the model as one long line ("name,score Ana,71 Ben,88 ..."), the scripts it wrote could not parse it, and the task ran out of steps.
 - A `send_file` with no path says to pass the file's full path or to find it first with `filesystem.manage search`. "Send it to me",
   asked as a new task, repeated the same path-less call four times until the task was blocked.
 - A file or screenshot the user asked to be sent is checked as sent even when the Auditor owns the rest of fulfillment. "Open the page
