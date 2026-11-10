@@ -237,6 +237,23 @@ class _Recorder:
 async def test_the_operator_passes_the_schema_only_when_it_has_one() -> None:
     plain, strict = _Recorder(), _Recorder()
     await OperatorLoopService(plain).decide("do it", "tools", [])
-    await OperatorLoopService(strict, response_schema=lambda: STRICT).decide("do it", "tools", [])
+    await OperatorLoopService(strict, response_schema=lambda finish_only=False: STRICT).decide("do it", "tools", [])
     assert "response_schema" not in plain.kwargs[0]
     assert strict.kwargs[0]["response_schema"] == STRICT and strict.kwargs[0]["temperature"] == 0.1
+
+
+@pytest.mark.asyncio
+async def test_a_finish_only_step_gets_the_finishing_schema(registry) -> None:
+    recorder = _Recorder()
+    cached = CachedOperatorSchema(registry)
+    operator = OperatorLoopService(recorder, response_schema=cached)
+    await operator.decide("do it", "tools", [])
+    await operator.decide("do it", "tools", [], finish_only=True)
+
+    ordinary, finishing = (kw["response_schema"] for kw in recorder.kwargs)
+    assert accepts(ordinary, call("filesystem.manage", operation="read_file", path="C:/a.txt"))
+    assert not accepts(finishing, call("filesystem.manage", operation="read_file", path="C:/a.txt"))
+    for reply in ({"action": "done", "final_answer": "Found nothing."}, {"action": "ask_user", "question": "Which one?"},
+                  {"action": "blocked", "reason": "no access"}):
+        assert accepts(finishing, reply)
+    assert not accepts(finishing, {"action": "call_tools_parallel", "parallel_calls": []})

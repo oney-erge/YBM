@@ -385,3 +385,146 @@ def test_verify_apply_manifest_returns_none_when_the_output_has_no_manifest() ->
     result = ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={})
 
     assert _verify_apply_manifest(request, result) is None
+
+
+# ---- read_file on files that are not plain text -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_file_gives_the_text_of_a_word_file_not_its_bytes(tmp_path) -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "e2e"))
+    import gap_fixtures
+
+    docx = tmp_path / "brief.docx"
+    gap_fixtures.write_docx(docx, ["Project brief", f"Reference marker: {gap_fixtures.DOCX_MARKER}."])
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(docx)))
+
+    assert result.status.value == "succeeded"
+    assert gap_fixtures.DOCX_MARKER in result.output["text"] and not result.output["text"].startswith("PK")
+
+
+@pytest.mark.asyncio
+async def test_read_file_on_a_binary_file_says_there_is_nothing_to_read(tmp_path) -> None:
+    blob = tmp_path / "photo.png"
+    blob.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256)))
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(blob)))
+
+    assert result.status.value == "succeeded"
+    assert result.output["text"] == "" and "No readable text" in result.output["summary"]
+
+
+
+# ---- search accepts the glob patterns a model writes -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "budget-2026.csv", "**/budget-2026.csv", "**/budget*.csv", "**/*.csv", "*.CSV", "finance/archive/*.csv",
+    "finance\\archive\\budget*.csv",
+])
+async def test_a_search_pattern_with_a_folder_prefix_finds_the_file(tmp_path, query) -> None:
+    nested = tmp_path / "finance" / "archive"
+    nested.mkdir(parents=True)
+    (nested / "budget-2026.csv").write_text("month,income\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("not a csv", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query=query))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["budget-2026.csv"]
+
+
+@pytest.mark.asyncio
+async def test_a_pattern_that_matches_nothing_still_finds_nothing(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="**/*.csv"))
+
+    assert result.output["entries"] == []
+
+
+# ---- a word that no file name contains is looked for in the files' text ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_search_by_word_looks_in_file_text_when_no_name_matches(tmp_path) -> None:
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "alpha" / "plan.txt").write_text("Alpha: ship the parser.\n", encoding="utf-8")
+    (tmp_path / "beta" / "kitchen-plan.txt").write_text("Beta: repaint the kitchen, tangerine walls.\n", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["kitchen-plan.txt"]
+    assert "found in the text" in result.output["summary"] and "tangerine" in result.output["entries"][0]["content_preview"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_match_does_not_trigger_the_text_search(tmp_path) -> None:
+    (tmp_path / "tangerine-notes.txt").write_text("nothing about fruit", encoding="utf-8")
+    (tmp_path / "other.txt").write_text("a tangerine here", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["tangerine-notes.txt"]
+    assert "found in the text" not in result.output["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_large_file_is_not_read_by_the_text_search(tmp_path) -> None:
+    (tmp_path / "huge.txt").write_text("tangerine " + "x" * 1_100_000, encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert result.output["entries"] == []
+
+
+
+# ---- modified times, shown only when the request is about which file is newest or oldest -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_listing_shows_modified_times_only_when_asked(tmp_path) -> None:
+    import os
+
+    old, new = tmp_path / "old.md", tmp_path / "latest.md"
+    old.write_text("a", encoding="utf-8")
+    new.write_text("b", encoding="utf-8")
+    os.utime(old, (1_577_836_800, 1_577_836_800))  # 2020-01-01
+    os.utime(new, (1_767_225_600, 1_767_225_600))  # 2026-01-01
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    plain = await adapter.execute(_request(tmp_path, "inspect_folder"))
+    dated = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=True))
+
+    plain_text = plain.output["terminal_output"][0]["content"]
+    dated_text = dated.output["terminal_output"][0]["content"]
+    assert ", modified " not in plain_text and "- [file] latest.md (1 bytes)" in plain_text  # the text every recording was made from
+    assert "- [file] old.md (1 bytes, modified 2020-01-01 00:00 UTC)" in dated_text
+    assert "- [file] latest.md (1 bytes, modified 2026-01-01 00:00 UTC)" in dated_text
+
+
+def test_only_a_recency_request_turns_the_dates_on() -> None:
+    from agent_control.orchestration.worker import _filesystem_listing_input_with_dates_intent as enrich
+    from agent_control.schemas import TaskRecord
+
+    listing = {"operation": "inspect_folder", "root": "C:/x"}
+    for text in ("Which file in the folder was modified most recently?", "What is the newest file in Downloads?",
+                 "when was budget.csv last modified"):
+        task = TaskRecord(objective=text, metadata={"original_message_text": text})
+        assert enrich(task, "filesystem.manage", listing) == {**listing, "with_dates": True}, text
+    for text in ("List the files in the folder", "Read notes.txt and tell me what it says"):
+        task = TaskRecord(objective=text, metadata={"original_message_text": text})
+        assert enrich(task, "filesystem.manage", listing) == listing, text
+    other = {"operation": "read_file", "path": "C:/x/a.txt"}
+    task = TaskRecord(objective="the newest file", metadata={})
+    assert enrich(task, "filesystem.manage", other) == other
+    assert enrich(task, "browser.open", listing) == listing

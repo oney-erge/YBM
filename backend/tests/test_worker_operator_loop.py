@@ -150,10 +150,12 @@ class QueueOperator:
         # docs/archive/HISTORY.md Part 4 T2.6: one entry per decide() call, so tests
         # can assert exactly when the caller asked for the stronger model.
         self.prefer_major_calls: list[bool] = []
+        self.finish_only_calls: list[bool] = []
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False):
         self.calls += 1
         self.prefer_major_calls.append(prefer_major)
+        self.finish_only_calls.append(finish_only)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
         if self._fallback_flags is not None:
@@ -447,13 +449,16 @@ async def test_operator_loop_exhausts_step_budget(tmp_path) -> None:
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=3)
 
     result = task
-    for _ in range(6):
+    for _ in range(9):
         result = await worker.process_task(result.id)
         if result.status not in {TaskStatus.RUNNING}:
             break
 
     assert result.status == TaskStatus.BLOCKED
-    assert len(result.metadata["operator_history"]) == 3
+    # Three calls ran. The budget then offered an answer, the model asked for a fourth call instead, and it was not run.
+    history = result.metadata["operator_history"]
+    assert [entry["tool_name"] for entry in history].count("llm") == 3
+    assert [entry["status"] for entry in history if entry["tool_name"] == "_stuck_check"] == ["stuck", "stuck_refused"]
     assert "Blocked after the bounded 3-step operator budget" in result.metadata["last_worker_error"]
     audit_events = repos.audit.list_for_task(task.id)
     assert any(
@@ -481,11 +486,38 @@ async def test_operator_step_budget_completes_when_nonempty_fulfillment_contract
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=1)
 
     running = await worker.process_task(task.id)
-    completed = await worker.process_task(running.id)
+    offered = await worker.process_task(running.id)
+    # The model that is out of steps with the work done refuses the offer: the task still completes, with the canned answer.
+    operator.decisions.append(
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+    )
+    refused = await worker.process_task(offered.id)
+    completed = await worker.process_task(refused.id)
 
+    assert offered.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
     assert completed.status == TaskStatus.COMPLETED
     assert completed.metadata["operator_step_budget_completed_after_fulfillment"] is True
     assert "/tmp/adapters/stock_quotes" in completed.metadata["synthesized_answer"]
+
+
+@pytest.mark.asyncio
+async def test_out_of_steps_the_model_is_asked_to_answer_and_its_answer_is_used(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Which items in stock.xlsx have fewer than 20 units?")
+    executor = _executor(_settings(), audit, repos, output={"summary": "gears: 17"})
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Only gears, with 17 units, is under 20."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=1)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"] == "Only gears, with 17 units, is under 20."
+    assert operator.finish_only_calls == [False, True]  # only the step after the offer is held to answering
 
 
 @pytest.mark.asyncio
@@ -543,6 +575,7 @@ async def test_operator_step_budget_allows_targeted_fulfillment_repair(tmp_path)
             tool_input={"operation": "send_screenshot"},
             risk_level=RiskLevel.LOW,
         ),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Sent you a screenshot of the page."),
     ])
     worker = TaskWorker(
         repos,
@@ -555,7 +588,8 @@ async def test_operator_step_budget_allows_targeted_fulfillment_repair(tmp_path)
     after_browser = await worker.process_task(task.id)
     repair_requested = await worker.process_task(after_browser.id)
     after_delivery = await worker.process_task(repair_requested.id)
-    completed = await worker.process_task(after_delivery.id)
+    offered = await worker.process_task(after_delivery.id)  # nothing left to repair: one last step to answer
+    completed = await worker.process_task(offered.id)
 
     assert repair_requested.status == TaskStatus.RUNNING
     assert repair_requested.metadata["operator_history"][-1]["tool_name"] == "_fulfillment_check"
@@ -581,19 +615,68 @@ async def test_operator_loop_blocks_repeated_successful_observations(tmp_path) -
             tool_input={"operation": "summarize_page", "objective": f"attempt {index}"},
             risk_level=RiskLevel.LOW,
         )
-        for index in range(3)
+        for index in range(4)
     ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    # The third identical result offers a finish; the model called the tool a fourth time, so the task stops.
+    assert result.status == TaskStatus.BLOCKED
+    assert "repeated llm:summarize_page calls returned the same result" in result.metadata["last_worker_error"]
+    events = repos.audit.list_for_task(result.id)
+    assert any(event.payload.get("error") == "operator_repeated_no_progress" for event in events)
+
+
+def _same_result_calls(count: int) -> list[OperatorDecision]:
+    return [
+        OperatorDecision(
+            action=OperatorAction.CALL_TOOL, tool_name="llm",
+            tool_input={"operation": "summarize_page", "objective": f"attempt {index}"}, risk_level=RiskLevel.LOW,
+        )
+        for index in range(count)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_third_identical_result_offers_a_finish_instead_of_blocking(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("find a download link")
+    executor = _executor(_settings(), audit, repos, output={"summary": "same page content"})
+    operator = QueueOperator(_same_result_calls(3))
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
 
     result = task
     for _ in range(3):
         result = await worker.process_task(result.id)
 
-    assert result.status == TaskStatus.BLOCKED
-    assert "repeated llm:summarize_page calls returned the same result" in result.metadata["last_worker_error"]
-    events = repos.audit.list_for_task(result.id)
-    assert any(event.payload.get("error") == "operator_repeated_no_progress" for event in events)
+    assert result.status == TaskStatus.RUNNING
+    offer = result.metadata["operator_history"][-1]
+    assert offer["tool_name"] == "_stuck_check" and "Answer now with what you have" in offer["error"]
+    assert "llm:summarize_page" in offer["error"]
 
+
+@pytest.mark.asyncio
+async def test_after_the_offer_the_model_can_finish_with_what_it_has(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("find a download link")
+    executor = _executor(_settings(), audit, repos, output={"summary": "same page content"})
+    operator = QueueOperator([
+        *_same_result_calls(3),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The page only says: same page content. No download link was on it."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert "No download link" in result.metadata["synthesized_answer"]
+    # Only the step after the offer is held to finishing; the three before it were ordinary.
+    assert operator.finish_only_calls == [False, False, False, True]
 
 
 @pytest.mark.asyncio
@@ -607,7 +690,7 @@ async def test_repeated_identical_failures_without_an_operation_are_stopped(tmp_
     worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([search] * 5), operator_max_steps=8)
 
     result = task
-    for _ in range(3):
+    for _ in range(4):  # the third identical error offers a finish; the model searches again, so the fourth stops it
         result = await worker.process_task(result.id)
 
     assert result.status == TaskStatus.BLOCKED
@@ -2828,7 +2911,7 @@ async def test_a_model_that_keeps_repeating_a_done_side_effect_is_stopped(tmp_pa
                         operator_max_steps=10)
 
     result = task
-    for _ in range(4):
+    for _ in range(5):  # the fourth call offers a finish; asking to create it again once more stops the task
         result = await worker.process_task(result.id)
 
     assert len(adapter.requests) == 1

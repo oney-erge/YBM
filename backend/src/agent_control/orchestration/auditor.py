@@ -119,6 +119,18 @@ class AuditorService:
             logger.warning("auditor provider call failed; not blocking completion on it", exc_info=True)
             return AuditResult(sufficient=True, answer=None, reason="auditor_error")
         text = result.strip()
+        if text and looks_like_audit_commentary(text):
+            # The reply discusses the check instead of giving a verdict. Ask once for the verdict alone: the essay often
+            # concludes that something is missing (a screenshot never sent), which is exactly what the check is for.
+            try:
+                retry = await self.provider.generate_text(
+                    AUDITOR_SYSTEM_PROMPT,
+                    f"{user_prompt}\n\n{_VERDICT_ONLY}",
+                )
+                text = retry.strip() or text
+                self.last_response_text = getattr(self.provider, "last_response_text", None)
+            except Exception:
+                logger.warning("auditor verdict retry failed; judging its first reply", exc_info=True)
         if not text:
             return AuditResult(sufficient=False, reason="auditor_returned_empty")
         if text.upper().startswith("INSUFFICIENT"):
@@ -131,13 +143,23 @@ class AuditorService:
         return AuditResult(sufficient=True, answer=text)
 
 
+_VERDICT_ONLY = (
+    "Your last reply discussed the audit instead of giving its result. Reply with ONLY one of these, nothing else: the "
+    "answer to the user's request in plain words, or one line that starts with INSUFFICIENT: and says what is missing."
+)
+
+# Phrases that talk about the check (its evidence, the objective, the steps) and that a plain answer to a user does not use.
 _AUDIT_COMMENTARY = re.compile(
-    r"\b(?:sufficiency check|the raw output (?:shows|indicates|successfully|contains|confirms)|"
-    r"the objective is to|steps? \d+(?:\s*-\s*\d+)? (?:failed|succeeded)|evidence is (?:sufficient|insufficient))\b",
+    r"\b(?:sufficiency check|the raw output|the (?:normalized )?objective (?:is to|requires|asks|states)|"
+    r"the user'?s? (?:request|objective) (?:is to|requires|asks)|steps? \d+(?:\s*-\s*\d+)? (?:failed|succeeded)|"
+    r"evidence is (?:sufficient|insufficient)|deliverable check)\b",
     re.IGNORECASE,
 )
+# A numbered list of bold headings ("1.  **Describe the page**:") is an audit write-up, not an answer.
+_NUMBERED_BOLD = re.compile(r"^\s*\d+\.\s+\*\*", re.MULTILINE)
 
 
 def looks_like_audit_commentary(text: str) -> bool:
     """Whether an auditor reply talks about the audit (its evidence, its checks) rather than answering the request."""
-    return bool(_AUDIT_COMMENTARY.search(text[:800]))
+    head = text[:800]
+    return bool(_AUDIT_COMMENTARY.search(head)) or len(_NUMBERED_BOLD.findall(head)) >= 2

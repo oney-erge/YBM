@@ -23,6 +23,7 @@ from agent_control.orchestration.fulfillment import (
     fulfillment_guidance,
     validate_fulfillment,
 )
+from agent_control.orchestration.number_check import ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.orchestration.signals import sweep_expired_approvals
@@ -99,8 +100,12 @@ ORPHANABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.INTERPRETING)
 CHECK_ENTRY_FULFILLMENT = "_fulfillment_check"
 CHECK_ENTRY_AUDIT = "_audit_check"
 CHECK_ENTRY_CLARIFICATION = "_clarification_check"
+# Offered once, when the same call keeps returning the same result: answer with what there is instead of stopping.
+CHECK_ENTRY_STUCK = "_stuck_check"
+# A calculated number in the answer that no tool result produced (orchestration/number_check.py).
+CHECK_ENTRY_NUMBER = "_number_check"
 CHECK_ENTRY_NAMES = frozenset(
-    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION}
+    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER}
 )
 
 def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
@@ -252,6 +257,7 @@ class TaskWorker:
         fulfillment_mode: str = "auditor",
         audit_min_tool_calls: int = 2,
         scope_tools: bool = False,
+        verify_numbers: bool = True,
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
@@ -282,6 +288,7 @@ class TaskWorker:
         self._auditor_owns_fulfillment = fulfillment_mode == "auditor" and auditor is not None
         self.audit_min_tool_calls = max(1, int(audit_min_tool_calls))
         self.scope_tools = scope_tools
+        self.verify_numbers = verify_numbers
         # None disables the persona learning pass entirely (tests, and any
         # embedder that never configured a persona file).
         self.persona_config = persona_config
@@ -559,8 +566,29 @@ class TaskWorker:
         fulfillment_repair_count = sum(
             1 for entry in history if entry.get("tool_name") == CHECK_ENTRY_FULFILLMENT
         )
-        if tool_call_count >= self.operator_max_steps + fulfillment_repair_count:
+        budget_reached = tool_call_count >= self.operator_max_steps + fulfillment_repair_count
+        offer_pending = _finish_offer_pending(history)
+        if budget_reached and not offer_pending:
             fulfillment = validate_fulfillment(latest)
+            repair_possible = bool(fulfillment.first_gap) and fulfillment_repair_count < 2
+            if not repair_possible and not any(
+                isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history
+            ):
+                # Out of steps with nothing left to repair. Ending now gave the user a canned line ("Completed the requested
+                # work in <folder>") when the work was done and "Blocked" when it was not, although the model usually knows
+                # what it found or why it could not finish. One last step, held to answering or asking, lets it say so;
+                # what it answers goes through the same checks.
+                history.append({
+                    "tool_name": CHECK_ENTRY_STUCK,
+                    "input": None,
+                    "status": "stuck",
+                    "error": (
+                        "The step budget is used up. Answer now with what you have: state what you found, and say plainly "
+                        "anything you could not do (action done), or ask the user one question (action ask_user). "
+                        "Do not call another tool."
+                    ),
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
             if fulfillment.expected and fulfillment.ok:
                 # The model can keep exploring after it has already produced
                 # every objective-derived deliverable. Failing solely because
@@ -673,6 +701,8 @@ class TaskWorker:
                     decision = await self.operator.decide(
                         latest.objective, self._planner_context(metadata=latest.metadata), history,
                         memory_context=memory_context, prefer_major=prefer_major,
+                        # Only passed when it applies, so an Operator without the option is called exactly as before.
+                        **({"finish_only": True} if offer_pending else {}),
                     )
                 latest = self._record_llm_usage(
                     latest, "operator", getattr(self.operator, "last_usage", None),
@@ -695,6 +725,15 @@ class TaskWorker:
                     latest, {**latest.metadata, "operator_history": history},
                     TaskStatus.FAILED, f"operator_decide_failed: {reason}"[:400],
                 )
+
+        if budget_reached and offer_pending and decision.action in _TOOL_RUNNING_ACTIONS:
+            history.append({
+                "tool_name": CHECK_ENTRY_STUCK,
+                "input": None,
+                "status": "stuck_refused",
+                "error": "The model asked for another tool after the step budget was used up; nothing was run.",
+            })
+            return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
 
         self.audit.append(
             AuditEventType.TASK_STATE_CHANGED, actor="operator", task_id=latest.id,
@@ -728,6 +767,24 @@ class TaskWorker:
             worth_auditing = (
                 _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
             )
+            unseen = self._numbers_no_tool_produced(latest, history, final_answer, answer_copied_from_results)
+            if unseen:
+                history.append({
+                    "tool_name": CHECK_ENTRY_NUMBER,
+                    "input": None,
+                    "status": "number_gap",
+                    "error": (
+                        f"Declared done, but {', '.join(unseen)} in your answer did not come from any tool result, and the "
+                        "request asks for a calculation. Work it out with code.interpreter (run_python, in the `code` "
+                        "field) from the data you already have, then answer with the number the code printed."
+                    ),
+                    "step_id": step_id,
+                })
+                return self.repositories.tasks.update_metadata(
+                    latest.id,
+                    {**latest.metadata, "operator_history": history, "operator_number_gap_count": 1},
+                    TaskStatus.RUNNING,
+                )
             evidence_offset = _post_clarification_history_offset(latest, history)
             content_entry = (
                 _last_content_tool_history_entry(history[evidence_offset:])
@@ -964,6 +1021,7 @@ class TaskWorker:
             self.executor.tool_definitions,
         )
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
+        tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
         tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
@@ -1008,18 +1066,13 @@ class TaskWorker:
                     return finished
             repeated_call = _repeated_no_progress_call(history)
             if repeated_call is not None:
-                return self._transition_operator(
-                    latest,
-                    {
-                        **latest.metadata,
-                        "operator_history": history,
-                        "last_worker_error": (
-                            f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
-                            "model kept asking to repeat it. Nothing was done twice."
-                        ),
-                    },
-                    TaskStatus.BLOCKED,
-                    "operator_repeated_no_progress",
+                return self._offer_finish_or_block(
+                    latest, history,
+                    called=f"{tool_name}:{tool_input.get('operation') or ''}".rstrip(":"),
+                    blocked_message=(
+                        f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
+                        "model kept asking to repeat it. Nothing was done twice."
+                    ),
                 )
             return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
         tool_def = self.executor.tool_definitions.get(tool_name)
@@ -1107,19 +1160,14 @@ class TaskWorker:
         if repeated_call is not None:
             tool_name, operation = repeated_call
             called = f"{tool_name}:{operation}" if operation else tool_name
-            metadata = {
-                **recorded.metadata,
-                "operator_history": history,
-                "last_worker_error": (
+            return self._offer_finish_or_block(
+                recorded.model_copy(update={"metadata": {**recorded.metadata, "operator_history": history}}),
+                history,
+                called=called,
+                blocked_message=(
                     f"Blocked after repeated {called} calls returned the same result; "
                     "stopped to avoid a no-progress loop. A different capability or user input is required."
                 ),
-            }
-            return self._transition_operator(
-                recorded,
-                metadata,
-                TaskStatus.BLOCKED,
-                "operator_repeated_no_progress",
             )
         return self.repositories.tasks.update_metadata(recorded.id, {**recorded.metadata, "operator_history": history})
 
@@ -2040,6 +2088,49 @@ class TaskWorker:
             )
         return updated
 
+    def _numbers_no_tool_produced(
+        self, task: TaskRecord, history: list[dict[str, Any]], answer: str | None, copied_from_results: bool
+    ) -> list[str]:
+        """Result-sized numbers in the answer that no tool produced, once per task and only when code can be run."""
+        if not self.verify_numbers or copied_from_results or not answer:
+            return []
+        if int(task.metadata.get("operator_number_gap_count", 0)) >= 1:
+            return []
+        interpreter = self.executor.tool_definitions.get("code.interpreter")
+        if interpreter is None or not interpreter.enabled:
+            return []
+        request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+        return ungrounded_numbers(request, answer, history)
+
+    def _offer_finish_or_block(
+        self, task: TaskRecord, history: list[dict[str, Any]], *, called: str, blocked_message: str
+    ) -> TaskRecord:
+        """The same call keeps returning the same result. Once, tell the model to answer with what there is; then stop.
+
+        Stopping at once left the user with "Blocked" although the model often had what the answer needed (a file it had
+        read, a search that found nothing), or could say plainly that it found nothing. The first time, a check entry
+        tells it so and, when the Operator's reply is held to a schema, the next reply can only finish or ask. If it
+        still calls tools and gets the same result, the task stops as before.
+        """
+        if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history if isinstance(entry, dict)):
+            return self._transition_operator(
+                task,
+                {**task.metadata, "operator_history": history, "last_worker_error": blocked_message},
+                TaskStatus.BLOCKED,
+                "operator_repeated_no_progress",
+            )
+        history.append({
+            "tool_name": CHECK_ENTRY_STUCK,
+            "input": None,
+            "status": "stuck",
+            "error": (
+                f"{called} has returned the same result several times, so calling it again will not help. Answer now with "
+                "what you have: say plainly what you found and what you could not do (action done), or ask the user one "
+                "question (action ask_user). Do not call that tool again."
+            ),
+        })
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
     def _refuse_unrequested_coding_agent(
         self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
     ) -> TaskRecord:
@@ -2611,6 +2702,33 @@ def _existing_absolute_directories(text: str) -> list[str]:
     return candidates
 
 
+# "newest", "latest", "most recently modified", "when was it last changed": the answer is in a file's modified time.
+_RECENCY_INTENT = re.compile(
+    r"\b(?:newest|oldest|latest|most recent(?:ly)?|last (?:modified|changed|updated|edited)|recently (?:modified|changed|updated|edited)|"
+    r"modified (?:most )?recently|(?:when|what time) (?:was|were) \w+(?: \w+){0,4} (?:last )?(?:modified|changed|updated|edited))\b",
+    re.IGNORECASE,
+)
+
+
+def _filesystem_listing_input_with_dates_intent(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Show modified times in a folder listing or search when the request is about which file is newest or oldest.
+
+    The listing used to carry sizes only, so "which file was modified most recently?" could not be answered and the model
+    looked for a tool that reports timestamps. Dates are added only for such a request: every other listing, and every
+    prompt built from one, stays exactly as it was.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") not in {"inspect_folder", "search"}:
+        return tool_input
+    request_text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    if not _RECENCY_INTENT.search(request_text):
+        return tool_input
+    return {**tool_input, "with_dates": True}
+
+
 def _filesystem_search_input_with_content_intent(
     task: TaskRecord,
     tool_name: str | None,
@@ -2959,6 +3077,8 @@ def _satisfied_task_does_not_need_clarification(
     required before asking the operator to finish instead of seek polish or
     confirmation that the user never made a prerequisite.
     """
+    if _user_asked_to_be_asked_first(task):
+        return False
     validation = validate_fulfillment(task)
     if not validation.expected or not validation.ok:
         return False
@@ -2967,6 +3087,27 @@ def _satisfied_task_does_not_need_clarification(
         and entry.get("status") == ToolResultStatus.SUCCEEDED.value
         for entry in history
     )
+
+
+# "Ask me before ...", "check with me first", "wait for my approval": the user made the question part of the request.
+_ASK_FIRST = re.compile(
+    r"\b(?:ask|check with|confirm with|run (?:it|this|that) by|clear (?:it|this|that) with)\s+me\b"
+    r"|\b(?:wait for|get|need|want|require)\s+(?:my|your)\s+(?:ok|okay|approval|permission|go-ahead|confirmation|consent|sign-off)\b"
+    r"|\blet me (?:approve|confirm|review|decide)\b"
+    r"|\bonly (?:after|with) (?:my|i)\s+(?:approve|approval|confirm|ok)\b",
+    re.IGNORECASE,
+)
+
+
+def _user_asked_to_be_asked_first(task: TaskRecord) -> bool:
+    """Whether the request itself says to ask the user before acting.
+
+    The guard that turns away an optional question after the work is done judged "Rewrite this file. Ask me before
+    changing anything on disk" satisfied once the file was read, rejected the permission question the model rightly
+    asked, and ended the task with a summary of the read: the change was never offered to the user.
+    """
+    text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    return bool(_ASK_FIRST.search(text))
 
 
 def _still_asking_after_the_work_is_done(task: TaskRecord, history: list[dict[str, Any]]) -> bool:
@@ -3373,6 +3514,14 @@ def _replay_call_decision(step: dict[str, Any], step_number: int, total: int) ->
         risk_level=RiskLevel(str(step.get("risk_level") or "low")),
         reasoning=f"Replaying step {step_number}/{total} from the source task.",
     )
+
+
+_TOOL_RUNNING_ACTIONS = frozenset({OperatorAction.CALL_TOOL, OperatorAction.CALL_TOOLS_PARALLEL, OperatorAction.DELEGATE})
+
+
+def _finish_offer_pending(history: list[dict[str, Any]]) -> bool:
+    """Whether the last thing in the history is an offer to answer, not yet taken up or refused."""
+    return bool(history) and history[-1].get("tool_name") == CHECK_ENTRY_STUCK and history[-1].get("status") == "stuck"
 
 
 def _fulfilled_step_budget_answer(task: TaskRecord, history: list[dict[str, Any]]) -> str:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus, ToolVerification
+from agent_control.tools.office_text import SUFFIXES as OFFICE_SUFFIXES, office_text
 from agent_control.tools.contracts import (
     FilesystemApplyManifestInput,
     FilesystemCollectFolderSnapshotInput,
@@ -39,6 +41,9 @@ from agent_control.tools.spec import (
 
 
 logger = logging.getLogger(__name__)
+
+# A search for a word that no file name contains reads files up to this size to look for it in their text.
+_TEXT_SEARCH_MAX_BYTES = 1_000_000
 
 
 class FilesystemManageAdapter:
@@ -81,6 +86,7 @@ class FilesystemManageAdapter:
             return failed_result(request, f"filesystem operation failed: {exc}")
 
         output["operation"] = operation
+        output["with_dates"] = bool(request.input.get("with_dates"))
         output["terminal_output"] = [_terminal_output(operation, output)]
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
@@ -105,16 +111,40 @@ class FilesystemManageAdapter:
 
     def _search(self, request: ToolCallRequest) -> dict[str, Any]:
         root = self._safe_path(str(request.input["root"]))
-        query = str(request.input["query"]).lower()
+        query = str(request.input["query"]).lower().replace("\\", "/")
         wildcard_query = any(char in query for char in "*?[")
+        # A model writes the pattern the way a shell would: "**/budget*.csv", "docs/*.pdf". The match is on a file's name
+        # and on its path under the root, so the folder prefix cannot make a name that is there match nothing.
+        name_pattern = query.rsplit("/", 1)[-1] if wildcard_query else query
         include_content = bool(request.input.get("include_content", False))
         max_results = int(request.input.get("max_results") or 100)
-        results = []
+        results = self._search_pass(root, query, name_pattern, wildcard_query, include_content, max_results)
+        in_text = False
+        if not results and not include_content and not wildcard_query:
+            # "Which file mentions tangerine?" names no file. A search by word that matches no file name is looked for in
+            # the text of the files instead of coming back empty, which the model then repeated until it was stopped.
+            results = self._search_pass(root, query, name_pattern, wildcard_query, True, max_results, text_only=True)
+            in_text = bool(results)
+        where = " (no file name matched; found in the text of the file)" if in_text else ""
+        return {
+            "root": str(root),
+            "entries": results,
+            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}{where}.",
+        }
+
+    def _search_pass(
+        self, root: Path, query: str, name_pattern: str, wildcard_query: bool, include_content: bool, max_results: int,
+        *, text_only: bool = False,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
         for path in _walk_limited(root, max_depth=20):
             if path == root:
                 continue
-            matched = (
-                fnmatch.fnmatch(path.name.lower(), query)
+            if text_only and not (path.is_file() and path.stat().st_size <= _TEXT_SEARCH_MAX_BYTES):
+                continue
+            matched = False if text_only else (
+                fnmatch.fnmatch(path.name.lower(), name_pattern)
+                or fnmatch.fnmatch(path.relative_to(root).as_posix().lower(), query)
                 if wildcard_query
                 else query in path.name.lower()
             )
@@ -145,11 +175,7 @@ class FilesystemManageAdapter:
                 results.append(item)
                 if len(results) >= max_results:
                     break
-        return {
-            "root": str(root),
-            "entries": results,
-            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}.",
-        }
+        return results
 
     def _resolve_desktop_item(self, request: ToolCallRequest) -> dict[str, Any]:
         query = str(request.input.get("query") or request.input.get("name") or "").lower().strip()
@@ -216,7 +242,10 @@ class FilesystemManageAdapter:
         max_chars = int(request.input.get("max_chars") or 12000)
         text = _extract_supported_text(path, max_chars=max_chars)
         if not text:
-            text = path.read_bytes()[:max_chars].decode("utf-8", errors="ignore")
+            raw = path.read_bytes()[:max_chars]
+            # A file that is not text (an image, an archive, a format no reader here knows) used to come back as its
+            # bytes decoded, a page of noise the model then tried to answer from. Say there is nothing to read instead.
+            text = "" if b"\x00" in raw[:4096] else raw.decode("utf-8", errors="ignore")
         text = _compact_text(text, limit=max_chars)
         summary = _simple_summary(text) if text else "No readable text was extracted from this file."
         return {
@@ -641,6 +670,13 @@ def _entry(root: Path, path: Path) -> dict[str, Any]:
     }
 
 
+def _modified_label(epoch: object) -> str:
+    """", modified 2026-11-10 06:30 UTC" for a listing line, so "which file changed last?" can be answered from the listing."""
+    if not isinstance(epoch, (int, float)):
+        return ""
+    return ", modified " + datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _rename_stem(path: Path) -> str:
     text = _content_for_rename(path)
     tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9]+", text)]
@@ -740,6 +776,14 @@ def _extract_supported_text(path: Path, *, max_chars: int) -> str:
         except Exception:
             logger.debug("pypdf extraction failed for %s; falling back to raw bytes decode", path, exc_info=True)
             return _compact_text(path.read_bytes().decode("utf-8", errors="ignore"), limit=max_chars)
+    if suffix in OFFICE_SUFFIXES:
+        # Word, Excel, PowerPoint and zip files are archives: reading them as text returned the archive's bytes. The
+        # same reader document.manage extract_text uses gives their paragraphs, cells, slide text or file list.
+        try:
+            return _compact_text(office_text(path) or "", limit=max_chars)
+        except ValueError:
+            logger.debug("%s is not a readable %s file", path, suffix, exc_info=True)
+            return ""
     return ""
 
 
@@ -776,7 +820,8 @@ def _human_filesystem_output(operation: str, output: dict[str, Any]) -> str:
             kind = "folder" if item.get("is_dir") else "file"
             name = item.get("relative_path") or item.get("path") or ""
             size = item.get("size_bytes")
-            suffix = f" ({size} bytes)" if size is not None and not item.get("is_dir") else ""
+            modified = _modified_label(item.get("modified_at")) if output.get("with_dates") else ""
+            suffix = f" ({size} bytes{modified})" if size is not None and not item.get("is_dir") else ""
             lines.append(f"- [{kind}] {name}{suffix}")
             preview = item.get("content_preview") or item.get("content_summary")
             if preview:

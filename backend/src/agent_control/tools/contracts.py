@@ -486,6 +486,8 @@ class FilesystemInspectInput(ToolInputModel):
     root: str = Field(min_length=1)
     max_depth: int = Field(default=2, ge=0, le=10)
     max_entries: int = Field(default=200, ge=1, le=5000)
+    # Show each file's modified time in the listing. Turned on by the worker for a request about what changed last.
+    with_dates: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -509,6 +511,7 @@ class FilesystemSearchInput(ToolInputModel):
     query: str = Field(min_length=1)
     include_content: bool = False
     max_results: int = Field(default=100, ge=1, le=1000)
+    with_dates: bool = False
 
 
 class FilesystemResolveDesktopItemInput(ToolInputModel):
