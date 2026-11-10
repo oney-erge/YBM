@@ -61,9 +61,13 @@ class MemoryManageAdapter:
     def _list(self, request: ToolCallRequest) -> dict:
         query = request.input.get("query")
         facts = self.repositories.memory_facts.list_all(query=str(query) if query else None)
+        # The text is what the model reads: a bare count left "what do you remember about me?" with nothing to answer from.
+        lines = [f"- [{fact.category}] {fact.content}" for fact in facts[:40]]
+        if len(facts) > 40:
+            lines.append(f"- ... {len(facts) - 40} more")
         return {
             "facts": [f.model_dump(mode="json") for f in facts],
-            "summary": f"Found {len(facts)} remembered fact(s).",
+            "summary": f"Found {len(facts)} remembered fact(s)." + ("\n" + "\n".join(lines) if lines else ""),
         }
 
     def _forget(self, request: ToolCallRequest) -> dict:
