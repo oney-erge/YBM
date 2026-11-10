@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+from datetime import datetime, timezone
 import json
 import logging
 from pathlib import Path
@@ -85,6 +86,7 @@ class FilesystemManageAdapter:
             return failed_result(request, f"filesystem operation failed: {exc}")
 
         output["operation"] = operation
+        output["with_dates"] = bool(request.input.get("with_dates"))
         output["terminal_output"] = [_terminal_output(operation, output)]
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
@@ -668,6 +670,13 @@ def _entry(root: Path, path: Path) -> dict[str, Any]:
     }
 
 
+def _modified_label(epoch: object) -> str:
+    """", modified 2026-11-10 06:30 UTC" for a listing line, so "which file changed last?" can be answered from the listing."""
+    if not isinstance(epoch, (int, float)):
+        return ""
+    return ", modified " + datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _rename_stem(path: Path) -> str:
     text = _content_for_rename(path)
     tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9]+", text)]
@@ -811,7 +820,8 @@ def _human_filesystem_output(operation: str, output: dict[str, Any]) -> str:
             kind = "folder" if item.get("is_dir") else "file"
             name = item.get("relative_path") or item.get("path") or ""
             size = item.get("size_bytes")
-            suffix = f" ({size} bytes)" if size is not None and not item.get("is_dir") else ""
+            modified = _modified_label(item.get("modified_at")) if output.get("with_dates") else ""
+            suffix = f" ({size} bytes{modified})" if size is not None and not item.get("is_dir") else ""
             lines.append(f"- [{kind}] {name}{suffix}")
             preview = item.get("content_preview") or item.get("content_summary")
             if preview:

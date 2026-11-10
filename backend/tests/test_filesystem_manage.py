@@ -485,3 +485,46 @@ async def test_a_large_file_is_not_read_by_the_text_search(tmp_path) -> None:
     result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
 
     assert result.output["entries"] == []
+
+
+
+# ---- modified times, shown only when the request is about which file is newest or oldest -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_listing_shows_modified_times_only_when_asked(tmp_path) -> None:
+    import os
+
+    old, new = tmp_path / "old.md", tmp_path / "latest.md"
+    old.write_text("a", encoding="utf-8")
+    new.write_text("b", encoding="utf-8")
+    os.utime(old, (1_577_836_800, 1_577_836_800))  # 2020-01-01
+    os.utime(new, (1_767_225_600, 1_767_225_600))  # 2026-01-01
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    plain = await adapter.execute(_request(tmp_path, "inspect_folder"))
+    dated = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=True))
+
+    plain_text = plain.output["terminal_output"][0]["content"]
+    dated_text = dated.output["terminal_output"][0]["content"]
+    assert ", modified " not in plain_text and "- [file] latest.md (1 bytes)" in plain_text  # the text every recording was made from
+    assert "- [file] old.md (1 bytes, modified 2020-01-01 00:00 UTC)" in dated_text
+    assert "- [file] latest.md (1 bytes, modified 2026-01-01 00:00 UTC)" in dated_text
+
+
+def test_only_a_recency_request_turns_the_dates_on() -> None:
+    from agent_control.orchestration.worker import _filesystem_listing_input_with_dates_intent as enrich
+    from agent_control.schemas import TaskRecord
+
+    listing = {"operation": "inspect_folder", "root": "C:/x"}
+    for text in ("Which file in the folder was modified most recently?", "What is the newest file in Downloads?",
+                 "when was budget.csv last modified"):
+        task = TaskRecord(objective=text, metadata={"original_message_text": text})
+        assert enrich(task, "filesystem.manage", listing) == {**listing, "with_dates": True}, text
+    for text in ("List the files in the folder", "Read notes.txt and tell me what it says"):
+        task = TaskRecord(objective=text, metadata={"original_message_text": text})
+        assert enrich(task, "filesystem.manage", listing) == listing, text
+    other = {"operation": "read_file", "path": "C:/x/a.txt"}
+    task = TaskRecord(objective="the newest file", metadata={})
+    assert enrich(task, "filesystem.manage", other) == other
+    assert enrich(task, "browser.open", listing) == listing

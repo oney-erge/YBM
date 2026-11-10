@@ -1021,6 +1021,7 @@ class TaskWorker:
             self.executor.tool_definitions,
         )
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
+        tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
         tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
@@ -2699,6 +2700,33 @@ def _existing_absolute_directories(text: str) -> list[str]:
         if resolved and resolved.casefold() not in {item.casefold() for item in candidates}:
             candidates.append(resolved)
     return candidates
+
+
+# "newest", "latest", "most recently modified", "when was it last changed": the answer is in a file's modified time.
+_RECENCY_INTENT = re.compile(
+    r"\b(?:newest|oldest|latest|most recent(?:ly)?|last (?:modified|changed|updated|edited)|recently (?:modified|changed|updated|edited)|"
+    r"modified (?:most )?recently|(?:when|what time) (?:was|were) \w+(?: \w+){0,4} (?:last )?(?:modified|changed|updated|edited))\b",
+    re.IGNORECASE,
+)
+
+
+def _filesystem_listing_input_with_dates_intent(
+    task: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+) -> dict[str, Any]:
+    """Show modified times in a folder listing or search when the request is about which file is newest or oldest.
+
+    The listing used to carry sizes only, so "which file was modified most recently?" could not be answered and the model
+    looked for a tool that reports timestamps. Dates are added only for such a request: every other listing, and every
+    prompt built from one, stays exactly as it was.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") not in {"inspect_folder", "search"}:
+        return tool_input
+    request_text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    if not _RECENCY_INTENT.search(request_text):
+        return tool_input
+    return {**tool_input, "with_dates": True}
 
 
 def _filesystem_search_input_with_content_intent(
