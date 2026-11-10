@@ -281,7 +281,11 @@ class FilesystemManageAdapter:
             "summary": (
                 f"Wrote text file {path}."
                 if not renamed
-                else f"Wrote text file {path} (requested path {original_path.name} already existed; auto-renamed)."
+                else (
+                    f"Wrote text file {path} (requested path {original_path.name} already existed; auto-renamed). "
+                    f"{original_path.name} itself was NOT changed. To replace it, call write_text_file again with the same "
+                    "path and overwrite set to true."
+                )
             ),
         }
         if renamed:
@@ -464,6 +468,12 @@ class FilesystemManageAdapter:
                 continue
             if not source.exists() or not source.is_file():
                 raise ValueError(f"source file does not exist: {source}")
+            if destination.is_dir():
+                # A folder as the destination means "into that folder", and the file keeps its name. It used to count as a
+                # name collision: moving three files to "." renamed them trash_2, trash_3, trash_4 outside the folder.
+                destination = destination / source.name
+            if destination.resolve() == source.resolve():
+                raise ValueError(f"source and destination are the same file, nothing to move: {source}")
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists() and not overwrite:
                 destination = _dedupe_destination(destination)
