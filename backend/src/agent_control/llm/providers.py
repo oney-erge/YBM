@@ -38,7 +38,10 @@ class LLMProvider(Protocol):
         output_model: type[T],
         *,
         temperature: float | None = None,
+        response_schema: dict | None = None,
     ) -> T:
+        """``response_schema`` is an optional, stricter JSON schema than ``output_model``'s own, for a server that can
+        enforce one while the model writes. The reply is still validated as ``output_model``."""
         ...
 
 
@@ -100,18 +103,38 @@ class OpenAICompatibleProvider:
         output_model: type[T],
         *,
         temperature: float | None = None,
+        response_schema: dict | None = None,
     ) -> T:
         schema = output_model.model_json_schema()
+        data = None
+        if response_schema is not None and not is_hosted(self.profile.provider, self.profile.base_url):
+            # The strict schema is only worth its size to a local server that enforces it. A server that refuses it
+            # (an older LocalDeploy counts its size against the prompt limit) gets the plain schema instead.
+            try:
+                data = await self._chat(
+                    system_prompt,
+                    user_prompt,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {"name": output_model.__name__, "schema": response_schema},
+                    },
+                    temperature=temperature,
+                )
+            except ValueError as exc:
+                if not _should_retry_structured_without_response_format(exc):
+                    raise
+                logger.warning("the server refused the strict response schema; using the plain one: %s", str(exc)[:200])
         try:
-            data = await self._chat(
-                system_prompt,
-                user_prompt,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {"name": output_model.__name__, "schema": schema},
-                },
-                temperature=temperature,
-            )
+            if data is None:
+                data = await self._chat(
+                    system_prompt,
+                    user_prompt,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {"name": output_model.__name__, "schema": schema},
+                    },
+                    temperature=temperature,
+                )
         except ValueError as exc:
             if not _should_retry_structured_without_response_format(exc):
                 raise
@@ -235,9 +258,11 @@ class FailoverLLMProvider:
         output_model: type[T],
         *,
         temperature: float | None = None,
+        response_schema: dict | None = None,
     ) -> T:
+        extra = {} if response_schema is None else {"response_schema": response_schema}
         return await self._call(
-            "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature
+            "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature, **extra
         )
 
     async def _call(self, method: str, *args, **kwargs):
@@ -373,9 +398,11 @@ class ChainLLMProvider:
         output_model: type[T],
         *,
         temperature: float | None = None,
+        response_schema: dict | None = None,
     ) -> T:
+        extra = {} if response_schema is None else {"response_schema": response_schema}
         return await self._call(
-            "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature
+            "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature, **extra
         )
 
     async def _call(self, method: str, *args, **kwargs):

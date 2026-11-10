@@ -5,6 +5,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `operator.constrain_calls` (off by default) holds the Operator's reply to a JSON schema built from the tool definitions, so a
+  tool call with a wrong argument name, an unknown tool or no operation cannot be written. It needs a local server that enforces
+  a response schema (llama.cpp, Ollama) and LocalDeploy with its response-schema fix; otherwise the plain schema is used.
+
 ## [0.1.5] - 2026-10-22
 
 ### Security
