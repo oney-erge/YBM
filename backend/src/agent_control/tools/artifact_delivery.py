@@ -83,7 +83,8 @@ class ArtifactDeliveryAdapter:
             "delivered": False,
             "artifact_ids": [artifact.id for artifact in artifacts],
             "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
-            "summary": f"Found {len(artifacts)} artifact(s) for task {request.task_id}.",
+            "summary": f"Found {len(artifacts)} artifact(s) for task {request.task_id}."
+            + "".join(f"\n- {artifact.type.value}: {artifact.uri or artifact.id}" for artifact in artifacts[:25]),
         }
 
     async def _send(self, request: ToolCallRequest, operation: str) -> dict[str, Any]:
