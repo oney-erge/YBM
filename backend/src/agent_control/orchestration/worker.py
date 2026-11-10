@@ -566,8 +566,29 @@ class TaskWorker:
         fulfillment_repair_count = sum(
             1 for entry in history if entry.get("tool_name") == CHECK_ENTRY_FULFILLMENT
         )
-        if tool_call_count >= self.operator_max_steps + fulfillment_repair_count:
+        budget_reached = tool_call_count >= self.operator_max_steps + fulfillment_repair_count
+        offer_pending = _finish_offer_pending(history)
+        if budget_reached and not offer_pending:
             fulfillment = validate_fulfillment(latest)
+            repair_possible = bool(fulfillment.first_gap) and fulfillment_repair_count < 2
+            if not repair_possible and not any(
+                isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history
+            ):
+                # Out of steps with nothing left to repair. Ending now gave the user a canned line ("Completed the requested
+                # work in <folder>") when the work was done and "Blocked" when it was not, although the model usually knows
+                # what it found or why it could not finish. One last step, held to answering or asking, lets it say so;
+                # what it answers goes through the same checks.
+                history.append({
+                    "tool_name": CHECK_ENTRY_STUCK,
+                    "input": None,
+                    "status": "stuck",
+                    "error": (
+                        "The step budget is used up. Answer now with what you have: state what you found, and say plainly "
+                        "anything you could not do (action done), or ask the user one question (action ask_user). "
+                        "Do not call another tool."
+                    ),
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
             if fulfillment.expected and fulfillment.ok:
                 # The model can keep exploring after it has already produced
                 # every objective-derived deliverable. Failing solely because
@@ -681,7 +702,7 @@ class TaskWorker:
                         latest.objective, self._planner_context(metadata=latest.metadata), history,
                         memory_context=memory_context, prefer_major=prefer_major,
                         # Only passed when it applies, so an Operator without the option is called exactly as before.
-                        **({"finish_only": True} if history and history[-1].get("tool_name") == CHECK_ENTRY_STUCK else {}),
+                        **({"finish_only": True} if offer_pending else {}),
                     )
                 latest = self._record_llm_usage(
                     latest, "operator", getattr(self.operator, "last_usage", None),
@@ -704,6 +725,15 @@ class TaskWorker:
                     latest, {**latest.metadata, "operator_history": history},
                     TaskStatus.FAILED, f"operator_decide_failed: {reason}"[:400],
                 )
+
+        if budget_reached and offer_pending and decision.action in _TOOL_RUNNING_ACTIONS:
+            history.append({
+                "tool_name": CHECK_ENTRY_STUCK,
+                "input": None,
+                "status": "stuck_refused",
+                "error": "The model asked for another tool after the step budget was used up; nothing was run.",
+            })
+            return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
 
         self.audit.append(
             AuditEventType.TASK_STATE_CHANGED, actor="operator", task_id=latest.id,
@@ -3456,6 +3486,14 @@ def _replay_call_decision(step: dict[str, Any], step_number: int, total: int) ->
         risk_level=RiskLevel(str(step.get("risk_level") or "low")),
         reasoning=f"Replaying step {step_number}/{total} from the source task.",
     )
+
+
+_TOOL_RUNNING_ACTIONS = frozenset({OperatorAction.CALL_TOOL, OperatorAction.CALL_TOOLS_PARALLEL, OperatorAction.DELEGATE})
+
+
+def _finish_offer_pending(history: list[dict[str, Any]]) -> bool:
+    """Whether the last thing in the history is an offer to answer, not yet taken up or refused."""
+    return bool(history) and history[-1].get("tool_name") == CHECK_ENTRY_STUCK and history[-1].get("status") == "stuck"
 
 
 def _fulfilled_step_budget_answer(task: TaskRecord, history: list[dict[str, Any]]) -> str:

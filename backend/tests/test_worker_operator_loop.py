@@ -449,13 +449,16 @@ async def test_operator_loop_exhausts_step_budget(tmp_path) -> None:
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=3)
 
     result = task
-    for _ in range(6):
+    for _ in range(9):
         result = await worker.process_task(result.id)
         if result.status not in {TaskStatus.RUNNING}:
             break
 
     assert result.status == TaskStatus.BLOCKED
-    assert len(result.metadata["operator_history"]) == 3
+    # Three calls ran. The budget then offered an answer, the model asked for a fourth call instead, and it was not run.
+    history = result.metadata["operator_history"]
+    assert [entry["tool_name"] for entry in history].count("llm") == 3
+    assert [entry["status"] for entry in history if entry["tool_name"] == "_stuck_check"] == ["stuck", "stuck_refused"]
     assert "Blocked after the bounded 3-step operator budget" in result.metadata["last_worker_error"]
     audit_events = repos.audit.list_for_task(task.id)
     assert any(
@@ -483,11 +486,38 @@ async def test_operator_step_budget_completes_when_nonempty_fulfillment_contract
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=1)
 
     running = await worker.process_task(task.id)
-    completed = await worker.process_task(running.id)
+    offered = await worker.process_task(running.id)
+    # The model that is out of steps with the work done refuses the offer: the task still completes, with the canned answer.
+    operator.decisions.append(
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+    )
+    refused = await worker.process_task(offered.id)
+    completed = await worker.process_task(refused.id)
 
+    assert offered.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
     assert completed.status == TaskStatus.COMPLETED
     assert completed.metadata["operator_step_budget_completed_after_fulfillment"] is True
     assert "/tmp/adapters/stock_quotes" in completed.metadata["synthesized_answer"]
+
+
+@pytest.mark.asyncio
+async def test_out_of_steps_the_model_is_asked_to_answer_and_its_answer_is_used(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Which items in stock.xlsx have fewer than 20 units?")
+    executor = _executor(_settings(), audit, repos, output={"summary": "gears: 17"})
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Only gears, with 17 units, is under 20."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=1)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"] == "Only gears, with 17 units, is under 20."
+    assert operator.finish_only_calls == [False, True]  # only the step after the offer is held to answering
 
 
 @pytest.mark.asyncio
@@ -545,6 +575,7 @@ async def test_operator_step_budget_allows_targeted_fulfillment_repair(tmp_path)
             tool_input={"operation": "send_screenshot"},
             risk_level=RiskLevel.LOW,
         ),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Sent you a screenshot of the page."),
     ])
     worker = TaskWorker(
         repos,
@@ -557,7 +588,8 @@ async def test_operator_step_budget_allows_targeted_fulfillment_repair(tmp_path)
     after_browser = await worker.process_task(task.id)
     repair_requested = await worker.process_task(after_browser.id)
     after_delivery = await worker.process_task(repair_requested.id)
-    completed = await worker.process_task(after_delivery.id)
+    offered = await worker.process_task(after_delivery.id)  # nothing left to repair: one last step to answer
+    completed = await worker.process_task(offered.id)
 
     assert repair_requested.status == TaskStatus.RUNNING
     assert repair_requested.metadata["operator_history"][-1]["tool_name"] == "_fulfillment_check"
