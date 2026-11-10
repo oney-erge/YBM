@@ -272,6 +272,40 @@ def cleanup_catalog_memory_facts(cases: list[dict]) -> None:
         pass
 
 
+def case_may_create_schedules(case: dict) -> bool:
+    """Whether a case can leave a schedule behind: tagged for it, asserting one, or expecting a schedule.manage call."""
+    assertion_sets = [case.get("assertions") or {}, *[(fu.get("assertions") or {}) for fu in case.get("follow_ups") or []]]
+    tools = [str(item) for item in case.get("tools_required") or []]
+    for assertions in assertion_sets:
+        tools += [str(item) for item in assertions.get("tools_all") or []]
+    return (
+        "schedule" in (case.get("tags") or [])
+        or any(assertions.get("schedule_created") for assertions in assertion_sets)
+        or any(tool.startswith("schedule.manage") for tool in tools)
+    )
+
+
+def delete_schedules_created_since(since_iso: str) -> int:
+    """Delete the schedules created since ``since_iso``: the ones a finished case made.
+
+    A schedule a case creates is real: it fires in the database the stack uses. The "Review my career evidence" cases of August
+    left seven weekly schedules that kept firing for three months, and an hourly check against a fixture server that no longer
+    existed would have messaged the user every hour. Rows are marked deleted, as the schedule tool does.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.execute(
+            "UPDATE schedules SET status = 'deleted', updated_at = ? WHERE created_at >= ? AND status != 'deleted'",
+            (datetime.now(timezone.utc).isoformat(), since_iso),
+        )
+        conn.commit()
+        deleted = cursor.rowcount
+        conn.close()
+        return int(deleted)
+    except Exception:
+        return 0
+
+
 def cancel_task(task_id: str) -> bool:
     """Cancel a deadline-exceeded task through YBM's public control path.
 
@@ -2086,6 +2120,7 @@ async def main() -> int:
               f"| elapsed {_fmt_duration(suite_elapsed)} "
               f"| ETA {eta_s}")
 
+        stage_started_iso = datetime.now(timezone.utc).isoformat()
         try:
             stage = await _run_one(case, fixtures)
         except Exception as exc:
@@ -2100,6 +2135,10 @@ async def main() -> int:
                 failure_reason=f"outer runner exception: {exc}",
             )
         results.append(stage)
+        if case_may_create_schedules(case):
+            removed = delete_schedules_created_since(stage_started_iso)
+            if removed:
+                print(f"  [cleanup] deleted {removed} schedule(s) this case created")
         _write_stage_artifacts(stage_dir, case, stage)
         _write_summary(run_dir, results)
         status = "PASS" if stage.passed else "FAIL"

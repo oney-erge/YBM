@@ -963,3 +963,41 @@ def test_a_run_removes_the_desktop_folders_it_created_and_keeps_existing_ones(tm
 
     assert not (tmp_path / "Desktop" / "AgentControlE2E").exists()  # this run made it
     assert (users_own / "my-real-resume.docx").read_bytes() == b"mine"  # this one was already there
+
+
+
+# ---- schedules a case creates are deleted when it ends --------------------------------------------------------------
+
+
+def test_a_case_that_can_create_a_schedule_is_recognised() -> None:
+    runner = _runner_module()
+    assert runner.case_may_create_schedules({"tags": ["autonomy", "schedule"]}) is True
+    assert runner.case_may_create_schedules({"assertions": {"schedule_created": True}}) is True
+    assert runner.case_may_create_schedules({"assertions": {"tools_all": ["schedule.manage:create"]}}) is True
+    assert runner.case_may_create_schedules({"follow_ups": [{"assertions": {"schedule_created": True}}]}) is True
+    assert runner.case_may_create_schedules({"tags": ["filesystem"], "assertions": {"tools_all": ["filesystem.manage:read_file"]}}) is False
+
+
+def test_only_the_schedules_made_since_the_case_started_are_deleted(tmp_path, monkeypatch) -> None:
+    import sqlite3
+
+    runner = _runner_module()
+    db = tmp_path / "agent.db"
+    conn = sqlite3.connect(db)
+    conn.execute("CREATE TABLE schedules (id TEXT, status TEXT, created_at TEXT, updated_at TEXT)")
+    conn.executemany(
+        "INSERT INTO schedules VALUES (?, ?, ?, ?)",
+        [("old", "enabled", "2026-11-09T10:00:00+00:00", "x"), ("mine", "enabled", "2026-11-10T10:05:00+00:00", "x"),
+         ("paused", "paused", "2026-11-10T10:06:00+00:00", "x"), ("gone", "deleted", "2026-11-10T10:07:00+00:00", "x")],
+    )
+    conn.commit()
+    conn.close()
+    monkeypatch.setattr(runner, "DB_PATH", db)
+
+    assert runner.delete_schedules_created_since("2026-11-10T10:00:00+00:00") == 2
+
+    rows = dict(sqlite3.connect(db).execute("SELECT id, status FROM schedules").fetchall())
+    assert rows == {"old": "enabled", "mine": "deleted", "paused": "deleted", "gone": "deleted"}
+    assert runner.delete_schedules_created_since("2026-11-10T10:00:00+00:00") == 0  # nothing left to delete
+    monkeypatch.setattr(runner, "DB_PATH", tmp_path / "missing" / "none.db")
+    assert runner.delete_schedules_created_since("2026-11-10T10:00:00+00:00") == 0  # no database: not an error
