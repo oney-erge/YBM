@@ -23,6 +23,7 @@ from agent_control.orchestration.fulfillment import (
     fulfillment_guidance,
     validate_fulfillment,
 )
+from agent_control.orchestration.number_check import ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.orchestration.signals import sweep_expired_approvals
@@ -101,8 +102,10 @@ CHECK_ENTRY_AUDIT = "_audit_check"
 CHECK_ENTRY_CLARIFICATION = "_clarification_check"
 # Offered once, when the same call keeps returning the same result: answer with what there is instead of stopping.
 CHECK_ENTRY_STUCK = "_stuck_check"
+# A calculated number in the answer that no tool result produced (orchestration/number_check.py).
+CHECK_ENTRY_NUMBER = "_number_check"
 CHECK_ENTRY_NAMES = frozenset(
-    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK}
+    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER}
 )
 
 def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
@@ -254,6 +257,7 @@ class TaskWorker:
         fulfillment_mode: str = "auditor",
         audit_min_tool_calls: int = 2,
         scope_tools: bool = False,
+        verify_numbers: bool = True,
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
@@ -284,6 +288,7 @@ class TaskWorker:
         self._auditor_owns_fulfillment = fulfillment_mode == "auditor" and auditor is not None
         self.audit_min_tool_calls = max(1, int(audit_min_tool_calls))
         self.scope_tools = scope_tools
+        self.verify_numbers = verify_numbers
         # None disables the persona learning pass entirely (tests, and any
         # embedder that never configured a persona file).
         self.persona_config = persona_config
@@ -732,6 +737,24 @@ class TaskWorker:
             worth_auditing = (
                 _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
             )
+            unseen = self._numbers_no_tool_produced(latest, history, final_answer, answer_copied_from_results)
+            if unseen:
+                history.append({
+                    "tool_name": CHECK_ENTRY_NUMBER,
+                    "input": None,
+                    "status": "number_gap",
+                    "error": (
+                        f"Declared done, but {', '.join(unseen)} in your answer did not come from any tool result, and the "
+                        "request asks for a calculation. Work it out with code.interpreter (run_python, in the `code` "
+                        "field) from the data you already have, then answer with the number the code printed."
+                    ),
+                    "step_id": step_id,
+                })
+                return self.repositories.tasks.update_metadata(
+                    latest.id,
+                    {**latest.metadata, "operator_history": history, "operator_number_gap_count": 1},
+                    TaskStatus.RUNNING,
+                )
             evidence_offset = _post_clarification_history_offset(latest, history)
             content_entry = (
                 _last_content_tool_history_entry(history[evidence_offset:])
@@ -2033,6 +2056,20 @@ class TaskWorker:
                 payload={"error": reason, "status": status.value},
             )
         return updated
+
+    def _numbers_no_tool_produced(
+        self, task: TaskRecord, history: list[dict[str, Any]], answer: str | None, copied_from_results: bool
+    ) -> list[str]:
+        """Result-sized numbers in the answer that no tool produced, once per task and only when code can be run."""
+        if not self.verify_numbers or copied_from_results or not answer:
+            return []
+        if int(task.metadata.get("operator_number_gap_count", 0)) >= 1:
+            return []
+        interpreter = self.executor.tool_definitions.get("code.interpreter")
+        if interpreter is None or not interpreter.enabled:
+            return []
+        request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+        return ungrounded_numbers(request, answer, history)
 
     def _offer_finish_or_block(
         self, task: TaskRecord, history: list[dict[str, Any]], *, called: str, blocked_message: str

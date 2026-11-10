@@ -385,3 +385,33 @@ def test_verify_apply_manifest_returns_none_when_the_output_has_no_manifest() ->
     result = ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={})
 
     assert _verify_apply_manifest(request, result) is None
+
+
+# ---- read_file on files that are not plain text -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_file_gives_the_text_of_a_word_file_not_its_bytes(tmp_path) -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "e2e"))
+    import gap_fixtures
+
+    docx = tmp_path / "brief.docx"
+    gap_fixtures.write_docx(docx, ["Project brief", f"Reference marker: {gap_fixtures.DOCX_MARKER}."])
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(docx)))
+
+    assert result.status.value == "succeeded"
+    assert gap_fixtures.DOCX_MARKER in result.output["text"] and not result.output["text"].startswith("PK")
+
+
+@pytest.mark.asyncio
+async def test_read_file_on_a_binary_file_says_there_is_nothing_to_read(tmp_path) -> None:
+    blob = tmp_path / "photo.png"
+    blob.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256)))
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(blob)))
+
+    assert result.status.value == "succeeded"
+    assert result.output["text"] == "" and "No readable text" in result.output["summary"]

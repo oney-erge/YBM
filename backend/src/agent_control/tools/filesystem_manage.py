@@ -12,6 +12,7 @@ from typing import Any
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus, ToolVerification
+from agent_control.tools.office_text import SUFFIXES as OFFICE_SUFFIXES, office_text
 from agent_control.tools.contracts import (
     FilesystemApplyManifestInput,
     FilesystemCollectFolderSnapshotInput,
@@ -216,7 +217,10 @@ class FilesystemManageAdapter:
         max_chars = int(request.input.get("max_chars") or 12000)
         text = _extract_supported_text(path, max_chars=max_chars)
         if not text:
-            text = path.read_bytes()[:max_chars].decode("utf-8", errors="ignore")
+            raw = path.read_bytes()[:max_chars]
+            # A file that is not text (an image, an archive, a format no reader here knows) used to come back as its
+            # bytes decoded, a page of noise the model then tried to answer from. Say there is nothing to read instead.
+            text = "" if b"\x00" in raw[:4096] else raw.decode("utf-8", errors="ignore")
         text = _compact_text(text, limit=max_chars)
         summary = _simple_summary(text) if text else "No readable text was extracted from this file."
         return {
@@ -740,6 +744,14 @@ def _extract_supported_text(path: Path, *, max_chars: int) -> str:
         except Exception:
             logger.debug("pypdf extraction failed for %s; falling back to raw bytes decode", path, exc_info=True)
             return _compact_text(path.read_bytes().decode("utf-8", errors="ignore"), limit=max_chars)
+    if suffix in OFFICE_SUFFIXES:
+        # Word, Excel, PowerPoint and zip files are archives: reading them as text returned the archive's bytes. The
+        # same reader document.manage extract_text uses gives their paragraphs, cells, slide text or file list.
+        try:
+            return _compact_text(office_text(path) or "", limit=max_chars)
+        except ValueError:
+            logger.debug("%s is not a readable %s file", path, suffix, exc_info=True)
+            return ""
     return ""
 
 
