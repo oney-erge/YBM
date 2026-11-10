@@ -902,6 +902,10 @@ class TaskWorker:
                 if self._auditor_owns_fulfillment
                 else validate_fulfillment(candidate_task).first_gap
             ) or _unsupported_write_claim(final_answer, history, metadata)
+            if gap and _named_target_not_found(candidate_task, history):
+                # The request named something that is not there. "It does not exist" is the answer, and it cannot also be
+                # required to hold the contents the request expected: the check sent the honest answer back and ended in "Blocked".
+                gap = None
             if gap:
                 gap_count = int(latest.metadata.get("operator_fulfillment_gap_count", 0))
                 if gap_count < 2:
@@ -3286,6 +3290,35 @@ def _answer_from_results(history: list[dict[str, Any]], question: str | None) ->
     return "\n".join(lines)
 
 
+_NOT_FOUND_ERROR = re.compile(
+    r"does not exist|doesn't exist|not found|no such file|could not find|couldn't find|cannot find|can't find|unable to find|"
+    r"no deliverable artifact or file path was found",
+    re.IGNORECASE,
+)
+
+
+def _named_target_not_found(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
+    """A reason to turn down a question when the last real step failed because the thing asked about is not there.
+
+    Asked to read, open or send a file that does not exist, the local model asked the user which of four other files it meant,
+    or to paste the contents, and the question waited. The honest answer is that the file is not there (and what similar items
+    were found), which the user can reply to just as well. A request that says to ask first keeps its question.
+    """
+    if _user_asked_to_be_asked_first(task):
+        return None
+    real = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
+    if not real:
+        return None
+    last = real[-1]
+    if last.get("status") != ToolResultStatus.FAILED.value or not _NOT_FOUND_ERROR.search(str(last.get("error") or "")):
+        return None
+    return (
+        "the last step failed because what the request named does not exist, so the answer is that it is not there; tell the "
+        "user so plainly in a final answer (action done), naming any similar items you found, instead of asking them to choose "
+        "or to paste its contents"
+    )
+
+
 def _clarification_recovery_reason(
     task: TaskRecord,
     history: list[dict[str, Any]],
@@ -3299,6 +3332,9 @@ def _clarification_recovery_reason(
             "the requested work's inferred postconditions are already satisfied; "
             "report optional review or verification gaps instead of asking the user"
         )
+    not_found = _named_target_not_found(task, history)
+    if not_found:
+        return not_found
 
     validation = validate_fulfillment(task)
     missing = set(validation.missing)

@@ -3396,3 +3396,84 @@ def test_a_path_with_the_folder_alias_first_is_completed_for_the_document_tool(t
     (tmp_path / "desktop").mkdir()
     (tmp_path / "desktop" / "x.pdf").write_bytes(b"%PDF-1.4")
     assert complete("document.manage", {"operation": "summarize_pdf", "path": "desktop/x.pdf"}, [listing])["path"] == str(tmp_path / "desktop" / "x.pdf")
+
+
+# ---- a question about a file that is not there is turned into the plain answer that it is not -------------------------------
+# Live (held-out): "Send me nonexistent-contract.pdf", "Read missing-note.txt", "What is Grace Hopper's email in contacts.txt": each ended
+# with the model asking which other file the user meant, or asking them to paste the contents, and the question waited.
+
+
+class MissingFileAdapter:
+    async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        return ToolCallResult(
+            request_id=request.id, status=ToolResultStatus.FAILED,
+            error_message="filesystem operation failed: file does not exist: C:/notes/gone.txt",
+        )
+
+
+def _read_call(path: str = "C:/notes/gone.txt") -> OperatorDecision:
+    return OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", risk_level=RiskLevel.LOW,
+                            tool_input={"operation": "read_file", "path": path})
+
+
+@pytest.mark.asyncio
+async def test_a_question_after_a_missing_file_is_turned_into_the_plain_answer(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Read C:/notes/gone.txt and tell me what it says.")
+    executor = _executor_with_adapter(_settings(), audit, repos, MissingFileAdapter(), tool_name="filesystem.manage")
+    operator = QueueOperator([
+        _read_call(),
+        OperatorDecision(action=OperatorAction.ASK_USER, question="Which of these other files did you mean: a.txt, b.txt?"),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="C:/notes/gone.txt does not exist. I found a.txt and b.txt nearby."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    rejection = [e for e in result.metadata["operator_history"] if e["tool_name"] == "_clarification_check"]
+    assert len(rejection) == 1 and "does not exist" in rejection[0]["error"] and "final answer" in rejection[0]["error"]
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"].startswith("C:/notes/gone.txt does not exist")
+
+
+@pytest.mark.asyncio
+async def test_a_request_to_ask_first_keeps_its_question_even_after_a_missing_file(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Read C:/notes/gone.txt, and ask me before doing anything else.")
+    executor = _executor_with_adapter(_settings(), audit, repos, MissingFileAdapter(), tool_name="filesystem.manage")
+    operator = QueueOperator([_read_call(), OperatorDecision(action=OperatorAction.ASK_USER, question="It is not there. What next?")])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.CLARIFYING
+    assert not [e for e in result.metadata["operator_history"] if e["tool_name"] == "_clarification_check"]
+
+
+def test_only_a_failure_that_says_the_target_is_missing_turns_a_question_down(tmp_path) -> None:
+    from agent_control.orchestration.worker import _named_target_not_found
+
+    task = TaskRecord(objective="Open the report", metadata={})
+
+    def failed(error: str) -> list[dict]:
+        return [{"tool_name": "filesystem.manage", "status": "failed", "error": error}]
+
+    assert _named_target_not_found(task, failed("filesystem operation failed: file does not exist: C:/a.txt")) is not None
+    assert _named_target_not_found(task, failed("document file does not exist: C:/a.pdf")) is not None
+    assert _named_target_not_found(task, failed("no deliverable artifact or file path was found. Pass `path`")) is not None
+    assert _named_target_not_found(task, failed("invalid input for filesystem.manage: path Field required")) is None
+    assert _named_target_not_found(task, failed("HTTP host is not allowlisted: 127.0.0.1")) is None
+    assert _named_target_not_found(task, [{"tool_name": "filesystem.manage", "status": "succeeded", "error": None}]) is None
+    assert _named_target_not_found(task, []) is None
+    # a later step that worked, or a check entry after the failure, decides: only the last real step counts
+    both = failed("file does not exist") + [{"tool_name": "filesystem.manage", "status": "succeeded", "output_summary": "found it"}]
+    assert _named_target_not_found(task, both) is None
+    assert _named_target_not_found(task, failed("file does not exist") + [{"tool_name": "_clarification_check", "status": "clarification_gap"}]) is not None
