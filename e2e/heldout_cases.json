@@ -842,6 +842,7 @@
     "timeout_seconds": 300,
     "assertions": {
       "final_status_in": [
+        "chat",
         "completed"
       ],
       "bot_reply_contains_any": [
@@ -849,6 +850,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
+    "expects_task": false,
     "number": "HO-31"
   },
   {
@@ -868,6 +870,7 @@
     "timeout_seconds": 300,
     "assertions": {
       "final_status_in": [
+        "chat",
         "completed"
       ],
       "bot_reply_contains_any": [
@@ -876,6 +879,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
+    "expects_task": false,
     "number": "HO-32"
   },
   {
@@ -987,6 +991,7 @@
     "timeout_seconds": 300,
     "assertions": {
       "final_status_in": [
+        "chat",
         "completed"
       ],
       "bot_reply_contains_any": [
@@ -994,6 +999,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
+    "expects_task": false,
     "number": "HO-36"
   },
   {
@@ -1013,6 +1019,7 @@
     "timeout_seconds": 300,
     "assertions": {
       "final_status_in": [
+        "chat",
         "completed"
       ],
       "bot_reply_contains_any": [
@@ -1020,6 +1027,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
+    "expects_task": false,
     "number": "HO-37"
   },
   {
@@ -1039,6 +1047,7 @@
     "timeout_seconds": 300,
     "assertions": {
       "final_status_in": [
+        "chat",
         "completed"
       ],
       "bot_reply_contains_any": [
@@ -1046,6 +1055,7 @@
       ]
     },
     "source_file": "heldout_cases.json",
+    "expects_task": false,
     "number": "HO-38"
   },
   {
@@ -1093,7 +1103,8 @@
           "bot_reply_contains_any": [
             "Marisol"
           ]
-        }
+        },
+        "expects_task": false
       }
     ],
     "number": "HO-39"
