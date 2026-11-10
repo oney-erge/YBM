@@ -3376,3 +3376,23 @@ async def test_a_screenshot_that_was_only_taken_is_not_done_even_when_the_audito
     assert result.status == TaskStatus.RUNNING  # sent back, not completed
     gap = result.metadata["operator_history"][-1]
     assert gap["tool_name"] == "_fulfillment_check" and "screenshot" in gap["error"].lower()
+
+
+
+def test_a_path_with_the_folder_alias_first_is_completed_for_the_document_tool(tmp_path) -> None:
+    # Live: summarize_pdf("desktop/AgentControlE2E/agent-control-sample.pdf") was looked for under the program's own folder.
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    (tmp_path / "AgentControlE2E").mkdir()
+    (tmp_path / "AgentControlE2E" / "sample.pdf").write_bytes(b"%PDF-1.4")
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder", "root": "desktop"}, "status": "succeeded",
+              "output_root": str(tmp_path)}
+    wanted = str(tmp_path / "AgentControlE2E" / "sample.pdf")
+
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "desktop/AgentControlE2E/sample.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "Desktop/AgentControlE2E/sample.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "AgentControlE2E/sample.pdf"}, [listing])["path"] == wanted
+    # an alias word that is really a folder inside the listed one is not stripped away from a path that exists as written
+    (tmp_path / "desktop").mkdir()
+    (tmp_path / "desktop" / "x.pdf").write_bytes(b"%PDF-1.4")
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "desktop/x.pdf"}, [listing])["path"] == str(tmp_path / "desktop" / "x.pdf")

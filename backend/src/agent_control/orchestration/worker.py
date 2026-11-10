@@ -2819,6 +2819,9 @@ _READS_OF_A_LISTED_FILE = {
 }
 
 
+_FOLDER_ALIASES = frozenset({"desktop", "documents", "downloads", "home", "pictures"})
+
+
 def _filesystem_path_relative_to_a_listed_root(
     tool_name: str | None, tool_input: dict[str, Any], history: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -2834,12 +2837,16 @@ def _filesystem_path_relative_to_a_listed_root(
     raw = str(tool_input.get("path") or "").strip().strip("\"'")
     if not raw or Path(raw).is_absolute() or Path(raw).exists():
         return tool_input
+    # The filesystem tool also takes "desktop/AgentControlE2E/a.pdf", with the folder alias first; the document tool does not.
+    parts = Path(raw).parts
+    without_alias = str(Path(*parts[1:])) if len(parts) > 1 and parts[0].casefold() in _FOLDER_ALIASES else None
     for entry in reversed(history):
         root = entry.get("output_root") if isinstance(entry, dict) else None
         if isinstance(root, str) and root:
-            candidate = Path(root) / raw
-            if candidate.is_file():
-                return {**tool_input, "path": str(candidate)}
+            for name in (raw, without_alias):
+                candidate = Path(root) / name if name else None
+                if candidate is not None and candidate.is_file():
+                    return {**tool_input, "path": str(candidate)}
     return tool_input
 
 

@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
+  filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
 - An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is
   delivered with a note ("Not fully confirmed ... please double-check it") instead of ending the task "Blocked". A 9B Auditor rejected
   a correct summary of a 159-character document for being short. An answer with an unsupported value is still blocked.
