@@ -124,3 +124,15 @@ def test_a_reply_must_hold_every_needle_of_a_contains_all_assertion() -> None:
     assert runner._diagnose_turn(case, turn("Alpha and Beta"), is_followup=False)[0] is True
     passed, reason = runner._diagnose_turn(case, turn("Alpha only"), is_followup=False)
     assert passed is False and "beta" in reason
+
+
+def test_a_case_about_a_plain_question_follows_a_task_if_one_appears_and_a_chat_reply_if_not(cases) -> None:
+    runner = _runner()
+    assert runner.expects_task_mode(True) is True and runner.expects_task_mode(False) is False
+    assert runner.expects_task_mode("auto") == "auto" and runner.expects_task_mode(" AUTO ") == "auto"
+    by_id = {c["id"]: c for c in cases}
+    for cid in ("ho_calc_percent", "ho_calc_compound", "ho_fibonacci", "ho_unit_convert", "ho_date_diff"):
+        assert by_id[cid]["expects_task"] == "auto", cid
+    # The remember statement must stay a plain chat turn: the runner's memory cleanup finds its fact by that flag.
+    remember = by_id["ho_remember_name"]
+    assert remember["expects_task"] is False and remember["follow_ups"][0]["expects_task"] == "auto"
