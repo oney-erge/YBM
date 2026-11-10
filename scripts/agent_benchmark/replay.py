@@ -35,6 +35,36 @@ def wilson(successes: int, total: int, z: float = 1.96) -> tuple[float, float]:
     return (max(0.0, centre - margin), min(1.0, centre + margin))
 
 
+_CATALOG_START = "## Available tools (only use names and operations from this catalog)\n"
+_CATALOG_END = "\n\n## Reminders"
+
+
+def scoped_steps(steps: list[Step], db_path: Path) -> list[Step]:
+    """The same steps with the tool list narrowed to the task's route, as the worker now does (tool_scope.py)."""
+    import sqlite3
+    from dataclasses import replace
+
+    from agent_control.orchestration.tool_scope import scope_catalog_text, tools_for_route
+
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    routes = {}
+    for task_id, metadata in connection.execute("SELECT id, metadata_json FROM tasks"):
+        intent = (json.loads(metadata or "{}").get("orchestration_intent") or {})
+        routes[task_id] = intent.get("route") if isinstance(intent, dict) else None
+    connection.close()
+    out = []
+    for step in steps:
+        start, end = step.user.find(_CATALOG_START), step.user.find(_CATALOG_END)
+        route = routes.get(step.task_id)
+        if start < 0 or end < start:
+            out.append(step)
+            continue
+        begin = start + len(_CATALOG_START)
+        scoped = scope_catalog_text(step.user[begin:end], tools_for_route(route), route)
+        out.append(replace(step, user=step.user[:begin] + scoped + step.user[end:]))
+    return out
+
+
 def build_payload(step: Step, schema: dict[str, Any], model: str) -> dict[str, Any]:
     return {
         "model": model,
@@ -59,6 +89,8 @@ def run(args: argparse.Namespace) -> None:
     steps = load(args.steps)
     if args.limit:
         steps = steps[: args.limit]
+    if getattr(args, "scope", False):
+        steps = scoped_steps(steps, args.db)
     out: Path = args.out
     out.parent.mkdir(parents=True, exist_ok=True)
     record: dict[str, Any] = json.loads(out.read_text(encoding="utf-8")) if out.exists() else {"name": args.name, "rows": []}
@@ -152,4 +184,6 @@ if __name__ == "__main__":
     parser.add_argument("--timeout", type=float, default=300.0)
     parser.add_argument("--abort-after", type=int, default=0, help="stop early if the median of this many steps is too slow")
     parser.add_argument("--abort-median", type=float, default=40.0)
+    parser.add_argument("--scope", action="store_true", help="narrow each prompt's tool list to the task's route (needs --db)")
+    parser.add_argument("--db", type=Path, default=Path(".agent_control/agent_control.db"))
     run(parser.parse_args())

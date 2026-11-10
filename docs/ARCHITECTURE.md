@@ -126,6 +126,19 @@ the question as well as the answer, and asking an answered question again is ref
 that still comes after two refusals, once the request's work is verifiably done, ends the task with what it changed
 and the question as a note, instead of pausing on the user. That answer is copied from results, so it is not audited.
 
+### Reads are not repeated, and an option to show fewer tools
+
+A read that already succeeded in the task, with nothing written since that could change its answer, is not run again
+(`filesystem.manage` reads, `document.manage` reads, `knowledge.search`). The model is shown the earlier result and told to
+finish from it; if it asks a third time and the request needs nothing more (no file to write, nothing to send), the task
+finishes with that result instead of ending blocked. Browsers, screenshots, HTTP, searches and task status are never
+treated as repeats, since asking again can be the point.
+
+`operator.scope_tools: true` narrows the tool catalog to the tools the request's route needs (`orchestration/tool_scope.py`;
+a file request sees the file, document, delivery and code tools). Every registered tool still runs if the model names it
+and a task with two failed or rejected steps gets the full catalog back. It is off because it did not help when
+measured: on 72 recorded steps Qwen3.5-9B scored 46% with it and 49% without (inside the noise).
+
 ## Task states
 
 ```mermaid

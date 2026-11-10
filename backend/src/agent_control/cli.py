@@ -461,6 +461,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "operator_max_steps": settings.operator.max_steps,
         "fulfillment_mode": settings.operator.fulfillment_mode,
         "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
+        "scope_tools": settings.operator.scope_tools,
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
         "auditor": AuditorService(auditor_provider) if auditor_provider else None,
