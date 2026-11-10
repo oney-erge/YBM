@@ -3221,3 +3221,34 @@ def test_a_scheduled_job_objective_is_otherwise_left_alone(message, call) -> Non
 
     assert _schedule_objective_with_request_urls(task, "schedule.manage", call) == call
 
+
+
+
+@pytest.mark.asyncio
+async def test_an_answer_now_offer_spent_on_an_already_answered_question_is_offered_once_more(tmp_path) -> None:
+    """Live: out of steps, the model asked the user again; the question had been answered, so it was rejected and the task
+    ended "blocked" without the model ever saying it could not do what was asked."""
+    repos, audit = make_repos(tmp_path)
+    question = "Which pizzeria should I order from?"
+    task = repos.tasks.create(
+        "Order a large pepperoni pizza from the nearest pizzeria",
+        metadata={"clarification_answer": "Yes, go ahead.", "answered_clarifying_question": question},
+    )
+    executor = _executor(_settings(), audit, repos, output={"summary": "a search page"})
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={"operation": "a"}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.ASK_USER, question=question),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot place orders; I can only search for pizzerias."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=1)
+
+    result = task
+    for _ in range(5):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"].startswith("I cannot place orders")
+    assert [e["status"] for e in result.metadata["operator_history"] if e["tool_name"] == "_stuck_check"] == ["stuck", "stuck"]
+    assert operator.finish_only_calls[-2:] == [True, True]

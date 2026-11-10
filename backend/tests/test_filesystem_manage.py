@@ -578,3 +578,22 @@ async def test_a_file_destination_that_exists_is_still_renamed_around(tmp_path) 
 
     assert result.status.value == "succeeded"
     assert (root / "b.txt").read_text(encoding="utf-8") == "old" and (root / "b_2.txt").read_text(encoding="utf-8") == "new"
+
+
+
+@pytest.mark.asyncio
+async def test_writing_over_an_existing_file_says_it_was_not_changed_and_how_to_replace_it(tmp_path) -> None:
+    # Live: asked to change greeting.txt, the model wrote greeting_2.txt, read greeting.txt (still "hello"), and repeated the
+    # same call until the task was blocked, because nothing said what to do differently.
+    (tmp_path / "greeting.txt").write_text("hello", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    kept = await adapter.execute(_request(tmp_path, "write_text_file", path=str(tmp_path / "greeting.txt"), content="goodbye"))
+    replaced = await adapter.execute(
+        _request(tmp_path, "write_text_file", path=str(tmp_path / "greeting.txt"), content="goodbye", overwrite=True)
+    )
+
+    assert (tmp_path / "greeting_2.txt").read_text(encoding="utf-8") == "goodbye"
+    assert "greeting.txt itself was NOT changed" in kept.output["summary"] and "overwrite set to true" in kept.output["summary"]
+    assert (tmp_path / "greeting.txt").read_text(encoding="utf-8") == "goodbye"  # the second call replaced it
+    assert "NOT changed" not in replaced.output["summary"]

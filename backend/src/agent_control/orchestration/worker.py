@@ -931,6 +931,23 @@ class TaskWorker:
                 recovery_count = int(
                     latest.metadata.get("operator_optional_question_recovery_count", 0)
                 )
+                if offer_pending and sum(
+                    1 for entry in history if isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK
+                ) < 2:
+                    # The model used its one "answer now" on a question the user had already answered. Without another
+                    # chance the task ended "blocked" although the model only needed to say it could not do the thing.
+                    history.append({
+                        "tool_name": CHECK_ENTRY_STUCK,
+                        "input": None,
+                        "status": "stuck",
+                        "error": (
+                            "That question was already answered, so it cannot be asked again. Answer now with what you "
+                            "have, in plain words (action done), or say what blocks you (action blocked)."
+                        ),
+                    })
+                    return self.repositories.tasks.update_metadata(
+                        latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING
+                    )
                 if recovery_count < 2:
                     history.append(
                         {

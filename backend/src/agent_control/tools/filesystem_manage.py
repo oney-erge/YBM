@@ -281,7 +281,11 @@ class FilesystemManageAdapter:
             "summary": (
                 f"Wrote text file {path}."
                 if not renamed
-                else f"Wrote text file {path} (requested path {original_path.name} already existed; auto-renamed)."
+                else (
+                    f"Wrote text file {path} (requested path {original_path.name} already existed; auto-renamed). "
+                    f"{original_path.name} itself was NOT changed. To replace it, call write_text_file again with the same "
+                    "path and overwrite set to true."
+                )
             ),
         }
         if renamed:

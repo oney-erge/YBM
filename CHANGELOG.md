@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original
+  was NOT changed and how to replace it. The model had repeated the same call until the task was blocked.
+- When the "answer now" offer (stuck or out of steps) is spent on a question the user already answered, the model gets one more
+  chance to answer or say what blocks it, instead of the task ending "blocked".
 - `filesystem.manage apply_manifest` treated a folder as the destination of a move as a name collision and renamed around it: three
   files "moved" to `.` became `trash_2`, `trash_3` and `trash_4` outside their folder. A folder destination now means "into that
   folder" and moving a file onto itself is refused with a plain message.
