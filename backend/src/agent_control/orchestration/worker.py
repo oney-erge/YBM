@@ -23,7 +23,7 @@ from agent_control.orchestration.fulfillment import (
     fulfillment_guidance,
     validate_fulfillment,
 )
-from agent_control.orchestration.number_check import ungrounded_numbers
+from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.orchestration.signals import sweep_expired_approvals
@@ -767,17 +767,25 @@ class TaskWorker:
             worth_auditing = (
                 _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
             )
-            unseen = self._numbers_no_tool_produced(latest, history, final_answer, answer_copied_from_results)
-            if unseen:
+            unseen_addresses, unseen = self._values_no_tool_produced(latest, history, final_answer, answer_copied_from_results)
+            if unseen_addresses or unseen:
+                reasons = []
+                if unseen_addresses:
+                    reasons.append(
+                        f"{', '.join(unseen_addresses)} in your answer is not in any tool result or in the request. Do not "
+                        "make up values: answer only from what the tools returned, and say plainly when something is not there."
+                    )
+                if unseen:
+                    reasons.append(
+                        f"{', '.join(unseen)} in your answer did not come from any tool result, and the request asks for a "
+                        "calculation. Work it out with code.interpreter (run_python, in the `code` field) from the data you "
+                        "already have, then answer with the number the code printed."
+                    )
                 history.append({
                     "tool_name": CHECK_ENTRY_NUMBER,
                     "input": None,
                     "status": "number_gap",
-                    "error": (
-                        f"Declared done, but {', '.join(unseen)} in your answer did not come from any tool result, and the "
-                        "request asks for a calculation. Work it out with code.interpreter (run_python, in the `code` "
-                        "field) from the data you already have, then answer with the number the code printed."
-                    ),
+                    "error": "Declared done, but " + " Also, ".join(reasons),
                     "step_id": step_id,
                 })
                 return self.repositories.tasks.update_metadata(
@@ -1061,6 +1069,13 @@ class TaskWorker:
                 1 for item in history if isinstance(item, dict) and item.get("status") == ALREADY_DONE_STATUS
                 and item.get("tool_name") == tool_name and item.get("input") == tool_input
             ) >= 2:
+                if not any(isinstance(item, dict) and item.get("tool_name") == CHECK_ENTRY_STUCK for item in history):
+                    # The model has been shown the result twice and still asks for it. Let it answer in its own words
+                    # (held to answering when the strict schema is on) before the raw result is given to the user: a
+                    # question the file does not answer ("what is the total?") got the whole file back as its answer.
+                    return self._offer_finish(
+                        latest, history, called=f"{tool_name}:{tool_input.get('operation') or ''}".rstrip(":")
+                    )
                 finished = self._finish_with_read_result(latest, history, earlier[1])
                 if finished is not None:
                     return finished
@@ -2088,19 +2103,24 @@ class TaskWorker:
             )
         return updated
 
-    def _numbers_no_tool_produced(
+    def _values_no_tool_produced(
         self, task: TaskRecord, history: list[dict[str, Any]], answer: str | None, copied_from_results: bool
-    ) -> list[str]:
-        """Result-sized numbers in the answer that no tool produced, once per task and only when code can be run."""
+    ) -> tuple[list[str], list[str]]:
+        """Addresses, and numbers of a calculation, in the answer that nothing the task read or ran produced.
+
+        Once per task. Numbers are only checked when code can be run to calculate them; addresses never need a tool.
+        """
         if not self.verify_numbers or copied_from_results or not answer:
-            return []
+            return [], []
         if int(task.metadata.get("operator_number_gap_count", 0)) >= 1:
-            return []
-        interpreter = self.executor.tool_definitions.get("code.interpreter")
-        if interpreter is None or not interpreter.enabled:
-            return []
+            return [], []
         request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
-        return ungrounded_numbers(request, answer, history)
+        addresses = ungrounded_addresses(request, answer, history, str(task.metadata.get("memory_context") or ""))
+        numbers: list[str] = []
+        interpreter = self.executor.tool_definitions.get("code.interpreter")
+        if interpreter is not None and interpreter.enabled:
+            numbers = ungrounded_numbers(request, answer, history)
+        return addresses, numbers
 
     def _offer_finish_or_block(
         self, task: TaskRecord, history: list[dict[str, Any]], *, called: str, blocked_message: str
@@ -2119,6 +2139,9 @@ class TaskWorker:
                 TaskStatus.BLOCKED,
                 "operator_repeated_no_progress",
             )
+        return self._offer_finish(task, history, called=called)
+
+    def _offer_finish(self, task: TaskRecord, history: list[dict[str, Any]], *, called: str) -> TaskRecord:
         history.append({
             "tool_name": CHECK_ENTRY_STUCK,
             "input": None,
