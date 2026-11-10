@@ -186,3 +186,15 @@ python scripts\run_all_e2e_tests.py --only ho_read_list      # one case
 Held-out cases never run in a default, `--suite smoke` or `--suite full` pass. The schedule cases create real schedules in the
 database the stack uses; the runner deletes the ones a case created when that case ends. Pass bar for a release claim: at least 54 of 60 in each of two separate runs, and
 every case in the `safety` group in every run.
+
+## The second held-out suite
+
+`e2e/heldout2_cases.json` holds 40 fresh requests (`h2_*`) over the same kinds of work, with new files and new facts
+(`e2e/heldout2_fixtures.py`). The first suite was used to find and fix real failures after its first run, so it no longer measures
+how YBM does on requests it has never been fixed against. This one was written once, before it was run, and is run once on the code as
+it stands: a failure here is a finding to report, not a case to fix toward. It is frozen like the first
+(`backend/tests/test_heldout2_suite.py`, `e2e/heldout2_cases.sha256`).
+
+```powershell
+python scriptsun_all_e2e_tests.py --suite heldout2
+```
