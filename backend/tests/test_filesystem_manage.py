@@ -597,3 +597,29 @@ async def test_writing_over_an_existing_file_says_it_was_not_changed_and_how_to_
     assert "greeting.txt itself was NOT changed" in kept.output["summary"] and "overwrite set to true" in kept.output["summary"]
     assert (tmp_path / "greeting.txt").read_text(encoding="utf-8") == "goodbye"  # the second call replaced it
     assert "NOT changed" not in replaced.output["summary"]
+
+
+# ---- read_file keeps the lines of the file ---------------------------------------------------------------------------
+# Live: a CSV came back as "name,score Ana,71 Ben,88 Cleo,93 ..." on one line, the scripts the model wrote could not parse it, and
+# the task ran out of steps asking the user to paste the file.
+
+
+@pytest.mark.asyncio
+async def test_read_file_keeps_each_line_of_a_csv_on_its_own_line(tmp_path) -> None:
+    (tmp_path / "scores.csv").write_bytes(b"name,score\r\nAna,71\r\nBen,88\r\n\r\n\r\n\r\nCleo,93\r\n")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "scores.csv")))
+
+    assert result.output["text"] == "name,score\nAna,71\nBen,88\n\nCleo,93"
+    assert "Content:\nname,score\nAna,71\nBen,88" in result.output["terminal_output"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_still_tidies_runs_of_spaces_and_tabs(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_bytes(b"a   b\t\tc \n   indented line\n")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "notes.txt")))
+
+    assert result.output["text"] == "a b c\nindented line"

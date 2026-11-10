@@ -240,13 +240,13 @@ class FilesystemManageAdapter:
         if not path.exists() or not path.is_file():
             raise ValueError(f"file does not exist: {path}")
         max_chars = int(request.input.get("max_chars") or 12000)
-        text = _extract_supported_text(path, max_chars=max_chars)
+        text = _extract_supported_text(path, max_chars=max_chars, keep_lines=True)
         if not text:
             raw = path.read_bytes()[:max_chars]
             # A file that is not text (an image, an archive, a format no reader here knows) used to come back as its
             # bytes decoded, a page of noise the model then tried to answer from. Say there is nothing to read instead.
             text = "" if b"\x00" in raw[:4096] else raw.decode("utf-8", errors="ignore")
-        text = _compact_text(text, limit=max_chars)
+        text = _line_text(text, limit=max_chars)
         summary = _simple_summary(text) if text else "No readable text was extracted from this file."
         return {
             "root": str(path.parent),
@@ -767,30 +767,37 @@ def _is_image_file(path: Path) -> bool:
     return path.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 
 
-def _extract_supported_text(path: Path, *, max_chars: int) -> str:
+def _extract_supported_text(path: Path, *, max_chars: int, keep_lines: bool = False) -> str:
     suffix = path.suffix.lower()
+
+    # A file read for its content keeps its line breaks: a CSV collapsed to one line ("name,score Ana,71 Ben,88 ...") cannot be
+    # parsed by the script the model writes, and a table, a list or code loses its meaning. Previews and search results are
+    # still compacted to one line.
+    def compact(value: str) -> str:
+        return _line_text(value, limit=max_chars) if keep_lines else _compact_text(value, limit=max_chars)
+
     if _is_text_file(path):
         text = path.read_text(encoding="utf-8", errors="ignore")
         if suffix in {".html", ".htm"}:
             text = re.sub(r"<script\b.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
             text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
             text = re.sub(r"<[^>]+>", " ", text)
-        return _compact_text(text, limit=max_chars)
+        return compact(text)
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader
 
             reader = PdfReader(str(path))
             text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
-            return _compact_text(text, limit=max_chars)
+            return compact(text)
         except Exception:
             logger.debug("pypdf extraction failed for %s; falling back to raw bytes decode", path, exc_info=True)
-            return _compact_text(path.read_bytes().decode("utf-8", errors="ignore"), limit=max_chars)
+            return compact(path.read_bytes().decode("utf-8", errors="ignore"))
     if suffix in OFFICE_SUFFIXES:
         # Word, Excel, PowerPoint and zip files are archives: reading them as text returned the archive's bytes. The
         # same reader document.manage extract_text uses gives their paragraphs, cells, slide text or file list.
         try:
-            return _compact_text(office_text(path) or "", limit=max_chars)
+            return compact(office_text(path) or "")
         except ValueError:
             logger.debug("%s is not a readable %s file", path, suffix, exc_info=True)
             return ""
@@ -799,6 +806,13 @@ def _extract_supported_text(path: Path, *, max_chars: int) -> str:
 
 def _compact_text(text: str, *, limit: int) -> str:
     return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def _line_text(text: str, *, limit: int) -> str:
+    """Text with its line breaks kept: runs of spaces and tabs become one space, blank lines become one."""
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r" ?\n ?", "\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()[:limit]
 
 
 def _simple_summary(text: str) -> str:
