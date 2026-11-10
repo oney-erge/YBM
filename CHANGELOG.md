@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `filesystem.manage apply_manifest` treated a folder as the destination of a move as a name collision and renamed around it: three
+  files "moved" to `.` became `trash_2`, `trash_3` and `trash_4` outside their folder. A folder destination now means "into that
+  folder" and moving a file onto itself is refused with a plain message.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:

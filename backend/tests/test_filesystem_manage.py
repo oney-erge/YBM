@@ -528,3 +528,53 @@ def test_only_a_recency_request_turns_the_dates_on() -> None:
     task = TaskRecord(objective="the newest file", metadata={})
     assert enrich(task, "filesystem.manage", other) == other
     assert enrich(task, "browser.open", listing) == listing
+
+
+
+# ---- a manifest destination that is a folder ------------------------------------------------------------------------
+# Live: asked to "delete everything" in a folder, the model sent apply_manifest with destination "." and the three files were
+# renamed trash_2, trash_3, trash_4 outside the folder, then reported as removed.
+
+
+@pytest.mark.asyncio
+async def test_moving_files_onto_their_own_folder_changes_nothing(tmp_path) -> None:
+    trash = tmp_path / "trash"
+    trash.mkdir()
+    for number in range(1, 4):
+        (trash / f"scrap-{number}.txt").write_text(f"scrap {number}", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    manifest = [{"source": f"scrap-{n}.txt", "destination": "."} for n in range(1, 4)]
+
+    result = await adapter.execute(_request(trash, "apply_manifest", manifest=manifest))
+
+    assert result.status.value == "failed" and "same file" in result.error_message
+    assert sorted(path.name for path in trash.iterdir()) == ["scrap-1.txt", "scrap-2.txt", "scrap-3.txt"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["trash"]  # nothing renamed out beside it
+
+
+@pytest.mark.asyncio
+async def test_a_folder_destination_means_into_that_folder(tmp_path) -> None:
+    root = tmp_path / "photos"
+    (root / "pics").mkdir(parents=True)
+    (root / "img-1.jpg").write_bytes(b"jpg")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(root, "apply_manifest", manifest=[{"source": "img-1.jpg", "destination": "pics"}]))
+
+    assert result.status.value == "succeeded"
+    assert (root / "pics" / "img-1.jpg").read_bytes() == b"jpg" and not (root / "img-1.jpg").exists()
+    assert not (root / "pics_2").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_file_destination_that_exists_is_still_renamed_around(tmp_path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "a.txt").write_text("new", encoding="utf-8")
+    (root / "b.txt").write_text("old", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(root, "apply_manifest", manifest=[{"source": "a.txt", "destination": "b.txt"}]))
+
+    assert result.status.value == "succeeded"
+    assert (root / "b.txt").read_text(encoding="utf-8") == "old" and (root / "b_2.txt").read_text(encoding="utf-8") == "new"
