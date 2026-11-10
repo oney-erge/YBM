@@ -704,6 +704,7 @@ class TaskWorker:
             },
         )
 
+        decision = _finish_named_as_a_tool(decision)
         answer_copied_from_results = False
         if decision.action == OperatorAction.ASK_USER and _still_asking_after_the_work_is_done(latest, history):
             # Twice told that the work is done and to report the gap instead of asking, a live run
@@ -2431,6 +2432,12 @@ def _canonical_operator_tool_call(
             tool_input["operation"] = operation_alias
             if operation_alias == "inspect_folder" and "root" not in tool_input and "path" in tool_input:
                 tool_input["root"] = tool_input.pop("path")
+    if tool_name == "document.manage" and "path" not in tool_input and "artifact_id" not in tool_input:
+        # The file tool calls it file_path; a model moving between the two sends the wrong one.
+        for alias in ("file_path", "filepath", "file", "document_path"):
+            if tool_input.get(alias):
+                tool_input["path"] = tool_input.pop(alias)
+                break
     if tool_name == "filesystem.manage":
         operation = tool_input.get("operation")
         if operation in {"inspect_folder", "search"} and "root" not in tool_input:
@@ -3655,6 +3662,28 @@ def _recorded_write_evidence(history: list[dict[str, Any]], metadata: dict[str, 
             parts.append(json.dumps(tool_input, default=str))
             parts.append(str(entry.get("output_summary") or ""))
     return " ".join(parts).casefold()
+
+
+_FINISH_TOOL_NAMES = frozenset({"done", "finish", "final_answer", "final", "answer", "respond", "reply"})
+_FINISH_TEXT_KEYS = ("final_answer", "answer", "text", "message", "response", "result")
+
+
+def _finish_named_as_a_tool(decision: OperatorDecision) -> OperatorDecision:
+    """Treat ``call_tool`` with ``tool_name: "done"`` and the answer in its input as the ``done`` action it plainly is.
+
+    A small model that has the answer sometimes writes the finish as a tool call. That was refused as an unregistered tool,
+    twice in one live run, with the right answer already written in the input. Only a finish name carrying a non-empty
+    answer is repaired; anything else goes through as before.
+    """
+    if decision.action != OperatorAction.CALL_TOOL or str(decision.tool_name or "").strip().casefold() not in _FINISH_TOOL_NAMES:
+        return decision
+    for key in _FINISH_TEXT_KEYS:
+        answer = decision.tool_input.get(key)
+        if isinstance(answer, str) and answer.strip():
+            return decision.model_copy(
+                update={"action": OperatorAction.DONE, "final_answer": answer.strip(), "tool_name": None, "tool_input": {}}
+            )
+    return decision
 
 
 def _ground_operator_final_answer(answer: str | None, history: list[dict[str, Any]]) -> str | None:

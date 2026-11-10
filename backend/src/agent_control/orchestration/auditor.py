@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
+import re
 
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
@@ -123,4 +124,20 @@ class AuditorService:
         if text.upper().startswith("INSUFFICIENT"):
             reason = text.split(":", 1)[1].strip() if ":" in text else text
             return AuditResult(sufficient=False, reason=(reason[:300] or "insufficient"))
+        if looks_like_audit_commentary(text):
+            # A small model sometimes writes up its checking instead of answering. Sent to the user as the answer, that
+            # was a page of "Sufficiency Check: Data Presence..." in place of the Operator's reply. Keep the Operator's.
+            return AuditResult(sufficient=True, answer=None, reason="auditor_wrote_commentary_not_an_answer")
         return AuditResult(sufficient=True, answer=text)
+
+
+_AUDIT_COMMENTARY = re.compile(
+    r"\b(?:sufficiency check|the raw output (?:shows|indicates|successfully|contains|confirms)|"
+    r"the objective is to|steps? \d+(?:\s*-\s*\d+)? (?:failed|succeeded)|evidence is (?:sufficient|insufficient))\b",
+    re.IGNORECASE,
+)
+
+
+def looks_like_audit_commentary(text: str) -> bool:
+    """Whether an auditor reply talks about the audit (its evidence, its checks) rather than answering the request."""
+    return bool(_AUDIT_COMMENTARY.search(text[:800]))
