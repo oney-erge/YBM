@@ -108,3 +108,35 @@ async def test_audit_passes_remembered_response_requirements() -> None:
     )
 
     assert "exactly three bullets" in provider.prompts[0][1]
+
+
+# ---- an essay about the check is not an answer ------------------------------------------------------------------
+# Live: a small model wrote "The objective is to calculate... 1. **Sufficiency Check**: ..." and the user was sent that.
+
+COMMENTARY = (
+    "The objective is to calculate the total order value from a specific Excel file.\n\n1.  **Sufficiency Check**:\n"
+    "    *   **Data Presence**: The raw output successfully extracted text from `orders.xlsx` (Step 2)."
+)
+
+
+@pytest.mark.asyncio
+async def test_commentary_about_the_audit_does_not_replace_the_operators_answer() -> None:
+    result = await AuditorService(QueueProvider([COMMENTARY])).audit("total the orders", "A2=keyboard B2=3 C2=40.0")
+
+    assert result.sufficient is True and result.answer is None  # the caller keeps the Operator's own answer
+    assert result.reason == "auditor_wrote_commentary_not_an_answer"
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "The invoice total is $250.00.",
+        "Revenue grew twelve percent and support tickets fell by a third.",
+        "The objective was met: the file is at C:/notes/a.txt.",  # mentions the word but is an answer
+        "Steps to reproduce are in the README.",
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_real_answer_is_still_used(text) -> None:
+    result = await AuditorService(QueueProvider([text])).audit("what is it", "raw")
+    assert result.sufficient is True and result.answer == text

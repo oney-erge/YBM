@@ -403,11 +403,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "summarize_pdf": Capability.FILESYSTEM_READ,
             },
             enabled=enabled,
-            description=(
-                "inspect documents, read their text (extract_text: PDF, text, Word .docx, Excel .xlsx cells, "
-                "PowerPoint .pptx; a .zip is listed, not unpacked), summarize PDFs, and create or revise PowerPoint "
-                "files as task artifacts"
-            ),
+            description="inspect documents, summarize PDFs, and create or revise PowerPoint files as task artifacts",
             operations=("inspect_document", "extract_text", "summarize_pdf", "create_presentation", "update_presentation"),
             input_schema=DocumentManageInput,
             output_schema=DocumentManageOutput,

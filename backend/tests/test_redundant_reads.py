@@ -91,3 +91,48 @@ async def test_a_read_that_runs_again_after_a_write_is_not_blocked(tmp_path) -> 
         result = await worker.process_task(result.id)
 
     assert len(adapter.requests) == 3  # the second read ran: the file may have changed
+
+
+# ---- a finish written as a tool call -------------------------------------------------------------------------------
+# Live: after reading a spreadsheet the model answered with {"action": "call_tool", "tool_name": "done", ...} twice and
+# was told "unregistered tool: done" with the correct total already written in the input.
+
+
+def _finish_as_tool(name: str = "done", **tool_input) -> OperatorDecision:
+    return OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name=name, tool_input=tool_input, risk_level=RiskLevel.LOW)
+
+
+@pytest.mark.parametrize("name", ["done", "Done", "final_answer", "finish"])
+def test_a_finish_named_as_a_tool_is_the_done_action(name) -> None:
+    from agent_control.orchestration.worker import _finish_named_as_a_tool
+
+    repaired = _finish_named_as_a_tool(_finish_as_tool(name, final_answer="  The total is 611.  "))
+    assert repaired.action == OperatorAction.DONE and repaired.final_answer == "The total is 611."
+    assert repaired.tool_name is None and repaired.tool_input == {}
+
+
+@pytest.mark.parametrize(
+    "decision",
+    [
+        _finish_as_tool("done"),  # no answer written: nothing to repair
+        _finish_as_tool("done", final_answer="  "),
+        _finish_as_tool("filesystem.manage", final_answer="not a finish"),  # a real tool keeps being a tool
+        OperatorDecision(action=OperatorAction.DONE, final_answer="already done"),
+    ],
+)
+def test_other_decisions_are_left_alone(decision) -> None:
+    from agent_control.orchestration.worker import _finish_named_as_a_tool
+
+    assert _finish_named_as_a_tool(decision) == decision
+
+
+@pytest.mark.asyncio
+async def test_a_task_finishes_when_the_model_writes_done_as_a_tool(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("What is two plus two")
+    executor = _executor_with_adapter(_settings(), audit, repos, StaticToolAdapter({"summary": "x"}), tool_name="llm")
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_finish_as_tool("done", final_answer="Four.")]))
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.COMPLETED and result.metadata["synthesized_answer"] == "Four."
