@@ -185,8 +185,11 @@ class CachedOperatorSchema:
         self._registry = registry
         self._key: tuple | None = None
         self._schema: dict[str, Any] = {}
+        self._finish_only = operator_response_schema([], actions=FINISH_ACTIONS)
 
-    def __call__(self) -> dict[str, Any]:
+    def __call__(self, *, finish_only: bool = False) -> dict[str, Any]:
+        if finish_only:
+            return self._finish_only
         definitions = tuple(self._registry.definitions)
         key = tuple((d.name, d.enabled, tuple(d.operations or ())) for d in definitions)
         if key != self._key:

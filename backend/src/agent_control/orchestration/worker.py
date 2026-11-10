@@ -99,8 +99,10 @@ ORPHANABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.INTERPRETING)
 CHECK_ENTRY_FULFILLMENT = "_fulfillment_check"
 CHECK_ENTRY_AUDIT = "_audit_check"
 CHECK_ENTRY_CLARIFICATION = "_clarification_check"
+# Offered once, when the same call keeps returning the same result: answer with what there is instead of stopping.
+CHECK_ENTRY_STUCK = "_stuck_check"
 CHECK_ENTRY_NAMES = frozenset(
-    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION}
+    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK}
 )
 
 def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
@@ -673,6 +675,8 @@ class TaskWorker:
                     decision = await self.operator.decide(
                         latest.objective, self._planner_context(metadata=latest.metadata), history,
                         memory_context=memory_context, prefer_major=prefer_major,
+                        # Only passed when it applies, so an Operator without the option is called exactly as before.
+                        **({"finish_only": True} if history and history[-1].get("tool_name") == CHECK_ENTRY_STUCK else {}),
                     )
                 latest = self._record_llm_usage(
                     latest, "operator", getattr(self.operator, "last_usage", None),
@@ -1008,18 +1012,13 @@ class TaskWorker:
                     return finished
             repeated_call = _repeated_no_progress_call(history)
             if repeated_call is not None:
-                return self._transition_operator(
-                    latest,
-                    {
-                        **latest.metadata,
-                        "operator_history": history,
-                        "last_worker_error": (
-                            f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
-                            "model kept asking to repeat it. Nothing was done twice."
-                        ),
-                    },
-                    TaskStatus.BLOCKED,
-                    "operator_repeated_no_progress",
+                return self._offer_finish_or_block(
+                    latest, history,
+                    called=f"{tool_name}:{tool_input.get('operation') or ''}".rstrip(":"),
+                    blocked_message=(
+                        f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
+                        "model kept asking to repeat it. Nothing was done twice."
+                    ),
                 )
             return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
         tool_def = self.executor.tool_definitions.get(tool_name)
@@ -1107,19 +1106,14 @@ class TaskWorker:
         if repeated_call is not None:
             tool_name, operation = repeated_call
             called = f"{tool_name}:{operation}" if operation else tool_name
-            metadata = {
-                **recorded.metadata,
-                "operator_history": history,
-                "last_worker_error": (
+            return self._offer_finish_or_block(
+                recorded.model_copy(update={"metadata": {**recorded.metadata, "operator_history": history}}),
+                history,
+                called=called,
+                blocked_message=(
                     f"Blocked after repeated {called} calls returned the same result; "
                     "stopped to avoid a no-progress loop. A different capability or user input is required."
                 ),
-            }
-            return self._transition_operator(
-                recorded,
-                metadata,
-                TaskStatus.BLOCKED,
-                "operator_repeated_no_progress",
             )
         return self.repositories.tasks.update_metadata(recorded.id, {**recorded.metadata, "operator_history": history})
 
@@ -2040,6 +2034,35 @@ class TaskWorker:
             )
         return updated
 
+    def _offer_finish_or_block(
+        self, task: TaskRecord, history: list[dict[str, Any]], *, called: str, blocked_message: str
+    ) -> TaskRecord:
+        """The same call keeps returning the same result. Once, tell the model to answer with what there is; then stop.
+
+        Stopping at once left the user with "Blocked" although the model often had what the answer needed (a file it had
+        read, a search that found nothing), or could say plainly that it found nothing. The first time, a check entry
+        tells it so and, when the Operator's reply is held to a schema, the next reply can only finish or ask. If it
+        still calls tools and gets the same result, the task stops as before.
+        """
+        if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history if isinstance(entry, dict)):
+            return self._transition_operator(
+                task,
+                {**task.metadata, "operator_history": history, "last_worker_error": blocked_message},
+                TaskStatus.BLOCKED,
+                "operator_repeated_no_progress",
+            )
+        history.append({
+            "tool_name": CHECK_ENTRY_STUCK,
+            "input": None,
+            "status": "stuck",
+            "error": (
+                f"{called} has returned the same result several times, so calling it again will not help. Answer now with "
+                "what you have: say plainly what you found and what you could not do (action done), or ask the user one "
+                "question (action ask_user). Do not call that tool again."
+            ),
+        })
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
     def _refuse_unrequested_coding_agent(
         self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
     ) -> TaskRecord:
@@ -2959,6 +2982,8 @@ def _satisfied_task_does_not_need_clarification(
     required before asking the operator to finish instead of seek polish or
     confirmation that the user never made a prerequisite.
     """
+    if _user_asked_to_be_asked_first(task):
+        return False
     validation = validate_fulfillment(task)
     if not validation.expected or not validation.ok:
         return False
@@ -2967,6 +2992,27 @@ def _satisfied_task_does_not_need_clarification(
         and entry.get("status") == ToolResultStatus.SUCCEEDED.value
         for entry in history
     )
+
+
+# "Ask me before ...", "check with me first", "wait for my approval": the user made the question part of the request.
+_ASK_FIRST = re.compile(
+    r"\b(?:ask|check with|confirm with|run (?:it|this|that) by|clear (?:it|this|that) with)\s+me\b"
+    r"|\b(?:wait for|get|need|want|require)\s+(?:my|your)\s+(?:ok|okay|approval|permission|go-ahead|confirmation|consent|sign-off)\b"
+    r"|\blet me (?:approve|confirm|review|decide)\b"
+    r"|\bonly (?:after|with) (?:my|i)\s+(?:approve|approval|confirm|ok)\b",
+    re.IGNORECASE,
+)
+
+
+def _user_asked_to_be_asked_first(task: TaskRecord) -> bool:
+    """Whether the request itself says to ask the user before acting.
+
+    The guard that turns away an optional question after the work is done judged "Rewrite this file. Ask me before
+    changing anything on disk" satisfied once the file was read, rejected the permission question the model rightly
+    asked, and ended the task with a summary of the read: the change was never offered to the user.
+    """
+    text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    return bool(_ASK_FIRST.search(text))
 
 
 def _still_asking_after_the_work_is_done(task: TaskRecord, history: list[dict[str, Any]]) -> bool:

@@ -34,7 +34,7 @@ class OperatorLoopService:
         self,
         provider: LLMProvider,
         major_provider: LLMProvider | None = None,
-        response_schema: Callable[[], dict] | None = None,
+        response_schema: Callable[..., dict] | None = None,
     ) -> None:
         self.provider = provider
         self.major_provider = major_provider
@@ -64,6 +64,7 @@ class OperatorLoopService:
         *,
         memory_context: str = "",
         prefer_major: bool = False,
+        finish_only: bool = False,
     ) -> OperatorDecision:
         """`prefer_major` (docs/archive/HISTORY.md Part 4 T2.6): start this call on
         major_provider instead of provider, when the caller already has a
@@ -89,7 +90,11 @@ class OperatorLoopService:
         current_prompt = user_prompt
         for _attempt in range(3):
             try:
-                strict = {} if self.response_schema is None else {"response_schema": self.response_schema()}
+                # finish_only: this step may only answer, ask or stop. Held to the schema when there is one; the history
+                # entry that caused it says the same in words for a server that cannot enforce a schema.
+                strict = (
+                    {} if self.response_schema is None else {"response_schema": self.response_schema(finish_only=finish_only)}
+                )
                 candidate = await provider.generate_structured(
                     OPERATOR_SYSTEM_PROMPT, current_prompt, OperatorDecision, temperature=0.1, **strict
                 )

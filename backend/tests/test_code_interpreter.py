@@ -755,3 +755,35 @@ def test_verify_code_interpreter_returns_none_without_a_workspace_dir(tmp_path) 
     result = ToolCallResult(request_id="toolres_ci", status=ToolResultStatus.SUCCEEDED, output={})
 
     assert _verify_code_interpreter(request, result) is None
+
+
+# ---- what a failed script tells the model ------------------------------------------------------------------------
+
+
+def test_a_missing_package_is_named_with_the_way_round_it() -> None:
+    from agent_control.tools.code_interpreter import _summary
+
+    stderr = (
+        "Traceback (most recent call last):\n  File \"script.py\", line 1, in <module>\n    import openpyxl\n"
+        "ModuleNotFoundError: No module named 'openpyxl'\n"
+    )
+    summary = _summary(1, "", stderr, [])
+    assert "No module named 'openpyxl'" in summary
+    assert "'openpyxl' is not installed here" in summary and "document.manage extract_text" in summary
+
+
+def test_a_long_traceback_keeps_the_line_that_says_why() -> None:
+    from agent_control.tools.code_interpreter import _summary
+
+    frames = "".join(f'  File "site-packages/pandas/mod{n}.py", line {n}, in helper\n    call()\n' for n in range(30))
+    stderr = f"Traceback (most recent call last):\n{frames}ImportError: Missing optional dependency 'openpyxl'.\n"
+    summary = _summary(1, "", stderr, [])
+    assert "Missing optional dependency 'openpyxl'" in summary
+    assert len(summary) < 800
+
+
+def test_a_short_failure_and_a_success_are_unchanged() -> None:
+    from agent_control.tools.code_interpreter import _summary
+
+    assert _summary(1, "", "ZeroDivisionError: division by zero", []) == "Python failed with exit code 1. ZeroDivisionError: division by zero"
+    assert _summary(0, "42\n", "", ["out.txt"]) == "Python completed successfully and created 1 file(s). 42"
