@@ -62,6 +62,7 @@ ENV_PATH = ROOT / ".env"
 RESULTS_ROOT = ROOT / ".agent_control" / "e2e_results"
 CASES_PATH = ROOT / "e2e" / "all_cases.json"
 HELDOUT_PATH = ROOT / "e2e" / "heldout_cases.json"
+HELDOUT2_PATH = ROOT / "e2e" / "heldout2_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -642,8 +643,9 @@ def expects_task_mode(value: object) -> bool | str:
 def load_cases() -> list[dict]:
     """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    if HELDOUT_PATH.exists():
-        cases += json.loads(HELDOUT_PATH.read_text(encoding="utf-8"))
+    for path in (HELDOUT_PATH, HELDOUT2_PATH):
+        if path.exists():
+            cases += json.loads(path.read_text(encoding="utf-8"))
     return cases
 
 
@@ -669,7 +671,7 @@ def select_cases(
             continue
         # The held-out suite is the yardstick, not something to run by accident on every pass: it runs with
         # `--suite heldout` or when its cases are named with `--only`.
-        if c.get("heldout") and "heldout" not in suites and not only:
+        if c.get("heldout") and not only and not (set(c.get("suites") or []) & suites):
             continue
         if sizes and (c.get("size") or "small") not in sizes:
             continue
@@ -2001,7 +2003,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",

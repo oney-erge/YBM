@@ -21,6 +21,7 @@ from typing import Any
 
 from gap_fixtures import prepare_gap_fixtures
 from heldout_fixtures import prepare_heldout_fixtures
+from heldout2_fixtures import prepare_heldout2_fixtures
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -292,6 +293,7 @@ if __name__ == "__main__":
     }
     values.update(prepare_gap_fixtures(fixture_root, _remove_fixture_tree))
     values.update(prepare_heldout_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_heldout2_fixtures(fixture_root, _remove_fixture_tree))
 
     server: ThreadingHTTPServer | None = None
     if start_web_server:
