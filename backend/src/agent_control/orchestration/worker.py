@@ -2826,7 +2826,7 @@ def _filesystem_overwrite_when_asked_to_change(
     path = str(tool_input.get("path") or "").strip()
     if not path or not Path(path).is_file():
         return tool_input
-    request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    request = _users_own_words(task)
     if not _CHANGE_INTENT.search(request):
         return tool_input
     return {**tool_input, "overwrite": True}
@@ -3307,6 +3307,16 @@ def _answer_from_results(history: list[dict[str, Any]], question: str | None) ->
     return "\n".join(lines)
 
 
+def _users_own_words(task: TaskRecord) -> str:
+    """What the user wrote, without the question and answer a clarification round appends to the task's objective.
+
+    After "Question to the user: ... offer to move them to a folder ..." the objective holds the model's words as well, and an
+    intent check that acts on the user's behalf (a delete refused, a file overwritten) must not read the model's words as theirs.
+    """
+    original = str(task.metadata.get("original_message_text") or "").strip()
+    return original or str(task.objective or "")
+
+
 _DELETE_INTENT = re.compile(r"\b(?:delete|erase|wipe|trash|get rid of|remove all|throw away|destroy)\b", re.IGNORECASE)
 _MOVE_INTENT = re.compile(r"\b(?:move|organi[sz]e|rename|sort|tidy|clean ?up|archive|copy|group|put (?:them|it|these|those)? ?(?:in|into|under))\b", re.IGNORECASE)
 _FILE_REARRANGING_OPERATIONS = frozenset({"organize_plan", "rename_plan", "apply_manifest"})
@@ -3321,7 +3331,7 @@ def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: di
     """
     if tool_name != "filesystem.manage" or tool_input.get("operation") not in _FILE_REARRANGING_OPERATIONS:
         return False
-    request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    request = _users_own_words(task)
     return bool(_DELETE_INTENT.search(request)) and not _MOVE_INTENT.search(request)
 
 

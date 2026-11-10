@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
+  appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
+  user's, and the files were renamed anyway.
 - A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
   all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
   The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
