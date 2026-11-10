@@ -295,8 +295,10 @@ class OperatorConfig(StrictBaseModel):
     verify_numbers: bool = True
     # Hold the Operator's reply to one JSON schema in which every tool call is a real tool, a real operation and its real
     # arguments (tools/call_schema.py), enforced by the local server while the model writes. Local servers only: a hosted
-    # profile keeps the plain schema. A server that refuses the schema gets the plain one for that call.
-    constrain_calls: bool = False
+    # profile keeps the plain schema, and a server that refuses the schema gets the plain one for that call. On by default
+    # because it was measured: on the local Qwen3.5-9B over the 60-case held-out suite, calls the tool refused fell from 52 of
+    # 266 steps to 5 of 150 and made-up tool names from 30 to 0.
+    constrain_calls: bool = True
 
 
 class VSCodeAdapterConfig(StrictBaseModel):

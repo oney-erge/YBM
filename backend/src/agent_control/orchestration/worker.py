@@ -20,6 +20,7 @@ from agent_control.orchestration.auditor import AuditorService
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
+    delivery_gap,
     fulfillment_guidance,
     validate_fulfillment,
 )
@@ -881,10 +882,12 @@ class TaskWorker:
             # evidence regex, not an intent-inference heuristic - so it still
             # runs in both modes; it is what caught "The following files were
             # created:" against an empty workspace (docs/archive/E2E_FINDINGS.md P0-2).
+            candidate_task = latest.model_copy(update={"metadata": metadata})
             gap = (
-                None
+                # The Auditor judges the rest, but whether a file or screenshot the user asked for was actually sent is a fact.
+                delivery_gap(candidate_task)
                 if self._auditor_owns_fulfillment
-                else validate_fulfillment(latest.model_copy(update={"metadata": metadata})).first_gap
+                else validate_fulfillment(candidate_task).first_gap
             ) or _unsupported_write_claim(final_answer, history, metadata)
             if gap:
                 gap_count = int(latest.metadata.get("operator_fulfillment_gap_count", 0))
@@ -1047,6 +1050,7 @@ class TaskWorker:
         )
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
+        tool_input = _filesystem_path_relative_to_a_listed_root(tool_name, tool_input, history)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
         tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
@@ -1177,6 +1181,9 @@ class TaskWorker:
             # prompt - previously only reconstructed at trace-read time
             # (admin.py's _enrich_operator_history), invisible to the model.
             "content_trust": result.content_trust,
+            # The folder a listing or search was taken from (an alias such as "desktop" is already resolved): its entries are
+            # shown relative to it, and a later read of one of them needs it to find the file.
+            "output_root": result.output.get("root") if tool_name == "filesystem.manage" else None,
             **normalization,
         })
         completed_coding_task = self._complete_fulfilled_coding_result(
@@ -2748,6 +2755,38 @@ _RECENCY_INTENT = re.compile(
     r"modified (?:most )?recently|(?:when|what time) (?:was|were) \w+(?: \w+){0,4} (?:last )?(?:modified|changed|updated|edited))\b",
     re.IGNORECASE,
 )
+
+
+# The operations that take one file by path and are given a listing's relative path: reading it, opening a document, sending it.
+_READS_OF_A_LISTED_FILE = {
+    "filesystem.manage": frozenset({"read_file", "open_file"}),
+    "document.manage": frozenset({"inspect_document", "extract_text", "summarize_pdf"}),
+    "artifact.deliver": frozenset({"send_file"}),
+}
+
+
+def _filesystem_path_relative_to_a_listed_root(
+    tool_name: str | None, tool_input: dict[str, Any], history: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Read a file the model names the way a listing showed it: relative to the folder that was listed.
+
+    ``search`` and ``inspect_folder`` list entries relative to the folder they looked in (``resumes/oney-resume-notes.txt``), and
+    the model passes that to ``read_file``. The tool resolved it against the program's own folder and said the file did not
+    exist, three times, until the task was stopped. The path is completed with the most recent listed folder it exists under;
+    anything that does not exist there is left exactly as given.
+    """
+    if tool_input.get("operation") not in _READS_OF_A_LISTED_FILE.get(str(tool_name), frozenset()):
+        return tool_input
+    raw = str(tool_input.get("path") or "").strip().strip("\"'")
+    if not raw or Path(raw).is_absolute() or Path(raw).exists():
+        return tool_input
+    for entry in reversed(history):
+        root = entry.get("output_root") if isinstance(entry, dict) else None
+        if isinstance(root, str) and root:
+            candidate = Path(root) / raw
+            if candidate.is_file():
+                return {**tool_input, "path": str(candidate)}
+    return tool_input
 
 
 def _filesystem_listing_input_with_dates_intent(

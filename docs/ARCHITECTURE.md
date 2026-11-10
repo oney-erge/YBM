@@ -139,7 +139,7 @@ a file request sees the file, document, delivery and code tools). Every register
 and a task with two failed or rejected steps gets the full catalog back. It is off because it did not help when
 measured: on 72 recorded steps Qwen3.5-9B scored 46% with it and 49% without (inside the noise).
 
-`operator.constrain_calls: true` holds the Operator's reply to one JSON schema in which every tool call is a real tool, a real
+`operator.constrain_calls` (on by default; `false` turns it off) holds the Operator's reply to one JSON schema in which every tool call is a real tool, a real
 operation and that operation's own arguments (`tools/call_schema.py`, built from the tool definitions so it cannot drift from
 what `ToolDefinition.validate_input` checks). The local server enforces it while the model writes, so a call such as
 `schedule.manage` with `task_name` where `objective` is required, a tool called `filesystem`, or an operation left out cannot

@@ -135,6 +135,21 @@ def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
     return tuple(_dedupe(inferred))
 
 
+_DELIVERY_TYPES = frozenset({PostconditionType.ARTIFACT_DELIVERED, PostconditionType.SCREENSHOT_DELIVERED})
+
+
+def delivery_gap(task: TaskRecord) -> str | None:
+    """The gap reason when a file or screenshot the request asked to be sent has not been sent; None otherwise.
+
+    Whether something was delivered is a fact in the record, not a judgment, so it is checked even when the Auditor owns the
+    rest of fulfillment: a 9B Auditor approved "open the page and send me a screenshot" after the screenshot was only taken.
+    """
+    for missing in validate_fulfillment(task).missing:
+        if missing in _DELIVERY_TYPES:
+            return _gap_reason(missing)
+    return None
+
+
 def validate_fulfillment(task: TaskRecord) -> FulfillmentValidation:
     expected = expected_postconditions(task)
     missing = tuple(

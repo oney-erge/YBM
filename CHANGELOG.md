@@ -7,6 +7,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A file or screenshot the user asked to be sent is checked as sent even when the Auditor owns the rest of fulfillment. "Open the page
+  and send me a screenshot" completed after the screenshot was only taken, because the Auditor approved it and the deterministic
+  delivery check was skipped.
+- A file read by the path a listing showed (`resumes/notes.txt`, relative to the folder the search or listing looked in) is
+  completed with that folder, instead of being looked for in the program's own folder and reported as not existing three times.
 - Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original
   was NOT changed and how to replace it. The model had repeated the same call until the task was blocked.
 - When the "answer now" offer (stuck or out of steps) is spent on a question the user already answered, the model gets one more
@@ -32,9 +37,16 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
   result; otherwise the model is sent back once to calculate it with code.
 
+### Changed
+
+- `operator.constrain_calls` is on by default. Measured over the 60-case held-out suite on the local Qwen3.5-9B: calls a tool refused
+  fell from 52 of 266 steps (19.5%) to 5 of 150 (3.3%), made-up tool names from 30 to 0, and the held-out pass rate went from 43 to 54 of
+  60 together with the other fixes in this release. It applies to local servers only and falls back to the plain schema when a server
+  refuses it; set `operator.constrain_calls: false` to turn it off.
+
 ### Added
 
-- `operator.constrain_calls` (off by default) holds the Operator's reply to a JSON schema built from the tool definitions, so a
+- `operator.constrain_calls` holds the Operator's reply to a JSON schema built from the tool definitions, so a
   tool call with a wrong argument name, an unknown tool or no operation cannot be written. It needs a local server that enforces
   a response schema (llama.cpp, Ollama) and LocalDeploy with its response-schema fix; otherwise the plain schema is used.
 

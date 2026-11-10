@@ -3252,3 +3252,73 @@ async def test_an_answer_now_offer_spent_on_an_already_answered_question_is_offe
     assert result.metadata["synthesized_answer"].startswith("I cannot place orders")
     assert [e["status"] for e in result.metadata["operator_history"] if e["tool_name"] == "_stuck_check"] == ["stuck", "stuck"]
     assert operator.finish_only_calls[-2:] == [True, True]
+
+
+
+def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    folder = tmp_path / "Desktop"
+    (folder / "resumes").mkdir(parents=True)
+    (folder / "resumes" / "notes.txt").write_text("resume notes", encoding="utf-8")
+    other = tmp_path / "Elsewhere"
+    other.mkdir()
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "search", "root": "desktop"}, "status": "succeeded",
+              "output_root": str(folder)}
+    read = {"operation": "read_file", "path": "resumes/notes.txt"}
+
+    assert complete("filesystem.manage", read, [listing])["path"] == str(folder / "resumes" / "notes.txt")
+    # the most recent listing that has the file wins; a folder that does not have it is skipped
+    older = {**listing, "output_root": str(other)}
+    assert complete("filesystem.manage", read, [listing, older])["path"] == str(folder / "resumes" / "notes.txt")
+    # nothing changes: no listing, an absolute path, a file that exists as given, another tool, another operation
+    assert complete("filesystem.manage", read, []) == read
+    absolute = {"operation": "read_file", "path": str(folder / "resumes" / "notes.txt")}
+    assert complete("filesystem.manage", absolute, [listing]) == absolute
+    assert complete("filesystem.manage", {"operation": "read_file", "path": "missing.txt"}, [listing]) == {"operation": "read_file", "path": "missing.txt"}
+    assert complete("browser.open", read, [listing]) == read
+    written = {"operation": "write_text_file", "path": "resumes/notes.txt"}
+    assert complete("filesystem.manage", written, [listing]) == written
+
+
+def test_the_document_and_delivery_tools_get_the_same_completion(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "memo.pdf").write_bytes(b"%PDF-1.4")
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder"}, "status": "succeeded", "output_root": str(tmp_path)}
+    wanted = str(tmp_path / "docs" / "memo.pdf")
+
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "extract_text", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    assert complete("artifact.deliver", {"operation": "send_file", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    # an operation that is not a read of one file is left alone
+    create = {"operation": "create_presentation", "path": "docs/memo.pdf"}
+    assert complete("document.manage", create, [listing]) == create
+
+
+
+@pytest.mark.asyncio
+async def test_a_screenshot_that_was_only_taken_is_not_done_even_when_the_auditor_owns_fulfillment(tmp_path) -> None:
+    """Live: "open the page and send me a screenshot" completed after the screenshot was taken and never sent; the 9B Auditor
+    approved it, and the deterministic delivery check was skipped because the Auditor owns fulfillment."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create(
+        "Open the browser, go to the page and send me a screenshot",
+        metadata={"expected_postconditions": ["screenshot_delivered"]},
+    )
+    executor = _executor(_settings(), audit, repos, output={"summary": "Screenshot: C:/shots/page.png"})
+    auditor = QueueAuditor([AuditResult(sufficient=True, answer="The page is titled Agent Control E2E Site.")])
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={"operation": "screenshot"}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The page is titled Agent Control E2E Site."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, operator_max_steps=8, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(2):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.RUNNING  # sent back, not completed
+    gap = result.metadata["operator_history"][-1]
+    assert gap["tool_name"] == "_fulfillment_check" and "screenshot" in gap["error"].lower()
