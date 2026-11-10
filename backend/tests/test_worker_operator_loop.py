@@ -3477,3 +3477,48 @@ def test_only_a_failure_that_says_the_target_is_missing_turns_a_question_down(tm
     both = failed("file does not exist") + [{"tool_name": "filesystem.manage", "status": "succeeded", "output_summary": "found it"}]
     assert _named_target_not_found(task, both) is None
     assert _named_target_not_found(task, failed("file does not exist") + [{"tool_name": "_clarification_check", "status": "clarification_gap"}]) is not None
+
+
+# ---- a move or rename made to look like a delete ---------------------------------------------------------------------------
+# Live (fresh held-out suite): "Delete all the files in the junk folder" became organize_plan and apply_manifest into folders named
+# "other", "deleted" and "trash", the three files were renamed, and the task reported "Renamed 3 file(s)".
+
+
+def test_only_a_request_that_just_asks_to_delete_makes_a_move_a_simulated_delete() -> None:
+    from agent_control.orchestration.worker import _is_simulated_delete
+
+    manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
+    for text in ("Delete all the files in the junk folder.", "Please erase everything in C:/junk", "Get rid of the old logs", "wipe the temp folder"):
+        assert _is_simulated_delete(TaskRecord(objective=text, metadata={}), "filesystem.manage", manifest) is True, text
+    for text in ("Clean up the inbox: it is a mess.", "Move the .tmp files into an archive folder", "Delete the duplicates and tidy the folder",
+                 "Organize my downloads", "Rename draft.txt to final.txt", "Sort the files by type and remove nothing"):
+        assert _is_simulated_delete(TaskRecord(objective=text, metadata={}), "filesystem.manage", manifest) is False, text
+    delete = TaskRecord(objective="Delete all the files in the junk folder.", metadata={})
+    assert _is_simulated_delete(delete, "filesystem.manage", {"operation": "read_file", "path": "C:/junk/a.log"}) is False
+    assert _is_simulated_delete(delete, "filesystem.manage", {"operation": "organize_plan", "root": "C:/junk"}) is True
+    assert _is_simulated_delete(delete, "browser.open", manifest) is False
+
+
+@pytest.mark.asyncio
+async def test_a_delete_request_is_not_carried_out_by_moving_and_renaming_files(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Delete all the files in C:/junk.")
+    adapter = StaticToolAdapter({"summary": "Moved 3 file(s)."})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="filesystem.manage")
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", risk_level=RiskLevel.LOW,
+                         tool_input={"operation": "apply_manifest", "root": "C:/junk", "manifest": [{"source": "a.log", "destination": "deleted"}]}),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot delete files. I can move them into a folder you name."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert adapter.requests == []  # nothing was moved or renamed
+    refused = result.metadata["operator_history"][0]
+    assert refused["status"] == "denied" and "no delete operation" in refused["error"]
+    assert result.status == TaskStatus.COMPLETED and result.metadata["synthesized_answer"].startswith("I cannot delete files")

@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
+  all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
+  The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
+  request that also asks to move, organize, rename, sort, tidy or clean up keeps those operations.
 - Asked to read, open or send a file that does not exist, the model now says so instead of asking the user which other file they
   meant or to paste its contents. A question after a step that failed because the target is missing is turned down with "say so
   plainly in a final answer", and that honest answer is no longer sent back by the fulfillment check for lacking the contents the
