@@ -3522,3 +3522,41 @@ async def test_a_delete_request_is_not_carried_out_by_moving_and_renaming_files(
     refused = result.metadata["operator_history"][0]
     assert refused["status"] == "denied" and "no delete operation" in refused["error"]
     assert result.status == TaskStatus.COMPLETED and result.metadata["synthesized_answer"].startswith("I cannot delete files")
+
+
+# ---- intent checks read the user's own words, not the model's question appended by a clarification round -------------------
+# Live: after "Delete everything in the trash folder", the model said it cannot delete and asked a question that offered to move the
+# files; the task's objective then held "move", the delete guard read that as the user's, and the files were renamed anyway.
+
+ROUND = (
+    "Delete everything in C:/junk. [Question to the user: I cannot delete files; I can offer to move them to a folder. Which?] "
+    "[User clarification: Yes, please go ahead with what you proposed.]"
+)
+
+
+def test_the_delete_guard_is_not_switched_off_by_the_models_own_question() -> None:
+    from agent_control.orchestration.worker import _is_simulated_delete
+
+    manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
+    task = TaskRecord(objective=ROUND, metadata={"original_message_text": "Delete everything in C:/junk."})
+    assert _is_simulated_delete(task, "filesystem.manage", manifest) is True
+    # without the original message to go by, the objective is all there is
+    assert _is_simulated_delete(TaskRecord(objective="Delete everything in C:/junk.", metadata={}), "filesystem.manage", manifest) is True
+    # and a user who really asked to move still gets the move
+    moving = TaskRecord(objective=ROUND, metadata={"original_message_text": "Move the old files in C:/junk into archive."})
+    assert _is_simulated_delete(moving, "filesystem.manage", manifest) is False
+
+
+def test_the_overwrite_rule_does_not_act_on_words_the_model_added(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as enrich
+
+    existing = tmp_path / "greeting.txt"
+    existing.write_text("hello", encoding="utf-8")
+    write = {"operation": "write_text_file", "path": str(existing), "content": "hi"}
+    asked = TaskRecord(
+        objective="Write greeting.txt saying hi. [Question to the user: Should I update the existing file?] [User clarification: ok]",
+        metadata={"original_message_text": "Write a file called greeting.txt saying hi."},
+    )
+    assert enrich(asked, "filesystem.manage", write) == write
+    changed = TaskRecord(objective="x", metadata={"original_message_text": "Change greeting.txt to say hi."})
+    assert enrich(changed, "filesystem.manage", write)["overwrite"] is True
