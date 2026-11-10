@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A file or screenshot the user asked to be sent is checked as sent even when the Auditor owns the rest of fulfillment. "Open the page
+  and send me a screenshot" completed after the screenshot was only taken, because the Auditor approved it and the deterministic
+  delivery check was skipped.
 - A file read by the path a listing showed (`resumes/notes.txt`, relative to the folder the search or listing looked in) is
   completed with that folder, instead of being looked for in the program's own folder and reported as not existing three times.
 - Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original

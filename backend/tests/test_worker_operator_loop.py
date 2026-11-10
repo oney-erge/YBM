@@ -3295,3 +3295,30 @@ def test_the_document_and_delivery_tools_get_the_same_completion(tmp_path) -> No
     # an operation that is not a read of one file is left alone
     create = {"operation": "create_presentation", "path": "docs/memo.pdf"}
     assert complete("document.manage", create, [listing]) == create
+
+
+
+@pytest.mark.asyncio
+async def test_a_screenshot_that_was_only_taken_is_not_done_even_when_the_auditor_owns_fulfillment(tmp_path) -> None:
+    """Live: "open the page and send me a screenshot" completed after the screenshot was taken and never sent; the 9B Auditor
+    approved it, and the deterministic delivery check was skipped because the Auditor owns fulfillment."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create(
+        "Open the browser, go to the page and send me a screenshot",
+        metadata={"expected_postconditions": ["screenshot_delivered"]},
+    )
+    executor = _executor(_settings(), audit, repos, output={"summary": "Screenshot: C:/shots/page.png"})
+    auditor = QueueAuditor([AuditResult(sufficient=True, answer="The page is titled Agent Control E2E Site.")])
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={"operation": "screenshot"}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The page is titled Agent Control E2E Site."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, operator_max_steps=8, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(2):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.RUNNING  # sent back, not completed
+    gap = result.metadata["operator_history"][-1]
+    assert gap["tool_name"] == "_fulfillment_check" and "screenshot" in gap["error"].lower()

@@ -20,6 +20,7 @@ from agent_control.orchestration.auditor import AuditorService
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
+    delivery_gap,
     fulfillment_guidance,
     validate_fulfillment,
 )
@@ -881,10 +882,12 @@ class TaskWorker:
             # evidence regex, not an intent-inference heuristic - so it still
             # runs in both modes; it is what caught "The following files were
             # created:" against an empty workspace (docs/archive/E2E_FINDINGS.md P0-2).
+            candidate_task = latest.model_copy(update={"metadata": metadata})
             gap = (
-                None
+                # The Auditor judges the rest, but whether a file or screenshot the user asked for was actually sent is a fact.
+                delivery_gap(candidate_task)
                 if self._auditor_owns_fulfillment
-                else validate_fulfillment(latest.model_copy(update={"metadata": metadata})).first_gap
+                else validate_fulfillment(candidate_task).first_gap
             ) or _unsupported_write_claim(final_answer, history, metadata)
             if gap:
                 gap_count = int(latest.metadata.get("operator_fulfillment_gap_count", 0))
