@@ -2096,7 +2096,10 @@ async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_an
         OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={}, risk_level=RiskLevel.LOW),
         OperatorDecision(action=OperatorAction.DONE, final_answer="attempt 1"),
         OperatorDecision(action=OperatorAction.DONE, final_answer="attempt 2"),
-        OperatorDecision(action=OperatorAction.DONE, final_answer="attempt 3"),
+        # The third answer holds an address that no tool returned: it is sent back once, and when it comes again it cannot be
+        # delivered unconfirmed.
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Ask news@invented.example for the five episodes."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Ask news@invented.example for the five episodes."),
     ])
     auditor = QueueAuditor([
         AuditResult(sufficient=False, reason="still insufficient"),
@@ -2108,7 +2111,7 @@ async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_an
                         audit_min_tool_calls=1)
 
     result = task
-    for _ in range(5):
+    for _ in range(6):
         result = await worker.process_task(result.id)
         if result.status != TaskStatus.RUNNING:
             break
@@ -2117,6 +2120,57 @@ async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_an
     assert result.metadata["operator_audit_gap_count"] == 2
     assert len(auditor.calls) == 2
     assert "unverified answer" in result.metadata["last_worker_error"]
+
+
+@pytest.mark.asyncio
+async def test_a_grounded_answer_the_auditor_twice_turned_down_is_delivered_with_a_note(tmp_path) -> None:
+    """Live: a 9B Auditor rejected a correct two-sentence summary of a 159-character document for being short, twice, and the
+    task ended "Blocked". The answer invents no address or number, so it is delivered and says it was not confirmed."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Summarize notes.txt in two sentences")
+    executor = _executor(_settings(), audit, repos, tool_name="filesystem.manage", output={"text": "Team offsite plan. Dates: June 9 to 11."})
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The team offsite is planned for June 9 to 11."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The team offsite is planned for June 9 to 11."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The team offsite is planned for June 9 to 11."),
+    ])
+    auditor = QueueAuditor([AuditResult(sufficient=False, reason="too short"), AuditResult(sufficient=False, reason="too short")])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(6):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.COMPLETED
+    answer = result.metadata["synthesized_answer"]
+    assert answer.startswith("The team offsite is planned for June 9 to 11.") and "Not fully confirmed" in answer
+    assert result.metadata["operator_audit_unconfirmed"] is True
+
+
+def test_a_request_to_change_a_file_that_exists_overwrites_it(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as enrich
+    from agent_control.schemas import TaskRecord
+
+    existing = tmp_path / "greeting.txt"
+    existing.write_text("hello", encoding="utf-8")
+    write = {"operation": "write_text_file", "path": str(existing), "content": "goodbye"}
+
+    def task(text: str) -> TaskRecord:
+        return TaskRecord(objective=text, metadata={"original_message_text": text})
+
+    assert enrich(task("Change it so it says goodbye instead."), "filesystem.manage", write) == {**write, "overwrite": True}
+    assert enrich(task("Update the text inside greeting.txt"), "filesystem.manage", write)["overwrite"] is True
+    # nothing changes: a request to create, a path that does not exist, overwrite already set, another operation or tool
+    assert enrich(task("Write a file called greeting.txt that says hello"), "filesystem.manage", write) == write
+    missing = {**write, "path": str(tmp_path / "new.txt")}
+    assert enrich(task("Change it so it says goodbye"), "filesystem.manage", missing) == missing
+    explicit = {**write, "overwrite": False}
+    assert enrich(task("Change it so it says goodbye"), "filesystem.manage", explicit)["overwrite"] is True
+    assert enrich(task("Change it"), "filesystem.manage", {"operation": "read_file", "path": str(existing)}) == {"operation": "read_file", "path": str(existing)}
+    assert enrich(task("Change it"), "browser.open", write) == write
 
 
 @pytest.mark.asyncio
