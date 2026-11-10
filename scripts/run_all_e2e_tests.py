@@ -61,6 +61,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
 RESULTS_ROOT = ROOT / ".agent_control" / "e2e_results"
 CASES_PATH = ROOT / "e2e" / "all_cases.json"
+HELDOUT_PATH = ROOT / "e2e" / "heldout_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -594,7 +595,11 @@ def render_text(text: str, fixtures: dict[str, str]) -> str:
 
 
 def load_cases() -> list[dict]:
-    return json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
+    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    if HELDOUT_PATH.exists():
+        cases += json.loads(HELDOUT_PATH.read_text(encoding="utf-8"))
+    return cases
 
 
 def is_guarded(case: dict) -> bool:
@@ -616,6 +621,10 @@ def select_cases(
         if only and cid not in only:
             continue
         if cid in skip:
+            continue
+        # The held-out suite is the yardstick, not something to run by accident on every pass: it runs with
+        # `--suite heldout` or when its cases are named with `--only`.
+        if c.get("heldout") and "heldout" not in suites and not only:
             continue
         if sizes and (c.get("size") or "small") not in sizes:
             continue
@@ -986,6 +995,13 @@ def _diagnose_turn(
                 f"bot reply did not contain any of {reply_needles}; "
                 f"reply={reply[:240]!r}; audit_confirmed={confirmed[:240]!r}"
             )
+
+    all_needles = [str(item).lower() for item in assertions.get("bot_reply_contains_all") or [] if str(item).strip()]
+    if all_needles:
+        reply_and_confirmed = f"{_turn_reply_text(turn)}\n{turn.telegram_confirmed_text}".lower()
+        absent = [needle for needle in all_needles if needle not in reply_and_confirmed]
+        if absent:
+            return False, f"bot reply is missing {absent}; reply={reply_and_confirmed[:240]!r}"
 
     # Leak checks. A secret that reaches the user is a failure even when every
     # positive assertion passed, so these are evaluated against both the
@@ -1923,7 +1939,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",
