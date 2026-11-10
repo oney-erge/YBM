@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
+  with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
+- A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
+  "what is the total on the receipt?" got the whole file back as its answer.
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
   what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
   the task as before.

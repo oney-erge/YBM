@@ -148,6 +148,18 @@ only: a hosted profile keeps the plain schema, and a server that refuses the str
 prompt text) gets the plain one for that call. The reply is still validated as an OperatorDecision and every tool still
 validates its own input.
 
+**When a task is stuck or out of steps.** A call that returns the same result three times, a read the model keeps repeating, and the
+step budget running out with nothing left to repair each end the same way: once, a check entry tells the model to answer with what it
+has or ask one question (with `operator.constrain_calls` its next reply can only finish, ask or stop), and a tool call after that is
+not run. What it answers goes through the usual audit and fulfillment checks; a model that refuses the offer ends the task as before
+(blocked, or finished with the result it already read).
+
+**Answers are checked against what the task read.** Before a `done` reaches the user (`operator.verify_numbers`, on by default; one
+send-back per task, `orchestration/number_check.py`): an email address or web link that the request, the tool results and the
+remembered facts never held is flagged ("do not make up values"), and for a request that asks for a calculation a result-sized number
+that no tool produced is sent back to be calculated with `code.interpreter`. The local model once answered a lookup with an email
+address that was not in the file.
+
 ## Task states
 
 ```mermaid

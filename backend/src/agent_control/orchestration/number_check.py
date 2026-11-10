@@ -37,6 +37,38 @@ def _numbers(text: str) -> set[str]:
     return {n for n in (_normalise(t) for t in _NUMBER.findall(text or "")) if n is not None}
 
 
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_URL = re.compile(r"https?://[^\s)>\]\"'<]+")
+
+
+def _evidence_text(request_text: str, history: Iterable[dict[str, Any]], extra: str) -> str:
+    parts = [request_text, extra]
+    for entry in history:
+        if not isinstance(entry, dict) or str(entry.get("tool_name") or "").startswith("_"):
+            continue
+        parts.append(str(entry.get("output_summary") or ""))
+        parts.append(str(entry.get("error") or ""))
+        parts.append(str(entry.get("input") or ""))
+    return "\n".join(parts).casefold()
+
+
+def ungrounded_addresses(request_text: str, answer: str, history: Iterable[dict[str, Any]], extra_evidence: str = "") -> list[str]:
+    """Email addresses and web links in ``answer`` that the request, the tool results and the remembered facts never held.
+
+    Asked for Grace Hopper's email address, a file that did not list her, the local model answered with a made-up
+    "grace.hopper@navy.example". A value like that has to have been read somewhere, so one that was not is flagged, for every
+    kind of request.
+    """
+    evidence = _evidence_text(request_text, history, extra_evidence)
+    found: list[str] = []
+    for pattern in (_EMAIL, _URL):
+        for token in pattern.findall(answer or ""):
+            cleaned = token.rstrip(".,;:!?)").casefold()
+            if cleaned and cleaned not in evidence and token.rstrip(".,;:!?)") not in found:
+                found.append(token.rstrip(".,;:!?)"))
+    return found
+
+
 def asks_for_a_calculation(request_text: str) -> bool:
     return bool(_CALCULATION.search(request_text or ""))
 
