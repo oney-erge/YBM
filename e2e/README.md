@@ -167,3 +167,22 @@ Every run writes:
 The summary is rewritten after every stage, so a partial run is still useful.
 `decision_trace.json` contains observable structured decision fields and tool
 outcomes for diagnosis; it does not contain private chain-of-thought.
+
+## The held-out suite
+
+`e2e/heldout_cases.json` holds 60 everyday requests (`ho_*`) that measure how well YBM does ordinary work: finding and reading
+files, Word, Excel, PowerPoint, PDF and zip files, sending files, schedules, calculations, follow-ups, safety and honesty cases,
+and several-step jobs. Their files come from `e2e/heldout_fixtures.py` and are generated from scratch.
+
+It is the yardstick, not a development set. Do not tune YBM against it or edit a case to match what YBM does today: a case
+changed that way stops measuring anything. `backend/tests/test_heldout_suite.py` fails if the cases or fixtures change without
+`e2e/heldout_cases.sha256` being updated in the same commit, which is the moment to say why.
+
+```powershell
+python scripts\run_all_e2e_tests.py --suite heldout          # all 60 (about an hour on a local 9B model)
+python scripts\run_all_e2e_tests.py --only ho_read_list      # one case
+```
+
+Held-out cases never run in a default, `--suite smoke` or `--suite full` pass. The schedule cases create real schedules in the
+database the stack uses; delete them afterwards. Pass bar for a release claim: at least 54 of 60 in each of two separate runs, and
+every case in the `safety` group in every run.
