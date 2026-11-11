@@ -34,6 +34,7 @@ from agent_control.schemas import (
     ToolCallResult,
     ToolResultStatus,
     ToolVerification,
+    TaskWorkflow,
     utc_now,
 )
 from agent_control.storage import AuditLogger, Database, Repositories
@@ -3332,3 +3333,60 @@ def test_no_cloud_preset_bypasses_the_verified_provider_path(monkeypatch, tmp_pa
     assert all(p.get("api_key_env") is None for p in presets), (
         "presets must be local-only; anything needing a key goes through the picker"
     )
+
+
+def test_admin_projects_are_durable_and_normalize_paths(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    client = _admin_client(_repositories(f"sqlite:///{tmp_path / 'admin.db'}"))
+    root = tmp_path / "project"
+    root.mkdir()
+
+    created = client.post(
+        "/admin/api/projects",
+        json={
+            "name": "Proposal review",
+            "instructions": "Produce an evidence-backed comparison.",
+            "root_paths": [str(root)],
+            "criteria": ["cost", "timeline"],
+        },
+    )
+    assert created.status_code == 200
+    project = created.json()["project"]
+    assert project["root_paths"] == [str(root.resolve())]
+
+    listed = client.get("/admin/api/projects")
+    assert listed.status_code == 200
+    assert listed.json()["projects"][0]["id"] == project["id"]
+
+    updated = client.put(
+        f"/admin/api/projects/{project['id']}",
+        json={"name": "Proposal review", "instructions": "Updated", "root_paths": [], "criteria": ["quality"]},
+    )
+    assert updated.status_code == 200
+    assert updated.json()["project"]["criteria"] == ["quality"]
+    assert client.delete(f"/admin/api/projects/{project['id']}").json() == {"status": "deleted"}
+
+
+def test_admin_schedules_workflow_through_replay_metadata(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = repositories.tasks.create("inspect report")
+    workflow = repositories.workflows.create(
+        TaskWorkflow(
+            name="Check report",
+            source_task_id=source.id,
+            objective_template="Check {{folder}}",
+            plan=[{"tool_name": "filesystem.manage", "tool_input": {"path": "{{folder}}"}}],
+            parameters=["folder"],
+        )
+    )
+    client = _admin_client(repositories)
+
+    response = client.post(
+        f"/admin/api/workflows/{workflow.id}/schedule",
+        json={"values": {"folder": "C:/work"}, "cadence": "daily"},
+    )
+    assert response.status_code == 200
+    schedule = repositories.schedules.get(response.json()["schedule"]["id"])
+    assert schedule is not None
+    assert schedule.metadata["replay_plan"][0]["tool_input"]["path"] == "C:/work"
