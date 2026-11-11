@@ -33,6 +33,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
