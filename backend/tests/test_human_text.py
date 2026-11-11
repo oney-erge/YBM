@@ -13,7 +13,7 @@ from agent_control.human_text import friendly_path, humanize, progress_phrase
 
 # A Windows-style path (C:\...) that does not exist is only recognised as one on Windows; a POSIX path is rewritten
 # only when it exists, which the tests below also cover on every platform.
-windows_only = pytest.mark.skipif(os.name != "nt", reason="a missing C:\ path is only rewritten as a Windows path")
+windows_only = pytest.mark.skipif(os.name != "nt", reason="a missing drive-letter path is only rewritten as a Windows path")
 
 
 @pytest.fixture
