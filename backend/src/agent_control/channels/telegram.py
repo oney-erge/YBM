@@ -7,7 +7,9 @@ from typing import Any
 import httpx
 
 from agent_control.channels.base import (
+    ACKNOWLEDGMENT_TEXT,
     ChannelUpdateResult,
+    answer_status_question,
     approve_latest_pending,
     classify_and_spawn_task,
     resume_clarifying_reply,
@@ -103,6 +105,19 @@ class TelegramBotApi:
         data = await self._post("sendMessage", payload)
         self._log_sent(chat_id, kind="text", text=text, response=data)
         return data
+
+    async def edit_message_text(self, chat_id: str | int, message_id: int | str, text: str) -> dict[str, Any]:
+        """Change the text of a message this bot sent, so a long job updates one bubble."""
+        data = await self._post("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text})
+        self._log_sent(chat_id, kind="edit", text=text, response=data)
+        return data
+
+    async def delete_message(self, chat_id: str | int, message_id: int | str) -> dict[str, Any]:
+        return await self._post("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+    async def send_chat_action(self, chat_id: str | int, action: str = "typing") -> dict[str, Any]:
+        """Show "typing…" in the chat: the quiet way to say "I am on it" without sending a message."""
+        return await self._post("sendChatAction", {"chat_id": chat_id, "action": action})
 
     async def send_photo_file(self, chat_id: str | int, path: str, caption: str | None = None) -> dict[str, Any]:
         payload = {"chat_id": str(chat_id)}
@@ -511,6 +526,10 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=plain_response,
                     )
+                # Before the clarifying check: "how's it going?" must not be swallowed as the answer to a question.
+                status_answer = answer_status_question(self.repositories, inbound, conversation_id)
+                if status_answer is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
                 clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
                 if clarify_response is not None:
                     return ChannelUpdateResult(
@@ -602,17 +621,27 @@ class TelegramIntakeService:
         )
         return inbound.model_copy(update={"text": text, "attachments": updated_attachments})
 
-    async def _send_progress(self, chat_id: str, text: str) -> None:
+    async def _send_progress(self, chat_id: str, text: str) -> str | None:
+        """Say "I am on it". The first acknowledgment is the typing indicator, not a message: it
+        disappears by itself. "On it" is a real message and its id is returned, because every later
+        progress update edits that one bubble."""
         if self.bot_api is None:
-            return
+            return None
         try:
-            await self.bot_api.send_message(chat_id, text)
+            if text == ACKNOWLEDGMENT_TEXT:
+                await self.bot_api.send_chat_action(chat_id, "typing")
+                return None
+            sent = await self.bot_api.send_message(chat_id, text)
+            result = sent.get("result") if isinstance(sent, dict) else None
+            message_id = result.get("message_id") if isinstance(result, dict) else None
+            return str(message_id) if message_id is not None else None
         except Exception as exc:
             self.audit.append(
                 AuditEventType.ERROR,
                 actor="telegram_progress",
                 payload={"error": "progress_send_failed", "reason": str(exc), "chat_id": chat_id},
             )
+        return None
 
     def _apply_command(self, command: CommandEnvelope) -> TaskSignal | None:
         payload = command.payload

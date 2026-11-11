@@ -1,0 +1,216 @@
+"""Make what YBM says in a chat read like a person wrote it.
+
+Everything a task reports (an answer, a progress line, a failure) is built from tool
+output, so it arrives full of things only a program cares about: `C:\\Users\\name\\...`
+paths, `task_<hex>` ids, `[file]` tags with byte counts, tool names and error codes.
+This module is the one place that turns those into plain language. It is pure text
+in, text out, with no model call, so it adds no delay and cannot invent anything:
+it only rewrites or shortens what is already there, and a path that does not exist
+on this machine is left exactly as written.
+
+    - `friendly_path`    `C:\\Users\\me\\OneDrive\\CV\\resume.docx` -> `resume.docx (in OneDrive > CV)`
+    - `humanize`         the whole message: paths, ids, long listings, error codes
+    - `progress_phrase`  one step of work -> "looking through your files"
+"""
+
+from __future__ import annotations
+
+import os
+import re
+from pathlib import Path
+from typing import Any
+
+# A Windows path as it appears inside a sentence. Spaces are legal in a Windows path, so the
+# match is greedy up to the end of the line and then cut back to the longest prefix that
+# exists on disk (`_resolve_prefix`); free text after the path is never swallowed.
+_WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\[^\r\n\"<>|*?]*")
+_TASK_ID = re.compile(r"\btask_[0-9a-f]{8,}\b")
+_LISTING_LINE = re.compile(r"^(\s*)- \[(?:file|folder|dir)\] (.+?)(?: \((\d+) bytes\))?\s*$")
+
+#: Folders a person names by their everyday word, matched case-insensitively against the first
+#: segment under the user profile.
+_KNOWN_FOLDERS = {
+    "desktop": "Desktop",
+    "documents": "Documents",
+    "downloads": "Downloads",
+    "pictures": "Pictures",
+    "music": "Music",
+    "videos": "Videos",
+}
+
+#: Reason codes the worker records, as a sentence. Anything not listed is left as it was.
+_REASONS = {
+    "risk_exceeds_capability_policy": "your safety settings do not allow that kind of action",
+    "approval_required": "it needs your approval first",
+    "already_done": "I had already done that",
+}
+
+MAX_LISTED = 8
+
+
+def _home() -> Path:
+    return Path(os.path.expanduser("~"))
+
+
+def _resolve_prefix(candidate: str) -> str:
+    """The longest leading part of `candidate` that is a real path, if any.
+
+    `C:\\Users\\me\\notes.txt and it has 3 lines` -> `C:\\Users\\me\\notes.txt`. When nothing
+    on disk matches, the final segment is trimmed at a file extension, or at the end of the
+    line, so a missing file still keeps the sentence after it.
+    """
+    text = candidate.rstrip()
+    trimmed = text.rstrip(".,;:!?)]}'\"")
+    words = trimmed.split(" ")
+    for count in range(len(words), 0, -1):
+        part = " ".join(words[:count]).rstrip(".,;:!?)]}'\"")
+        try:
+            if part and os.path.exists(part):
+                return part
+        except (OSError, ValueError):
+            continue
+    match = re.match(r"^(.*?\\[^\\/]*?\.[A-Za-z0-9]{1,6})(?=$|[\s,;:)\]'\"!?]|\.(?:\s|$))", trimmed)
+    return match.group(1) if match else trimmed
+
+
+def friendly_path(path: str) -> str:
+    """A place described the way a person would say it, with the file or folder name first."""
+    raw = str(path).strip().strip('"')
+    if not raw:
+        return raw
+    parts = [p for p in re.split(r"[\\/]+", raw) if p]
+    if parts and re.fullmatch(r"[A-Za-z]:", parts[0]):
+        parts = parts[1:]
+    if not parts:
+        return raw
+    # Anything under YBM's own scratch space is "the project folder made for this task".
+    lowered = [p.lower() for p in parts]
+    if ".agent_control" in lowered:
+        tail = parts[lowered.index(".agent_control") + 1:]
+        if tail and tail[0].lower() == "workspaces":
+            name = parts[-1] if len(tail) > 2 else "the project folder"
+            return f"{name} (in the project folder I made for this task)" if len(tail) > 2 else name
+        return parts[-1] + " (in my working folder)"
+    home = _home()
+    home_parts = [p.lower() for p in home.parts[1:]] if home.parts else []
+    inner = parts
+    where = ""
+    if home_parts and lowered[: len(home_parts)] == home_parts:
+        inner = parts[len(home_parts):]
+        if inner and inner[0].lower() == "onedrive":
+            where, inner = "OneDrive", inner[1:]
+        elif inner and inner[0].lower() in _KNOWN_FOLDERS:
+            where, inner = _KNOWN_FOLDERS[inner[0].lower()], inner[1:]
+        elif not inner:
+            return "your user folder"
+        else:
+            where = "your user folder"
+    elif lowered and lowered[0] in {"program files", "program files (x86)"}:
+        where = parts[0]
+        inner = parts[1:]
+    else:
+        where = f"the {parts[0]} folder" if len(parts) > 1 else ""
+        inner = parts[1:] if len(parts) > 1 else parts
+    if not inner:
+        return where or raw
+    name = inner[-1]
+    folders = inner[:-1]
+    if len(folders) > 2:
+        folders = ["…", *folders[-2:]]
+    place = " > ".join([p for p in [where, *folders] if p])
+    return f"{name} (in {place})" if place else name
+
+
+def _replace_paths(text: str) -> str:
+    def swap(match: re.Match[str]) -> str:
+        raw = match.group(0)
+        cut = _resolve_prefix(raw)
+        rest = raw[len(cut):]
+        return friendly_path(cut) + rest
+
+    return _WINDOWS_PATH.sub(swap, text)
+
+
+def _tidy_listing(text: str) -> str:
+    """`- [file] name (123 bytes)` runs become short name lists, long ones are cut off."""
+    lines = text.split("\n")
+    out: list[str] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        if not run:
+            return
+        shown = run[:MAX_LISTED]
+        out.extend(f"- {name}" for name in shown)
+        if len(run) > MAX_LISTED:
+            out.append(f"…and {len(run) - MAX_LISTED} more.")
+        run.clear()
+
+    for line in lines:
+        match = _LISTING_LINE.match(line)
+        if match:
+            run.append(match.group(2))
+        else:
+            flush()
+            out.append(line)
+    flush()
+    return "\n".join(out)
+
+
+def humanize(text: str) -> str:
+    """Rewrite a message so a person can read it. Idempotent."""
+    if not text:
+        return text
+    out = _replace_paths(text)
+    out = _TASK_ID.sub("an earlier task", out)
+    out = _tidy_listing(out)
+    for code, sentence in _REASONS.items():
+        out = out.replace(code, sentence)
+    out = re.sub(r"[ \t]+\n", "\n", out)
+    out = re.sub(r"\n{3,}", "\n\n", out)
+    return out.strip()
+
+
+# What a step is, in the words a person uses. Keyed by (tool, operation); "" matches any operation.
+_PHRASES: dict[tuple[str, str], str] = {
+    ("filesystem.manage", "search"): "looking through your files",
+    ("filesystem.manage", "inspect_folder"): "looking through a folder",
+    ("filesystem.manage", "describe_folder"): "looking through a folder",
+    ("filesystem.manage", "read_file"): "reading a file",
+    ("filesystem.manage", "write_text_file"): "writing a file",
+    ("filesystem.manage", "apply_manifest"): "moving and organising files",
+    ("filesystem.manage", ""): "working with your files",
+    ("document.manage", ""): "reading a document",
+    ("browser.open", "open"): "opening a web page",
+    ("browser.open", "search"): "searching the web",
+    ("browser.open", ""): "browsing the web",
+    ("browser.control", "fill_form"): "filling in a form",
+    ("browser.control", "fill_form_step"): "filling in a form",
+    ("browser.control", ""): "using the web page",
+    ("web.search", ""): "searching the web",
+    ("http.request", ""): "fetching information from the web",
+    ("code.interpreter", ""): "running a calculation",
+    ("workspace.manage", "write_files"): "writing the app",
+    ("workspace.manage", "launch_static"): "starting the app",
+    ("workspace.manage", ""): "setting up the project",
+    ("computer.use", ""): "looking at your screen",
+    ("memory.manage", ""): "checking what I know about you",
+    ("schedule.manage", ""): "setting up the reminder",
+    ("artifact.deliver", ""): "getting the file ready to send",
+    ("task.status", ""): "checking on your tasks",
+    ("knowledge.search", ""): "searching your notes",
+    ("system.inventory", ""): "checking what is on this computer",
+}
+_CODING_AGENTS = {"codex": "Codex", "claude_code": "Claude Code", "github_copilot": "Copilot"}
+
+
+def progress_phrase(tool: str, operation: str = "", tool_input: dict[str, Any] | None = None) -> str:
+    """What one step means to a person, e.g. `looking through your files`."""
+    tool = (tool or "").strip()
+    operation = (operation or "").strip()
+    if tool == "coding.agent":
+        name = _CODING_AGENTS.get(str((tool_input or {}).get("provider") or ""), "a coding assistant")
+        return f"working with {name}"
+    if tool in {"delegate", ""} and not operation:
+        return "splitting the work into smaller parts" if tool == "delegate" else "thinking it through"
+    return _PHRASES.get((tool, operation)) or _PHRASES.get((tool, "")) or "working on it"
