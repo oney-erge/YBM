@@ -18,10 +18,26 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
+- "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
+  no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
+  The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
+  for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
 
 ### Changed
 
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+- What YBM says in a chat now reads like a person wrote it. A new text pass (`human_text.py`) rewrites every task message before it
+  is sent: a path becomes the file name and a place ("resume.docx (in OneDrive)"), a task id becomes "an earlier task", a
+  `[file] name (123 bytes)` listing becomes a short list capped at eight names with "...and 22 more", and a reason code becomes a
+  sentence. It only rewrites what is already in the message; a path that does not exist on this computer is left as written.
+- Progress is one message that changes, not one new message per step. The "On it" message is the one that gets edited ("Working on it:
+  looking through your files... (3 min so far)"), the typing indicator replaces the "Got your message" text, and the answer arrives as
+  its own message while the progress message is removed. Tool names, outcome codes and the model's reasoning no longer appear.
+  Failures say what the last step was and how it ended, without "Gap:", "Retries:" or "Error:" labels.
+- The approval prompt lists what will happen as sentences ("Type \"Oney Erge\" into the \"Full name\" field", "Click \"Sign me up\"", "Control your computer: Open Steam") instead of tool names and JSON, and a value typed into a password, card or similar field is never shown.
+- A policy refusal ends the task after the second one for the same tool. A form fill refused for exceeding the browser's risk
+  ceiling was retried six more times and then reported as "something went wrong on my side"; it now stops and says the safety
+  settings do not allow that action.
 - What a person says about themselves is remembered one fact at a time. "Remember these about me: my GitHub username is oney-erge, my
   favorite language is Python, and my t-shirt size is L" was stored as that one sentence under "preference", so a form asking for a
   GitHub username had to find it inside a paragraph, and a later "my t-shirt size is XL" added a contradicting sentence. Each "my
@@ -33,10 +49,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
+- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
   all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
   The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
