@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_control.human_text import humanize, progress_phrase
+from agent_control.human_text import describe_action, humanize, progress_phrase
 from agent_control.error_text import explain_for_user, explain_tool_input_error, readable_reason
 from agent_control.text import trim_text as _trim
 from agent_control.schemas import TaskRecord, TaskStatus, utc_now
@@ -41,13 +41,19 @@ def _format_task_message(task: TaskRecord) -> str:
         return progress_text(task)
     if task.status == TaskStatus.AWAITING_APPROVAL:
         preview = str(task.metadata.get("pending_approval_preview") or "").strip()
-        lines = ["I need approval before I can continue:"]
-        if preview:
+        actions = _pending_actions(task)
+        lines = ["I need your OK before I go on:" if actions else "I need approval before I can continue:"]
+        if actions:
+            lines.extend(f"- {action}" for action in actions)
+        elif preview:
             lines.append(preview)
         else:
             lines.append("(no preview available for this step)")
         lines.append("")
-        lines.append("Reply 'approve' here to continue, or say 'cancel'.")
+        if actions:
+            lines.append("Tap Approve, or reply 'approve', to go ahead. Say 'cancel' to stop.")
+        else:
+            lines.append("Reply 'approve' here to continue, or say 'cancel'.")
         return _trim("\n".join(lines), 3900)
     if task.status == TaskStatus.AWAITING_EXTERNAL:
         session = task.metadata.get("awaiting_external") if isinstance(task.metadata, dict) else None
@@ -357,6 +363,20 @@ def _failure_lines(task: TaskRecord) -> list[str]:
     if error:
         lines.append(_trim(explain_tool_input_error(error), 900))
     return lines
+
+
+def _pending_actions(task: TaskRecord) -> list[str]:
+    """The step or steps waiting for approval, each as a sentence, from the task's own record."""
+    batch = task.metadata.get("operator_pending_batch")
+    calls = batch.get("calls") if isinstance(batch, dict) else None
+    if not calls and isinstance(task.metadata.get("operator_pending_call"), dict):
+        calls = [task.metadata["operator_pending_call"]]
+    actions: list[str] = []
+    for call in calls or []:
+        if isinstance(call, dict) and call.get("tool_name"):
+            tool_input = call.get("tool_input") if isinstance(call.get("tool_input"), dict) else {}
+            actions.append(describe_action(str(call["tool_name"]), tool_input))
+    return actions[:12]
 
 
 def _latest_real_step(task: TaskRecord) -> dict | None:

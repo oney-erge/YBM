@@ -243,3 +243,64 @@ def progress_phrase(tool: str, operation: str = "", tool_input: dict[str, Any] |
     if tool in {"delegate", ""} and not operation:
         return "splitting the work into smaller parts" if tool == "delegate" else "thinking it through"
     return _PHRASES.get((tool, operation)) or _PHRASES.get((tool, "")) or "working on it"
+
+
+_SECRET_FIELD = re.compile(r"pass(word|code)?|secret|token|card|cvv|cvc|ssn|pin\b|iban", re.IGNORECASE)
+
+
+def _quoted(value: object, limit: int = 80) -> str:
+    text = " ".join(str(value).split())
+    return '"' + (text if len(text) <= limit else text[: limit - 3].rstrip() + "...") + '"'
+
+
+def _field_value(field: object, value: object) -> str:
+    return "(hidden)" if _SECRET_FIELD.search(str(field)) else _quoted(value)
+
+
+def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
+    """What a step will do, as a sentence a person can approve or refuse. Secrets are never shown."""
+    data = tool_input or {}
+    operation = str(data.get("operation") or "")
+    if tool == "browser.control":
+        if operation in {"fill_form_step", "fill_form"}:
+            fields = dict(data["fields"]) if isinstance(data.get("fields"), dict) else {}
+            if data.get("field") is not None:
+                fields[str(data["field"])] = data.get("value", "")
+            if len(fields) == 1:
+                ((name, value),) = fields.items()
+                return f'Type {_field_value(name, value)} into the "{name}" field'
+            if fields:
+                filled = ", ".join(f'"{name}" = {_field_value(name, value)}' for name, value in list(fields.items())[:6])
+                return f"Fill in the form: {filled}"
+            return "Fill in the form"
+        if operation == "click":
+            target = data.get("text") or data.get("selector")
+            return f"Click {_quoted(target)}" if target else "Click on the page"
+        return "Use the web page"
+    if tool == "browser.open":
+        return f"Open {data['url']}" if data.get("url") else "Open a web page"
+    if tool == "computer.use":
+        action = data.get("action") if isinstance(data.get("action"), dict) else {}
+        goal = action.get("goal") or data.get("goal")
+        return f"Control your computer: {goal}" if goal else "Control your computer (mouse and keyboard)"
+    if tool == "filesystem.manage":
+        if operation == "write_text_file":
+            return f"Write the file {humanize(str(data.get('path') or ''))}".rstrip()
+        if operation == "apply_manifest":
+            moves = data.get("moves") or data.get("entries") or data.get("manifest")
+            count = len(moves) if isinstance(moves, list) else None
+            return f"Move or rename {count} file(s)" if count else "Move or rename files"
+    if tool == "artifact.deliver":
+        return f"Send you the file {humanize(str(data.get('path') or 'you asked for'))}"
+    if tool == "schedule.manage" and operation == "create":
+        return f"Set up a reminder: {data.get('objective') or data.get('prompt') or ''}".rstrip(": ")
+    if tool == "http.request":
+        return f"Contact {data['url']}" if data.get("url") else "Contact a website"
+    if tool == "coding.agent":
+        name = _CODING_AGENTS.get(str(data.get("provider") or ""), "a coding assistant")
+        prompt = " ".join(str(data.get("prompt") or "").split())
+        return f"Start {name}" + (f" on: {prompt[:100]}" if prompt else "")
+    if tool == "code.interpreter":
+        return "Run a short Python script"
+    phrase = progress_phrase(tool, operation, data)
+    return phrase[:1].upper() + phrase[1:]
