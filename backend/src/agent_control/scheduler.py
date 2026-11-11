@@ -5,14 +5,27 @@ from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any
+from collections.abc import Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_control.db_tools import retention_sweep
+from agent_control.config import AppSettings
+from agent_control.folder_triggers import poll_folder_watch
 from agent_control.schemas import AuditEventType, ScheduleRecord, ScheduleStatus, TaskRecord, TaskStatus, utc_now
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
 
 logger = logging.getLogger(__name__)
+
+
+def validate_schedule(cadence: str, timezone_name: str) -> None:
+    """Reject unsupported automation input rather than silently choosing daily."""
+    if not re.fullmatch(r"(?:daily|weekly|every (?:day|week)|every [1-9]\d{0,3} (?:minutes?|hours?|days?|weeks?))", cadence.strip().lower()):
+        raise ValueError("Use daily, weekly, or every N minutes/hours/days/weeks (N: 1-9999).")
+    try:
+        ZoneInfo(timezone_name)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        raise ValueError("Use a valid IANA timezone, such as America/Chicago or UTC.") from exc
 
 
 def _resolve_timezone(timezone_name: str | None) -> ZoneInfo | timezone:
@@ -84,10 +97,11 @@ def create_due_task(repositories: Repositories, audit: AuditLogger, schedule: Sc
         schedule.objective,
         conversation_id=conversation_id,
         metadata={
+            **schedule.metadata,
             "source_schedule_id": schedule.id,
             "source_chat_id": schedule.source_chat_id,
+            "source_channel": schedule.source_channel.value,
             "schedule_cadence": schedule.cadence,
-            **schedule.metadata,
         },
     )
     now = utc_now()
@@ -112,7 +126,7 @@ def _record_previous_run_outcome(
     failing unnoticed (the motivating case: 7 real schedules whose target
     had gone away, still firing daily for weeks - docs/archive/HISTORY.md P6).
     Returns the schedule record, refreshed if its metadata/status changed."""
-    if not schedule.last_task_id:
+    if not schedule.last_task_id or schedule.metadata.get("last_evaluated_task_id") == schedule.last_task_id:
         return schedule
     previous_task = repositories.tasks.get(schedule.last_task_id)
     if previous_task is None:
@@ -126,9 +140,7 @@ def _record_previous_run_outcome(
         # Still in flight (or in some non-terminal state) from last time -
         # nothing new to learn about the streak yet.
         return schedule
-    if streak == int(schedule.metadata.get("consecutive_failures", 0)):
-        return schedule
-    metadata = {**schedule.metadata, "consecutive_failures": streak}
+    metadata = {**schedule.metadata, "consecutive_failures": streak, "last_evaluated_task_id": previous_task.id}
     schedule = repositories.schedules.update_metadata(schedule.id, metadata)
     if streak >= max_consecutive_failures:
         schedule = repositories.schedules.update_status(schedule.id, ScheduleStatus.PAUSED)
@@ -152,12 +164,20 @@ async def run_scheduler_once(
     now: datetime | None = None,
     limit: int = 20,
     max_consecutive_failures: int = 5,
+    settings: AppSettings | None = None,
 ) -> list[TaskRecord]:
+    if settings is not None and not settings.scheduler.enabled:
+        return []
     due = repositories.schedules.list_due(now or utc_now(), limit=limit)
     created: list[TaskRecord] = []
     for schedule in due:
         if schedule.status != ScheduleStatus.ENABLED:
             continue
+        previous = repositories.tasks.get(schedule.last_task_id) if schedule.last_task_id else None
+        if previous and previous.status not in {
+            TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED, TaskStatus.BLOCKED,
+        }:
+            continue  # Never pile up another run while the last one waits on work or approval.
         schedule = _record_previous_run_outcome(
             repositories, audit, schedule, max_consecutive_failures=max_consecutive_failures
         )
@@ -171,6 +191,24 @@ async def run_scheduler_once(
                 actor="scheduler",
                 payload={"schedule_id": schedule.id, "error": str(exc)},
             )
+    if settings is not None and settings.scheduler.enabled:
+        for schedule in repositories.folder_watches.list_enabled():
+            schedule = _record_previous_run_outcome(repositories, audit, schedule,
+                                                     max_consecutive_failures=max_consecutive_failures)
+            if schedule.status != ScheduleStatus.ENABLED:
+                continue
+            try:
+                task = await asyncio.to_thread(poll_folder_watch, schedule, repositories, audit, settings, now or utc_now())
+                if task:
+                    created.append(task)
+                if schedule.metadata.get('watch_error'):
+                    repositories.schedules.update_metadata(schedule.id, {**schedule.metadata, 'watch_error': None})
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                error = str(exc)
+                if schedule.metadata.get('watch_error') != error:
+                    repositories.schedules.update_metadata(schedule.id, {**schedule.metadata, 'watch_error': error})
+                    audit.append(AuditEventType.ERROR, actor='folder_trigger',
+                                 payload={'schedule_id': schedule.id, 'error': error})
     return created
 
 
@@ -181,6 +219,7 @@ async def run_scheduler_forever(
     poll_interval_seconds: float = 30.0,
     max_consecutive_failures: int = 5,
     retention_days: int | None = None,
+    settings_loader: Callable[[], AppSettings] | None = None,
 ) -> None:
     # None (the default, config.py's storage.retention_days) means task/audit
     # history is never automatically deleted - unchanged from before this
@@ -193,7 +232,9 @@ async def run_scheduler_forever(
     # loop is otherwise fully async.
     last_retention_sweep: datetime | None = None
     while True:
-        await run_scheduler_once(repositories, audit, max_consecutive_failures=max_consecutive_failures)
+        settings = settings_loader() if settings_loader else None
+        if settings is None or settings.scheduler.enabled:
+            await run_scheduler_once(repositories, audit, max_consecutive_failures=max_consecutive_failures, settings=settings)
         if retention_days:
             now = utc_now()
             if last_retention_sweep is None or now - last_retention_sweep >= timedelta(days=1):

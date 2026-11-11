@@ -5,8 +5,27 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
+  onto the task for the operator to read; adding a folder to a project never grants access to it.
+- Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
+  (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
+  task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
+  YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
+  writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
+  password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
+- The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
+  saved as a workflow from its page.
+- "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
+  no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
+  The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
+  for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
+
 ### Changed
 
+- First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 - What YBM says in a chat now reads like a person wrote it. A new text pass (`human_text.py`) rewrites every task message before it
   is sent: a path becomes the file name and a place ("resume.docx (in OneDrive)"), a task id becomes "an earlier task", a
   `[file] name (123 bytes)` listing becomes a short list capped at eight names with "...and 22 more", and a reason code becomes a
@@ -18,14 +37,6 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A policy refusal ends the task after the second one for the same tool. A form fill refused for exceeding the browser's risk
   ceiling was retried six more times and then reported as "something went wrong on my side"; it now stops and says the safety
   settings do not allow that action.
-
-### Added
-
-- "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
-  no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
-  The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
-  for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
-
 
 ### Fixed
 
