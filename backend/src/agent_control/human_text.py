@@ -107,8 +107,9 @@ def friendly_path(path: str) -> str:
     if ".agent_control" in lowered:
         tail = parts[lowered.index(".agent_control") + 1:]
         if tail and tail[0].lower() == "workspaces":
-            name = parts[-1] if len(tail) > 2 else "the project folder"
-            return f"{name} (in the project folder I made for this task)" if len(tail) > 2 else name
+            if len(tail) > 2:
+                return f"{parts[-1]} (in the project folder I made for this task)"
+            return "the project folder I made for this task"
         return parts[-1] + " (in my working folder)"
     home = _home()
     home_parts = [p.lower() for p in home.parts[1:]] if home.parts else []
@@ -190,6 +191,8 @@ def humanize(text: str) -> str:
     out = _replace_paths(text)
     out = _TASK_ID.sub("an earlier task", out)
     out = _tidy_listing(out)
+    # "Workspace: <the project folder>" is a label for a program; a person is told where the files are.
+    out = re.sub(r"^Workspace: (the project folder I made for this task)\s*$", r"The files are in \1.", out, flags=re.MULTILINE)
     for code, sentence in _REASONS.items():
         out = out.replace(code, sentence)
     out = re.sub(r"[ \t]+\n", "\n", out)

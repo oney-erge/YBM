@@ -515,6 +515,13 @@ class TelegramIntakeService:
                     )
             if not self.repositories.messages.try_create(inbound, conversation_id):
                 return ChannelUpdateResult(authorized=True, inbound_message=inbound)
+            if result.command is None and inbound.text:
+                # First, before the memory update below (a model call that can queue behind the running task for
+                # tens of seconds) and before the clarifying check: "how's it going?" is answered at once from the
+                # task's record, and must not be swallowed as the answer to a question.
+                status_answer = answer_status_question(self.repositories, inbound, conversation_id)
+                if status_answer is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
             if inbound.text:
                 await self._update_conversation_memory(conversation_id, inbound.text)
 
@@ -526,10 +533,6 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=plain_response,
                     )
-                # Before the clarifying check: "how's it going?" must not be swallowed as the answer to a question.
-                status_answer = answer_status_question(self.repositories, inbound, conversation_id)
-                if status_answer is not None:
-                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
                 clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
                 if clarify_response is not None:
                     return ChannelUpdateResult(

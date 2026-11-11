@@ -232,3 +232,12 @@ def test_the_wall_message_is_a_sentence_for_a_person():
     assert message.startswith("I can't go on with filling in a form")
     assert "safety settings" in message
     assert "browser.control" not in message and "risk_exceeds" not in message
+
+
+def test_a_status_question_does_not_wait_for_the_memory_update(tmp_path):
+    """The memory update is a model call that can queue behind the running task; the status answer must come first."""
+    from agent_control.channels import telegram as telegram_module
+    import inspect
+
+    source = inspect.getsource(telegram_module.TelegramIntakeService.handle_update_async)
+    assert source.index("answer_status_question") < source.index("_update_conversation_memory")

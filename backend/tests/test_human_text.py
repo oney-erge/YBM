@@ -155,3 +155,11 @@ def test_a_path_that_does_not_exist_on_this_computer_is_left_alone(home):
 def test_a_slash_in_ordinary_text_is_not_a_path(home):
     text = "Use either/or, see /etc, and http://127.0.0.1:8891/app/ for 5/6 of it."
     assert humanize(text) == text
+
+
+def test_the_task_workspace_folder_and_its_label_read_as_a_sentence(home):
+    path = r"C:\for fun\YBM\.agent_control\workspaces\task_4df3f037de7a4b9da38998125ed3d642"
+    assert friendly_path(path) == "the project folder I made for this task"
+    assert humanize(f"It is running at http://127.0.0.1:8890/.\nWorkspace: {path}") == (
+        "It is running at http://127.0.0.1:8890/.\nThe files are in the project folder I made for this task."
+    )
