@@ -48,6 +48,7 @@ _POSTCONDITION_DESCRIPTIONS: dict[PostconditionType, str] = {
     PostconditionType.TASK_STATUS: "A task status summary is reported.",
     PostconditionType.GITHUB_PR: "A GitHub pull request URL or number is reported.",
     PostconditionType.EXTERNAL_COMMAND: "External command completion is reported.",
+    PostconditionType.FORM_SUBMITTED: "A form that was filled in was actually submitted.",
 }
 
 
@@ -223,6 +224,9 @@ def _expand(*words: str) -> set[str]:
     return expanded
 
 
+_FORM_SUBMIT_INTENT = re.compile(r"\b(?:submit|sign me up|sign up|sign us up|register|enrol+|apply)\b")
+
+
 def _postconditions_from_objective(objective: str) -> list[PlanPostcondition]:
     lowered = _strip_embedded_paths(objective).lower()
     words = set(re.findall(r"[a-z0-9]+", lowered))
@@ -354,6 +358,15 @@ def _postconditions_from_objective(objective: str) -> list[PlanPostcondition]:
             PlanPostcondition(
                 type=PostconditionType.BROWSER_STATE,
                 description="Browser state or page observation is reported.",
+            )
+        )
+    # "Sign me up", "register me", "submit it" on a web page: filling the fields is not doing it. Without this a run
+    # that typed every field and stopped was reported as done and nobody was signed up.
+    if (browser_surface or "form" in words) and _FORM_SUBMIT_INTENT.search(lowered):
+        expected.append(
+            PlanPostcondition(
+                type=PostconditionType.FORM_SUBMITTED,
+                description="A form that was filled in was actually submitted.",
             )
         )
     if (bool(words & {"screenshot", "screen", "desktop"}) or "what do you see" in lowered) and not _desktop_file_listing_request(
@@ -507,6 +520,8 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
             or session_status in {"completed", "failed", "stopped"}
             or bool((output.get("limit_state") or {}).get("limited"))
         )
+    if expected == PostconditionType.FORM_SUBMITTED:
+        return _form_submitted(task)
     if expected == PostconditionType.SCHEDULE_CREATED:
         return bool(_any_value(task, metadata_keys=("schedule_id",), output_keys=("schedule_id", "task_id")))
     if expected == PostconditionType.BROWSER_STATE:
@@ -551,6 +566,27 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
         )
     if expected == PostconditionType.EXTERNAL_COMMAND:
         return _external_command_succeeded(task)
+    return False
+
+
+def _form_submitted(task: TaskRecord) -> bool:
+    """A successful click, or a fill step that asked to submit, after the first successful fill.
+
+    A click that matches nothing now fails (tools/browser.py), so a succeeded click did land on something.
+    """
+    history = task.metadata.get("operator_history") if isinstance(task.metadata, dict) else None
+    filled_at: int | None = None
+    for index, entry in enumerate(history if isinstance(history, list) else []):
+        if not isinstance(entry, dict) or entry.get("tool_name") != "browser.control" or entry.get("status") != "succeeded":
+            continue
+        tool_input = entry.get("input") if isinstance(entry.get("input"), dict) else {}
+        operation = tool_input.get("operation")
+        if operation in {"fill_form", "fill_form_step"}:
+            filled_at = index if filled_at is None else filled_at
+            if tool_input.get("submit"):
+                return True
+        elif operation == "click" and filled_at is not None:
+            return True
     return False
 
 
@@ -723,6 +759,10 @@ def fulfillment_guidance(gap: str) -> str:
             "Call filesystem.manage organize_plan, then pass its returned manifest unchanged to apply_manifest."
         ),
         "expected_external_command_missing": "Use code.interpreter or the configured terminal tool and verify exit code 0.",
+        "expected_form_submitted_missing": (
+            "The form was filled in but never submitted. Call browser.control with operation=click and the button's "
+            "visible words in 'text' (for example \"Sign me up\"), or fill the form again with submit=true."
+        ),
     }
     return guidance.get(gap, "Call the available tool that produces this missing result, or explain why it is blocked.")
 def _desktop_file_listing_request(lowered: str) -> bool:
