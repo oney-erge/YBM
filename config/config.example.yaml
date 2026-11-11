@@ -179,6 +179,13 @@ capabilities:
     scopes: []
     requires_approval: true
     max_risk_level: "high"
+  # Read-only questions about this computer (Steam games, installed apps, disk space, finding a file
+  # anywhere). Nothing here changes anything; set enabled: true to turn it on.
+  system.inventory:
+    enabled: false
+    scopes: []
+    requires_approval: false
+    max_risk_level: "low"
   memory.manage:
     enabled: false
     scopes: []
