@@ -27,6 +27,7 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
@@ -274,7 +275,7 @@ def _depth(path: str, roots: list[Path]) -> int:
     return 99
 
 
-def _ranked(items: list[dict[str, Any]], roots: list[Path]) -> list[dict[str, Any]]:
+def _ranked(items: list[dict[str, Any]], roots: list[Path], name_tokens: list[str] | None = None) -> list[dict[str, Any]]:
     """What a person means first: documents, then the ones kept near the top of a folder, then newest.
 
     A person keeps the file they use in Downloads or at the top of OneDrive; a copy buried five folders
@@ -283,7 +284,32 @@ def _ranked(items: list[dict[str, Any]], roots: list[Path]) -> list[dict[str, An
     """
     ordered = sorted(items, key=lambda item: item.get("modified") or "", reverse=True)
     ordered = sorted(ordered, key=lambda item: min(_depth(item["path"], roots), 6))
-    return sorted(ordered, key=lambda item: Path(item["path"]).suffix.casefold() not in _DOCUMENT_EXTENSIONS)
+    ordered = sorted(ordered, key=lambda item: Path(item["path"]).suffix.casefold() not in _DOCUMENT_EXTENSIONS)
+    # "My resume": a file with the person's own name in it is theirs before one with anyone else's.
+    tokens = [t for t in (name_tokens or []) if len(t) >= 3]
+    if tokens:
+        ordered = sorted(ordered, key=lambda item: not _mentions(Path(item["path"]).name, tokens))
+    return ordered
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.casefold())
+
+
+def _mentions(file_name: str, tokens: list[str]) -> bool:
+    squashed = _squash(file_name)
+    return any(_squash(token) in squashed for token in tokens)
+
+
+def name_tokens_from_facts(facts: list[Any]) -> list[str]:
+    """The words of the person's own name, from remembered facts like `Name: Oney Erge`."""
+    tokens: list[str] = []
+    for fact in facts:
+        content = str(getattr(fact, "content", "") or "")
+        label, _, value = content.partition(":")
+        if label.strip().casefold() in {"name", "full name", "my name"} and value.strip():
+            tokens += [w for w in re.split(r"[^\w]+", value.split("(")[0]) if len(w) >= 3]
+    return list(dict.fromkeys(tokens))
 
 
 _PREVIEW_CHARS = 280
@@ -318,8 +344,9 @@ def preview(path: str) -> str | None:
 
 
 class SystemInventoryAdapter:
-    def __init__(self, allowed_roots: list[str]) -> None:
+    def __init__(self, allowed_roots: list[str], name_tokens: Callable[[], list[str]] | None = None) -> None:
         self.allowed_roots = [Path(root).expanduser().resolve() for root in allowed_roots]
+        self._name_tokens = name_tokens
 
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
         operation = str(request.input.get("operation") or "")
@@ -391,7 +418,8 @@ class SystemInventoryAdapter:
             source = "a search of the folders I can read"
         readable = [r for r in rows if _inside(r["path"], self.allowed_roots)]
         skipped = len(rows) - len(readable)
-        items = _ranked(readable, self.allowed_roots)[:limit]
+        tokens = self._name_tokens() if self._name_tokens else []
+        items = _ranked(readable, self.allowed_roots, tokens)[:limit]
         for item in items:
             item["name"] = Path(item["path"]).name
         if not items:
@@ -460,4 +488,13 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
     )
     if enabled:
-        adapters["system.inventory"] = SystemInventoryAdapter(settings.adapters.computer_use.allowed_roots)  # type: ignore[arg-type]
+        repositories = deps.repositories
+
+        def own_name_tokens() -> list[str]:
+            if repositories is None:
+                return []
+            return name_tokens_from_facts(repositories.memory_facts.list_all(category="profile"))
+
+        adapters["system.inventory"] = SystemInventoryAdapter(  # type: ignore[arg-type]
+            settings.adapters.computer_use.allowed_roots, own_name_tokens
+        )

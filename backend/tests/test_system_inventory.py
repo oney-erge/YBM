@@ -175,3 +175,28 @@ def test_a_big_result_set_is_cut_to_the_best_few_and_says_so(tmp_path, monkeypat
     result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="resume")
     assert result.output["count"] == 8
     assert "the best 8 of 20" in result.output["summary"]
+
+
+def test_a_file_with_the_persons_own_name_comes_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
+    (tmp_path / "Downloads").mkdir()
+    mine = tmp_path / "OneDrive" / "Oney.Erge.Resume.2021.docx"
+    mine.parent.mkdir()
+    mine.write_text("a")
+    theirs = tmp_path / "Downloads" / "2025.02_Onur_Resume.docx"
+    theirs.write_text("b")
+    adapter = SystemInventoryAdapter([str(tmp_path)], lambda: ["Oney", "Erge"])
+    names = [i["name"] for i in _run(adapter, operation="find_files", query="resume").output["items"]]
+    assert names == ["Oney.Erge.Resume.2021.docx", "2025.02_Onur_Resume.docx"]
+    # Without a known name the shallower, newer file is first, as before.
+    plain = [i["name"] for i in _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="resume").output["items"]]
+    assert plain[0] == "2025.02_Onur_Resume.docx"
+
+
+def test_name_tokens_come_from_name_facts_only():
+    facts = [
+        SimpleNamespace(content="Name: Oney Erge (from their Telegram profile)"),
+        SimpleNamespace(content="GitHub username: oney-erge"),
+        SimpleNamespace(content="T-shirt size: L"),
+    ]
+    assert system_inventory.name_tokens_from_facts(facts) == ["Oney", "Erge"]
