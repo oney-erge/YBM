@@ -17,6 +17,7 @@ from agent_control.config import AppSettings, TelegramConfig
 from agent_control.config_sync import read_env_value
 from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
+from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.schemas import (
@@ -692,6 +693,10 @@ class TelegramIntakeService:
         content = detect_remember_request(inbound.text or "")
         if content is None:
             return None
+        pairs = profile_pairs(content)
+        if pairs:
+            store_profile_facts(self.repositories, pairs)
+            return self._out(inbound.chat_id, f"Got it, I'll remember {describe_pairs(pairs)}.")
         self.repositories.memory_facts.create(
             MemoryFact(category="user_note", content=content, source=MemorySource.USER_STATED)
         )

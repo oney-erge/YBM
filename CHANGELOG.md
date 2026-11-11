@@ -5,6 +5,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- What a person says about themselves is remembered one fact at a time. "Remember these about me: my GitHub username is oney-erge, my
+  favorite language is Python, and my t-shirt size is L" was stored as that one sentence under "preference", so a form asking for a
+  GitHub username had to find it inside a paragraph, and a later "my t-shirt size is XL" added a contradicting sentence. Each "my
+  <thing> is <value>" clause is now its own fact ("T-shirt size: L") in the `profile` category, saying it again updates it, and the
+  reply names what was kept ("your GitHub username (oney-erge), your favorite language (Python) and your t-shirt size (L)"). Rules such
+  as "remember that I prefer short answers" are unchanged.
+
 ### Fixed
 
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
