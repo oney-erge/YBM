@@ -37,6 +37,7 @@ _EFFECT_BY_TOOL_OPERATION: dict[tuple[str, str], EffectKind] = {
     ("document.manage", "extract_text"): "read",
     ("document.manage", "summarize_pdf"): "read",
     ("document.manage", "create_presentation"): "created",
+    ("document.manage", "compare_documents"): "created",
     ("document.manage", "update_presentation"): "modified",
     # code.interpreter - every run operation executes generated code,
     # regardless of which of the near-identical run/repair/build/solve

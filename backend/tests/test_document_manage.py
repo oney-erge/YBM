@@ -44,6 +44,7 @@ def test_registry_exposes_document_manage_when_filesystem_write_is_enabled(tmp_p
         "inspect_document": "untrusted_external",
         "extract_text": "untrusted_external",
         "summarize_pdf": "untrusted_external",
+        "compare_documents": "untrusted_external",
     }
 
 @pytest.mark.asyncio
@@ -108,6 +109,39 @@ async def test_document_manage_creates_and_updates_powerpoint_artifacts(tmp_path
         assert "ppt/presentation.xml" in pptx.namelist()
     assert created.output["slide_count"] >= 1
     assert revised.output["artifact_id"] != created.output["artifact_id"]
+    assert len(repos.artifacts.list_for_task(task.id)) == 2
+
+
+@pytest.mark.asyncio
+async def test_document_manage_compares_documents_into_verified_workbook_and_report(tmp_path) -> None:
+    repos, _audit = make_repos(tmp_path)
+    task = repos.tasks.create("compare proposals")
+    first = tmp_path / "first.txt"
+    second = tmp_path / "second.txt"
+    first.write_text("Cost is $10. Timeline is two weeks.", encoding="utf-8")
+    second.write_text("Cost is $12. Timeline is one week.", encoding="utf-8")
+    adapter = DocumentManageAdapter(repos.artifacts, allowed_roots=[str(tmp_path)])
+
+    request = ToolCallRequest(
+        task_id=task.id,
+        tool_name="document.manage",
+        capability=Capability.FILESYSTEM_WRITE,
+        input={
+            "operation": "compare_documents",
+            "source_paths": [str(first), str(second)],
+            "criteria": ["cost", "timeline"],
+            "output_name": str(tmp_path / "comparison.xlsx"),
+        },
+    )
+    result = await adapter.execute(request)
+
+    assert result.status.value == "succeeded"
+    assert Path(result.output["workbook_path"]).is_file()
+    assert Path(result.output["report_path"]).is_file()
+    with ZipFile(result.output["workbook_path"]) as workbook:
+        assert "xl/worksheets/sheet1.xml" in workbook.namelist()
+    verification = _verify_document_manage(request, result)
+    assert verification is not None and verification.ok
     assert len(repos.artifacts.list_for_task(task.id)) == 2
 
 

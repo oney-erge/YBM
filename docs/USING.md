@@ -34,10 +34,70 @@ Browser") and offers a button, instead of failing with a code.
 | **Tasks** | Every task, with filters and a detailed trace per task: each tool call, its result, approvals, the model calls and their cost, and timing. Completed tasks can be replayed or saved as a workflow. |
 | **Insights** | How often work actually finishes *verified*, not just how often the model said it did: success rates by tool, which tools have no mechanical check yet, cost and duration. |
 | **Access** | What YBM can observe, what needs your review, and what may run on its own, grouped into Off, Read-only, Write with approval, and Full access. Runtime approval gates still apply to critical operations. **Security review** (linked from here) shows what the machine is exposed to right now, from configuration and recorded activity rather than a live scan. |
-| **Agent** | What YBM is made of. **Memory**: durable facts it remembers, with where each came from; correct or delete any of them. **Skills**: instructions it reads when relevant (a runbook, a style guide); a skill cannot execute anything. **Tools**: the tool catalog and the capability each needs. **Workflows**: completed tasks saved as named, reusable plans; running one goes through the same approval and verification checks as any task. |
+| **Agent** | What YBM is made of. **Projects**: reusable folders, instructions, and success criteria. Selecting one in chat snapshots that context onto the task without granting folder access. **Memory**: durable facts it remembers, with where each came from; correct or delete any of them. **Skills**: instructions it reads when relevant (a runbook, a style guide); a skill cannot execute anything. **Tools**: the tool catalog and the capability each needs. **Workflows**: completed tasks saved as named, reusable plans; run or automate one on a cadence through the same approval and verification checks as any task. |
 | **Settings** | The model (including a one-message test), per-role models, Telegram, MCP servers, computer use, voice, the VS Code bridge, the workspace, diagnostics, and the audit log. WhatsApp is configured in `config/config.yaml`, not here; see [INSTALL.md](INSTALL.md#link-whatsapp). |
 
 The status strip in the header shows the model, Telegram, VS Code, workspace, and database at a glance.
+
+## Projects and recurring work
+
+In **Agent -> Projects**, create a project with folders, instructions, and success criteria. Use
+**Edit** to record corrections for future tasks. **Open project chat and history** opens a separate
+conversation; a reply to one project's clarification cannot resume another project's task. General
+chat remains separate. Project questions go to the worker so it receives the project's context.
+
+New tasks snapshot the project's instructions. Editing or deleting a project does not rewrite past
+tasks or schedules. Folder paths are context, not permission: grant the required access in **Access**.
+The history view is task history, not automatic retrieval or learning from all previous outcomes.
+For project-specific corrections, edit the project's instructions; global Memory remains separate.
+
+From a completed task's trace, choose **Save as workflow**. In **Agent -> Workflows**, choose
+**Automate**, fill any parameters, select a project if desired, and set a cadence and timezone.
+Supported cadences are `daily`, `weekly`, `every day`, `every week`, or `every N minutes/hours/days/weeks`
+with N from 1 to 9999. Use an IANA timezone such as `America/Chicago` or `UTC`. The first run is one
+interval from creation; a daily schedule keeps the local time across daylight-saving changes.
+
+The Automations card shows the next due time, status, failure count, and a link to the last run and
+receipt. **Pause** stops future runs; **Resume** restarts the trigger and clears the failure streak
+(time-based schedules start a new interval from now); **Delete automation** removes the schedule from
+this list. Already-created tasks retain their state. A run waiting for work or approval prevents
+overlapping runs of the same schedule. Every run
+still uses the normal policy, approvals, and verification pipeline. YBM must be running for scheduled
+work to start. Schedules retain the workflow parameters and project context captured at creation;
+recreate a schedule to use changed parameters or project instructions.
+
+To process incoming files, first complete a task on an example file. In **Save as workflow**, turn that
+file's exact input path from the task trace into a parameter such as `input_file`. In **Automate**,
+choose **When a file changes**, enter the inbox folder, select that parameter, and choose extensions
+and a settling delay. YBM fills this parameter with each changed file's path; other parameter values
+and project instructions remain as saved. This repeats the recorded tool steps; it does not ask a
+model to invent a new workflow for each file.
+
+The watcher observes top-level regular files of 1 byte to 10 MB in an inbox with at most 500 entries.
+Existing files form its baseline; new or modified files must remain unchanged across polls for the
+settling delay. The scheduler's polling interval also affects response time (30 seconds by default).
+Files run one at a time. Pending observations survive restarts and collect while a prior task waits
+for approval. Repeated observations do not create duplicate runs. After a file has triggered a task,
+rewrites with identical content are also deduplicated.
+YBM artifact outputs, symlinks, hidden files, temporary downloads, and subfolders are excluded.
+
+Folder observation requires currently permitted filesystem read access; adding a project folder does
+not grant it. A revoked permission or scan error appears on the automation card and prevents a new
+run until corrected. Every actual workflow tool call still uses its normal approval and access checks.
+The chat shows which file triggered a task, and its trace records the observed file fingerprint.
+The input remains a live path: editing it after task creation can change what the approved workflow
+reads. Replay a failed task from its trace to retry that version's work; resuming a watcher handles
+future changes and any pending files rather than automatically retrying failed tasks.
+
+Polling coalesces changes to the latest observed state of each path. A file created and deleted between
+polls, or transient versions overwritten before observation, cannot be recovered. Recursive watching,
+multi-file batch reports, version snapshots, and explicit exclusion rules are still future work.
+
+For document comparisons, provide two or more supported source files and explicit criteria, for
+example: `Compare these two proposals by cost and timeline; create a spreadsheet and evidence report`.
+The current tool extracts literal keyword matches into XLSX and Markdown. It does not evaluate which
+proposal is best. Review the source locations, missing matches, and extraction-limit notices before
+using the result. Supported formats and limits are in [CAPABILITIES.md](CAPABILITIES.md#document-comparison).
 
 ## Approvals
 
@@ -69,7 +129,7 @@ flowchart LR
 
 1. Start YBM and open the console (the launcher does both).
 2. In **Settings**, press **Send a test message to the current model**. It must pass; all text is
-   classified by it.
+   processed by it. General chat uses classification; project messages go directly to the task worker.
 3. In **Chat**, ask `what can you do?`. It answers directly and creates no task.
 4. Ask `what tasks are running right now?`. It creates a task that calls `task.status` and replies.
 5. Confirm: **Tasks** shows it reaching `completed`; `ybm trace-task <task_id>` (Windows wrapper:

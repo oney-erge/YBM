@@ -49,11 +49,30 @@ being allowed to look at them.
 
 ## Tools
 
+### Document comparison
+
+`document.manage` with `compare_documents` accepts 2-12 distinct PDF, UTF-8 text, Markdown, CSV, TSV,
+or JSON files and 1-30 criteria (at most 300 characters each). Each source is limited to 10 MB.
+Extraction stops at 40,000 characters or 100 PDF pages per source and reports truncation. Corrupt PDFs,
+PDFs requiring a password, and empty or scanned PDFs without extractable text fail visibly; OCR is not included.
+
+The output is an XLSX evidence table and a Markdown report. Matching is literal keyword overlap,
+not semantic comparison, scoring, or a recommendation. A missing match does not establish that a
+document lacks the information. The report includes source paths, SHA-256 fingerprints, and excerpt
+line locations in the extracted text. Input documents are treated as untrusted content.
+
+Both output names are reserved without overwriting existing files. Verification checks each output's
+hash and the workbook's requested dimensions; it does not establish semantic accuracy or full Office
+application compatibility. Creating these artifacts requires filesystem write access and the normal
+approval policy. Adding a source folder to a project never grants that access.
+
+### Catalog
+
 | Tool | Capability | What it does |
 |---|---|---|
 | `filesystem.manage` | `filesystem.read` for looking, `filesystem.write` for changing | Inspect, search, describe, organize, and rename files inside allowed roots. Builds a manifest first, then applies only approved moves/copies. Rejects path escapes. The read operations (`inspect_folder`, `search`, `read_file`, `organize_plan`, and the other lookups) run under `filesystem.read`, so **Read-only** access genuinely lets it look without being able to change anything; moving, copying, renaming, writing and opening a file need `filesystem.write`. |
 | `workspace.manage` | `filesystem.write` | Per-task workspace under `.agent_control/workspaces/task_<id>`: prepare, write files, materialize a static app, serve it on localhost. |
-| `document.manage` | `filesystem.read` for reading, `filesystem.write` for creating | Inspect/extract documents and summarize PDFs (read), create and update PowerPoint files (write). |
+| `document.manage` | `filesystem.read` for reading, `filesystem.write` for creating | Inspect/extract documents and summarize PDFs (read), compare supplied documents into an evidence spreadsheet and report, or create and update PowerPoint files (write). The comparison preserves matching passages; it does not manufacture a score or recommendation. |
 | `adapter.factory` | `filesystem.write` | Scaffolds a reviewable adapter proposal when a needed tool doesn't exist. Never auto-loaded. |
 | `code.interpreter` | `terminal.run` | Run or generate-and-run Python. Local subprocess by default; optional Docker sandbox for untrusted code with network off and memory/CPU/pid limits. |
 | `coding.agent` | `terminal.run` | Session-backed Codex, Claude Code, and GitHub Copilot CLI runs with durable session files and restart-safe completion. |

@@ -9,16 +9,13 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](backend/pyproject.toml)
 [![Docker ready](https://img.shields.io/badge/docker-ready-2496ED.svg)](docker-compose.yml)
-[![12 model providers](https://img.shields.io/badge/models-12%20providers-6E56CF.svg)](#choose-a-model-and-channel)
 
 ![Asking YBM to organize a Downloads folder: it plans the work, asks for approval before moving any file, then reports exactly what it moved](docs/screenshots/demo.gif)
 
 </div>
 
-YBM runs on your machine. You can talk to it through the web console, Telegram,
-or WhatsApp, then let it use only the tools you enable: files, terminal
-commands, Chrome, VS Code, desktop control, schedules, MCP servers, and coding
-agents.
+YBM runs on your machine and works through the web console, Telegram, or
+WhatsApp. You choose which tools it may use.
 
 Its core workflow is simple:
 
@@ -26,9 +23,8 @@ Its core workflow is simple:
 Plan -> Approve -> Execute -> Verify -> Receipt
 ```
 
-For consequential work, YBM shows the plan, waits for approval, enforces policy
-on each tool call, and keeps a record of what happened. High-impact capabilities
-start disabled, and file access is limited to folders you choose.
+For consequential work, YBM shows the plan, waits for approval, and records the
+result. High-impact capabilities start disabled.
 
 > YBM is alpha software. Start with a test folder, review access settings before
 > granting them, and keep the admin console on localhost unless you understand
@@ -62,10 +58,10 @@ headless Docker option are in [Install](docs/INSTALL.md).
 1. YBM opens in your browser and shows the model it found. It can use a local
    model through Ollama, LM Studio, or LocalDeploy, or a provider API key you
    already have. It does not call a paid API just to choose a model.
-2. File access starts off. Choose a folder and whether YBM may read it or may
-   change it after approval.
-3. Try: **"Organize my Downloads folder by type."** YBM shows what it intends
-   to move, waits for approval, then leaves a receipt.
+2. Create a disposable test folder containing a few sample files. File access
+   starts off; select that folder and allow changes after approval.
+3. Ask: **"Organize the files in my test folder by type."** Review the plan and
+   approve it. The receipt records what happened.
 
 [Using YBM](docs/USING.md) explains the console, approvals, and troubleshooting.
 
