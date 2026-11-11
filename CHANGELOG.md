@@ -96,6 +96,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   the task as before.
 - A request that says to ask first ("Ask me before changing anything on disk") keeps its question: the guard that turns away
   optional questions judged "Rewrite this file" satisfied once the file was read and ended the task with a summary of the read.
+- A form step with nothing to fill is refused before anyone is asked to approve it. `fill_form_step` had `fields` optional, so a model that
+  sent an empty step (it sent eleven in one run) got an approval request for each, and the failure came from inside the browser adapter
+  after the person had tapped Approve. `fields` is now required, one `field`/`value` pair is read as a one-entry `fields`, and the failure
+  message no longer claims "Chrome is not running with remote debugging enabled" for every error that mentions the browser.
 - `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
   there is nothing to read.
 - A failed script shows the end of its traceback (the line that says why) and a missing package says what to do instead.

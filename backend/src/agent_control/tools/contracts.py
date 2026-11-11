@@ -453,13 +453,24 @@ class BrowserExtractPageStateInput(ToolInputModel):
 
 class BrowserFillFormStepInput(ToolInputModel):
     operation: Literal["fill_form_step"] = "fill_form_step"
-    fields: dict[str, str] = Field(default_factory=dict)
+    # Required, like fill_form's: a step with nothing to fill cannot succeed, and it used to fail inside the adapter
+    # AFTER the person had approved it (a live run spent eleven approvals on empty steps).
+    fields: dict[str, str] = Field(..., min_length=1)
     submit: bool = False
     submit_selector: str | None = None
     tab_id: str | None = None
     url_contains: str | None = None
     title_contains: str | None = None
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _one_field_as_a_pair(cls, data: Any) -> Any:
+        """A model often fills one field per step as `field` and `value`; that is a one-entry `fields`."""
+        if isinstance(data, dict) and not data.get("fields") and data.get("field") is not None:
+            rest = {key: value for key, value in data.items() if key not in {"field", "value"}}
+            return {**rest, "fields": {str(data["field"]): str(data.get("value", ""))}}
+        return data
 
 
 class ComputerObserveInput(ToolInputModel):
