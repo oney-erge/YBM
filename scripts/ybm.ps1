@@ -76,8 +76,8 @@ YBM - local agentic control stack
                                 run the tray icon automatically at login (per-user Startup folder shortcut)
   ybm backup [--out <dir>]     zip the database, config.yaml, .env, and secret vault (default: .agent_control/backups)
   ybm check-updates            compare the installed version against the latest GitHub release (read-only)
-  ybm ui-build                 build the admin console into the backend's static dir (needs Node.js 22.22+)
-  ybm ui-dev                   run the admin console with hot reload (needs Node.js 22.22+)
+  ybm ui-build                 build the admin console (Node 22.22.2+, 24.15.0+, or 26+)
+  ybm ui-dev                   run the admin console with hot reload (same Node ranges)
 "@ | Write-Host
 }
 

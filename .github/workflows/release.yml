@@ -3,7 +3,7 @@ name: Release
 # Publishes the Windows installers, cross-platform archives, and container for a tag.
 #
 # The reason this workflow exists: a source checkout has no admin console until
-# someone installs Node.js 22.22+ and builds it, which is the one prerequisite a
+# someone installs a supported Node.js version and builds it, which is the one prerequisite a
 # non-developer cannot reasonably be asked to satisfy. Building the console here
 # and shipping it inside the payload turns Node.js back into a contributor tool.
 #
@@ -96,7 +96,7 @@ jobs:
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: "22.22.0"
+          node-version: "22.22.2"
           # No dependency cache while building release artifacts (cache poisoning).
           package-manager-cache: false
 

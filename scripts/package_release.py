@@ -2,7 +2,7 @@
 
 Everything a machine needs to RUN YBM, with the admin console already built.
 The console is the point: a source checkout has none until someone installs
-Node.js 22.22+ and builds it, which is the one prerequisite a non-developer
+Node.js 22.22.2+ on Node 22, 24.15.0+ on Node 24, or Node 26+ and builds it, which is the one prerequisite a non-developer
 cannot reasonably be asked to satisfy. Shipping
 backend/src/agent_control/static/admin inside the payload removes it.
 
