@@ -22,6 +22,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
   (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
   YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+  Files kept only in OneDrive (not downloaded) are marked `[online only]`, and reading one says so instead of "File is not a
+  zip file"; a live run had reported the user's own resume as corrupted.
 
 ### Changed
 

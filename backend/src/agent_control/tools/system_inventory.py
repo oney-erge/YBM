@@ -39,6 +39,7 @@ from agent_control.tools.contracts import (
     SystemSimpleInput,
 )
 from agent_control.tools.office_text import office_text
+from agent_control.tools.path_utils import is_online_only
 from agent_control.tools.spec import (
     Adapters,
     Definitions,
@@ -320,6 +321,8 @@ _PREVIEW_PLAIN = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".rtf", ".py",
 def preview(path: str) -> str | None:
     """The first few lines of a document, so "what is it about?" can be answered without opening it."""
     target = Path(path)
+    if is_online_only(target):
+        return None
     try:
         if target.stat().st_size > _PREVIEW_MAX_BYTES:
             return None
@@ -427,7 +430,9 @@ class SystemInventoryAdapter:
             return {"count": 0, "items": [], "source": source, "summary": f"No file matching '{query}' was found{note}."}
         lines: list[str] = []
         for number, item in enumerate(items):
-            lines.append(f"- {item['path']} ({(item.get('modified') or '')[:10] or 'date unknown'})")
+            item["online_only"] = is_online_only(item["path"])
+            marker = " [online only: not downloaded]" if item["online_only"] else ""
+            lines.append(f"- {item['path']} ({(item.get('modified') or '')[:10] or 'date unknown'}){marker}")
             if number < 3:
                 text = preview(item["path"])
                 if text:
@@ -441,6 +446,11 @@ class SystemInventoryAdapter:
             notes.append(
                 "If several of these could be what the user means (for example the same kind of file for different "
                 "people), name the best two or three and ask which; do not pick one at random."
+            )
+        if any(item.get("online_only") for item in items):
+            notes.append(
+                "A file marked [online only] is in OneDrive but not downloaded to this computer, so it cannot be read: say that "
+                "plainly (it is not corrupted) and tell the user to right-click it and choose \"Always keep on this device\"."
             )
         notes.append(
             "To read one in full use filesystem.manage read_file (it reads .docx, .xlsx, .pptx and text files) or "

@@ -200,3 +200,35 @@ def test_name_tokens_come_from_name_facts_only():
         SimpleNamespace(content="T-shirt size: L"),
     ]
     assert system_inventory.name_tokens_from_facts(facts) == ["Oney", "Erge"]
+
+
+def test_an_online_only_file_is_marked_and_not_called_corrupted(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
+    cloud = tmp_path / "Oney.Erge.Resume.2021.docx"
+    cloud.write_bytes(b"not a zip")
+    monkeypatch.setattr(system_inventory, "is_online_only", lambda path: str(path) == str(cloud))
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="resume")
+    summary = result.output["summary"]
+    assert "[online only: not downloaded]" in summary
+    assert "it is not corrupted" in summary and "Always keep on this device" in summary
+    assert result.output["items"][0]["online_only"] is True
+    assert "preview" not in result.output["items"][0]
+
+
+def test_office_text_explains_an_online_only_file(tmp_path, monkeypatch):
+    from agent_control.tools import office_text as module
+
+    cloud = tmp_path / "plan.docx"
+    cloud.write_bytes(b"placeholder")
+    monkeypatch.setattr(module, "is_online_only", lambda path: True)
+    with pytest.raises(ValueError, match="stored only in the cloud"):
+        module.office_text(cloud)
+
+
+def test_a_local_file_is_not_online_only(tmp_path):
+    from agent_control.tools.path_utils import is_online_only
+
+    local = tmp_path / "a.txt"
+    local.write_text("x")
+    assert is_online_only(local) is False
+    assert is_online_only(tmp_path / "missing.txt") is False
