@@ -7,8 +7,6 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
-### Changed
-
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
 - Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
@@ -20,11 +18,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
-- First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 - A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
   library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
   (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
   YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+
+### Changed
+
+- First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 
 ### Fixed
 
