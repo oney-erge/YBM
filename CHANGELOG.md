@@ -5,6 +5,24 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
+  onto the task for the operator to read; adding a folder to a project never grants access to it.
+- Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
+  (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
+  task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
+  YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
+  writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
+  password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
+- The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
+  saved as a workflow from its page.
+
+### Changed
+
+- First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+
 ### Fixed
 
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round

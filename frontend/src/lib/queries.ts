@@ -19,6 +19,8 @@ import {
   getTaskTrace,
   deleteMCPServer,
   deleteWorkflow,
+  createProject,
+  deleteProject,
   getWorkflow,
   initSecretVault,
   installSkill,
@@ -38,6 +40,8 @@ import {
   revokeGrant,
   runDoctor,
   runWorkflow,
+  scheduleWorkflow,
+  watchWorkflow,
   saveWorkflow,
   selectLLMPreset,
   sendChatMessage,
@@ -56,6 +60,7 @@ import {
   updateTelegramConfig,
   updateVSCodeConfig,
   updateWorkspaceConfig,
+  updateProject,
   uploadChatAttachment,
   upsertMCPServer,
   type ApprovalDecision,
@@ -70,6 +75,10 @@ import {
   type WorkspaceConfigInput,
   getSetupFolders,
   saveWorkFolders,
+  listProjects,
+  listSchedules,
+  updateScheduleStatus,
+  type ProjectInput,
 } from "@/lib/api"
 import { isTerminal } from "@/lib/chat"
 
@@ -112,10 +121,10 @@ export function useSummary() {
   })
 }
 
-export function useChatMessages() {
+export function useChatMessages(projectId?: string) {
   return useQuery({
-    queryKey: ["chat", "messages"],
-    queryFn: () => listChatMessages(),
+    queryKey: ["chat", "messages", projectId ?? "local"],
+    queryFn: () => listChatMessages(50, projectId),
     refetchInterval: (query) => {
       // Poll faster while any task is still in flight, back off once every
       // visible task has settled - no point hammering the backend for a
@@ -130,8 +139,8 @@ export function useChatMessages() {
 export function useSendChatMessage() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ text, attachmentIds }: { text: string; attachmentIds?: string[] }) =>
-      sendChatMessage(text, attachmentIds),
+    mutationFn: ({ text, attachmentIds, projectId }: { text: string; attachmentIds?: string[]; projectId?: string }) =>
+      sendChatMessage(text, attachmentIds, projectId),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
     },
@@ -295,6 +304,63 @@ export function useRunWorkflow() {
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] })
     },
+  })
+}
+
+export function useScheduleWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ workflowId, values, cadence, projectId, timezone }: { workflowId: string; values: Record<string, string>; cadence: string; projectId?: string; timezone: string }) =>
+      scheduleWorkflow(workflowId, { values, cadence, projectId, timezone }),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["schedules"] }) },
+  })
+}
+
+export function useSchedules() {
+  return useQuery({ queryKey: ["schedules"], queryFn: listSchedules, refetchInterval: 10_000 })
+}
+
+export function useWatchWorkflow() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ workflowId, ...input }: Parameters<typeof watchWorkflow>[1] & { workflowId: string }) => watchWorkflow(workflowId, input),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["schedules"] }) },
+  })
+}
+
+export function useUpdateScheduleStatus() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, status }: { id: string; status: "enabled" | "paused" | "deleted" }) => updateScheduleStatus(id, status),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["schedules"] }) },
+  })
+}
+
+export function useProjects() {
+  return useQuery({ queryKey: ["projects"], queryFn: listProjects })
+}
+
+export function useCreateProject() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (input: ProjectInput) => createProject(input),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["projects"] }) },
+  })
+}
+
+export function useUpdateProject() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ projectId, input }: { projectId: string; input: ProjectInput }) => updateProject(projectId, input),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["projects"] }) },
+  })
+}
+
+export function useDeleteProject() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (projectId: string) => deleteProject(projectId),
+    onSuccess: () => { void queryClient.invalidateQueries({ queryKey: ["projects"] }) },
   })
 }
 

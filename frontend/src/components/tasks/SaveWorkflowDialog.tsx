@@ -92,6 +92,7 @@ export function SaveWorkflowDialog({
               <div key={index} className="flex items-center gap-2">
                 <Input
                   value={row.value}
+                  aria-label={`Value ${index + 1} to parameterize`}
                   onChange={(e) => {
                     const next = [...rows]
                     next[index] = { ...next[index], value: e.target.value }
@@ -102,6 +103,7 @@ export function SaveWorkflowDialog({
                 />
                 <Input
                   value={row.param}
+                  aria-label={`Parameter ${index + 1} name`}
                   onChange={(e) => {
                     const next = [...rows]
                     next[index] = { ...next[index], param: e.target.value }

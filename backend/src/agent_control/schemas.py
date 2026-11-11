@@ -822,6 +822,24 @@ class TaskWorkflow(StrictBaseModel):
     created_at: datetime = Field(default_factory=utc_now)
 
 
+class ProjectRecord(StrictBaseModel):
+    """A durable work area a person can attach to multiple tasks.
+
+    Project instructions are explicitly authored by the local administrator.
+    Files inside ``root_paths`` remain ordinary, untrusted tool input: a
+    project only tells the worker where work belongs and what outcome the
+    person wants. It never widens filesystem policy or approval authority.
+    """
+
+    id: str = Field(default_factory=lambda: new_id("project"))
+    name: str = Field(min_length=1, max_length=120)
+    instructions: str = Field(default="", max_length=8000)
+    root_paths: list[str] = Field(default_factory=list, max_length=20)
+    criteria: list[str] = Field(default_factory=list, max_length=30)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class Artifact(StrictBaseModel):
     id: str = Field(default_factory=lambda: new_id("artifact"))
     task_id: str | None = None

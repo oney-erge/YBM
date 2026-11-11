@@ -50,6 +50,20 @@ def test_objective_from_schedule_text_removes_scheduling_wrapper() -> None:
 
     assert objective == "check https://example.com and tell me if a new episode came out"
 
+
+@pytest.mark.asyncio
+async def test_schedule_metadata_cannot_create_an_unvalidated_folder_trigger(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create('schedule a task')
+    adapter = ScheduleManageAdapter(repos, audit)
+    result = await adapter.execute(ToolCallRequest(
+        task_id=task.id, tool_name='schedule.manage', capability=Capability.SCHEDULE_MANAGE,
+        input={'operation': 'create', 'objective': 'check files', 'metadata': {'folder_trigger': {}}},
+    ))
+    assert result.status == ToolResultStatus.FAILED
+    assert 'Workflows' in result.error_message
+    assert repos.schedules.list_recent() == []
+
 @pytest.mark.asyncio
 async def test_schedule_manage_creates_lists_pauses_resumes_and_runs_now(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
