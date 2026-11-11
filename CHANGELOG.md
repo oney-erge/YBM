@@ -68,6 +68,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   request expected (which ended in "Blocked"). A request that says to ask first keeps its question.
 - The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
   filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
+- A batch of calls the person approved is no longer refused when it runs. The executor fills in a tool's schema defaults before it checks policy, but a batch approval bound the model's raw input, so for any tool whose schema adds a default (browser form steps do) every approved call came back `approval_invalid_or_mismatched` and the approvals were wasted. The batch now binds the call as it will run, and finds each call's approval by that same form.
 - An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is
   delivered with a note ("Not fully confirmed ... please double-check it") instead of ending the task "Blocked". A 9B Auditor rejected
   a correct summary of a 159-character document for being short. An answer with an unsupported value is still blocked.
