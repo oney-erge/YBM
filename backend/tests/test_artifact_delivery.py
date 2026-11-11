@@ -355,3 +355,22 @@ async def test_executor_records_artifact_delivery_output(tmp_path) -> None:
 
     assert result.status == ToolResultStatus.SUCCEEDED
     assert result.output["delivered"] is True
+
+
+
+@pytest.mark.asyncio
+async def test_a_send_with_nothing_to_send_says_how_to_find_the_file(tmp_path) -> None:
+    # Live: "Send it to me", asked as a new task with no path, called send_file with no path four times and was blocked, because
+    # the error only said that nothing was found.
+    repos, _audit = make_repos(tmp_path)
+    task = repos.tasks.create("send the invoice", metadata={"source_chat_id": "100"})
+    adapter = ArtifactDeliveryAdapter(repos.artifacts, repos.tasks, telegram_client=FakeTelegramClient(), allowed_roots=[str(tmp_path)])
+
+    result = await adapter.execute(ToolCallRequest(
+        task_id=task.id, tool_name="artifact.deliver", capability=Capability.TELEGRAM_SEND, risk_level=RiskLevel.LOW,
+        input={"operation": "send_file", "caption": "invoice.pdf"},
+    ))
+
+    assert result.status == ToolResultStatus.FAILED
+    assert "no deliverable artifact or file path was found" in result.error_message
+    assert "filesystem.manage search" in result.error_message and "full path" in result.error_message

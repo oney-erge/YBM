@@ -132,3 +132,53 @@ async def test_without_a_code_tool_or_with_the_check_off_nothing_is_sent_back(tm
         for _ in range(2):
             result = await worker.process_task(result.id)
         assert result.status == TaskStatus.COMPLETED, kwargs
+
+
+# ---- an address nobody read ---------------------------------------------------------------------------------------------
+# Live: asked for Grace Hopper's email in a file that does not list her, the 9B answered "grace.hopper@navy.example".
+
+from agent_control.orchestration.number_check import ungrounded_addresses  # noqa: E402
+
+CONTACTS = [{"tool_name": "filesystem.manage", "input": {"operation": "read_file"}, "status": "succeeded",
+             "output_summary": "Contacts. Ada Lovelace - ada@analytical.example. T. Okafor - t.okafor@northwind.example."}]
+
+
+def test_an_invented_email_is_flagged() -> None:
+    answer = "Grace Hopper's email address is grace.hopper@navy.example"
+    assert ungrounded_addresses("What is Grace Hopper's email address in contacts.txt?", answer, CONTACTS) == ["grace.hopper@navy.example"]
+
+
+def test_an_email_the_tool_returned_is_fine_in_any_case_and_with_a_full_stop() -> None:
+    assert ungrounded_addresses("Okafor's email?", "It is T.Okafor@Northwind.example.", CONTACTS) == []
+
+
+def test_an_address_in_the_request_or_in_memory_is_grounded() -> None:
+    assert ungrounded_addresses("Send a note to bob@home.example", "Sent it to bob@home.example.", []) == []
+    assert ungrounded_addresses("Email my sister", "Emailed marisol@family.example.", [], "my sister: marisol@family.example") == []
+
+
+def test_a_web_link_nothing_returned_is_flagged_but_one_visited_is_not() -> None:
+    visited = [{"tool_name": "browser.open", "input": {"url": "http://127.0.0.1:5000/episode.html"}, "status": "succeeded", "output_summary": "Episode 4"}]
+    assert ungrounded_addresses("What is on the page?", "See http://127.0.0.1:5000/episode.html.", visited) == []
+    assert ungrounded_addresses("Where is the manual?", "It is at https://docs.example.com/manual.", visited) == ["https://docs.example.com/manual"]
+
+
+def test_an_answer_with_no_address_is_never_flagged() -> None:
+    assert ungrounded_addresses("What is in the file?", "It lists two people and no addresses.", CONTACTS) == []
+
+
+@pytest.mark.asyncio
+async def test_the_worker_sends_the_model_back_once_for_an_invented_email(tmp_path) -> None:
+    repos, worker = _worker(
+        tmp_path, [_read(), _done("Grace Hopper's email is grace.hopper@navy.example"), _done("There is no email for Grace Hopper in the file.")]
+    )
+    task = repos.tasks.create("What is Grace Hopper's email address in contacts.txt?")
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+
+    sent_back = [e for e in result.metadata["operator_history"] if e["tool_name"] == "_number_check"]
+    assert len(sent_back) == 1 and "grace.hopper@navy.example" in sent_back[0]["error"] and "Do not make up values" in sent_back[0]["error"]
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"] == "There is no email for Grace Hopper in the file."

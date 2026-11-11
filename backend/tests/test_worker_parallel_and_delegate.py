@@ -17,6 +17,7 @@ from agent_control.policy import PolicyEngine
 from agent_control.schemas import (
     ApprovalStatus,
     Capability,
+    ErrorClass,
     OperatorAction,
     OperatorDecision,
     ParallelToolCall,
@@ -85,7 +86,11 @@ class RecordingAdapter:
 
 
 class BackgroundAdapter:
+    def __init__(self) -> None:
+        self.calls = 0
+
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        self.calls += 1
         return ToolCallResult(
             request_id=request.id, status=ToolResultStatus.SUCCEEDED,
             output={"status": "running", "session_id": "sess-1", "provider": "codex"},
@@ -104,6 +109,78 @@ class ChangedPathAdapter:
             status=ToolResultStatus.SUCCEEDED,
             output={"changed_paths": [path]},
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["parallel", "approved_parallel", "delegate", "delegate_parallel"])
+@pytest.mark.parametrize("result_kind", ["timeout", "transient"])
+async def test_uncertain_parallel_or_delegated_effect_requires_review(tmp_path, mode, result_kind) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("perform an external effect")
+    effects: list[str] = []
+
+    class EffectThenUncertain:
+        async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+            effects.append("effect")
+            return ToolCallResult(
+                request_id=request.id,
+                status=ToolResultStatus.TIMEOUT if result_kind == "timeout" else ToolResultStatus.FAILED,
+                error_class=ErrorClass.TRANSIENT if result_kind == "transient" else None,
+                error_message="outcome unknown",
+            )
+
+    settings = AppSettings(_env_file=None, approval_policy={"require_approval_at_or_above": RiskLevel.CRITICAL},
+                           capabilities={
+        Capability.FILESYSTEM_WRITE: CapabilityPolicy(enabled=True, requires_approval=mode == "approved_parallel",
+                                                      max_risk_level=RiskLevel.HIGH),
+        Capability.LLM_GENERATE: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH),
+    })
+    executor = ToolExecutor(PolicyEngine(settings, audit), repos, audit,
+                            adapters={"write": EffectThenUncertain(), "read": RecordingAdapter("read", delay=0.0)},
+                            tool_definitions={
+        "write": ToolDefinition(name="write", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test"),
+        "read": ToolDefinition(name="read", capability=Capability.LLM_GENERATE, enabled=True, description="test"),
+    })
+    write = ParallelToolCall(tool_name="write", tool_input={"path": "result.txt"}, risk_level=RiskLevel.HIGH)
+    batch = OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[
+        write, ParallelToolCall(tool_name="read", tool_input={}, risk_level=RiskLevel.LOW),
+    ])
+    if mode == "delegate":
+        delegated = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="write",
+                                     tool_input={"path": "result.txt"}, risk_level=RiskLevel.HIGH)
+        decisions = [OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the work"),
+                     delegated, delegated, OperatorDecision(action=OperatorAction.DONE, final_answer="done")]
+    elif mode == "delegate_parallel":
+        decisions = [OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the work"),
+                     batch, batch, OperatorDecision(action=OperatorAction.DONE, final_answer="done")]
+    else:
+        decisions = [batch, batch]
+    operator = QueueOperator(decisions)
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator)
+
+    result = await worker.process_task(task.id)
+    if mode == "approved_parallel":
+        assert result.status == TaskStatus.AWAITING_APPROVAL
+        batch_approval = repos.approvals.list_pending()[0]
+        repos.approvals.decide_pending(batch_approval.id, ApprovalStatus.APPROVED)
+        for item in batch_approval.action_payload["batch"]:
+            repos.approvals.decide_pending(item["approval_id"], ApprovalStatus.APPROVED)
+        result = await worker.process_task(task.id)
+    assert result.status == TaskStatus.CLARIFYING
+    assert effects == ["effect"]
+    assert "interrupted_step" in result.metadata
+    assert "operator_pending_batch" not in result.metadata
+    history = result.metadata["operator_history"]
+    if mode.startswith("delegate"):
+        assert history[-1]["uncertain_calls"][0]["tool_name"] == "write"
+        if mode == "delegate_parallel":
+            assert any(entry["tool_name"] == "read" and entry["status"] == "succeeded"
+                       for entry in history[-1]["interrupted_batch_results"])
+    else:
+        assert any(entry["tool_name"] == "write" and entry["outcome_uncertain"] for entry in history)
+        assert any(entry["tool_name"] == "read" and entry["status"] == "succeeded" for entry in history)
+    assert (await worker.process_task(task.id)).status == TaskStatus.CLARIFYING
+    assert effects == ["effect"]
 
 
 def _settings(*caps: Capability) -> AppSettings:
@@ -545,13 +622,14 @@ async def test_parallel_batch_without_approvals_still_runs_straight_through(tmp_
 
 
 @pytest.mark.asyncio
-async def test_call_tools_parallel_background_session_call_fails_that_call_only(tmp_path) -> None:
+async def test_call_tools_parallel_background_session_requires_review(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     task = repos.tasks.create("start a coding session and check a site")
     settings = _settings(Capability.LLM_GENERATE)
+    background = BackgroundAdapter()
     executor = _executor(
         settings, audit, repos,
-        {"coding.agent": BackgroundAdapter(), "site_a": RecordingAdapter("site_a", delay=0.0)},
+        {"coding.agent": background, "site_a": RecordingAdapter("site_a", delay=0.0)},
     )
     operator = QueueOperator([
         OperatorDecision(
@@ -566,10 +644,38 @@ async def test_call_tools_parallel_background_session_call_fails_that_call_only(
 
     running = await worker.process_task(task.id)
 
+    assert running.status == TaskStatus.CLARIFYING
     history = {entry["tool_name"]: entry for entry in running.metadata["operator_history"]}
     assert history["site_a"]["status"] == "succeeded"
-    assert history["coding.agent"]["status"] == "failed"
-    assert "background session" in history["coding.agent"]["error"]
+    assert history["coding.agent"]["status"] == "running"
+    assert history["coding.agent"]["outcome_uncertain"] is True
+    assert history["coding.agent"]["session_id"] == "sess-1"
+    assert (await worker.process_task(task.id)).status == TaskStatus.CLARIFYING
+    assert background.calls == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel", [False, True])
+async def test_delegated_background_session_requires_review(tmp_path, parallel) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("delegate a coding session")
+    background = BackgroundAdapter()
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {
+        "coding.agent": background, "site_a": RecordingAdapter("site_a", delay=0.0),
+    })
+    child = (OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[
+        ParallelToolCall(tool_name="coding.agent", tool_input={}),
+        ParallelToolCall(tool_name="site_a", tool_input={}),
+    ]) if parallel else OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="coding.agent", tool_input={}))
+    operator = QueueOperator([OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the work"), child, child])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator)
+
+    result = await worker.process_task(task.id)
+
+    assert result.status == TaskStatus.CLARIFYING
+    assert result.metadata["operator_history"][-1]["uncertain_calls"][0]["session_id"] == "sess-1"
+    assert (await worker.process_task(task.id)).status == TaskStatus.CLARIFYING
+    assert background.calls == 1
 
 
 @pytest.mark.asyncio

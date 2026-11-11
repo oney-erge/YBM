@@ -40,6 +40,10 @@ from agent_control.storage.redaction import redact_text
 
 logger = logging.getLogger(__name__)
 
+WORKER_CLAIMABLE_STATUSES = (
+    TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.RETRYING,
+)
+
 
 class WorkerClaimLost(RuntimeError):
     """A claimed worker may no longer publish state or reserve a new call."""
@@ -377,11 +381,11 @@ class TaskRepository:
                 WHERE status IN ({placeholders})
                   AND (
                       claimed_by IS NULL
-                      OR claimed_by = ?
-                      OR claim_expires_at IS NULL
-                      -- A claim that expires at T is expired at T. With < a claim
-                      -- read in the same clock tick (common on Windows) stayed held.
-                      OR claim_expires_at <= ?
+                      OR (claim_expires_at IS NOT NULL AND (
+                          claimed_by = ?
+                          -- A claim that expires at T is expired at T.
+                          OR claim_expires_at <= ?
+                      ))
                   )
                   -- A different worker's expired active task must be
                   -- reconciled before it can be claimed and run again.
@@ -454,7 +458,7 @@ class TaskRepository:
             return result.rowcount == 1
 
     def recovery_candidates(self, *, after_rowid: int, expired_only: bool, limit: int = 100) -> list[tuple[int, str]]:
-        """Find active-state rows whose claim requires recovery, in stable pages."""
+        """Find active and missing-expiry claims requiring recovery, in stable pages."""
         claim_filter = (
             "claimed_by IS NOT NULL AND (claim_expires_at IS NULL OR claim_expires_at <= ?)"
             if expired_only else
@@ -462,9 +466,12 @@ class TaskRepository:
         )
         with self.database.connect() as connection:
             rows = connection.execute(
-                "SELECT rowid, id FROM tasks WHERE rowid > ? AND status IN (?, ?) "
-                f"AND ({claim_filter}) ORDER BY rowid LIMIT ?",
-                (after_rowid, TaskStatus.RUNNING.value, TaskStatus.INTERPRETING.value, _dt(utc_now()), limit),
+                "SELECT rowid, id FROM tasks WHERE rowid > ? AND ("
+                f"(status IN (?, ?) AND ({claim_filter})) OR "
+                "(status IN (?, ?, ?, ?, ?) AND claimed_by IS NOT NULL AND claim_expires_at IS NULL)"
+                ") ORDER BY rowid LIMIT ?",
+                (after_rowid, TaskStatus.RUNNING.value, TaskStatus.INTERPRETING.value, _dt(utc_now()),
+                 *(status.value for status in WORKER_CLAIMABLE_STATUSES), limit),
             ).fetchall()
         return [(int(row["rowid"]), str(row["id"])) for row in rows]
 
@@ -474,19 +481,29 @@ class TaskRepository:
         decide: Callable[[TaskRecord], tuple[dict[str, Any], TaskStatus]],
         *,
         expired_only: bool,
+        decide_missing_expiry: Callable[[TaskRecord], tuple[dict[str, Any], TaskStatus]] | None = None,
     ) -> tuple[TaskRecord, TaskRecord] | None:
         """Recheck claim, status and metadata under the same write transaction."""
         now = _dt(utc_now())
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-            if row is None or row["status"] not in {TaskStatus.RUNNING.value, TaskStatus.INTERPRETING.value}:
+            if row is None:
                 return None
             owner, expires = row["claimed_by"], row["claim_expires_at"]
+            missing_expiry = owner is not None and expires is None
+            active = row["status"] in {TaskStatus.RUNNING.value, TaskStatus.INTERPRETING.value}
+            if not active and not (missing_expiry and row["status"] in {item.value for item in WORKER_CLAIMABLE_STATUSES}):
+                return None
             if (expired_only and owner is None) or (owner is not None and expires is not None and expires > now):
                 return None
             previous = self._row_to_task(row)
-            metadata, status = decide(previous)
+            if missing_expiry:
+                if decide_missing_expiry is None:
+                    return None
+                metadata, status = decide_missing_expiry(previous)
+            else:
+                metadata, status = decide(previous)
             connection.execute(
                 "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, "
                 "claimed_by = NULL, claim_expires_at = NULL WHERE id = ?",
@@ -611,6 +628,53 @@ class TaskRepository:
             return task, bool(
                 task.status == TaskStatus.RUNNING and isinstance(marker, dict) and marker.get("step_id") == step_id
             )
+
+    def complete_external_session(
+        self, task_id: str, session_id: str, result: dict[str, Any], brief: dict[str, Any]
+    ) -> tuple[str, TaskRecord | None]:
+        """Bind a completion to the currently awaited session under the task write lock."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None or not session_id:
+                return "ignored", None
+            task = self._row_to_task(row)
+            metadata = dict(task.metadata)
+            awaiting = metadata.get("awaiting_external")
+            paused_wait = task.status == TaskStatus.PAUSED and metadata.get("paused_from_status") == TaskStatus.AWAITING_EXTERNAL.value
+            if task.status == TaskStatus.AWAITING_EXTERNAL or paused_wait:
+                if (not isinstance(awaiting, dict) or awaiting.get("session_id") != session_id
+                        or awaiting.get("tool_name") not in (None, "coding.agent")
+                        or "pending_tool_result" in metadata):
+                    return "ignored", task
+                pending_call = metadata.get("operator_pending_call")
+                if isinstance(pending_call, dict) and (
+                    pending_call.get("tool_name") not in (None, "coding.agent")
+                    or (pending_call.get("step_id") and awaiting.get("step_id")
+                        and pending_call["step_id"] != awaiting["step_id"])
+                ):
+                    return "ignored", task
+                metadata["coding_agent_session"] = brief
+                metadata["pending_tool_result"] = {
+                    "step_id": awaiting.get("step_id") or (pending_call.get("step_id") if isinstance(pending_call, dict) else None),
+                    "tool_name": "coding.agent", "result": result,
+                }
+                if paused_wait:
+                    metadata["paused_from_status"] = TaskStatus.RUNNING.value
+                    target = TaskStatus.PAUSED
+                else:
+                    target = TaskStatus.RUNNING
+                connection.execute(
+                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                    (_dump(_redact_answer_fields(metadata)), target.value, _dt(utc_now()), task_id),
+                )
+                updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+                return "applied", self._row_to_task(updated)
+            marker = metadata.get("operator_in_flight")
+            paused_running = task.status == TaskStatus.PAUSED and metadata.get("paused_from_status") == TaskStatus.RUNNING.value
+            if (task.status == TaskStatus.RUNNING or paused_running) and isinstance(marker, dict) and marker.get("tool_name") == "coding.agent":
+                return "deferred", task
+            return "ignored", task
 
     def apply_control(self, task_id: str, action: str) -> tuple[TaskRecord, TaskRecord]:
         """Apply a user control to the current row, not a stale task snapshot."""

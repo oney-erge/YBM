@@ -113,6 +113,124 @@ async def test_worker_cannot_publish_progress_after_ownership_changes(tmp_path, 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [
+    TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.RETRYING,
+])
+@pytest.mark.parametrize("has_in_flight", [False, True])
+async def test_missing_claim_expiry_requires_review_before_reclaim(tmp_path, monkeypatch, status, has_in_flight) -> None:
+    from agent_control.storage.repositories import WorkerClaimLost, worker_claim_context
+
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("work that may still be running")
+    marker = {"tool_name": "filesystem.manage", "capability": "filesystem.write",
+              "risk_level": "high", "input": {"operation": "write_text_file"}}
+    repos.tasks.update_metadata(task.id, {"operator_in_flight": marker} if has_in_flight else {}, status)
+    with repos.tasks.database.connect() as connection:
+        connection.execute("UPDATE tasks SET claimed_by = ?, claim_expires_at = NULL WHERE id = ?",
+                           ("old-worker", task.id))
+
+    assert repos.tasks.claim_next([status], worker_id="old-worker") is None
+    assert repos.tasks.claim_next([status], worker_id="new-worker") is None
+    worker = TaskWorker(repos, audit)
+    dispatched = []
+
+    async def unexpected_dispatch(task_id):
+        dispatched.append(task_id)
+        return repos.tasks.get(task_id)
+
+    monkeypatch.setattr(worker, "process_task", unexpected_dispatch)
+    assert await worker.process_next() is None
+    recovered = repos.tasks.get(task.id)
+    assert recovered.status == TaskStatus.CLARIFYING
+    assert recovered.metadata["claim_recovery"]["reason"] == "missing_expiry"
+    assert "previous worker" in recovered.metadata["clarifying_question"]
+    assert "check" in recovered.metadata["clarifying_question"].lower()
+    if has_in_flight:
+        assert recovered.metadata["interrupted_step"] == marker
+    with repos.tasks.database.connect() as connection:
+        row = connection.execute("SELECT claimed_by, claim_expires_at FROM tasks WHERE id = ?", (task.id,)).fetchone()
+    assert row["claimed_by"] is None and row["claim_expires_at"] is None
+    with worker_claim_context(repos.tasks.database, task.id, "old-worker"), pytest.raises(WorkerClaimLost):
+        repos.tasks.update_metadata(task.id, {"stale_result": True}, TaskStatus.RUNNING)
+    assert await worker.process_next() is None
+    assert dispatched == []
+
+
+@pytest.mark.parametrize("changed", ["renewed", "cancelled"])
+def test_missing_expiry_recovery_rechecks_a_changed_claim_or_control(tmp_path, changed) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("check an uncertain worker")
+    repos.tasks.update_status(task.id, TaskStatus.RUNNING)
+    with repos.tasks.database.connect() as connection:
+        connection.execute("UPDATE tasks SET claimed_by = ?, claim_expires_at = NULL WHERE id = ?",
+                           ("old-worker", task.id))
+    assert repos.tasks.recovery_candidates(after_rowid=0, expired_only=True)
+    with repos.tasks.database.connect() as connection:
+        if changed == "renewed":
+            connection.execute("UPDATE tasks SET claim_expires_at = ? WHERE id = ?", ("2999-01-01T00:00:00+00:00", task.id))
+        else:
+            connection.execute("UPDATE tasks SET status = ? WHERE id = ?", (TaskStatus.CANCELLED.value, task.id))
+
+    def must_not_recover(_task):
+        pytest.fail("a renewed claim or cancelled task must not be recovered")
+
+    assert repos.tasks.reconcile_claim(task.id, must_not_recover, expired_only=True,
+                                       decide_missing_expiry=must_not_recover) is None
+    assert repos.tasks.get(task.id).status == (TaskStatus.RUNNING if changed == "renewed" else TaskStatus.CANCELLED)
+
+
+@pytest.mark.asyncio
+async def test_missing_expiry_recovery_question_is_visible_to_agent_status(tmp_path) -> None:
+    from agent_control.schemas import ToolCallRequest
+    from agent_control.tools.task_status import TaskStatusAdapter
+
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("recover an unknown claim")
+    with repos.tasks.database.connect() as connection:
+        connection.execute("UPDATE tasks SET claimed_by = ?, claim_expires_at = NULL WHERE id = ?",
+                           ("old-worker", task.id))
+    assert reconcile_orphaned_tasks(repos, audit) == 1
+    result = await TaskStatusAdapter(repos).execute(ToolCallRequest(
+        task_id="status", tool_name="task.status", capability=Capability.AGENT_CORE, input={"operation": "status"},
+    ))
+    row = next(item for item in result.output["task_status"]["recent_tasks"] if item["id"] == task.id)
+    assert row["status"] == TaskStatus.CLARIFYING.value
+    assert "previous worker" in row["clarifying_question"]
+    assert "previous worker" in result.output["summary"]
+
+
+@pytest.mark.asyncio
+async def test_missing_expiry_review_can_resume_after_user_reply(tmp_path, monkeypatch) -> None:
+    from agent_control.clarification import resume_clarifying_task
+    from agent_control.schemas import utc_now
+
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("recover an unknown claim")
+    with repos.tasks.database.connect() as connection:
+        connection.execute("UPDATE tasks SET claimed_by = ?, claim_expires_at = NULL WHERE id = ?",
+                           ("old-worker", task.id))
+    assert reconcile_orphaned_tasks(repos, audit) == 1
+    awaiting = repos.tasks.get(task.id)
+    result = resume_clarifying_task(
+        repos, audit, awaiting, text="I checked the prior work; continue", actor="test",
+        message_id="reply", received_at=utc_now(),
+    )
+    assert result.task.status == TaskStatus.RECEIVED
+    assert result.task.metadata["claim_recovery"]["reason"] == "missing_expiry"
+    seen = []
+    worker = TaskWorker(repos, audit)
+
+    async def complete_once(task_id):
+        seen.append(task_id)
+        return repos.tasks.update_metadata(task_id, repos.tasks.get(task_id).metadata, TaskStatus.COMPLETED)
+
+    monkeypatch.setattr(worker, "process_task", complete_once)
+    completed = await worker.process_next()
+    assert completed.status == TaskStatus.COMPLETED
+    assert seen == [task.id]
+
+
+@pytest.mark.asyncio
 async def test_worker_notifies_once_on_completion(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     task = repos.tasks.create("Run safe step", metadata={"source_chat_id": "100"})

@@ -62,6 +62,7 @@ ENV_PATH = ROOT / ".env"
 RESULTS_ROOT = ROOT / ".agent_control" / "e2e_results"
 CASES_PATH = ROOT / "e2e" / "all_cases.json"
 HELDOUT_PATH = ROOT / "e2e" / "heldout_cases.json"
+HELDOUT2_PATH = ROOT / "e2e" / "heldout2_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -79,6 +80,7 @@ GUARDED_TAGS = {"codex", "copilot", "external", "quota", "limit", "presentation"
 HARD_CEILING_S = 1260
 TASK_SPAWN_TIMEOUT_S = 180
 AUTO_SPAWN_TIMEOUT_S = 60  # expects_task "auto": how long to wait for a task before taking a chat reply
+SECOND_QUESTION_GRACE_S = 120  # how long to wait after answering a question for the task to move on, before failing it
 
 # The runner must wait AT LEAST this long after the case's declared timeout so
 # the worker's own per-task budget (settings.limits.task_budget_seconds,
@@ -641,8 +643,9 @@ def expects_task_mode(value: object) -> bool | str:
 def load_cases() -> list[dict]:
     """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    if HELDOUT_PATH.exists():
-        cases += json.loads(HELDOUT_PATH.read_text(encoding="utf-8"))
+    for path in (HELDOUT_PATH, HELDOUT2_PATH):
+        if path.exists():
+            cases += json.loads(path.read_text(encoding="utf-8"))
     return cases
 
 
@@ -668,7 +671,7 @@ def select_cases(
             continue
         # The held-out suite is the yardstick, not something to run by accident on every pass: it runs with
         # `--suite heldout` or when its cases are named with `--only`.
-        if c.get("heldout") and "heldout" not in suites and not only:
+        if c.get("heldout") and not only and not (set(c.get("suites") or []) & suites):
             continue
         if sizes and (c.get("size") or "small") not in sizes:
             continue
@@ -1447,6 +1450,7 @@ async def _run_turn(
         last_status = None
         last_step = None
         last_replan = None
+        clarification_sent_at = 0.0
         ceiling, clipped = _turn_ceiling_seconds(max_seconds)
         if clipped:
             print(
@@ -1492,8 +1496,18 @@ async def _run_turn(
             # One neutral confirmation per turn, echoing the original request
             # so the answer cannot smuggle in new instructions, and logged
             # loudly so a pass here is never mistaken for an unprompted one.
+            # A second question after that answer means the agent is not finishing. Waiting out the whole ceiling (about 11
+            # minutes a case, three cases in one run) only delays the same failure, so the wait ends shortly after the reply.
+            if (
+                status == "clarifying"
+                and turn.clarification_sent
+                and time.monotonic() - clarification_sent_at > SECOND_QUESTION_GRACE_S
+            ):
+                print(f"    [clarify] asked again after the reply; not waiting {SECOND_QUESTION_GRACE_S:.0f}s more")
+                break
             if status == "clarifying" and not turn.clarification_sent:
                 turn.clarification_sent = True
+                clarification_sent_at = time.monotonic()
                 answer = (
                     "Yes, please go ahead with what you proposed, staying within the "
                     "constraints in my original message."
@@ -1989,7 +2003,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",

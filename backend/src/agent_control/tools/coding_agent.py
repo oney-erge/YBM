@@ -1104,26 +1104,41 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
 
 
+async def handle_session_completion(tasks, session: dict, telegram) -> tuple[bool, str | None]:
+    """Apply a completion once through the task owner before notifying a channel."""
+    task_id = session.get("task_id")
+    session_id = session.get("session_id")
+    if not task_id or not isinstance(session_id, str) or not session_id:
+        return True, None
+    result = terminal_session_result(session)
+    brief = {
+        key: session.get(key)
+        for key in ("session_id", "provider", "status", "returncode", "changed_files", "summary", "ended_at")
+    }
+    disposition, task = tasks.complete_external_session(str(task_id), session_id, result.model_dump(mode="json"), brief)
+    if disposition == "deferred":
+        return False, None
+    if disposition != "applied" or task is None:
+        return True, None
+    chat_id = task.metadata.get("source_chat_id")
+    if telegram is not None and chat_id:
+        try:
+            await telegram.send_message(str(chat_id), session_completion_message(session))
+        except Exception as exc:
+            return True, str(exc)
+    return True, None
+
+
 def _coding_session_completion_callback(deps: RegistryDeps):
-    """Push a report to the task's source chat when a background coding session ends."""
+    """Use the same task transition as the durable session watcher."""
     telegram = deps.telegram_client
     tasks = deps.task_repository
+    if tasks is None:
+        return None
 
     async def notify(session: dict) -> None:
-        task = None
-        task_id = session.get("task_id")
-        if tasks is not None and task_id:
-            task = tasks.get(str(task_id))  # type: ignore[attr-defined]
-            if task is not None:
-                brief = {
-                    key: session.get(key)
-                    for key in ("session_id", "provider", "status", "returncode", "changed_files", "summary")
-                }
-                tasks.update_metadata(task.id, {**task.metadata, "coding_agent_session": brief})  # type: ignore[attr-defined]
-        chat_id = task.metadata.get("source_chat_id") if task is not None else None
-        if telegram is not None and chat_id:
-            await telegram.send_message(str(chat_id), session_completion_message(session))  # type: ignore[attr-defined]
+        _, error = await handle_session_completion(tasks, session, telegram)
+        if error:
+            logger.warning("coding session completion notification failed")
 
-    if telegram is None and tasks is None:
-        return None
     return notify

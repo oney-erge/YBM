@@ -60,19 +60,41 @@ async def test_a_model_that_keeps_re_reading_is_answered_from_the_first_read(tmp
     task = repos.tasks.create("What is in a.txt")
     adapter = StaticToolAdapter({"summary": "The notes say hello."})
     executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="filesystem.manage")
-    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_read_call(), _read_call(), _read_call()]),
-                        operator_max_steps=8)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_read_call()] * 4), operator_max_steps=8)
 
     result = task
-    for _ in range(3):
+    for _ in range(4):
         result = await worker.process_task(result.id)
 
     assert len(adapter.requests) == 1  # read once
     history = result.metadata["operator_history"]
-    assert [entry["status"] for entry in history] == ["succeeded", ALREADY_DONE_STATUS, ALREADY_DONE_STATUS]
+    # Shown the result twice, the model is first offered the chance to answer in its own words; it asks to read again,
+    # so the task finishes with the result it already has.
+    assert [entry["status"] for entry in history] == ["succeeded", ALREADY_DONE_STATUS, ALREADY_DONE_STATUS, "stuck", ALREADY_DONE_STATUS]
     assert "finish with action done" in history[1]["output_summary"]
     assert result.status == TaskStatus.COMPLETED
     assert result.metadata["synthesized_answer"] == "The notes say hello."
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_keeps_re_reading_is_offered_its_own_answer_first(tmp_path) -> None:
+    """Live: "What is the total on the receipt?" (it has none) got the whole file back, because the model re-read it."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("What is the total amount on receipt.pdf")
+    adapter = StaticToolAdapter({"summary": "Receipt from Corner Cafe. Items: one coffee, one bagel."})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="filesystem.manage")
+    operator = QueueOperator([
+        _read_call(), _read_call(), _read_call(),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The receipt does not show a total, only a coffee and a bagel."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"].startswith("The receipt does not show a total, only a coffee and a bagel.")
 
 
 @pytest.mark.asyncio
