@@ -131,3 +131,47 @@ def test_disk_space_lists_the_drives(monkeypatch):
     monkeypatch.setattr(system_inventory, "disk_space", lambda: [{"drive": "C:\\", "free_gb": 10.0, "total_gb": 20.0}])
     result = _run(SystemInventoryAdapter([]), operation="disk_space")
     assert "C:\\ 10.0 GB free of 20.0 GB" in result.output["summary"]
+
+
+def test_files_kept_near_the_top_of_a_folder_come_before_buried_copies(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
+    home = tmp_path / "home"
+    (home / "Downloads").mkdir(parents=True)
+    buried = home / "Desktop" / "Review" / "Copies" / "archive" / "old"
+    buried.mkdir(parents=True)
+    kept = home / "Downloads" / "resume.pdf"
+    kept.write_text("kept")
+    deep = buried / "resume.pdf"
+    deep.write_text("deep")
+    os.utime(kept, (1_600_000_000, 1_600_000_000))  # older, but where a person keeps it
+    result = _run(SystemInventoryAdapter([str(home)]), operation="find_files", query="resume")
+    assert [i["path"] for i in result.output["items"]] == [str(kept), str(deep)]
+
+
+def test_the_top_results_start_with_a_preview_and_the_summary_says_what_to_do_next(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "resume-a.txt").write_text("Jane Doe\nSenior data engineer with eight years of experience\n")
+    (home / "resume-b.txt").write_text("John Roe\nProduct designer\n")
+    result = _run(SystemInventoryAdapter([str(home)]), operation="find_files", query="resume")
+    summary = result.output["summary"]
+    assert "starts: Jane Doe Senior data engineer with eight years of experience" in summary
+    assert "ask which" in summary and "filesystem.manage read_file" in summary
+    assert all("preview" in item for item in result.output["items"])
+
+
+def test_a_single_result_does_not_ask_which_one(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
+    (tmp_path / "only-resume.txt").write_text("x")
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="resume")
+    assert "ask which" not in result.output["summary"]
+
+
+def test_a_big_result_set_is_cut_to_the_best_few_and_says_so(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
+    for number in range(20):
+        (tmp_path / f"resume-{number}.txt").write_text("x")
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="resume")
+    assert result.output["count"] == 8
+    assert "the best 8 of 20" in result.output["summary"]

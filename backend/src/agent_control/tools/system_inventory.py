@@ -30,7 +30,14 @@ from pathlib import Path
 from typing import Any
 
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
-from agent_control.tools.contracts import SystemInventoryInput, SystemInventoryOutput
+from agent_control.tools.contracts import (
+    SystemFindFilesInput,
+    SystemInstalledAppsInput,
+    SystemInventoryInput,
+    SystemInventoryOutput,
+    SystemSimpleInput,
+)
+from agent_control.tools.office_text import office_text
 from agent_control.tools.spec import (
     Adapters,
     Definitions,
@@ -258,10 +265,56 @@ def _inside(path: str, roots: list[Path]) -> bool:
     return any(root == candidate or root in candidate.parents for root in roots)
 
 
-def _ranked(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Documents before everything else, newest first within each group."""
-    newest_first = sorted(items, key=lambda item: item.get("modified") or "", reverse=True)
-    return sorted(newest_first, key=lambda item: Path(item["path"]).suffix.casefold() not in _DOCUMENT_EXTENSIONS)
+def _depth(path: str, roots: list[Path]) -> int:
+    """How many folders down from the readable folder it sits (a file in Downloads is 0)."""
+    candidate = Path(path)
+    for root in roots:
+        if root == candidate or root in candidate.parents:
+            return len(candidate.relative_to(root).parts) - 1
+    return 99
+
+
+def _ranked(items: list[dict[str, Any]], roots: list[Path]) -> list[dict[str, Any]]:
+    """What a person means first: documents, then the ones kept near the top of a folder, then newest.
+
+    A person keeps the file they use in Downloads or at the top of OneDrive; a copy buried five folders
+    down in an archive is rarely the one they mean, and on a machine with a "to review" folder full of
+    old copies it is most of what a name search returns.
+    """
+    ordered = sorted(items, key=lambda item: item.get("modified") or "", reverse=True)
+    ordered = sorted(ordered, key=lambda item: min(_depth(item["path"], roots), 6))
+    return sorted(ordered, key=lambda item: Path(item["path"]).suffix.casefold() not in _DOCUMENT_EXTENSIONS)
+
+
+_PREVIEW_CHARS = 280
+_PREVIEW_MAX_BYTES = 20 * 1024 * 1024
+_PREVIEW_PLAIN = {".txt", ".md", ".csv", ".tsv", ".json", ".log", ".rtf", ".py", ".yaml", ".yml"}
+
+
+def preview(path: str) -> str | None:
+    """The first few lines of a document, so "what is it about?" can be answered without opening it."""
+    target = Path(path)
+    try:
+        if target.stat().st_size > _PREVIEW_MAX_BYTES:
+            return None
+        suffix = target.suffix.casefold()
+        if suffix in _PREVIEW_PLAIN:
+            text = target.read_bytes()[:4000].decode("utf-8", errors="replace")
+        elif suffix in {".docx", ".pptx", ".xlsx"}:
+            text = office_text(target) or ""
+        elif suffix == ".pdf":
+            from pypdf import PdfReader
+
+            pages = PdfReader(str(target)).pages
+            text = (pages[0].extract_text() or "") if pages else ""
+        else:
+            return None
+    except Exception:  # noqa: BLE001 - a preview is a courtesy; never fail the search over it
+        return None
+    collapsed = " ".join(text.split())
+    if not collapsed:
+        return None
+    return collapsed[:_PREVIEW_CHARS] + ("..." if len(collapsed) > _PREVIEW_CHARS else "")
 
 
 class SystemInventoryAdapter:
@@ -326,28 +379,48 @@ class SystemInventoryAdapter:
         words = _words(query)
         if not words:
             raise ValueError("query is required")
-        limit = max(1, min(int(request.input.get("limit") or 20), 100))
+        limit = max(1, min(int(request.input.get("limit") or 8), 50))
         extensions = [e if e.startswith(".") else f".{e}" for e in (request.input.get("extensions") or [])]
         extensions = [e.casefold() for e in extensions if re.fullmatch(r"\.[A-Za-z0-9]{1,8}", e)]
         match = "content" if request.input.get("match") == "content" else "name"
-        rows = search_index(words, extensions, match, cap=limit * 12)
+        cap = max(limit * 12, 100)
+        rows = search_index(words, extensions, match, cap=cap)
         source = "the Windows Search index"
         if rows is None:
-            rows = walk_search(self.allowed_roots, words, extensions, cap=limit * 12) if match == "name" else []
+            rows = walk_search(self.allowed_roots, words, extensions, cap=cap) if match == "name" else []
             source = "a search of the folders I can read"
         readable = [r for r in rows if _inside(r["path"], self.allowed_roots)]
         skipped = len(rows) - len(readable)
-        items = _ranked(readable)[:limit]
+        items = _ranked(readable, self.allowed_roots)[:limit]
         for item in items:
             item["name"] = Path(item["path"]).name
         if not items:
             note = f" ({skipped} matches are in folders I am not allowed to read)" if skipped else ""
             return {"count": 0, "items": [], "source": source, "summary": f"No file matching '{query}' was found{note}."}
-        lines = [f"- {i['path']} ({(i.get('modified') or '')[:10] or 'date unknown'})" for i in items]
-        note = f"\n({skipped} more matches are in folders I am not allowed to read.)" if skipped else ""
+        lines: list[str] = []
+        for number, item in enumerate(items):
+            lines.append(f"- {item['path']} ({(item.get('modified') or '')[:10] or 'date unknown'})")
+            if number < 3:
+                text = preview(item["path"])
+                if text:
+                    item["preview"] = text
+                    lines.append(f"    starts: {text}")
+        shown = f"the best {len(items)} of {len(readable)}" if len(readable) > len(items) else f"{len(items)}"
+        notes = []
+        if skipped:
+            notes.append(f"{skipped} more matches are in folders I am not allowed to read.")
+        if len(items) > 1:
+            notes.append(
+                "If several of these could be what the user means (for example the same kind of file for different "
+                "people), name the best two or three and ask which; do not pick one at random."
+            )
+        notes.append(
+            "To read one in full use filesystem.manage read_file (it reads .docx, .xlsx, .pptx and text files) or "
+            "document.manage summarize_pdf for a PDF; do not search again."
+        )
         return {
             "count": len(items), "items": items, "source": source,
-            "summary": f"Found {len(items)} file(s) for '{query}' using {source}:\n" + "\n".join(lines) + note,
+            "summary": f"Found {shown} file(s) for '{query}' using {source}:\n" + "\n".join(lines) + "\n" + " ".join(notes),
         }
 
 
@@ -368,6 +441,12 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             ),
             operations=OPERATIONS,
             input_schema=SystemInventoryInput,
+            operation_schemas={
+                "steam_games": SystemSimpleInput,
+                "disk_space": SystemSimpleInput,
+                "installed_apps": SystemInstalledAppsInput,
+                "find_files": SystemFindFilesInput,
+            },
             output_schema=SystemInventoryOutput,
             operation_output_schemas=same_output_schema(OPERATIONS, SystemInventoryOutput),
             default_operation="find_files",
