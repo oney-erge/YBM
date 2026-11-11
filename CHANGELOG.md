@@ -7,6 +7,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
 - Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
