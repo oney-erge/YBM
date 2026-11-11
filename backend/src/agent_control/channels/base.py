@@ -60,7 +60,7 @@ from agent_control.schemas import (
 )
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
-from agent_control.task_inbox import acknowledgement, attach_note, find_steerable_task
+from agent_control.task_inbox import acknowledgement, attach_note, find_steerable_task, is_status_question, status_reply
 
 
 @dataclass(frozen=True)
@@ -104,6 +104,17 @@ def _reply(inbound: InboundMessage, text: str) -> OutboundMessage:
 # already carries. Telegram's own _send_progress sends both unchanged.
 ACKNOWLEDGMENT_TEXT = "Got your message, figuring out what to do…"
 TASK_STARTED_TEXT = "On it - I'll send the result here when it's done."
+
+
+def answer_status_question(
+    repositories: Repositories, inbound: InboundMessage, conversation_id: str | None
+) -> OutboundMessage | None:
+    """"How's it going?" while a task runs: answer from the task's own record. No model call and no
+    new task. None when the message is not such a question or there is nothing to report on."""
+    if not is_status_question(inbound.text or ""):
+        return None
+    reply = status_reply(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id)
+    return _reply(inbound, reply) if reply else None
 
 
 def status_summary(repositories: Repositories) -> str:
@@ -334,7 +345,7 @@ async def classify_and_spawn_task(
     classifier: MessageClassifier | None,
     responder: ChatResponder | None = None,
     settings: AppSettings | None = None,
-    send_progress: Callable[[str, str], Awaitable[None]],
+    send_progress: Callable[[str, str], Awaitable[Any]],
 ) -> ChannelUpdateResult:
     """Classify one inbound message and either spawn a task or produce a
     chat-only reply - the "classify -> task" half of intake -> classify ->
@@ -347,6 +358,10 @@ async def classify_and_spawn_task(
         return _spawn_failed(audit, inbound, "message has no text content", actor)
     if classifier is None:
         return _spawn_failed(audit, inbound, "message classifier is not configured", actor)
+
+    status_answer = answer_status_question(repositories, inbound, conversation_id)
+    if status_answer is not None:
+        return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
 
     await send_progress(inbound.chat_id, ACKNOWLEDGMENT_TEXT)
     try:
@@ -472,6 +487,9 @@ async def classify_and_spawn_task(
         remembered_facts=repositories.memory_facts.list_all(),
         objective=objective,
     )
+    # Sent before the task exists so the id of this one message can be written with the task's first
+    # record: every later progress update edits it instead of adding a bubble to the chat.
+    progress_anchor = await send_progress(inbound.chat_id, TASK_STARTED_TEXT)
     task = repositories.tasks.create(
         objective,
         conversation_id=conversation_id,
@@ -492,6 +510,7 @@ async def classify_and_spawn_task(
             "expected_postconditions": [item.value for item in classification.expected_postconditions],
             "original_message_text": inbound.text,
             "memory_context": mem_ctx,
+            **({"progress_message_id": progress_anchor} if progress_anchor else {}),
             **voice_metadata,
         },
     )
@@ -518,7 +537,6 @@ async def classify_and_spawn_task(
         max_chars=settings.storage.llm_call_max_chars if settings is not None else 8000,
         redact_patterns=settings.logging.redact_patterns if settings is not None else None,
     )
-    await send_progress(inbound.chat_id, TASK_STARTED_TEXT)
     return ChannelUpdateResult(
         authorized=True, inbound_message=inbound, classification=classification, task=task, outbound_message=None,
     )

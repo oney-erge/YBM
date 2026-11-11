@@ -11,6 +11,7 @@ import re
 from typing import Any, Protocol
 from uuid import uuid4
 
+from agent_control.human_text import progress_phrase
 from agent_control.channels.memory import ConversationMemoryService
 from agent_control.error_text import describe_exception
 from agent_control.llm.call_log import cap_messages, merge_token_usage
@@ -1225,10 +1226,7 @@ class TaskWorker:
                 recorded.model_copy(update={"metadata": {**recorded.metadata, "operator_history": history}}),
                 history,
                 called=called,
-                blocked_message=(
-                    f"Blocked after repeated {called} calls returned the same result; "
-                    "stopped to avoid a no-progress loop. A different capability or user input is required."
-                ),
+                blocked_message=_repeat_block_message(history, called),
             )
         return self.repositories.tasks.update_metadata(recorded.id, {**recorded.metadata, "operator_history": history})
 
@@ -3873,6 +3871,42 @@ def _redundant_read(
     return found
 
 
+#: Refusals that come from a rule, not from a hiccup: the same call can never succeed.
+_POLICY_REFUSALS = ("risk_exceeds_capability_policy", "capability_disabled", "scope_not_allowed", "pattern_denied")
+
+
+def _policy_refusal(history: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """The tool and operation when policy has refused the same tool twice in a row.
+
+    A live run asked to fill in a form was refused for exceeding the browser's risk ceiling, tried
+    the same step six more times and then said "something went wrong on my side". One refusal is
+    information the model can act on (use another way); the second is a wall, so stop and say so.
+    """
+    real = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES][-2:]
+    if len(real) < 2 or real[0].get("tool_name") != real[1].get("tool_name"):
+        return None
+    for entry in real:
+        error = str(entry.get("error") or "")
+        if str(entry.get("status") or "") != ToolResultStatus.DENIED.value or not any(c in error for c in _POLICY_REFUSALS):
+            return None
+    tool_input = real[1].get("input") if isinstance(real[1].get("input"), dict) else {}
+    return str(real[1].get("tool_name") or ""), str(tool_input.get("operation") or "")
+
+
+def _repeat_block_message(history: list[dict[str, Any]], called: str) -> str:
+    refused = _policy_refusal(history)
+    if refused is not None:
+        what = progress_phrase(*refused)
+        return (
+            f"I can't go on with {what}: your safety settings do not allow that action, so I stopped "
+            "instead of trying it again. You can allow it in the YBM settings, or do that one step yourself."
+        )
+    return (
+        f"Blocked after repeated {called} calls returned the same result; "
+        "stopped to avoid a no-progress loop. A different capability or user input is required."
+    )
+
+
 def _repeated_no_progress_call(
     history: list[dict[str, Any]],
     *,
@@ -3887,6 +3921,9 @@ def _repeated_no_progress_call(
     also catches a model retrying the same missing path despite receiving the
     same explicit error; writes with changing output do not match this guard.
     """
+    refused = _policy_refusal(history)
+    if refused is not None:
+        return refused
     real_entries = [
         entry
         for entry in history

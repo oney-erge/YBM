@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent_control.error_text import explain_for_user, explain_tool_input_error
+from agent_control.human_text import describe_action, humanize, progress_phrase
+from agent_control.error_text import explain_for_user, explain_tool_input_error, readable_reason
 from agent_control.text import trim_text as _trim
-from agent_control.schemas import TaskRecord, TaskStatus
+from agent_control.schemas import TaskRecord, TaskStatus, utc_now
 from agent_control.storage.redaction import redact_text
 from agent_control.tools.mcp_client import mcp_output_text
 
@@ -30,31 +31,29 @@ def format_task_message(task: TaskRecord) -> str:
     separately by `AuditLogger.append`; a task's answer reaches the user through
     here regardless of which tool produced it.
     """
-    return redact_text(_format_task_message(task))
+    return humanize(redact_text(_format_task_message(task)))
 
 
 def _format_task_message(task: TaskRecord) -> str:
     if task.status == TaskStatus.RECEIVED:
         return "Got your message, working on it now…"
-    if task.status == TaskStatus.RUNNING:
-        attempt = _latest_attempt_summary(task)
-        if attempt:
-            return f"Working on another step.\n{attempt}"
-        return "On it."
-    if task.status == TaskStatus.RETRYING:
-        attempt = _latest_attempt_summary(task)
-        if attempt:
-            return f"That attempt did not work, so I am trying a different approach now.\n{attempt}"
-        return "That attempt did not work, so I am trying a different approach now."
+    if task.status in {TaskStatus.RUNNING, TaskStatus.RETRYING}:
+        return progress_text(task)
     if task.status == TaskStatus.AWAITING_APPROVAL:
         preview = str(task.metadata.get("pending_approval_preview") or "").strip()
-        lines = ["I need approval before I can continue:"]
-        if preview:
+        actions = _pending_actions(task)
+        lines = ["I need your OK before I go on:" if actions else "I need approval before I can continue:"]
+        if actions:
+            lines.extend(f"- {action}" for action in actions)
+        elif preview:
             lines.append(preview)
         else:
             lines.append("(no preview available for this step)")
         lines.append("")
-        lines.append("Reply 'approve' here to continue, or say 'cancel'.")
+        if actions:
+            lines.append("Tap Approve, or reply 'approve', to go ahead. Say 'cancel' to stop.")
+        else:
+            lines.append("Reply 'approve' here to continue, or say 'cancel'.")
         return _trim("\n".join(lines), 3900)
     if task.status == TaskStatus.AWAITING_EXTERNAL:
         session = task.metadata.get("awaiting_external") if isinstance(task.metadata, dict) else None
@@ -76,7 +75,7 @@ def _format_task_message(task: TaskRecord) -> str:
         # "What was the last thing you actually tried?" is the first question a
         # user asks about a failure, and the answer is right there in
         # operator_history.
-        attempt = _latest_attempt_summary(task)
+        attempt = _last_attempt_sentence(task)
         if attempt:
             lines.append(attempt)
         return _trim("\n".join(lines), 3900)
@@ -359,14 +358,84 @@ def _failure_lines(task: TaskRecord) -> list[str]:
     lines = []
     gap = task.metadata.get("fulfillment_gap")
     if gap:
-        lines.append(f"Gap: {gap}")
-    retry_count = task.metadata.get("retry_count") or task.metadata.get("fulfillment_retry_count")
-    if retry_count:
-        lines.append(f"Retries: {retry_count}")
+        lines.append(f"What was missing: {str(gap).replace('_', ' ')}.")
     error = _last_error(task)
     if error:
-        lines.append(f"Error: {_trim(explain_tool_input_error(error), 900)}")
+        lines.append(_trim(explain_tool_input_error(error), 900))
     return lines
+
+
+def _pending_actions(task: TaskRecord) -> list[str]:
+    """The step or steps waiting for approval, each as a sentence, from the task's own record."""
+    batch = task.metadata.get("operator_pending_batch")
+    calls = batch.get("calls") if isinstance(batch, dict) else None
+    if not calls and isinstance(task.metadata.get("operator_pending_call"), dict):
+        calls = [task.metadata["operator_pending_call"]]
+    actions: list[str] = []
+    for call in calls or []:
+        if isinstance(call, dict) and call.get("tool_name"):
+            tool_input = call.get("tool_input") if isinstance(call.get("tool_input"), dict) else {}
+            actions.append(describe_action(str(call["tool_name"]), tool_input))
+    return actions[:12]
+
+
+def _latest_real_step(task: TaskRecord) -> dict | None:
+    history = task.metadata.get("operator_history")
+    if not isinstance(history, list):
+        return None
+    return next(
+        (
+            item
+            for item in reversed(history)
+            if isinstance(item, dict) and not str(item.get("tool_name") or "").startswith("_")
+        ),
+        None,
+    )
+
+
+def _step_phrase(step: dict) -> str:
+    tool_input = step.get("input") if isinstance(step.get("input"), dict) else {}
+    return progress_phrase(str(step.get("tool_name") or ""), str(tool_input.get("operation") or ""), tool_input)
+
+
+def progress_text(task: TaskRecord) -> str:
+    """One plain sentence about what is going on now, for a progress update.
+
+    No tool names, no paths, no outcome codes and no model reasoning: those are in the task trace
+    for whoever wants them. A person asked for something and wants to know it is being worked on,
+    roughly where it is, and how long it has been.
+    """
+    step = _latest_real_step(task)
+    if step is None:
+        return "Working on it: that did not work, so I am trying another way…" if task.status == TaskStatus.RETRYING else "On it."
+    if task.status == TaskStatus.RETRYING or str(step.get("status") or "") in {"failed", "denied", "timeout"}:
+        text = "Working on it: that last step did not work, so I am trying another way…"
+    else:
+        text = f"Working on it: {_step_phrase(step)}…"
+    created = getattr(task, "created_at", None)
+    if created is not None:
+        try:
+            minutes = int((utc_now() - created).total_seconds() // 60)
+        except TypeError:
+            minutes = 0
+        if minutes >= 2:
+            text += f" ({minutes} min so far)"
+    return text
+
+
+def _last_attempt_sentence(task: TaskRecord) -> str | None:
+    """What the last step was and how it ended, as a sentence."""
+    step = _latest_real_step(task)
+    if step is None:
+        return None
+    status = str(step.get("status") or "")
+    phrase = _step_phrase(step)
+    if status == "denied":
+        return f"The last thing I tried was {phrase}, and I was not allowed to."
+    if status in {"failed", "timeout", "rate_limited"}:
+        reason = readable_reason(explain_tool_input_error(str(step.get("error") or "")))
+        return f"The last thing I tried was {phrase}, and it did not work" + (f": {reason}." if reason else ".")
+    return None
 
 
 def _latest_attempt_summary(task: TaskRecord) -> str | None:
