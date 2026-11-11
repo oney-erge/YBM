@@ -68,6 +68,7 @@ being allowed to look at them.
 | `dependencies.install` | `dependencies.install` | Install allowlisted Python packages into a per-task directory, never the system environment. Installing always asks for approval, whatever the access mode. |
 | `schedule.manage` | `schedule.manage` | Create, list, pause, resume, delete, and run recurring schedules. |
 | `memory.manage` | `memory.manage` | Remember, list, and forget structured facts. |
+| `system.inventory` | `system.inventory` | Read-only questions about this computer: how many Steam games are installed, which apps are installed, free disk space, and finding a file anywhere by name or content (Windows Search; only files in readable folders are returned). Off by default; enable it under `capabilities`. |
 | `tts.synthesize` | `tts.synthesize` | Text to speech. |
 | `artifact.deliver` | `telegram.send` | Send a generated file or screenshot back to the chat. |
 | `knowledge.search` | `agent.core` | Keyword-overlap search across a folder of your documents. Not embeddings. |

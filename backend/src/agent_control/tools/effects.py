@@ -108,6 +108,11 @@ _EFFECT_BY_TOOL_OPERATION: dict[tuple[str, str], EffectKind] = {
     ("memory.manage", "remember"): "created",
     ("memory.manage", "list"): "read",
     ("memory.manage", "forget"): "deleted",
+    # system.inventory - read-only questions about this computer.
+    ("system.inventory", "steam_games"): "read",
+    ("system.inventory", "installed_apps"): "read",
+    ("system.inventory", "disk_space"): "read",
+    ("system.inventory", "find_files"): "read",
     # coding.agent - every operation but the read-only ones drives a real
     # coding session that can touch a workspace; "other" for those rather
     # than claiming a specific file effect this tool doesn't expose.

@@ -943,6 +943,28 @@ class MemoryManageOutput(ToolOutputModel):
     summary: str | None = None
 
 
+class SystemInventoryInput(ToolInputModel):
+    operation: Literal["steam_games", "installed_apps", "disk_space", "find_files"] = "find_files"
+    query: str | None = None
+    extensions: list[str] = Field(default_factory=list, max_length=12)
+    match: Literal["name", "content"] = "name"
+    limit: int = Field(default=20, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def _require_inputs_per_operation(self) -> "SystemInventoryInput":
+        if self.operation == "find_files" and not (self.query or "").strip():
+            raise ValueError("system.inventory find_files requires 'query'")
+        return self
+
+
+class SystemInventoryOutput(ToolOutputModel):
+    operation: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    count: int = 0
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None
+
+
 class TaskStatusOutput(ToolOutputModel):
     operation: Literal["status"] = "status"
     summary: str = Field(min_length=1)
