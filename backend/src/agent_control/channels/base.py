@@ -33,6 +33,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Protocol
 
+from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
 from agent_control.channels.memory import memory_context
 from agent_control.channels.responder import ChatResponder, gateway_context
 from agent_control.clarification import expire_stale_clarifications, find_clarifying_task, resume_clarifying_task
@@ -282,6 +283,27 @@ def remember_standing_instruction(
     content = _standing_instruction(inbound.text or "")
     if content is None:
         return None
+    pairs = profile_pairs(content)
+    if pairs:
+        # Facts about the person ("my GitHub username is ...") are kept one per fact, so a form can be filled from them.
+        try:
+            stored = store_profile_facts(repositories, pairs)
+        except Exception as exc:
+            audit.append(
+                AuditEventType.ERROR,
+                actor=actor,
+                correlation_id=inbound.correlation_id,
+                payload={"error": "remember_profile_failed", "reason": str(exc)},
+            )
+            return None
+        for fact in stored:
+            audit.append(
+                AuditEventType.MEMORY_UPDATED,
+                actor=actor,
+                correlation_id=inbound.correlation_id,
+                payload={"fact_id": fact.id, "category": fact.category, "content": fact.content},
+            )
+        return describe_pairs(pairs)
     try:
         fact = repositories.memory_facts.create(
             MemoryFact(category="preference", content=content, source=MemorySource.USER_STATED)
