@@ -185,6 +185,8 @@ def test_a_file_with_the_persons_own_name_comes_first(tmp_path, monkeypatch):
     mine.write_text("a")
     theirs = tmp_path / "Downloads" / "2025.02_Onur_Resume.docx"
     theirs.write_text("b")
+    os.utime(mine, (1_600_000_000, 1_600_000_000))  # the same depth, so which is newer decides; pin it, files made in one second tie
+    os.utime(theirs, (1_700_000_000, 1_700_000_000))
     adapter = SystemInventoryAdapter([str(tmp_path)], lambda: ["Oney", "Erge"])
     names = [i["name"] for i in _run(adapter, operation="find_files", query="resume").output["items"]]
     assert names == ["Oney.Erge.Resume.2021.docx", "2025.02_Onur_Resume.docx"]
