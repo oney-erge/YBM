@@ -9,6 +9,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
+- A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
+  library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
+  (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
+  YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+  Files kept only in OneDrive (not downloaded) are marked `[online only]`, and reading one says so instead of "File is not a
+  zip file"; a live run had reported the user's own resume as corrupted.
 - Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs

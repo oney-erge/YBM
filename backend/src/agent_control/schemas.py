@@ -99,6 +99,7 @@ class Capability(StrEnum):
     GITHUB_PUSH = "github.push"
     DEPENDENCIES_INSTALL = "dependencies.install"
     MEMORY_MANAGE = "memory.manage"
+    SYSTEM_INVENTORY = "system.inventory"
 
 
 class TaskType(StrEnum):
