@@ -23,7 +23,7 @@ from typing import Any
 # A Windows path as it appears inside a sentence. Spaces are legal in a Windows path, so the
 # match is greedy up to the end of the line and then cut back to the longest prefix that
 # exists on disk (`_resolve_prefix`); free text after the path is never swallowed.
-_WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\[^\r\n\"<>|*?]*")
+_WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\[^\r\n\"<>|*?`]*")
 _TASK_ID = re.compile(r"\btask_[0-9a-f]{8,}\b")
 _LISTING_LINE = re.compile(r"^(\s*)- \[(?:file|folder|dir)\] (.+?)(?: \((\d+) bytes\))?\s*$")
 
@@ -59,18 +59,22 @@ def _resolve_prefix(candidate: str) -> str:
     on disk matches, the final segment is trimmed at a file extension, or at the end of the
     line, so a missing file still keeps the sentence after it.
     """
-    text = candidate.rstrip()
-    trimmed = text.rstrip(".,;:!?)]}'\"")
+    trailing = ".,;:!?)]}'\"`"
+    trimmed = candidate.rstrip().rstrip(trailing)
     words = trimmed.split(" ")
     for count in range(len(words), 0, -1):
-        part = " ".join(words[:count]).rstrip(".,;:!?)]}'\"")
+        part = " ".join(words[:count]).rstrip(trailing)
         try:
             if part and os.path.exists(part):
                 return part
         except (OSError, ValueError):
             continue
-    match = re.match(r"^(.*?\\[^\\/]*?\.[A-Za-z0-9]{1,6})(?=$|[\s,;:)\]'\"!?]|\.(?:\s|$))", trimmed)
-    return match.group(1) if match else trimmed
+    # Not on this computer: end the path at the first file extension that does not run on into more path.
+    match = re.match(r"^(.*?\\[^\\/]*?\.[A-Za-z0-9]{1,6})(?![A-Za-z0-9_\\/-])", trimmed)
+    if match:
+        return match.group(1)
+    # A folder with no extension ends at the first quote or sentence punctuation.
+    return re.match(r"^(.*?)(?=[`'\"]|[.,;:!?)\]]+(?:\s|$)|$)", trimmed).group(1)
 
 
 def friendly_path(path: str) -> str:

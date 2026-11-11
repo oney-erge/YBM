@@ -111,3 +111,27 @@ def test_progress_phrase(tool, operation, expected):
 
 def test_progress_phrase_names_the_coding_assistant():
     assert progress_phrase("coding.agent", "start", {"provider": "claude_code"}) == "working with Claude Code"
+
+
+def test_a_path_in_backticks_keeps_the_sentence_around_it(home):
+    out = humanize(rf"The file was found at `{home}\Downloads\Resume 2025.docx`. It belongs to Jo Doe and is two pages.")
+    assert out == "The file was found at `Resume 2025.docx (in Downloads)`. It belongs to Jo Doe and is two pages."
+
+
+def test_an_existing_path_in_backticks_keeps_the_sentence_around_it(home):
+    target = home / "Documents" / "plan v2.txt"
+    target.parent.mkdir()
+    target.write_text("x")
+    out = humanize(f"Saved to `{target}`. Open it later.")
+    assert out == "Saved to `plan v2.txt (in Documents)`. Open it later."
+
+
+def test_a_missing_folder_path_stops_at_sentence_punctuation(home):
+    out = humanize(rf"I looked in {home}\Desktop\Old Stuff. Nothing there, so I moved on.")
+    assert out.endswith("Nothing there, so I moved on.")
+    assert "\\" not in out
+
+
+def test_a_dotted_folder_name_does_not_end_the_path_early(home):
+    out = humanize(rf"See {home}\Desktop\sam.smith\notes.txt for details.")
+    assert out == "See notes.txt (in Desktop > sam.smith) for details."
