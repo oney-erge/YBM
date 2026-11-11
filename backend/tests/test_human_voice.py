@@ -72,6 +72,7 @@ def test_a_blocked_task_explains_what_was_tried_in_words():
 def test_an_answer_with_paths_is_readable(tmp_path):
     folder = tmp_path / "Reports"
     folder.mkdir()
+    (folder / "q3.pdf").write_text("x")
     task = _task(TaskStatus.COMPLETED, synthesized_answer=f"The report is {folder / 'q3.pdf'} and it is 3 pages.")
     text = format_task_message(task)
     assert "q3.pdf (in " in text

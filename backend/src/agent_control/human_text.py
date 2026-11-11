@@ -24,6 +24,9 @@ from typing import Any
 # match is greedy up to the end of the line and then cut back to the longest prefix that
 # exists on disk (`_resolve_prefix`); free text after the path is never swallowed.
 _WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\[^\r\n\"<>|*?`]*")
+# A POSIX path (macOS, Linux). Only rewritten when it exists on this computer, so "and/or", a URL or a stray
+# slash is never touched: the lookbehind refuses a slash that follows a word character, a colon or a dot.
+_POSIX_PATH = re.compile(r"(?<![\w:/.\-])(/(?=[^\s/])[^\r\n\"<>|*?`]*)")
 _TASK_ID = re.compile(r"\btask_[0-9a-f]{8,}\b")
 _LISTING_LINE = re.compile(r"^(\s*)- \[(?:file|folder|dir)\] (.+?)(?: \((\d+) bytes\))?\s*$")
 
@@ -52,23 +55,35 @@ def _home() -> Path:
     return Path(os.path.expanduser("~"))
 
 
-def _resolve_prefix(candidate: str) -> str:
-    """The longest leading part of `candidate` that is a real path, if any.
+_TRAILING = ".,;:!?)]}'\"`"
 
-    `C:\\Users\\me\\notes.txt and it has 3 lines` -> `C:\\Users\\me\\notes.txt`. When nothing
-    on disk matches, the final segment is trimmed at a file extension, or at the end of the
-    line, so a missing file still keeps the sentence after it.
-    """
-    trailing = ".,;:!?)]}'\"`"
-    trimmed = candidate.rstrip().rstrip(trailing)
+
+def _existing_prefix(candidate: str) -> str | None:
+    """The longest leading part of `candidate` that is a real path on this computer, if any."""
+    trimmed = candidate.rstrip().rstrip(_TRAILING)
     words = trimmed.split(" ")
     for count in range(len(words), 0, -1):
-        part = " ".join(words[:count]).rstrip(trailing)
+        part = " ".join(words[:count]).rstrip(_TRAILING)
         try:
             if part and os.path.exists(part):
                 return part
         except (OSError, ValueError):
             continue
+    return None
+
+
+def _resolve_prefix(candidate: str) -> str:
+    """The part of a Windows-style `candidate` that is the path, without the sentence after it.
+
+    `C:\\Users\\me\\notes.txt and it has 3 lines` -> `C:\\Users\\me\\notes.txt`. A path that exists is cut back
+    to the longest prefix that does. One that does not (a file that was moved, or one on another computer)
+    ends at its first file extension that does not run on into more path, or, for a folder, at the first
+    quote or sentence punctuation, so what follows it is kept.
+    """
+    existing = _existing_prefix(candidate)
+    if existing is not None:
+        return existing
+    trimmed = candidate.rstrip().rstrip(_TRAILING)
     # Not on this computer: end the path at the first file extension that does not run on into more path.
     match = re.match(r"^(.*?\\[^\\/]*?\.[A-Za-z0-9]{1,6})(?![A-Za-z0-9_\\/-])", trimmed)
     if match:
@@ -126,13 +141,20 @@ def friendly_path(path: str) -> str:
 
 
 def _replace_paths(text: str) -> str:
-    def swap(match: re.Match[str]) -> str:
+    def swap_windows(match: re.Match[str]) -> str:
         raw = match.group(0)
         cut = _resolve_prefix(raw)
-        rest = raw[len(cut):]
-        return friendly_path(cut) + rest
+        return friendly_path(cut) + raw[len(cut):]
 
-    return _WINDOWS_PATH.sub(swap, text)
+    def swap_posix(match: re.Match[str]) -> str:
+        raw = match.group(1)
+        cut = _existing_prefix(raw)
+        # Two folders or more: "/tmp" alone is a word, not a place worth rewriting.
+        if cut is None or len([part for part in cut.split("/") if part]) < 2:
+            return match.group(0)
+        return friendly_path(cut) + raw[len(cut):]
+
+    return _POSIX_PATH.sub(swap_posix, _WINDOWS_PATH.sub(swap_windows, text))
 
 
 def _tidy_listing(text: str) -> str:

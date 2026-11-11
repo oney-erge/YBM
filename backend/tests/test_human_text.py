@@ -2,12 +2,18 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from agent_control import human_text
 from agent_control.human_text import friendly_path, humanize, progress_phrase
+
+
+# A Windows-style path (C:\...) that does not exist is only recognised as one on Windows; a POSIX path is rewritten
+# only when it exists, which the tests below also cover on every platform.
+windows_only = pytest.mark.skipif(os.name != "nt", reason="a missing C:\ path is only rewritten as a Windows path")
 
 
 @pytest.fixture
@@ -54,6 +60,7 @@ def test_humanize_keeps_the_sentence_after_an_existing_path(home):
     assert out == "I read my notes.txt (in Documents) and it has 3 lines."
 
 
+@windows_only
 def test_humanize_trims_a_missing_file_at_its_extension(home):
     out = humanize(rf"Cannot open {home}\Desktop\gone.txt because it was moved.")
     assert "gone.txt (in Desktop)" in out
@@ -113,6 +120,7 @@ def test_progress_phrase_names_the_coding_assistant():
     assert progress_phrase("coding.agent", "start", {"provider": "claude_code"}) == "working with Claude Code"
 
 
+@windows_only
 def test_a_path_in_backticks_keeps_the_sentence_around_it(home):
     out = humanize(rf"The file was found at `{home}\Downloads\Resume 2025.docx`. It belongs to Jo Doe and is two pages.")
     assert out == "The file was found at `Resume 2025.docx (in Downloads)`. It belongs to Jo Doe and is two pages."
@@ -126,12 +134,24 @@ def test_an_existing_path_in_backticks_keeps_the_sentence_around_it(home):
     assert out == "Saved to `plan v2.txt (in Documents)`. Open it later."
 
 
+@windows_only
 def test_a_missing_folder_path_stops_at_sentence_punctuation(home):
     out = humanize(rf"I looked in {home}\Desktop\Old Stuff. Nothing there, so I moved on.")
     assert out.endswith("Nothing there, so I moved on.")
     assert "\\" not in out
 
 
+@windows_only
 def test_a_dotted_folder_name_does_not_end_the_path_early(home):
     out = humanize(rf"See {home}\Desktop\sam.smith\notes.txt for details.")
     assert out == "See notes.txt (in Desktop > sam.smith) for details."
+
+
+def test_a_path_that_does_not_exist_on_this_computer_is_left_alone(home):
+    text = f"It was at {home / 'Desktop' / 'moved-away.txt'} until yesterday."
+    assert "(in Desktop)" not in humanize(text) or os.name == "nt"
+
+
+def test_a_slash_in_ordinary_text_is_not_a_path(home):
+    text = "Use either/or, see /etc, and http://127.0.0.1:8891/app/ for 5/6 of it."
+    assert humanize(text) == text
