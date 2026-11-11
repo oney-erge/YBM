@@ -28,6 +28,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+- What a person says about themselves is remembered one fact at a time. "Remember these about me: my GitHub username is oney-erge, my
+  favorite language is Python, and my t-shirt size is L" was stored as that one sentence under "preference", so a form asking for a
+  GitHub username had to find it inside a paragraph, and a later "my t-shirt size is XL" added a contradicting sentence. Each "my
+  <thing> is <value>" clause is now its own fact ("T-shirt size: L") in the `profile` category, saying it again updates it, and the
+  reply names what was kept ("your GitHub username (oney-erge), your favorite language (Python) and your t-shirt size (L)"). Rules such
+  as "remember that I prefer short answers" are unchanged.
+- YBM remembers who it is talking to: the first message from a Telegram sender stores `Name: <their Telegram name>` as a profile fact, so "my
+  resume" has an owner. A name they state later ("my name is Oney Erge") replaces it.
 
 ### Fixed
 
