@@ -59,6 +59,20 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
 
 
+def task_control_actions(status: TaskStatus) -> list[str]:
+    """Meaningful controls to advertise; every command is checked again on use."""
+    if status in {TaskStatus.RUNNING, TaskStatus.RETRYING}:
+        return ["pause", "cancel"]
+    if status == TaskStatus.PAUSED:
+        return ["resume", "cancel"]
+    if status in {
+        TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.CLARIFYING,
+        TaskStatus.PLANNED, TaskStatus.AWAITING_APPROVAL, TaskStatus.AWAITING_EXTERNAL,
+    }:
+        return ["cancel"]
+    return []
+
+
 class ScheduleStatus(StrEnum):
     ENABLED = "enabled"
     PAUSED = "paused"

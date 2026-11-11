@@ -11,7 +11,8 @@ import asyncio
 import pytest
 
 from agent_control.config import ApprovalPolicyConfig, AppSettings, CapabilityPolicy
-from agent_control.orchestration import TaskWorker, ToolExecutor
+from agent_control.orchestration import TaskWorker, ToolExecutor, reconcile_orphaned_tasks
+from agent_control.orchestration.signals import apply_task_signal
 from agent_control.policy import PolicyEngine
 from agent_control.schemas import (
     ApprovalStatus,
@@ -161,6 +162,140 @@ async def test_call_tools_parallel_runs_calls_concurrently_not_sequentially(tmp_
     assert len(history) == 3
     assert {entry["tool_name"] for entry in history} == {"site_a", "site_b", "site_c"}
     assert all(entry["status"] == "succeeded" and entry["parallel"] is True for entry in history)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signal,expected", [("pause", TaskStatus.PAUSED), ("cancel", TaskStatus.CANCELLED)])
+async def test_control_before_parallel_admission_prevents_all_calls(tmp_path, monkeypatch, signal, expected) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("check two sites")
+    first, second = RecordingAdapter("first"), RecordingAdapter("second")
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {"first": first, "second": second})
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[
+            ParallelToolCall(tool_name="first", tool_input={}),
+            ParallelToolCall(tool_name="second", tool_input={}),
+        ])
+    ]))
+    admit = worker._mark_parallel_in_flight
+
+    def control_then_admit(*args, **kwargs):
+        apply_task_signal(repos, audit, task.id, signal, "operator", {})
+        return admit(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "_mark_parallel_in_flight", control_then_admit)
+    result = await worker.process_task(task.id)
+    assert result.status == expected
+    assert first.started_at == second.started_at == []
+    assert "operator_in_flight" not in repos.tasks.get(task.id).metadata
+
+
+@pytest.mark.asyncio
+async def test_parallel_effect_keeps_recovery_marker_if_result_recording_fails(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("write a file")
+    settings = _settings(Capability.FILESYSTEM_WRITE).model_copy(update={
+        "approval_policy": ApprovalPolicyConfig(require_approval_at_or_above=RiskLevel.CRITICAL)
+    })
+    adapter = ChangedPathAdapter()
+    definition = ToolDefinition(
+        name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        enabled=True, description="filesystem", operations=("write_text_file",),
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={"filesystem.manage": adapter}, tool_definitions={"filesystem.manage": definition},
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[
+            ParallelToolCall(tool_name="filesystem.manage", tool_input={
+                "operation": "write_text_file", "path": "result.txt", "content": "one",
+            }),
+            ParallelToolCall(tool_name="filesystem.manage", tool_input={
+                "operation": "write_text_file", "path": "result.txt", "content": "one",
+            }),
+        ])
+    ]))
+
+    def fail_result_record(*_args):
+        raise RuntimeError("simulated batch-result persistence failure")
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_result_record)
+    with pytest.raises(RuntimeError, match="simulated batch-result persistence failure"):
+        await worker.process_task(task.id)
+    assert adapter.started_at == ["result.txt"]
+    marker = repos.tasks.get(task.id).metadata["operator_in_flight"]
+    assert marker["tool_name"] == "call_tools_parallel"
+    assert marker["parallel_calls"][0]["capability"] == "filesystem.write"
+    assert reconcile_orphaned_tasks(repos, audit) == 1
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
+async def test_parallel_duplicate_write_is_dispatched_only_once(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("write a file once")
+    settings = _settings(Capability.FILESYSTEM_WRITE).model_copy(update={
+        "approval_policy": ApprovalPolicyConfig(require_approval_at_or_above=RiskLevel.CRITICAL)
+    })
+    adapter = ChangedPathAdapter()
+    definition = ToolDefinition(
+        name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        enabled=True, description="filesystem", operations=("write_text_file",),
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={"filesystem.manage": adapter}, tool_definitions={"filesystem.manage": definition},
+    )
+    call = ParallelToolCall(
+        tool_name="filesystem.manage",
+        tool_input={"operation": "write_text_file", "path": "result.txt", "content": "one"},
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[call, call])
+    ]))
+
+    result = await worker.process_task(task.id)
+
+    assert adapter.started_at == ["result.txt"]
+    assert [entry["status"] for entry in result.metadata["operator_history"]] == ["succeeded", "already_done"]
+
+
+@pytest.mark.asyncio
+async def test_parallel_duplicate_write_does_not_turn_a_failure_into_success(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("write a file once")
+    settings = _settings(Capability.FILESYSTEM_WRITE).model_copy(update={
+        "approval_policy": ApprovalPolicyConfig(require_approval_at_or_above=RiskLevel.CRITICAL)
+    })
+
+    class FailingWrite(ChangedPathAdapter):
+        async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+            self.started_at.append(str(request.input["path"]))
+            return ToolCallResult(request_id=request.id, status=ToolResultStatus.FAILED, error_message="write failed")
+
+    adapter = FailingWrite()
+    definition = ToolDefinition(
+        name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE,
+        enabled=True, description="filesystem", operations=("write_text_file",),
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={"filesystem.manage": adapter}, tool_definitions={"filesystem.manage": definition},
+    )
+    call = ParallelToolCall(
+        tool_name="filesystem.manage",
+        tool_input={"operation": "write_text_file", "path": "result.txt", "content": "one"},
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[call, call])
+    ]))
+
+    result = await worker.process_task(task.id)
+
+    assert adapter.started_at == ["result.txt"]
+    assert [entry["status"] for entry in result.metadata["operator_history"]] == ["failed", "failed"]
+    assert result.metadata["operator_history"][1]["duplicate_in_batch"] is True
 
 
 @pytest.mark.asyncio
@@ -320,6 +455,53 @@ async def test_call_tools_parallel_needing_approval_asks_once_for_the_whole_batc
 
 
 @pytest.mark.asyncio
+async def test_approved_parallel_batch_keeps_recovery_marker_after_effect(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("do two things, one risky")
+    settings = AppSettings(_env_file=None, capabilities={
+        Capability.LLM_GENERATE: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH),
+        Capability.TERMINAL_RUN: CapabilityPolicy(enabled=True, requires_approval=True, max_risk_level=RiskLevel.HIGH),
+    })
+    safe = RecordingAdapter("safe_read", delay=0.0)
+    risky = RecordingAdapter("risky_write", delay=0.0)
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit,
+        adapters={"safe_read": safe, "risky_write": risky},
+        tool_definitions={
+            "safe_read": ToolDefinition(name="safe_read", capability=Capability.LLM_GENERATE, enabled=True, description="x"),
+            "risky_write": ToolDefinition(name="risky_write", capability=Capability.TERMINAL_RUN, enabled=True, description="x"),
+        },
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[
+            ParallelToolCall(tool_name="safe_read", tool_input={}),
+            ParallelToolCall(tool_name="risky_write", tool_input={}, risk_level=RiskLevel.HIGH),
+        ])
+    ]))
+    assert (await worker.process_task(task.id)).status == TaskStatus.AWAITING_APPROVAL
+    batch = repos.approvals.list_pending()[0]
+    repos.approvals.decide_pending(batch.id, ApprovalStatus.APPROVED)
+    for entry in batch.action_payload["batch"]:
+        repos.approvals.decide_pending(entry["approval_id"], ApprovalStatus.APPROVED)
+    record_result = worker._record_tool_result
+
+    def fail_risky_result(task_id, name, result):
+        if name == "risky_write":
+            raise RuntimeError("simulated approved-batch persistence failure")
+        return record_result(task_id, name, result)
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_risky_result)
+    with pytest.raises(RuntimeError, match="simulated approved-batch persistence failure"):
+        await worker.process_task(task.id)
+    saved = repos.tasks.get(task.id)
+    assert len(risky.started_at) == 1
+    assert saved.status == TaskStatus.RUNNING
+    assert saved.metadata["operator_in_flight"]["tool_name"] == "call_tools_parallel"
+    assert reconcile_orphaned_tasks(repos, audit) == 1
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
 async def test_parallel_batch_without_approvals_still_runs_straight_through(tmp_path) -> None:
     """The pre-flight must not add a round trip to the common case."""
     repos, audit = make_repos(tmp_path)
@@ -388,6 +570,151 @@ async def test_call_tools_parallel_background_session_call_fails_that_call_only(
     assert history["site_a"]["status"] == "succeeded"
     assert history["coding.agent"]["status"] == "failed"
     assert "background session" in history["coding.agent"]["error"]
+
+
+@pytest.mark.asyncio
+async def test_interrupted_delegate_keeps_evidence_until_parent_history_is_written(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("delegate an operation")
+    adapter = RecordingAdapter("effect", delay=0.0)
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {"effect": adapter})
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the operation"),
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="effect", tool_input={}),
+    ]))
+
+    def fail_after_effect(*_args):
+        raise RuntimeError("result persistence failed")
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_after_effect)
+    with pytest.raises(RuntimeError, match="result persistence failed"):
+        await worker.process_task(task.id)
+
+    assert len(adapter.started_at) == 1
+    assert repos.tasks.get(task.id).metadata["operator_in_flight"]["tool_name"] == "delegate"
+    assert reconcile_orphaned_tasks(repos, audit) == 1
+    recovered = repos.tasks.get(task.id)
+    assert recovered.status == TaskStatus.CLARIFYING
+    assert recovered.metadata["interrupted_step"]["tool_name"] == "delegate"
+
+
+@pytest.mark.asyncio
+async def test_failed_delegate_result_write_requires_review_through_worker_entry(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("delegate an operation")
+    adapter = RecordingAdapter("effect", delay=0.0)
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {"effect": adapter})
+    notified = []
+
+    class Notifier:
+        async def notify(self, value):
+            notified.append(value.status)
+
+    worker = TaskWorker(repos, audit, executor=executor, notification_sink=Notifier(), operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the operation"),
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="effect", tool_input={}),
+    ]))
+
+    def fail_after_effect(*_args):
+        raise RuntimeError("result persistence failed")
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_after_effect)
+    result = await worker.process_next()
+    assert len(adapter.started_at) == 1
+    assert result.id == task.id
+    assert result.status == TaskStatus.CLARIFYING
+    assert result.metadata["interrupted_step"]["tool_name"] == "delegate"
+    assert "result persistence failed" in result.metadata["last_worker_error"]
+    assert notified == [TaskStatus.CLARIFYING]
+    with repos.tasks.database.connect() as connection:
+        row = connection.execute("SELECT claimed_by FROM tasks WHERE id = ?", (task.id,)).fetchone()
+    assert row["claimed_by"] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel", [False, True])
+@pytest.mark.parametrize("signal,expected", [("pause", TaskStatus.PAUSED), ("cancel", TaskStatus.CANCELLED)])
+async def test_control_before_delegated_dispatch_prevents_effect(tmp_path, signal, expected, parallel) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("delegate an operation")
+    adapter = RecordingAdapter("effect", delay=0.0)
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {"effect": adapter})
+
+    class SignalOnSubdecision(QueueOperator):
+        async def decide(self, *args, **kwargs):
+            if self.calls == 1:
+                apply_task_signal(repos, audit, task.id, signal, "operator", {})
+            return await super().decide(*args, **kwargs)
+
+    subdecision = (
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=[
+            ParallelToolCall(tool_name="effect", tool_input={}),
+            ParallelToolCall(tool_name="effect", tool_input={"item": 2}),
+        ]) if parallel else OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="effect", tool_input={})
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=SignalOnSubdecision([
+        OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the operation"),
+        subdecision,
+    ]))
+    result = await worker.process_task(task.id)
+    assert result.status == expected
+    assert adapter.started_at == []
+
+
+@pytest.mark.asyncio
+async def test_delegated_dispatch_stops_when_worker_loses_claim(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("delegate an operation")
+    adapter = RecordingAdapter("effect", delay=0.0)
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {"effect": adapter})
+
+    class TransferOnSubdecision(QueueOperator):
+        async def decide(self, *args, **kwargs):
+            if self.calls == 1:
+                with repos.tasks.database.connect() as connection:
+                    connection.execute(
+                        "UPDATE tasks SET claimed_by = ?, claim_expires_at = ? WHERE id = ?",
+                        ("new-worker", "2999-01-01T00:00:00+00:00", task.id),
+                    )
+            return await super().decide(*args, **kwargs)
+
+    worker = TaskWorker(repos, audit, executor=executor, operator=TransferOnSubdecision([
+        OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do the operation"),
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="effect", tool_input={}),
+    ]))
+    result = await worker.process_next()
+    assert result.status == TaskStatus.RUNNING
+    assert adapter.started_at == []
+    assert result.metadata["operator_in_flight"]["tool_name"] == "delegate"
+
+
+@pytest.mark.asyncio
+async def test_paused_delegate_requires_review_of_earlier_effect_before_resume(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("delegate multiple operations")
+    first, second = RecordingAdapter("first", delay=0.0), RecordingAdapter("second", delay=0.0)
+    executor = _executor(_settings(Capability.LLM_GENERATE), audit, repos, {"first": first, "second": second})
+
+    class PauseAfterFirst(QueueOperator):
+        async def decide(self, *args, **kwargs):
+            if self.calls == 2:
+                apply_task_signal(repos, audit, task.id, "pause", "operator", {})
+            return await super().decide(*args, **kwargs)
+
+    worker = TaskWorker(repos, audit, executor=executor, operator=PauseAfterFirst([
+        OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="do both operations"),
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="first", tool_input={}),
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="second", tool_input={}),
+    ]))
+    paused = await worker.process_task(task.id)
+    assert paused.status == TaskStatus.PAUSED
+    assert len(first.started_at) == 1 and second.started_at == []
+    assert paused.metadata["interrupted_step"]["tool_name"] == "delegate"
+
+    apply_task_signal(repos, audit, task.id, "resume", "operator", {})
+    resumed = repos.tasks.get(task.id)
+    assert resumed.status == TaskStatus.CLARIFYING
+    assert "check what took effect" in resumed.metadata["clarifying_question"]
 
 
 @pytest.mark.asyncio

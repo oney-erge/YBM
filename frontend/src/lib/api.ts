@@ -209,6 +209,7 @@ export const TaskRecordSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   metadata: z.record(z.string(), z.unknown()),
+  allowed_actions: z.array(z.enum(["pause", "resume", "cancel"])).optional(),
   // Only populated by the chat endpoints (docs/archive/UI_UX_AUDIT.md Phase 1's
   // artifact cards) - optional so /api/tasks and /api/tasks/{id}/trace,
   // which don't send this key, still parse.

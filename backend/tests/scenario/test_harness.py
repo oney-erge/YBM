@@ -27,6 +27,23 @@ from agent_control.storage import AuditLogger, Database, Repositories
 import pytest
 
 from .harness import Scenario, assert_completed, isolated_settings, run_task_to_completion
+from . import harness
+
+
+def test_scenario_scratch_refuses_escape_and_cleans_its_own_directory(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(harness, "SCENARIO_SCRATCH_ROOT", tmp_path / "scenario-scratch")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    sentinel = outside / "keep.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    with pytest.raises(ValueError, match="one directory name"):
+        harness.scenario_scratch_dir("../outside")
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+    scratch = harness.scenario_scratch_dir("fixture")
+    (scratch / "old.txt").write_text("old", encoding="utf-8")
+    assert harness.scenario_scratch_dir("fixture") == scratch
+    assert list(scratch.iterdir()) == []
 
 
 class _ApprovalThenCompleteWorker:

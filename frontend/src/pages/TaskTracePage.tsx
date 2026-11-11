@@ -18,7 +18,7 @@ import { useAdvancedMode } from "@/lib/advanced-mode"
 import { ApiError, tokenUsageOf, type EvidenceItem } from "@/lib/api"
 import { isTerminal } from "@/lib/chat"
 import { EFFECT_DISPLAY } from "@/lib/evidence"
-import { CANCELLABLE, PAUSABLE, RESUMABLE } from "@/lib/task-signals"
+import { canSignal } from "@/lib/task-signals"
 import { cn } from "@/lib/utils"
 
 type TraceView = "steps" | "timeline" | "duration" | "graph"
@@ -98,17 +98,17 @@ export function TaskTracePage() {
       </div>
 
       <div className="flex gap-2">
-        {PAUSABLE.has(task.status) && (
+        {canSignal(task, "pause") && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("pause")}>
             Pause
           </Button>
         )}
-        {RESUMABLE.has(task.status) && (
+        {canSignal(task, "resume") && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("resume")}>
             Resume
           </Button>
         )}
-        {CANCELLABLE.has(task.status) && (
+        {canSignal(task, "cancel") && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("cancel")}>
             Cancel
           </Button>

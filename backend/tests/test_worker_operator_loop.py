@@ -7,14 +7,16 @@ See orchestration/operator.py's module docstring for the design.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+import threading
 
 import pytest
 
-from agent_control.config import AppSettings, CapabilityPolicy
+from agent_control.config import ApprovalPolicyConfig, AppSettings, CapabilityPolicy
 from agent_control.orchestration import StaticToolAdapter, TaskWorker, ToolExecutor
 from agent_control.orchestration.auditor import AuditResult
-from agent_control.orchestration.signals import requeue_after_approval_decision
+from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.orchestration.worker import (
     CHECK_ENTRY_FULFILLMENT,
     _answer_from_results,
@@ -181,6 +183,213 @@ class QueueAuditor:
         return self.results.pop(0)
 
 
+@pytest.mark.asyncio
+async def test_worker_losing_claim_before_admission_does_not_dispatch(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("do not dispatch after ownership changes")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    worker = TaskWorker(
+        repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter),
+        operator=QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+        ]),
+    )
+    admit = worker._mark_in_flight
+
+    def transfer_then_admit(*args, **kwargs):
+        with repos.tasks.database.connect() as connection:
+            connection.execute(
+                "UPDATE tasks SET claimed_by = ?, claim_expires_at = ? WHERE id = ?",
+                ("new-worker", "2999-01-01T00:00:00+00:00", task.id),
+            )
+        return admit(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "_mark_in_flight", transfer_then_admit)
+    result = await worker.process_next()
+    assert result.status == TaskStatus.RUNNING
+    assert adapter.requests == []
+    assert "operator_in_flight" not in repos.tasks.get(task.id).metadata
+
+
+@pytest.mark.asyncio
+async def test_old_worker_return_cannot_overwrite_reconciled_effect(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("perform an effect once")
+    started, finish = asyncio.Event(), asyncio.Event()
+    effects = []
+
+    class HeldEffect:
+        async def execute(self, request):
+            effects.append(request.id)
+            started.set()
+            await finish.wait()
+            return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={"done": True})
+
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.FILESYSTEM_WRITE: CapabilityPolicy(
+            enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH,
+        )},
+        approval_policy=ApprovalPolicyConfig(require_approval_at_or_above=RiskLevel.CRITICAL),
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit, adapters={"test.effect": HeldEffect()},
+        tool_definitions={"test.effect": ToolDefinition(
+            name="test.effect", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test",
+        )},
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="test.effect", tool_input={})
+    ]))
+    running = asyncio.create_task(worker.process_next())
+    await asyncio.wait_for(started.wait(), timeout=5)
+    with repos.tasks.database.connect() as connection:
+        connection.execute("UPDATE tasks SET claim_expires_at = ? WHERE id = ?",
+                           ("2000-01-01T00:00:00+00:00", task.id))
+
+    replacement = TaskWorker(repos, audit)
+    assert await replacement.process_next() is None
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    finish.set()
+    old_result = await asyncio.wait_for(running, timeout=5)
+
+    saved = repos.tasks.get(task.id)
+    assert old_result.status == saved.status == TaskStatus.CLARIFYING
+    assert len(effects) == 1
+    assert saved.metadata["interrupted_step"]["tool_name"] == "test.effect"
+    assert "last_tool_name" not in saved.metadata
+
+
+@pytest.mark.asyncio
+async def test_timeout_with_running_external_effect_requires_review(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("perform an effect once", metadata={"task_budget_seconds": 0.5})
+    started, finish = threading.Event(), threading.Event()
+    effects = []
+
+    class ThreadedEffect:
+        async def execute(self, request):
+            def run():
+                effects.append(request.id)
+                started.set()
+                finish.wait(5)
+                return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={"done": True})
+
+            return await asyncio.to_thread(run)
+
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.FILESYSTEM_WRITE: CapabilityPolicy(
+            enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH,
+        )},
+        approval_policy=ApprovalPolicyConfig(require_approval_at_or_above=RiskLevel.CRITICAL),
+    )
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit, adapters={"test.effect": ThreadedEffect()},
+        tool_definitions={"test.effect": ToolDefinition(
+            name="test.effect", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test",
+        )},
+    )
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="test.effect", tool_input={})
+    ]))
+    try:
+        result = await worker.process_next()
+        assert started.is_set() and not finish.is_set()
+        assert result.id == task.id and result.status == TaskStatus.CLARIFYING
+        assert result.metadata["interrupted_step"]["tool_name"] == "test.effect"
+        assert len(effects) == 1
+    finally:
+        finish.set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("signal,expected", [("pause", TaskStatus.PAUSED), ("cancel", TaskStatus.CANCELLED)])
+async def test_control_winning_before_admission_prevents_dispatch(tmp_path, monkeypatch, signal, expected) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("run one tool")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    worker = TaskWorker(
+        repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter),
+        operator=QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+        ]),
+    )
+    admit = worker._mark_in_flight
+
+    def control_then_admit(*args, **kwargs):
+        apply_task_signal(repos, audit, task.id, signal, "operator", {})
+        return admit(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "_mark_in_flight", control_then_admit)
+    result = await worker.process_task(task.id)
+    assert result.status == expected
+    assert adapter.requests == []
+    assert "operator_in_flight" not in repos.tasks.get(task.id).metadata
+
+
+@pytest.mark.asyncio
+async def test_inflight_call_survives_failure_before_its_result_is_recorded(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("run one tool")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter)
+    decision = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([decision]))
+
+    def fail_result_record(*_args):
+        raise RuntimeError("simulated result persistence failure")
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_result_record)
+    with pytest.raises(RuntimeError, match="simulated result persistence failure"):
+        await worker.process_task(task.id)
+    assert len(adapter.requests) == 1
+    assert repos.tasks.get(task.id).metadata["operator_in_flight"]["tool_name"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_inflight_call_survives_failure_after_result_before_history(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("run one tool")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    worker = TaskWorker(
+        repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter),
+        operator=QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+        ]),
+    )
+    record_result = worker._record_tool_result
+
+    def fail_after_record(*args):
+        record_result(*args)
+        raise RuntimeError("simulated interruption before history")
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_after_record)
+    with pytest.raises(RuntimeError, match="simulated interruption before history"):
+        await worker.process_task(task.id)
+    saved = repos.tasks.get(task.id).metadata
+    assert len(adapter.requests) == 1
+    assert saved["last_tool_result"]["status"] == "succeeded"
+    assert saved["operator_in_flight"]["tool_name"] == "llm"
+
+
+@pytest.mark.asyncio
+async def test_successful_tool_history_clears_its_inflight_marker(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("run one tool")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    worker = TaskWorker(
+        repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter),
+        operator=QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+        ]),
+    )
+    saved = await worker.process_task(task.id)
+    assert len(adapter.requests) == 1
+    assert "operator_in_flight" not in saved.metadata
+    assert saved.metadata["operator_history"][-1]["status"] == "succeeded"
+
+
 def test_ground_operator_final_answer_preserves_read_file_identity() -> None:
     history = [{
         "tool_name": "filesystem.manage",
@@ -232,6 +441,60 @@ def _executor_with_adapter(settings, audit, repos, adapter, *, tool_name="llm") 
             )
         },
     )
+
+
+@pytest.mark.asyncio
+async def test_pause_during_model_decision_does_not_dispatch_tool(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("pause while deciding")
+    settings = _settings()
+    adapter = StaticToolAdapter()
+    executor = _executor_with_adapter(settings, audit, repos, adapter)
+
+    class PausingOperator(QueueOperator):
+        async def decide(self, *args, **kwargs):
+            apply_task_signal(repos, audit, task.id, "pause", "operator", {})
+            return await super().decide(*args, **kwargs)
+
+    operator = PausingOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+    ])
+    result = await TaskWorker(repos, audit, executor=executor, operator=operator).process_task(task.id)
+    assert result.status == TaskStatus.PAUSED
+    assert adapter.requests == []
+
+
+@pytest.mark.asyncio
+async def test_pause_during_tool_keeps_result_for_resume_without_repeating_call(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("use the tool once")
+
+    class PausingAdapter:
+        calls = 0
+
+        async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+            self.calls += 1
+            apply_task_signal(repos, audit, task.id, "pause", "operator", {})
+            return ToolCallResult(
+                request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={"answer": "done"}
+            )
+
+    adapter = PausingAdapter()
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="done"),
+    ])
+    worker = TaskWorker(repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter), operator=operator)
+
+    paused = await worker.process_task(task.id)
+    assert paused.status == TaskStatus.PAUSED
+    assert paused.metadata["operator_history"][0]["status"] == "succeeded"
+    assert adapter.calls == 1
+
+    apply_task_signal(repos, audit, task.id, "resume", "operator", {})
+    resumed = await worker.process_task(task.id)
+    assert resumed.status == TaskStatus.COMPLETED
+    assert adapter.calls == 1
 
 
 # ---- docs/THREAT_MODEL.md "Finish the Proof": untrusted content actually
@@ -1683,6 +1946,61 @@ async def test_run_forever_survives_one_infrastructure_poll_failure(tmp_path, mo
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("signal,expected", [("pause", TaskStatus.PAUSED), ("cancel", TaskStatus.CANCELLED)])
+async def test_control_before_approved_call_admission_prevents_dispatch(tmp_path, monkeypatch, signal, expected) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("needs approval")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    worker = TaskWorker(
+        repos, audit, executor=_executor_with_adapter(_approval_settings(), audit, repos, adapter),
+        operator=QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+        ]),
+    )
+    await worker.process_task(task.id)
+    approval = repos.approvals.list_for_task(task.id)[0]
+    repos.approvals.set_status(approval.id, ApprovalStatus.APPROVED)
+    requeue_after_approval_decision(repos, task.id)
+    admit = worker._mark_in_flight
+
+    def control_then_admit(*args, **kwargs):
+        apply_task_signal(repos, audit, task.id, signal, "operator", {})
+        return admit(*args, **kwargs)
+
+    monkeypatch.setattr(worker, "_mark_in_flight", control_then_admit)
+    result = await worker.process_task(task.id)
+    assert result.status == expected
+    assert adapter.requests == []
+    assert "operator_in_flight" not in repos.tasks.get(task.id).metadata
+
+
+@pytest.mark.asyncio
+async def test_approved_call_retains_inflight_marker_until_its_result_is_saved(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("needs approval")
+    adapter = StaticToolAdapter({"answer": "completed"})
+    worker = TaskWorker(
+        repos, audit, executor=_executor_with_adapter(_approval_settings(), audit, repos, adapter),
+        operator=QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={}, risk_level=RiskLevel.LOW)
+        ]),
+    )
+    awaiting = await worker.process_task(task.id)
+    approval = repos.approvals.list_for_task(task.id)[0]
+    repos.approvals.set_status(approval.id, ApprovalStatus.APPROVED)
+    requeue_after_approval_decision(repos, task.id)
+
+    def fail_result_record(*_args):
+        raise RuntimeError("simulated approved-result persistence failure")
+
+    monkeypatch.setattr(worker, "_record_tool_result", fail_result_record)
+    with pytest.raises(RuntimeError, match="simulated approved-result persistence failure"):
+        await worker.process_task(awaiting.id)
+    assert len(adapter.requests) == 1
+    assert repos.tasks.get(task.id).metadata["operator_in_flight"]["tool_name"] == "llm"
+
+
+@pytest.mark.asyncio
 async def test_operator_loop_resumes_and_executes_after_approval_granted(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     task = repos.tasks.create("needs approval")
@@ -3118,6 +3436,17 @@ def test_the_answer_names_the_file_that_was_read_not_the_made_up_one(tmp_path) -
     answer = _ground_operator_final_answer(f"The PDF located at {made_up} is about desktop automation.", [_read(real)])
 
     assert answer == f"The PDF located at {real} is about desktop automation."
+
+
+def test_answer_file_correction_handles_spaces_in_directory_and_filename(tmp_path) -> None:
+    folder = tmp_path / "research documents"
+    folder.mkdir()
+    real = folder / "actual report.pdf"
+    real.write_bytes(b"%PDF-1.4")
+    guessed = folder / "invented report.pdf"
+    original = f'Read "{guessed}" for the summary.'
+
+    assert _ground_operator_final_answer(original, [_read(real)]) == f'Read "{real}" for the summary.'
 
 
 @pytest.mark.parametrize("named", ["other.pdf", "notes.txt", "agent-control-sample.pdf"])

@@ -9,9 +9,6 @@ from agent_control.storage.repositories import Repositories
 
 logger = logging.getLogger(__name__)
 
-TERMINAL_STATUSES = {TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED}
-
-
 def apply_task_signal(
     repositories: Repositories,
     audit: AuditLogger,
@@ -21,41 +18,9 @@ def apply_task_signal(
     payload: dict,
     settings: AppSettings | None = None,
 ) -> tuple[TaskSignal, TaskStatus, TaskStatus]:
-    task = repositories.tasks.get(task_id)
-    if task is None:
-        raise KeyError(f"task not found: {task_id}")
-
-    if action == "pause":
-        if task.status in TERMINAL_STATUSES:
-            raise ValueError(f"cannot pause task in terminal status {task.status.value}")
-        metadata = {
-            **task.metadata,
-            "paused_from_status": task.status.value,
-            "last_control_signal": action,
-        }
-        updated = repositories.tasks.update_metadata(task_id, metadata, TaskStatus.PAUSED)
-    elif action == "resume":
-        if task.status in TERMINAL_STATUSES:
-            raise ValueError(f"cannot resume task in terminal status {task.status.value}")
-        target = _resume_target(task.status, task.metadata.get("paused_from_status"))
-        metadata = {**task.metadata, "last_control_signal": action}
-        metadata.pop("paused_from_status", None)
-        updated = repositories.tasks.update_metadata(task_id, metadata, target)
-    elif action == "cancel":
-        if task.status == TaskStatus.CANCELLED:
-            updated = task
-        elif task.status in {TaskStatus.COMPLETED, TaskStatus.FAILED}:
-            raise ValueError(f"cannot cancel task in terminal status {task.status.value}")
-        else:
-            metadata = {
-                **task.metadata,
-                "cancelled_from_status": task.status.value,
-                "last_control_signal": action,
-            }
-            updated = repositories.tasks.update_metadata(task_id, metadata, TaskStatus.CANCELLED)
-            _cleanup_cancelled_task(repositories, audit, task, settings)
-    else:
-        raise ValueError(f"unsupported task signal: {action}")
+    task, updated = repositories.tasks.apply_control(task_id, action)
+    if action == "cancel" and task.status != TaskStatus.CANCELLED:
+        _cleanup_cancelled_task(repositories, audit, task, settings)
 
     signal = TaskSignal(task_id=task_id, signal=action, actor=actor, payload=payload)
     repositories.task_signals.create(signal)
@@ -105,7 +70,11 @@ def _cleanup_cancelled_task(
             },
         )
 
-    if task.status == TaskStatus.AWAITING_EXTERNAL and settings is not None:
+    awaiting_external = task.status == TaskStatus.AWAITING_EXTERNAL or (
+        task.status == TaskStatus.PAUSED
+        and task.metadata.get("paused_from_status") == TaskStatus.AWAITING_EXTERNAL.value
+    )
+    if awaiting_external and settings is not None:
         _stop_awaiting_external_session(task, settings, audit)
 
 
@@ -197,16 +166,3 @@ def sweep_expired_approvals(repositories: Repositories, limit: int = 200) -> lis
         requeue_after_approval_decision(repositories, task.id)
         requeued.append(task.id)
     return requeued
-
-
-def _resume_target(current_status: TaskStatus, paused_from_status: str | None) -> TaskStatus:
-    if current_status != TaskStatus.PAUSED:
-        return current_status
-    if paused_from_status:
-        try:
-            target = TaskStatus(paused_from_status)
-        except ValueError:
-            return TaskStatus.RECEIVED
-        if target not in TERMINAL_STATUSES and target != TaskStatus.PAUSED:
-            return target
-    return TaskStatus.RECEIVED

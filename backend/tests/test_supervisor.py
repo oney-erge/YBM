@@ -137,7 +137,8 @@ def test_stop_command_names_the_launched_console_script_when_ybm_is_not_on_path(
     monkeypatch.setattr(supervisor.sys, "executable", str(script.with_name("python.exe" if os.name == "nt" else "python")))
     monkeypatch.setattr(supervisor.shutil, "which", lambda name: None)
 
-    assert supervisor.stop_command() == f"{script} stop"
+    expected = f'"{script}" stop' if " " in str(script) else f"{script} stop"
+    assert supervisor.stop_command() == expected
 
 
 def test_stop_command_is_plain_ybm_when_it_resolves_to_this_install(monkeypatch, tmp_path) -> None:

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import logging
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from agent_control.schemas import (
     ApprovalGrant,
@@ -36,6 +39,32 @@ from agent_control.storage.redaction import redact_text
 
 
 logger = logging.getLogger(__name__)
+
+
+class WorkerClaimLost(RuntimeError):
+    """A claimed worker may no longer publish state or reserve a new call."""
+
+
+_worker_claim: ContextVar[tuple[Database, str, str] | None] = ContextVar("worker_claim", default=None)
+
+
+@contextmanager
+def worker_claim_context(database: Database, task_id: str, worker_id: str) -> Iterator[None]:
+    """Scope claimed worker writes to their task, including async child tasks."""
+    token = _worker_claim.set((database, task_id, worker_id))
+    try:
+        yield
+    finally:
+        _worker_claim.reset(token)
+
+
+def _check_worker_claim(database: Database, row: sqlite3.Row, now: str) -> None:
+    claim = _worker_claim.get()
+    if claim is None or claim[0] is not database or claim[1] != row["id"]:
+        return
+    expiry = row["claim_expires_at"]
+    if row["claimed_by"] != claim[2] or expiry is None or expiry <= now:
+        raise WorkerClaimLost(f"worker claim lost for task {row['id']}")
 
 
 def _dump(value: Any) -> str:
@@ -354,6 +383,13 @@ class TaskRepository:
                       -- read in the same clock tick (common on Windows) stayed held.
                       OR claim_expires_at <= ?
                   )
+                  -- A different worker's expired active task must be
+                  -- reconciled before it can be claimed and run again.
+                  AND NOT (
+                      status IN ('running', 'interpreting')
+                      AND claimed_by IS NOT NULL AND claimed_by <> ?
+                      AND (claim_expires_at IS NULL OR claim_expires_at <= ?)
+                  )
                   -- Skip a task that is deliberately waiting (retry backoff,
                   -- or a usage limit that resets hours from now). Without
                   -- this the oldest parked task is re-claimed on every poll
@@ -380,6 +416,8 @@ class TaskRepository:
                     *(status.value for status in statuses),
                     worker_id,
                     _dt(now),
+                    worker_id,
+                    _dt(now),
                     _dt(now),
                 ],
             ).fetchone()
@@ -387,7 +425,7 @@ class TaskRepository:
             return None
         return self._row_to_task(row)
 
-    def release_claim(self, task_id: str) -> None:
+    def release_claim(self, task_id: str, *, worker_id: str | None = None) -> None:
         """Clear the worker claim on a task once it reaches a terminal state.
 
         Best-effort; failures are intentionally swallowed because this is
@@ -396,11 +434,66 @@ class TaskRepository:
         try:
             with self.database.connect() as connection:
                 connection.execute(
-                    "UPDATE tasks SET claimed_by = NULL, claim_expires_at = NULL WHERE id = ?",
-                    (task_id,),
+                    "UPDATE tasks SET claimed_by = NULL, claim_expires_at = NULL "
+                    "WHERE id = ? AND (? IS NULL OR claimed_by = ?)",
+                    (task_id, worker_id, worker_id),
                 )
         except Exception:
             logger.debug("release_claim failed for task %s; claim will expire on its own", task_id, exc_info=True)
+
+    def extend_claim(self, task_id: str, *, worker_id: str, claim_expiry_seconds: float) -> bool:
+        """Extend an owned, unexpired claim; never reacquire one that was lost."""
+        now = utc_now()
+        expiry = _dt(now + timedelta(seconds=claim_expiry_seconds))
+        with self.database.connect() as connection:
+            result = connection.execute(
+                "UPDATE tasks SET claim_expires_at = CASE WHEN claim_expires_at < ? THEN ? "
+                "ELSE claim_expires_at END WHERE id = ? AND claimed_by = ? AND claim_expires_at > ?",
+                (expiry, expiry, task_id, worker_id, _dt(now)),
+            )
+            return result.rowcount == 1
+
+    def recovery_candidates(self, *, after_rowid: int, expired_only: bool, limit: int = 100) -> list[tuple[int, str]]:
+        """Find active-state rows whose claim requires recovery, in stable pages."""
+        claim_filter = (
+            "claimed_by IS NOT NULL AND (claim_expires_at IS NULL OR claim_expires_at <= ?)"
+            if expired_only else
+            "claimed_by IS NULL OR claim_expires_at IS NULL OR claim_expires_at <= ?"
+        )
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT rowid, id FROM tasks WHERE rowid > ? AND status IN (?, ?) "
+                f"AND ({claim_filter}) ORDER BY rowid LIMIT ?",
+                (after_rowid, TaskStatus.RUNNING.value, TaskStatus.INTERPRETING.value, _dt(utc_now()), limit),
+            ).fetchall()
+        return [(int(row["rowid"]), str(row["id"])) for row in rows]
+
+    def reconcile_claim(
+        self,
+        task_id: str,
+        decide: Callable[[TaskRecord], tuple[dict[str, Any], TaskStatus]],
+        *,
+        expired_only: bool,
+    ) -> tuple[TaskRecord, TaskRecord] | None:
+        """Recheck claim, status and metadata under the same write transaction."""
+        now = _dt(utc_now())
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None or row["status"] not in {TaskStatus.RUNNING.value, TaskStatus.INTERPRETING.value}:
+                return None
+            owner, expires = row["claimed_by"], row["claim_expires_at"]
+            if (expired_only and owner is None) or (owner is not None and expires is not None and expires > now):
+                return None
+            previous = self._row_to_task(row)
+            metadata, status = decide(previous)
+            connection.execute(
+                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, "
+                "claimed_by = NULL, claim_expires_at = NULL WHERE id = ?",
+                (_dump(_redact_answer_fields(metadata)), status.value, now, task_id),
+            )
+            updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            return previous, self._row_to_task(updated)
 
     def update_status(self, task_id: str, status: TaskStatus) -> TaskRecord:
         now = utc_now()
@@ -432,7 +525,7 @@ class TaskRepository:
         metadata: dict[str, Any],
         status: TaskStatus | None = None,
     ) -> TaskRecord:
-        """Update task state without reviving a cooperatively cancelled task.
+        """Record worker progress without erasing a concurrent control decision.
 
         Worker model/tool calls run outside the SQLite transaction.  A user can
         cancel while one of those calls is in flight, so the worker may return
@@ -444,20 +537,118 @@ class TaskRepository:
         now = utc_now()
         metadata = _redact_answer_fields(metadata)
         with self.database.connect() as connection:
-            if status is None:
+            # Control and worker writes share this transaction boundary. The
+            # worker's result is retained while a paused task stays paused.
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            _check_worker_claim(self.database, row, _dt(utc_now()))
+            current = self._row_to_task(row)
+            deferred = current.metadata.get("paused_from_status")
+            if (
+                current.status == TaskStatus.PAUSED
+                and deferred in {TaskStatus.COMPLETED.value, TaskStatus.FAILED.value}
+                and status not in {TaskStatus.COMPLETED, TaskStatus.FAILED}
+            ):
+                return current
+            if current.status != TaskStatus.CANCELLED:
+                metadata = dict(metadata)
+                if "last_control_signal" in current.metadata:
+                    metadata["last_control_signal"] = current.metadata["last_control_signal"]
+                if current.status == TaskStatus.PAUSED:
+                    # Resume should continue from the observed result, not the
+                    # pre-call status. A completed effect is not replayed.
+                    metadata["paused_from_status"] = (
+                        status.value if status is not None and status != TaskStatus.PAUSED
+                        else current.metadata.get("paused_from_status", TaskStatus.RECEIVED.value)
+                    )
+                    target = TaskStatus.PAUSED
+                else:
+                    metadata.pop("paused_from_status", None)
+                    target = status or current.status
                 connection.execute(
-                    "UPDATE tasks SET metadata_json = ?, updated_at = ? WHERE id = ? AND status != ?",
-                    (_dump(metadata), _dt(now), task_id, TaskStatus.CANCELLED.value),
-                )
-            else:
-                connection.execute(
-                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ? AND status != ?",
-                    (_dump(metadata), status.value, _dt(now), task_id, TaskStatus.CANCELLED.value),
+                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                    (_dump(metadata), target.value, _dt(now), task_id),
                 )
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-        if row is None:
-            raise KeyError(f"task not found: {task_id}")
         return self._row_to_task(row)
+
+    def admit_operator_call(
+        self, task_id: str, in_flight: dict[str, Any], *, allow_awaiting_approval: bool = False
+    ) -> tuple[TaskRecord, bool]:
+        """Reserve a single tool call atomically against pause and cancellation."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            _check_worker_claim(self.database, row, _dt(utc_now()))
+            task = self._row_to_task(row)
+            allowed = {TaskStatus.RUNNING}
+            if allow_awaiting_approval:
+                allowed.add(TaskStatus.AWAITING_APPROVAL)
+            if task.status not in allowed or "operator_in_flight" in task.metadata:
+                return task, False
+            metadata = {**task.metadata, "operator_in_flight": in_flight}
+            connection.execute(
+                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                (_dump(_redact_answer_fields(metadata)), TaskStatus.RUNNING.value, _dt(utc_now()), task_id),
+            )
+            updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            return self._row_to_task(updated), True
+
+    def confirm_reserved_dispatch(self, task_id: str, step_id: str) -> tuple[TaskRecord, bool]:
+        """Order a delegated dispatch against controls and claim changes."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            _check_worker_claim(self.database, row, _dt(utc_now()))
+            task = self._row_to_task(row)
+            marker = task.metadata.get("operator_in_flight")
+            return task, bool(
+                task.status == TaskStatus.RUNNING and isinstance(marker, dict) and marker.get("step_id") == step_id
+            )
+
+    def apply_control(self, task_id: str, action: str) -> tuple[TaskRecord, TaskRecord]:
+        """Apply a user control to the current row, not a stale task snapshot."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                raise KeyError(f"task not found: {task_id}")
+            task = self._row_to_task(row)
+            terminal = {TaskStatus.COMPLETED, TaskStatus.CANCELLED, TaskStatus.FAILED}
+            if action not in {"pause", "resume", "cancel"}:
+                raise ValueError(f"unsupported task signal: {action}")
+            if task.status in terminal:
+                if action == "cancel" and task.status == TaskStatus.CANCELLED:
+                    return task, task
+                raise ValueError(f"cannot {action} task in terminal status {task.status.value}")
+            metadata = dict(task.metadata)
+            target = task.status
+            if action == "pause" and task.status != TaskStatus.PAUSED:
+                metadata["paused_from_status"] = task.status.value
+                target = TaskStatus.PAUSED
+            elif action == "resume" and task.status == TaskStatus.PAUSED:
+                try:
+                    target = TaskStatus(metadata.pop("paused_from_status", TaskStatus.RECEIVED.value))
+                except ValueError:
+                    target = TaskStatus.RECEIVED
+                if target in {TaskStatus.PAUSED, TaskStatus.CANCELLED}:
+                    target = TaskStatus.RECEIVED
+            elif action == "cancel":
+                metadata["cancelled_from_status"] = task.status.value
+                target = TaskStatus.CANCELLED
+            metadata["last_control_signal"] = action
+            connection.execute(
+                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                (_dump(metadata), target.value, _dt(utc_now()), task_id),
+            )
+            updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            return task, self._row_to_task(updated)
 
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> TaskRecord:
