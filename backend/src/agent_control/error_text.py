@@ -156,6 +156,14 @@ def explain_for_user(exc: BaseException | str) -> str:
     return "Something went wrong on my side and I couldn't finish that. The details are in the task trace."
 
 
+def readable_reason(text: str | None) -> str | None:
+    """The text itself when it already reads as a sentence for a person, else None (never a stack trace)."""
+    cleaned = " ".join((text or "").split())
+    if not cleaned or _looks_diagnostic(cleaned) or len(cleaned) > 300:
+        return None
+    return cleaned.rstrip(".")
+
+
 def _looks_diagnostic(text: str) -> bool:
     """Whether a stored error reads like a stack trace rather than a sentence.
 
