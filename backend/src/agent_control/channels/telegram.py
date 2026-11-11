@@ -17,7 +17,7 @@ from agent_control.config import AppSettings, TelegramConfig
 from agent_control.config_sync import read_env_value
 from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
-from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
+from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.schemas import (
@@ -503,6 +503,10 @@ class TelegramIntakeService:
                 return ChannelUpdateResult(authorized=True, inbound_message=inbound)
             if inbound.text:
                 await self._update_conversation_memory(conversation_id, inbound.text)
+            try:
+                learn_sender_name(self.repositories, inbound.raw)
+            except Exception:  # noqa: BLE001 - knowing the name is a convenience, never a reason to drop a message
+                logger.warning("could not remember the sender's name", exc_info=True)
 
             if result.command is None:
                 plain_response = self._plain_text_command_response(inbound)

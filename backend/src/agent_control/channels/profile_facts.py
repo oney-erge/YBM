@@ -25,7 +25,8 @@ _PREAMBLE = re.compile(
 )
 _CLAUSE = re.compile(
     r"\bmy\s+([A-Za-z][A-Za-z0-9' \-]{1,50}?)\s+(?:is|are)\s+(?:called\s+|named\s+)?([^,;\n]+?)"
-    r"(?=\s*(?:,|;|\.(?:\s|$)|\n|$)|\s+and\s+my\b)",
+    # A full stop ends the value unless it follows a single capital: "Oney E. Erge" is one name.
+    r"(?=\s*(?:,|;|(?<!\s[A-Z])\.(?:\s|$)|\n|$)|\s+and\s+my\b)",
     re.IGNORECASE,
 )
 #: Fewer clause words than this share of the statement means it is mostly something else (a rule, a story).
@@ -77,3 +78,33 @@ def describe_pairs(pairs: list[tuple[str, str]]) -> str:
     """`your GitHub username (oney-erge), your favorite language (Python) and your shirt size (L)`."""
     parts = [f"your {label} ({value})" for label, value in pairs]
     return parts[0] if len(parts) == 1 else ", ".join(parts[:-1]) + " and " + parts[-1]
+
+
+def sender_name(raw: dict | None) -> str | None:
+    """The sender's display name from a raw Telegram update, if it carries one."""
+    if not isinstance(raw, dict):
+        return None
+    holder = raw.get("message") or raw.get("edited_message") or raw.get("callback_query") or {}
+    who = holder.get("from") if isinstance(holder, dict) else None
+    if not isinstance(who, dict):
+        return None
+    name = " ".join(part.strip() for part in (who.get("first_name"), who.get("last_name")) if isinstance(part, str) and part.strip())
+    return name or None
+
+
+def learn_sender_name(repositories: Repositories, raw: dict | None) -> bool:
+    """Remember who is talking, once, from their own Telegram profile.
+
+    "Where is my resume?" has an answer only if "my" means someone. A name the person states later
+    ("my name is Oney Erge") replaces this one.
+    """
+    name = sender_name(raw)
+    if name is None:
+        return False
+    known = repositories.memory_facts.list_all(category=PROFILE_CATEGORY)
+    if any(fact.content.casefold().startswith("name:") for fact in known):
+        return False
+    repositories.memory_facts.create(
+        MemoryFact(category=PROFILE_CATEGORY, content=f"Name: {name} (from their Telegram profile)", source=MemorySource.USER_STATED)
+    )
+    return True

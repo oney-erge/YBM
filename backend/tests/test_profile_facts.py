@@ -74,3 +74,26 @@ def test_a_rule_still_takes_the_old_path(tmp_path):
     assert remember_standing_instruction(repos, audit, inbound, "telegram:user:1") is not None
     assert repos.memory_facts.list_all(category="profile") == []
     assert len(repos.memory_facts.list_all(category="preference")) == 1
+
+
+from agent_control.channels.profile_facts import learn_sender_name, sender_name  # noqa: E402
+
+
+def _update(first="Oney", last="Erge"):
+    return {"update_id": 1, "message": {"message_id": 5, "from": {"id": 9, "first_name": first, "last_name": last}, "text": "hi"}}
+
+
+def test_the_senders_name_is_read_from_the_telegram_update():
+    assert sender_name(_update()) == "Oney Erge"
+    assert sender_name(_update(last="")) == "Oney"
+    assert sender_name({"callback_query": {"from": {"first_name": "Jo"}}}) == "Jo"
+    assert sender_name({"message": {}}) is None and sender_name(None) is None
+
+
+def test_the_name_is_learned_once_and_a_stated_name_replaces_it(tmp_path):
+    repos, _ = make_repos(tmp_path)
+    assert learn_sender_name(repos, _update()) is True
+    assert learn_sender_name(repos, _update(first="Other")) is False
+    assert [f.content for f in repos.memory_facts.list_all(category="profile")] == ["Name: Oney Erge (from their Telegram profile)"]
+    store_profile_facts(repos, profile_pairs("my name is Oney E. Erge"))
+    assert [f.content for f in repos.memory_facts.list_all(category="profile")] == ["Name: Oney E. Erge"]

@@ -13,6 +13,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   <thing> is <value>" clause is now its own fact ("T-shirt size: L") in the `profile` category, saying it again updates it, and the
   reply names what was kept ("your GitHub username (oney-erge), your favorite language (Python) and your t-shirt size (L)"). Rules such
   as "remember that I prefer short answers" are unchanged.
+- YBM remembers who it is talking to: the first message from a Telegram sender stores `Name: <their Telegram name>` as a profile fact, so "my
+  resume" has an owner. A name they state later ("my name is Oney Erge") replaces it.
 
 ### Fixed
 
