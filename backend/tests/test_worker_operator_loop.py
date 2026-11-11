@@ -2096,7 +2096,10 @@ async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_an
         OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={}, risk_level=RiskLevel.LOW),
         OperatorDecision(action=OperatorAction.DONE, final_answer="attempt 1"),
         OperatorDecision(action=OperatorAction.DONE, final_answer="attempt 2"),
-        OperatorDecision(action=OperatorAction.DONE, final_answer="attempt 3"),
+        # The third answer holds an address that no tool returned: it is sent back once, and when it comes again it cannot be
+        # delivered unconfirmed.
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Ask news@invented.example for the five episodes."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Ask news@invented.example for the five episodes."),
     ])
     auditor = QueueAuditor([
         AuditResult(sufficient=False, reason="still insufficient"),
@@ -2108,7 +2111,7 @@ async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_an
                         audit_min_tool_calls=1)
 
     result = task
-    for _ in range(5):
+    for _ in range(6):
         result = await worker.process_task(result.id)
         if result.status != TaskStatus.RUNNING:
             break
@@ -2117,6 +2120,57 @@ async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_an
     assert result.metadata["operator_audit_gap_count"] == 2
     assert len(auditor.calls) == 2
     assert "unverified answer" in result.metadata["last_worker_error"]
+
+
+@pytest.mark.asyncio
+async def test_a_grounded_answer_the_auditor_twice_turned_down_is_delivered_with_a_note(tmp_path) -> None:
+    """Live: a 9B Auditor rejected a correct two-sentence summary of a 159-character document for being short, twice, and the
+    task ended "Blocked". The answer invents no address or number, so it is delivered and says it was not confirmed."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Summarize notes.txt in two sentences")
+    executor = _executor(_settings(), audit, repos, tool_name="filesystem.manage", output={"text": "Team offsite plan. Dates: June 9 to 11."})
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The team offsite is planned for June 9 to 11."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The team offsite is planned for June 9 to 11."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The team offsite is planned for June 9 to 11."),
+    ])
+    auditor = QueueAuditor([AuditResult(sufficient=False, reason="too short"), AuditResult(sufficient=False, reason="too short")])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(6):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.COMPLETED
+    answer = result.metadata["synthesized_answer"]
+    assert answer.startswith("The team offsite is planned for June 9 to 11.") and "Not fully confirmed" in answer
+    assert result.metadata["operator_audit_unconfirmed"] is True
+
+
+def test_a_request_to_change_a_file_that_exists_overwrites_it(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as enrich
+    from agent_control.schemas import TaskRecord
+
+    existing = tmp_path / "greeting.txt"
+    existing.write_text("hello", encoding="utf-8")
+    write = {"operation": "write_text_file", "path": str(existing), "content": "goodbye"}
+
+    def task(text: str) -> TaskRecord:
+        return TaskRecord(objective=text, metadata={"original_message_text": text})
+
+    assert enrich(task("Change it so it says goodbye instead."), "filesystem.manage", write) == {**write, "overwrite": True}
+    assert enrich(task("Update the text inside greeting.txt"), "filesystem.manage", write)["overwrite"] is True
+    # nothing changes: a request to create, a path that does not exist, overwrite already set, another operation or tool
+    assert enrich(task("Write a file called greeting.txt that says hello"), "filesystem.manage", write) == write
+    missing = {**write, "path": str(tmp_path / "new.txt")}
+    assert enrich(task("Change it so it says goodbye"), "filesystem.manage", missing) == missing
+    explicit = {**write, "overwrite": False}
+    assert enrich(task("Change it so it says goodbye"), "filesystem.manage", explicit)["overwrite"] is True
+    assert enrich(task("Change it"), "filesystem.manage", {"operation": "read_file", "path": str(existing)}) == {"operation": "read_file", "path": str(existing)}
+    assert enrich(task("Change it"), "browser.open", write) == write
 
 
 @pytest.mark.asyncio
@@ -3221,3 +3275,288 @@ def test_a_scheduled_job_objective_is_otherwise_left_alone(message, call) -> Non
 
     assert _schedule_objective_with_request_urls(task, "schedule.manage", call) == call
 
+
+
+
+@pytest.mark.asyncio
+async def test_an_answer_now_offer_spent_on_an_already_answered_question_is_offered_once_more(tmp_path) -> None:
+    """Live: out of steps, the model asked the user again; the question had been answered, so it was rejected and the task
+    ended "blocked" without the model ever saying it could not do what was asked."""
+    repos, audit = make_repos(tmp_path)
+    question = "Which pizzeria should I order from?"
+    task = repos.tasks.create(
+        "Order a large pepperoni pizza from the nearest pizzeria",
+        metadata={"clarification_answer": "Yes, go ahead.", "answered_clarifying_question": question},
+    )
+    executor = _executor(_settings(), audit, repos, output={"summary": "a search page"})
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={"operation": "a"}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.ASK_USER, question=question),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot place orders; I can only search for pizzerias."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=1)
+
+    result = task
+    for _ in range(5):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"].startswith("I cannot place orders")
+    assert [e["status"] for e in result.metadata["operator_history"] if e["tool_name"] == "_stuck_check"] == ["stuck", "stuck"]
+    assert operator.finish_only_calls[-2:] == [True, True]
+
+
+
+def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    folder = tmp_path / "Desktop"
+    (folder / "resumes").mkdir(parents=True)
+    (folder / "resumes" / "notes.txt").write_text("resume notes", encoding="utf-8")
+    other = tmp_path / "Elsewhere"
+    other.mkdir()
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "search", "root": "desktop"}, "status": "succeeded",
+              "output_root": str(folder)}
+    read = {"operation": "read_file", "path": "resumes/notes.txt"}
+
+    assert complete("filesystem.manage", read, [listing])["path"] == str(folder / "resumes" / "notes.txt")
+    # the most recent listing that has the file wins; a folder that does not have it is skipped
+    older = {**listing, "output_root": str(other)}
+    assert complete("filesystem.manage", read, [listing, older])["path"] == str(folder / "resumes" / "notes.txt")
+    # nothing changes: no listing, an absolute path, a file that exists as given, another tool, another operation
+    assert complete("filesystem.manage", read, []) == read
+    absolute = {"operation": "read_file", "path": str(folder / "resumes" / "notes.txt")}
+    assert complete("filesystem.manage", absolute, [listing]) == absolute
+    assert complete("filesystem.manage", {"operation": "read_file", "path": "missing.txt"}, [listing]) == {"operation": "read_file", "path": "missing.txt"}
+    assert complete("browser.open", read, [listing]) == read
+    written = {"operation": "write_text_file", "path": "resumes/notes.txt"}
+    assert complete("filesystem.manage", written, [listing]) == written
+
+
+def test_the_document_and_delivery_tools_get_the_same_completion(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "memo.pdf").write_bytes(b"%PDF-1.4")
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder"}, "status": "succeeded", "output_root": str(tmp_path)}
+    wanted = str(tmp_path / "docs" / "memo.pdf")
+
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "extract_text", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    assert complete("artifact.deliver", {"operation": "send_file", "path": "docs/memo.pdf"}, [listing])["path"] == wanted
+    # an operation that is not a read of one file is left alone
+    create = {"operation": "create_presentation", "path": "docs/memo.pdf"}
+    assert complete("document.manage", create, [listing]) == create
+
+
+
+@pytest.mark.asyncio
+async def test_a_screenshot_that_was_only_taken_is_not_done_even_when_the_auditor_owns_fulfillment(tmp_path) -> None:
+    """Live: "open the page and send me a screenshot" completed after the screenshot was taken and never sent; the 9B Auditor
+    approved it, and the deterministic delivery check was skipped because the Auditor owns fulfillment."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create(
+        "Open the browser, go to the page and send me a screenshot",
+        metadata={"expected_postconditions": ["screenshot_delivered"]},
+    )
+    executor = _executor(_settings(), audit, repos, output={"summary": "Screenshot: C:/shots/page.png"})
+    auditor = QueueAuditor([AuditResult(sufficient=True, answer="The page is titled Agent Control E2E Site.")])
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="llm", tool_input={"operation": "screenshot"}, risk_level=RiskLevel.LOW),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="The page is titled Agent Control E2E Site."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, operator_max_steps=8, audit_min_tool_calls=1)
+
+    result = task
+    for _ in range(2):
+        result = await worker.process_task(result.id)
+
+    assert result.status == TaskStatus.RUNNING  # sent back, not completed
+    gap = result.metadata["operator_history"][-1]
+    assert gap["tool_name"] == "_fulfillment_check" and "screenshot" in gap["error"].lower()
+
+
+
+def test_a_path_with_the_folder_alias_first_is_completed_for_the_document_tool(tmp_path) -> None:
+    # Live: summarize_pdf("desktop/AgentControlE2E/agent-control-sample.pdf") was looked for under the program's own folder.
+    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+
+    (tmp_path / "AgentControlE2E").mkdir()
+    (tmp_path / "AgentControlE2E" / "sample.pdf").write_bytes(b"%PDF-1.4")
+    listing = {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder", "root": "desktop"}, "status": "succeeded",
+              "output_root": str(tmp_path)}
+    wanted = str(tmp_path / "AgentControlE2E" / "sample.pdf")
+
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "desktop/AgentControlE2E/sample.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "Desktop/AgentControlE2E/sample.pdf"}, [listing])["path"] == wanted
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "AgentControlE2E/sample.pdf"}, [listing])["path"] == wanted
+    # an alias word that is really a folder inside the listed one is not stripped away from a path that exists as written
+    (tmp_path / "desktop").mkdir()
+    (tmp_path / "desktop" / "x.pdf").write_bytes(b"%PDF-1.4")
+    assert complete("document.manage", {"operation": "summarize_pdf", "path": "desktop/x.pdf"}, [listing])["path"] == str(tmp_path / "desktop" / "x.pdf")
+
+
+# ---- a question about a file that is not there is turned into the plain answer that it is not -------------------------------
+# Live (held-out): "Send me nonexistent-contract.pdf", "Read missing-note.txt", "What is Grace Hopper's email in contacts.txt": each ended
+# with the model asking which other file the user meant, or asking them to paste the contents, and the question waited.
+
+
+class MissingFileAdapter:
+    async def execute(self, request: ToolCallRequest) -> ToolCallResult:
+        return ToolCallResult(
+            request_id=request.id, status=ToolResultStatus.FAILED,
+            error_message="filesystem operation failed: file does not exist: C:/notes/gone.txt",
+        )
+
+
+def _read_call(path: str = "C:/notes/gone.txt") -> OperatorDecision:
+    return OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", risk_level=RiskLevel.LOW,
+                            tool_input={"operation": "read_file", "path": path})
+
+
+@pytest.mark.asyncio
+async def test_a_question_after_a_missing_file_is_turned_into_the_plain_answer(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Read C:/notes/gone.txt and tell me what it says.")
+    executor = _executor_with_adapter(_settings(), audit, repos, MissingFileAdapter(), tool_name="filesystem.manage")
+    operator = QueueOperator([
+        _read_call(),
+        OperatorDecision(action=OperatorAction.ASK_USER, question="Which of these other files did you mean: a.txt, b.txt?"),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="C:/notes/gone.txt does not exist. I found a.txt and b.txt nearby."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(4):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    rejection = [e for e in result.metadata["operator_history"] if e["tool_name"] == "_clarification_check"]
+    assert len(rejection) == 1 and "does not exist" in rejection[0]["error"] and "final answer" in rejection[0]["error"]
+    assert result.status == TaskStatus.COMPLETED
+    assert result.metadata["synthesized_answer"].startswith("C:/notes/gone.txt does not exist")
+
+
+@pytest.mark.asyncio
+async def test_a_request_to_ask_first_keeps_its_question_even_after_a_missing_file(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Read C:/notes/gone.txt, and ask me before doing anything else.")
+    executor = _executor_with_adapter(_settings(), audit, repos, MissingFileAdapter(), tool_name="filesystem.manage")
+    operator = QueueOperator([_read_call(), OperatorDecision(action=OperatorAction.ASK_USER, question="It is not there. What next?")])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert result.status == TaskStatus.CLARIFYING
+    assert not [e for e in result.metadata["operator_history"] if e["tool_name"] == "_clarification_check"]
+
+
+def test_only_a_failure_that_says_the_target_is_missing_turns_a_question_down(tmp_path) -> None:
+    from agent_control.orchestration.worker import _named_target_not_found
+
+    task = TaskRecord(objective="Open the report", metadata={})
+
+    def failed(error: str) -> list[dict]:
+        return [{"tool_name": "filesystem.manage", "status": "failed", "error": error}]
+
+    assert _named_target_not_found(task, failed("filesystem operation failed: file does not exist: C:/a.txt")) is not None
+    assert _named_target_not_found(task, failed("document file does not exist: C:/a.pdf")) is not None
+    assert _named_target_not_found(task, failed("no deliverable artifact or file path was found. Pass `path`")) is not None
+    assert _named_target_not_found(task, failed("invalid input for filesystem.manage: path Field required")) is None
+    assert _named_target_not_found(task, failed("HTTP host is not allowlisted: 127.0.0.1")) is None
+    assert _named_target_not_found(task, [{"tool_name": "filesystem.manage", "status": "succeeded", "error": None}]) is None
+    assert _named_target_not_found(task, []) is None
+    # a later step that worked, or a check entry after the failure, decides: only the last real step counts
+    both = failed("file does not exist") + [{"tool_name": "filesystem.manage", "status": "succeeded", "output_summary": "found it"}]
+    assert _named_target_not_found(task, both) is None
+    assert _named_target_not_found(task, failed("file does not exist") + [{"tool_name": "_clarification_check", "status": "clarification_gap"}]) is not None
+
+
+# ---- a move or rename made to look like a delete ---------------------------------------------------------------------------
+# Live (fresh held-out suite): "Delete all the files in the junk folder" became organize_plan and apply_manifest into folders named
+# "other", "deleted" and "trash", the three files were renamed, and the task reported "Renamed 3 file(s)".
+
+
+def test_only_a_request_that_just_asks_to_delete_makes_a_move_a_simulated_delete() -> None:
+    from agent_control.orchestration.worker import _is_simulated_delete
+
+    manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
+    for text in ("Delete all the files in the junk folder.", "Please erase everything in C:/junk", "Get rid of the old logs", "wipe the temp folder"):
+        assert _is_simulated_delete(TaskRecord(objective=text, metadata={}), "filesystem.manage", manifest) is True, text
+    for text in ("Clean up the inbox: it is a mess.", "Move the .tmp files into an archive folder", "Delete the duplicates and tidy the folder",
+                 "Organize my downloads", "Rename draft.txt to final.txt", "Sort the files by type and remove nothing"):
+        assert _is_simulated_delete(TaskRecord(objective=text, metadata={}), "filesystem.manage", manifest) is False, text
+    delete = TaskRecord(objective="Delete all the files in the junk folder.", metadata={})
+    assert _is_simulated_delete(delete, "filesystem.manage", {"operation": "read_file", "path": "C:/junk/a.log"}) is False
+    assert _is_simulated_delete(delete, "filesystem.manage", {"operation": "organize_plan", "root": "C:/junk"}) is True
+    assert _is_simulated_delete(delete, "browser.open", manifest) is False
+
+
+@pytest.mark.asyncio
+async def test_a_delete_request_is_not_carried_out_by_moving_and_renaming_files(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Delete all the files in C:/junk.")
+    adapter = StaticToolAdapter({"summary": "Moved 3 file(s)."})
+    executor = _executor_with_adapter(_settings(), audit, repos, adapter, tool_name="filesystem.manage")
+    operator = QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", risk_level=RiskLevel.LOW,
+                         tool_input={"operation": "apply_manifest", "root": "C:/junk", "manifest": [{"source": "a.log", "destination": "deleted"}]}),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot delete files. I can move them into a folder you name."),
+    ])
+    worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=8)
+
+    result = task
+    for _ in range(3):
+        result = await worker.process_task(result.id)
+        if result.status != TaskStatus.RUNNING:
+            break
+
+    assert adapter.requests == []  # nothing was moved or renamed
+    refused = result.metadata["operator_history"][0]
+    assert refused["status"] == "denied" and "no delete operation" in refused["error"]
+    assert result.status == TaskStatus.COMPLETED and result.metadata["synthesized_answer"].startswith("I cannot delete files")
+
+
+# ---- intent checks read the user's own words, not the model's question appended by a clarification round -------------------
+# Live: after "Delete everything in the trash folder", the model said it cannot delete and asked a question that offered to move the
+# files; the task's objective then held "move", the delete guard read that as the user's, and the files were renamed anyway.
+
+ROUND = (
+    "Delete everything in C:/junk. [Question to the user: I cannot delete files; I can offer to move them to a folder. Which?] "
+    "[User clarification: Yes, please go ahead with what you proposed.]"
+)
+
+
+def test_the_delete_guard_is_not_switched_off_by_the_models_own_question() -> None:
+    from agent_control.orchestration.worker import _is_simulated_delete
+
+    manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
+    task = TaskRecord(objective=ROUND, metadata={"original_message_text": "Delete everything in C:/junk."})
+    assert _is_simulated_delete(task, "filesystem.manage", manifest) is True
+    # without the original message to go by, the objective is all there is
+    assert _is_simulated_delete(TaskRecord(objective="Delete everything in C:/junk.", metadata={}), "filesystem.manage", manifest) is True
+    # and a user who really asked to move still gets the move
+    moving = TaskRecord(objective=ROUND, metadata={"original_message_text": "Move the old files in C:/junk into archive."})
+    assert _is_simulated_delete(moving, "filesystem.manage", manifest) is False
+
+
+def test_the_overwrite_rule_does_not_act_on_words_the_model_added(tmp_path) -> None:
+    from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as enrich
+
+    existing = tmp_path / "greeting.txt"
+    existing.write_text("hello", encoding="utf-8")
+    write = {"operation": "write_text_file", "path": str(existing), "content": "hi"}
+    asked = TaskRecord(
+        objective="Write greeting.txt saying hi. [Question to the user: Should I update the existing file?] [User clarification: ok]",
+        metadata={"original_message_text": "Write a file called greeting.txt saying hi."},
+    )
+    assert enrich(asked, "filesystem.manage", write) == write
+    changed = TaskRecord(objective="x", metadata={"original_message_text": "Change greeting.txt to say hi."})
+    assert enrich(changed, "filesystem.manage", write)["overwrite"] is True

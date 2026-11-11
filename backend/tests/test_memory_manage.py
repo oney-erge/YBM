@@ -179,3 +179,24 @@ async def test_memory_manage_forget_is_denied_outright_if_max_risk_level_is_not_
     )
 
     assert result.status == ToolResultStatus.DENIED
+
+
+
+@pytest.mark.asyncio
+async def test_list_shows_the_facts_to_the_model_not_only_how_many(tmp_path) -> None:
+    repos, _audit = make_repos(tmp_path)
+    task = repos.tasks.create("what do you remember about me")
+    adapter = MemoryManageAdapter(repos)
+    for category, content in (("preference", "Prefers metric units"), ("person", "Sister is called Marisol")):
+        await adapter.execute(ToolCallRequest(
+            task_id=task.id, tool_name="memory.manage", capability=Capability.MEMORY_MANAGE,
+            input={"operation": "remember", "category": category, "content": content},
+        ))
+
+    listed = await adapter.execute(ToolCallRequest(
+        task_id=task.id, tool_name="memory.manage", capability=Capability.MEMORY_MANAGE, input={"operation": "list"},
+    ))
+
+    summary = listed.output["summary"]
+    assert summary.startswith("Found 2 remembered fact(s).")
+    assert "- [preference] Prefers metric units" in summary and "- [person] Sister is called Marisol" in summary

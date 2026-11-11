@@ -83,7 +83,8 @@ class ArtifactDeliveryAdapter:
             "delivered": False,
             "artifact_ids": [artifact.id for artifact in artifacts],
             "artifacts": [artifact.model_dump(mode="json") for artifact in artifacts],
-            "summary": f"Found {len(artifacts)} artifact(s) for task {request.task_id}.",
+            "summary": f"Found {len(artifacts)} artifact(s) for task {request.task_id}."
+            + "".join(f"\n- {artifact.type.value}: {artifact.uri or artifact.id}" for artifact in artifacts[:25]),
         }
 
     async def _send(self, request: ToolCallRequest, operation: str) -> dict[str, Any]:
@@ -97,7 +98,10 @@ class ArtifactDeliveryAdapter:
         if path is None and operation == "send_latest":
             artifact, path = self._materialize_latest_text(request, task)
         if path is None:
-            raise ValueError("no deliverable artifact or file path was found")
+            raise ValueError(
+                "no deliverable artifact or file path was found. Pass `path` with the file's full path; if you only know its "
+                "name, find it first with filesystem.manage search, then send that path."
+            )
         if not path.exists() or not path.is_file():
             raise ValueError(f"deliverable file does not exist: {path}")
 

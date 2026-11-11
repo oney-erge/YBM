@@ -7,6 +7,47 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
+  appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
+  user's, and the files were renamed anyway.
+- A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
+  all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
+  The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
+  request that also asks to move, organize, rename, sort, tidy or clean up keeps those operations.
+- Asked to read, open or send a file that does not exist, the model now says so instead of asking the user which other file they
+  meant or to paste its contents. A question after a step that failed because the target is missing is turned down with "say so
+  plainly in a final answer", and that honest answer is no longer sent back by the fulfillment check for lacking the contents the
+  request expected (which ended in "Blocked"). A request that says to ask first keeps its question.
+- The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
+  filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
+- An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is
+  delivered with a note ("Not fully confirmed ... please double-check it") instead of ending the task "Blocked". A 9B Auditor rejected
+  a correct summary of a 159-character document for being short. An answer with an unsupported value is still blocked.
+- A request to change a file that exists ("change it to say goodbye", "update the text") overwrites it. `write_text_file` saves a copy
+  (`greeting_2.txt`) unless `overwrite` is set, and the model repeated the copy until the task was blocked.
+- `read_file` keeps the lines of the file it reads. Every run of whitespace, line breaks included, became one space, so a CSV reached
+  the model as one long line ("name,score Ana,71 Ben,88 ..."), the scripts it wrote could not parse it, and the task ran out of steps.
+- A `send_file` with no path says to pass the file's full path or to find it first with `filesystem.manage search`. "Send it to me",
+  asked as a new task, repeated the same path-less call four times until the task was blocked.
+- A file or screenshot the user asked to be sent is checked as sent even when the Auditor owns the rest of fulfillment. "Open the page
+  and send me a screenshot" completed after the screenshot was only taken, because the Auditor approved it and the deterministic
+  delivery check was skipped.
+- A file read by the path a listing showed (`resumes/notes.txt`, relative to the folder the search or listing looked in) is
+  completed with that folder, instead of being looked for in the program's own folder and reported as not existing three times.
+- Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original
+  was NOT changed and how to replace it. The model had repeated the same call until the task was blocked.
+- When the "answer now" offer (stuck or out of steps) is spent on a question the user already answered, the model gets one more
+  chance to answer or say what blocks it, instead of the task ending "blocked".
+- `filesystem.manage apply_manifest` treated a folder as the destination of a move as a name collision and renamed around it: three
+  files "moved" to `.` became `trash_2`, `trash_3` and `trash_4` outside their folder. A folder destination now means "into that
+  folder" and moving a file onto itself is refused with a plain message.
+- `schedule.manage list`, `memory.manage list` and the artifact list returned only a count to the model ("Found 35 schedule(s)."), so
+  "what do I have scheduled?" was asked for again and again until the task was blocked. Each now lists its items in the text the model
+  reads, and the schedule list leaves out deleted schedules, which it counted before.
+- An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
+  with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
+- A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
+  "what is the total on the receipt?" got the whole file back as its answer.
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
   what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
   the task as before.
@@ -18,9 +59,16 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
   result; otherwise the model is sent back once to calculate it with code.
 
+### Changed
+
+- `operator.constrain_calls` is on by default. Measured over the 60-case held-out suite on the local Qwen3.5-9B: calls a tool refused
+  fell from 52 of 266 steps (19.5%) to 5 of 150 (3.3%), made-up tool names from 30 to 0, and the held-out pass rate went from 43 to 54 of
+  60 together with the other fixes in this release. It applies to local servers only and falls back to the plain schema when a server
+  refuses it; set `operator.constrain_calls: false` to turn it off.
+
 ### Added
 
-- `operator.constrain_calls` (off by default) holds the Operator's reply to a JSON schema built from the tool definitions, so a
+- `operator.constrain_calls` holds the Operator's reply to a JSON schema built from the tool definitions, so a
   tool call with a wrong argument name, an unknown tool or no operation cannot be written. It needs a local server that enforces
   a response schema (llama.cpp, Ollama) and LocalDeploy with its response-schema fix; otherwise the plain schema is used.
 

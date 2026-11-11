@@ -528,3 +528,98 @@ def test_only_a_recency_request_turns_the_dates_on() -> None:
     task = TaskRecord(objective="the newest file", metadata={})
     assert enrich(task, "filesystem.manage", other) == other
     assert enrich(task, "browser.open", listing) == listing
+
+
+
+# ---- a manifest destination that is a folder ------------------------------------------------------------------------
+# Live: asked to "delete everything" in a folder, the model sent apply_manifest with destination "." and the three files were
+# renamed trash_2, trash_3, trash_4 outside the folder, then reported as removed.
+
+
+@pytest.mark.asyncio
+async def test_moving_files_onto_their_own_folder_changes_nothing(tmp_path) -> None:
+    trash = tmp_path / "trash"
+    trash.mkdir()
+    for number in range(1, 4):
+        (trash / f"scrap-{number}.txt").write_text(f"scrap {number}", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    manifest = [{"source": f"scrap-{n}.txt", "destination": "."} for n in range(1, 4)]
+
+    result = await adapter.execute(_request(trash, "apply_manifest", manifest=manifest))
+
+    assert result.status.value == "failed" and "same file" in result.error_message
+    assert sorted(path.name for path in trash.iterdir()) == ["scrap-1.txt", "scrap-2.txt", "scrap-3.txt"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["trash"]  # nothing renamed out beside it
+
+
+@pytest.mark.asyncio
+async def test_a_folder_destination_means_into_that_folder(tmp_path) -> None:
+    root = tmp_path / "photos"
+    (root / "pics").mkdir(parents=True)
+    (root / "img-1.jpg").write_bytes(b"jpg")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(root, "apply_manifest", manifest=[{"source": "img-1.jpg", "destination": "pics"}]))
+
+    assert result.status.value == "succeeded"
+    assert (root / "pics" / "img-1.jpg").read_bytes() == b"jpg" and not (root / "img-1.jpg").exists()
+    assert not (root / "pics_2").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_file_destination_that_exists_is_still_renamed_around(tmp_path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "a.txt").write_text("new", encoding="utf-8")
+    (root / "b.txt").write_text("old", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(root, "apply_manifest", manifest=[{"source": "a.txt", "destination": "b.txt"}]))
+
+    assert result.status.value == "succeeded"
+    assert (root / "b.txt").read_text(encoding="utf-8") == "old" and (root / "b_2.txt").read_text(encoding="utf-8") == "new"
+
+
+
+@pytest.mark.asyncio
+async def test_writing_over_an_existing_file_says_it_was_not_changed_and_how_to_replace_it(tmp_path) -> None:
+    # Live: asked to change greeting.txt, the model wrote greeting_2.txt, read greeting.txt (still "hello"), and repeated the
+    # same call until the task was blocked, because nothing said what to do differently.
+    (tmp_path / "greeting.txt").write_text("hello", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    kept = await adapter.execute(_request(tmp_path, "write_text_file", path=str(tmp_path / "greeting.txt"), content="goodbye"))
+    replaced = await adapter.execute(
+        _request(tmp_path, "write_text_file", path=str(tmp_path / "greeting.txt"), content="goodbye", overwrite=True)
+    )
+
+    assert (tmp_path / "greeting_2.txt").read_text(encoding="utf-8") == "goodbye"
+    assert "greeting.txt itself was NOT changed" in kept.output["summary"] and "overwrite set to true" in kept.output["summary"]
+    assert (tmp_path / "greeting.txt").read_text(encoding="utf-8") == "goodbye"  # the second call replaced it
+    assert "NOT changed" not in replaced.output["summary"]
+
+
+# ---- read_file keeps the lines of the file ---------------------------------------------------------------------------
+# Live: a CSV came back as "name,score Ana,71 Ben,88 Cleo,93 ..." on one line, the scripts the model wrote could not parse it, and
+# the task ran out of steps asking the user to paste the file.
+
+
+@pytest.mark.asyncio
+async def test_read_file_keeps_each_line_of_a_csv_on_its_own_line(tmp_path) -> None:
+    (tmp_path / "scores.csv").write_bytes(b"name,score\r\nAna,71\r\nBen,88\r\n\r\n\r\n\r\nCleo,93\r\n")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "scores.csv")))
+
+    assert result.output["text"] == "name,score\nAna,71\nBen,88\n\nCleo,93"
+    assert "Content:\nname,score\nAna,71\nBen,88" in result.output["terminal_output"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_still_tidies_runs_of_spaces_and_tabs(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_bytes(b"a   b\t\tc \n   indented line\n")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "notes.txt")))
+
+    assert result.output["text"] == "a b c\nindented line"
