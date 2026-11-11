@@ -1275,14 +1275,13 @@ class TaskWorker:
             if tool_def is None:
                 built.append((call, None))
                 continue
-            built.append((
-                call,
-                ToolCallRequest(
-                    task_id=task_id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
-                    risk_level=_effective_operator_risk(tool_def, tool_input, call.risk_level),
-                    input=tool_input, parent_step_id=step_id,
-                ),
-            ))
+            request = ToolCallRequest(
+                task_id=task_id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
+                risk_level=_effective_operator_risk(tool_def, tool_input, call.risk_level),
+                input=tool_input, parent_step_id=step_id,
+            )
+            # Bind the call as it will run (schema defaults filled in), not the model's raw input.
+            built.append((call, self.executor.normalized_request(request)))
         return built
 
     def _request_batch_approval(
@@ -1468,8 +1467,9 @@ class TaskWorker:
             )
             # On a resumed batch each call carries the approval minted for it,
             # keyed by exactly what was shown to the human.
+            # Keyed by the call as it was bound when the person approved it (see _batch_requests).
             approval_id = (approvals_by_call or {}).get(
-                (tool_name, json.dumps(tool_input, sort_keys=True))
+                (tool_name, json.dumps(self.executor.normalized_request(request).input, sort_keys=True))
             )
             result = await self.executor.execute(request, approval_id=approval_id)
             if result.status == ToolResultStatus.NEEDS_APPROVAL:
