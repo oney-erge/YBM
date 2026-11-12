@@ -42,6 +42,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   its own message while the progress message is removed. Tool names, outcome codes and the model's reasoning no longer appear.
   Failures say what the last step was and how it ended, without "Gap:", "Retries:" or "Error:" labels.
 - The approval prompt lists what will happen as sentences ("Type \"Oney Erge\" into the \"Full name\" field", "Click \"Sign me up\"", "Control your computer: Open Steam") instead of tool names and JSON, and a value typed into a password, card or similar field is never shown.
+  Going to a page, reading it and a chain of page steps read the same way ("Go to http://...", "Read what is on the page") instead of "Use the web page".
 - A policy refusal ends the task after the second one for the same tool. A form fill refused for exceeding the browser's risk
   ceiling was retried six more times and then reported as "something went wrong on my side"; it now stops and says the safety
   settings do not allow that action.
