@@ -58,3 +58,11 @@ def test_other_actions_read_as_sentences():
     assert describe_action("schedule.manage", {"operation": "create", "objective": "check the inbox"}) == "Set up a reminder: check the inbox"
     assert describe_action("filesystem.manage", {"operation": "apply_manifest", "moves": [1, 2, 3]}) == "Move or rename 3 file(s)"
     assert describe_action("system.inventory", {"operation": "steam_games"}) == "Checking what is on this computer"
+
+
+def test_moving_around_a_page_is_described_not_called_using_the_web_page():
+    assert describe_action("browser.control", {"operation": "navigate", "url": "http://127.0.0.1:8899/"}) == "Go to http://127.0.0.1:8899/"
+    assert describe_action("browser.control", {"operation": "navigate"}) == "Go to another page"
+    assert describe_action("browser.control", {"operation": "extract_page_state"}) == "Read what is on the page"
+    assert describe_action("browser.control", {"operation": "chain", "steps": []}) == "Do several things on the web page, one after another"
+    assert describe_action("browser.control", {"operation": "something_new"}) == "Use the web page"

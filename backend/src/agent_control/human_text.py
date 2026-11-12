@@ -276,6 +276,12 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
         if operation == "click":
             target = data.get("text") or data.get("selector")
             return f"Click {_quoted(target)}" if target else "Click on the page"
+        if operation == "navigate":
+            return f"Go to {data['url']}" if data.get("url") else "Go to another page"
+        if operation in {"extract_page_state", "summarize_page"}:
+            return "Read what is on the page"
+        if operation == "chain":
+            return "Do several things on the web page, one after another"
         return "Use the web page"
     if tool == "browser.open":
         return f"Open {data['url']}" if data.get("url") else "Open a web page"
