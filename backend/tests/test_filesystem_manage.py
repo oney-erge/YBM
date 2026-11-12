@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TypeVar
 
@@ -90,19 +89,25 @@ async def test_apply_manifest_resolves_relative_paths_from_requested_root(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_organize_plan_terminal_output_carries_manifest_for_next_operator_step(tmp_path) -> None:
+async def test_organize_plan_text_lists_the_plan_and_how_to_apply_it(tmp_path) -> None:
+    """The operator reads this text, cut to 1,000 characters. It used to carry the manifest's JSON,
+    and a 9B model passed on the three or four moves it could see as the whole plan; the worker now
+    fills an apply_manifest that leaves the manifest out with the plan itself."""
     root = tmp_path / "documents"
     root.mkdir()
     (root / "notes.txt").write_text("hello", encoding="utf-8")
+    (root / "photo.jpg").write_text("x", encoding="utf-8")
     adapter = FilesystemManageAdapter([str(tmp_path)])
 
     result = await adapter.execute(_request(root, "organize_plan"))
 
     terminal_text = result.output["terminal_output"][0]["content"]
-    assert "Manifest for the next apply_manifest call" in terminal_text
-    emitted_manifest = json.loads(terminal_text.rsplit("\n", 1)[-1])
-    assert emitted_manifest[0]["source"] == str((root / "notes.txt").resolve())
-    assert emitted_manifest[0]["destination"] == str((root / "documents" / "notes.txt").resolve())
+    assert "Planned 2 move(s) in documents: 1 to documents, 1 to images." in terminal_text
+    assert "- documents: notes.txt" in terminal_text
+    assert "- images: photo.jpg" in terminal_text
+    assert '"source"' not in terminal_text
+    # The result object still carries the full manifest the worker applies.
+    assert result.output["manifest"][0]["source"].endswith("notes.txt") or result.output["manifest"][1]["source"].endswith("notes.txt")
 
 
 @pytest.mark.asyncio

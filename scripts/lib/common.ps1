@@ -130,6 +130,36 @@ function Test-YbmPidAlive {
   return $null -ne (Get-Process -Id ([int]$processId) -ErrorAction SilentlyContinue)
 }
 
+function Test-YbmServiceProcess {
+  # Whether a process is one of this checkout's services: its command line matches a service
+  # pattern, and the checkout's path is on that command line or on its parent's. A venv's
+  # python.exe starts the base interpreter as a child whose command line is only that interpreter
+  # and the module name ("...\uv\python\cpython-3.12\python.exe -m agent_control.serve_backend");
+  # its parent, the venv launcher, carries the checkout path. Matching a module name alone stopped
+  # every YBM on the machine, other checkouts included, whenever any one of them started or stopped.
+  param(
+    [string]$CommandLine,
+    [string]$ParentCommandLine,
+    [string[]]$Patterns,
+    [string]$RootPath
+  )
+  if (-not $CommandLine -or -not $RootPath) {
+    return $false
+  }
+  foreach ($pattern in $Patterns) {
+    if ($CommandLine -notlike "*$pattern*") {
+      continue
+    }
+    if ($CommandLine -like "*$RootPath*") {
+      return $true
+    }
+    if ($pattern -like "agent_control.*" -and $ParentCommandLine -and $ParentCommandLine -like "*$RootPath*") {
+      return $true
+    }
+  }
+  return $false
+}
+
 function Get-YbmExternalLocalDeployIds {
   # LocalDeploy's own launcher (its run.ps1) records the API server it started
   # in logs\api_server.pid. That server is the user's, not a YBM orphan: before

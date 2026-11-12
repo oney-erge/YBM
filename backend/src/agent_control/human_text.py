@@ -17,7 +17,8 @@ from __future__ import annotations
 
 import os
 import re
-from pathlib import Path
+from collections import Counter
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 # A Windows path as it appears inside a sentence. Spaces are legal in a Windows path, so the
@@ -257,6 +258,53 @@ def _field_value(field: object, value: object) -> str:
     return "(hidden)" if _SECRET_FIELD.search(str(field)) else _quoted(value)
 
 
+def _files(count: int) -> str:
+    return f"{count} file" if count == 1 else f"{count} files"
+
+
+def describe_manifest(data: dict[str, Any]) -> str:
+    """What a move/copy/rename manifest does, from its own entries.
+
+    An approval on a phone read "Move or rename 24 file(s)": nothing about which folder, or where
+    the files would go. The entries say both: the folder they are in now, and the folders they go
+    to (or that they keep their folder and change name).
+    """
+    moves = data.get("moves") or data.get("entries") or data.get("manifest")
+    if not isinstance(moves, list) or not moves:
+        return "Move or rename files"
+    items = [item for item in moves if isinstance(item, dict) and item.get("source") and item.get("destination")]
+    if len(items) != len(moves):
+        return f"Move or rename {len(moves)} file(s)"
+    # PureWindowsPath reads both separators, so Windows and POSIX paths split the same way.
+    pairs = [(PureWindowsPath(str(item["source"])), PureWindowsPath(str(item["destination"])), item) for item in items]
+    home = Counter(source.parent.name for source, _, _ in pairs).most_common(1)[0][0]
+    groups: dict[str, set[str]] = {"move": set(), "copy": set()}
+    counts = Counter()
+    for source, destination, item in pairs:
+        kind = str(item.get("operation") or "move")
+        if kind != "copy" and source.parent == destination.parent:
+            kind = "rename"
+        counts[kind] += 1
+        if kind in groups:
+            groups[kind].add(destination.parent.name)
+    parts = []
+    for kind, verb in (("move", "move"), ("copy", "copy")):
+        if counts[kind]:
+            folders = sorted(groups[kind])
+            shown = ", ".join(folders[:6]) + (f" and {len(folders) - 6} more" if len(folders) > 6 else "")
+            where = f"into {folders[0]}" if len(folders) == 1 else f"into {len(folders)} folders: {shown}"
+            parts.append(f"{verb} {_files(counts[kind])} {where}")
+    if counts["rename"]:
+        parts.append(f"rename {_files(counts['rename'])}")
+    if home and parts:
+        verb, _, rest = parts[0].partition(" ")
+        count_word, _, after = rest.partition(" ")
+        noun, _, tail = after.partition(" ")
+        parts[0] = f"{verb} {count_word} {noun} in {home}" + (f" {tail}" if tail else "")
+    sentence = " and ".join(parts)
+    return sentence[:1].upper() + sentence[1:]
+
+
 def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
     """What a step will do, as a sentence a person can approve or refuse. Secrets are never shown."""
     data = tool_input or {}
@@ -293,9 +341,7 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
         if operation == "write_text_file":
             return f"Write the file {humanize(str(data.get('path') or ''))}".rstrip()
         if operation == "apply_manifest":
-            moves = data.get("moves") or data.get("entries") or data.get("manifest")
-            count = len(moves) if isinstance(moves, list) else None
-            return f"Move or rename {count} file(s)" if count else "Move or rename files"
+            return describe_manifest(data)
     if tool == "artifact.deliver":
         return f"Send you the file {humanize(str(data.get('path') or 'you asked for'))}"
     if tool == "schedule.manage" and operation == "create":

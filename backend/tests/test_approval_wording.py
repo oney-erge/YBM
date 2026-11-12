@@ -66,3 +66,37 @@ def test_moving_around_a_page_is_described_not_called_using_the_web_page():
     assert describe_action("browser.control", {"operation": "extract_page_state"}) == "Read what is on the page"
     assert describe_action("browser.control", {"operation": "chain", "steps": []}) == "Do several things on the web page, one after another"
     assert describe_action("browser.control", {"operation": "something_new"}) == "Use the web page"
+
+
+def test_a_manifest_says_where_the_files_are_and_where_they_go():
+    """A phone approval read "Move or rename 24 file(s)", with no folder named."""
+    folder = "C:\\Users\\sam\\Downloads"
+    sorted_by_type = [
+        {"operation": "move", "source": f"{folder}\\{name}", "destination": f"{folder}\\{kind}\\{name}"}
+        for name, kind in (("q3.pdf", "documents"), ("cat.jpg", "images"), ("song.mp3", "audio"), ("notes.txt", "documents"))
+    ]
+    assert describe_action("filesystem.manage", {"operation": "apply_manifest", "manifest": sorted_by_type}) == (
+        "Move 4 files in Downloads into 3 folders: audio, documents, images"
+    )
+    one_folder = [{"operation": "move", "source": "/home/sam/Desktop/a.pdf", "destination": "/home/sam/Desktop/old/a.pdf"}]
+    assert describe_action("filesystem.manage", {"operation": "apply_manifest", "manifest": one_folder}) == (
+        "Move 1 file in Desktop into old"
+    )
+    renames = [
+        {"operation": "rename", "source": "/home/sam/Desktop/IMG_1.jpg", "destination": "/home/sam/Desktop/beach.jpg"},
+        {"operation": "move", "source": "/home/sam/Desktop/b.pdf", "destination": "/home/sam/Desktop/papers/b.pdf"},
+    ]
+    assert describe_action("filesystem.manage", {"operation": "apply_manifest", "manifest": renames}) == (
+        "Move 1 file in Desktop into papers and rename 1 file"
+    )
+
+
+def test_the_console_approval_for_a_manifest_says_the_same():
+    from agent_control.config import AppSettings
+    from agent_control.tools.registry import build_tool_registry
+
+    registry = build_tool_registry(AppSettings(), "http://127.0.0.1:1")
+    manage = next(d for d in registry.definitions if d.name == "filesystem.manage")
+    moves = [{"operation": "move", "source": "/home/sam/Downloads/a.pdf", "destination": "/home/sam/Downloads/documents/a.pdf"}]
+    assert manage.approval_reason({"operation": "apply_manifest", "manifest": moves}) == "Move 1 file in Downloads into documents."
+    assert manage.approval_reason({"operation": "write_text_file", "path": "x.txt"}) is None

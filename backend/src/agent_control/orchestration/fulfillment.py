@@ -564,13 +564,7 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
             )
         )
     if expected == PostconditionType.FILE_ORGANIZATION:
-        return bool(
-            _any_value(
-                task,
-                metadata_keys=("organized_paths", "moved_files", "changed_files", "files", "file_manifest"),
-                output_keys=("organized_paths", "changed_paths", "moved_files", "changed_files", "files", "manifest", "entries"),
-            )
-        )
+        return _files_rearranged(task)
     if expected == PostconditionType.TASK_STATUS:
         return bool(_any_value(task, metadata_keys=("task_status",), output_keys=("task_status", "summary")))
     if expected == PostconditionType.GITHUB_PR:
@@ -628,6 +622,33 @@ def _value(task: TaskRecord, metadata_key: str, output_key: str) -> Any:
     if not isinstance(output, dict):
         return None
     return output.get(output_key)
+
+
+def _files_rearranged(task: TaskRecord) -> bool:
+    """Files were actually moved, renamed or organized: a succeeded apply_manifest anywhere in
+    the history, or changed paths in the latest output.
+
+    A folder listing or a search returns ``entries`` and an organize_plan returns a ``manifest``,
+    but neither changes anything: counting them let a task that only looked at a folder end as
+    "organized" when its step budget ran out.
+    """
+    history = task.metadata.get("operator_history") if isinstance(task.metadata, dict) else None
+    for entry in history if isinstance(history, list) else []:
+        if (
+            isinstance(entry, dict)
+            and entry.get("tool_name") == "filesystem.manage"
+            and entry.get("status") == "succeeded"
+            and isinstance(entry.get("input"), dict)
+            and entry["input"].get("operation") == "apply_manifest"
+        ):
+            return True
+    return bool(
+        _any_value(
+            task,
+            metadata_keys=("organized_paths", "moved_files", "changed_files"),
+            output_keys=("organized_paths", "changed_paths", "moved_files", "changed_files"),
+        )
+    )
 
 
 def _any_value(task: TaskRecord, metadata_keys: tuple[str, ...], output_keys: tuple[str, ...]) -> Any:
@@ -784,7 +805,8 @@ def fulfillment_guidance(gap: str) -> str:
         "expected_browser_state_missing": "Call browser.open to inspect the requested page and retain its URL/title.",
         "expected_desktop_observation_missing": "Call computer.use with tool_input {\"operation\": \"observe\"}.",
         "expected_file_organization_missing": (
-            "Call filesystem.manage organize_plan, then pass its returned manifest unchanged to apply_manifest."
+            "Call filesystem.manage organize_plan, then apply_manifest with the same root and no manifest: "
+            "it applies that plan."
         ),
         "expected_external_command_missing": "Use code.interpreter or the configured terminal tool and verify exit code 0.",
         "expected_page_matches_request_missing": (

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import fnmatch
 from datetime import datetime, timezone
-import json
 import logging
 from pathlib import Path
 import os
@@ -29,6 +28,7 @@ from agent_control.tools.contracts import (
     FilesystemSearchInput,
     FilesystemWriteTextFileInput,
 )
+from agent_control.human_text import describe_manifest
 from agent_control.tools.spec import (
     Adapters,
     Definitions,
@@ -413,7 +413,7 @@ class FilesystemManageAdapter:
             "root": str(root),
             "manifest": manifest,
             "dry_run": True,
-            "summary": f"Prepared {len(manifest)} file organization action(s) for {root}.",
+            "summary": _organize_plan_summary(root, manifest),
         }
 
     def _rename_plan(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -457,7 +457,7 @@ class FilesystemManageAdapter:
             "manifest": manifest,
             "rename_manifest": rename_manifest,
             "dry_run": True,
-            "summary": f"Prepared {len(rename_manifest)} rename action(s) with before/after names.",
+            "summary": _rename_plan_summary(root, rename_manifest),
         }
 
     def _apply_manifest(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -876,13 +876,26 @@ def _human_filesystem_output(operation: str, output: dict[str, Any]) -> str:
         lines.append(str(text)[:5000])
     manifest = output.get("manifest")
     if operation in {"organize_plan", "rename_plan"} and isinstance(manifest, list) and manifest:
-        # The Operator only sees this human output on its next decide() call,
-        # not the raw result object. Omitting the manifest meant it was told
-        # merely "Prepared 3 actions" and then expected to invent those three
-        # actions for apply_manifest. Keep the actionable hand-off bounded.
+        # The Operator reads this text, not the result object, and keeps 1,000 characters of each
+        # step. The manifest's JSON used to be handed off here: that showed a model three or four
+        # moves, which it passed on as the whole plan (or padded with files it made up). An
+        # apply_manifest with no manifest now applies the plan, so the plan is listed by folder,
+        # file names only, for the Operator, the auditor and the person reading the trace.
         lines.append("")
-        lines.append("Manifest for the next apply_manifest call:")
-        lines.append(json.dumps(manifest[:60], ensure_ascii=False, separators=(",", ":")))
+        lines.append("Planned:")
+        by_folder: dict[str, list[str]] = {}
+        for item in manifest:
+            if not isinstance(item, dict):
+                continue
+            source = Path(str(item.get("source") or "")).name
+            destination = Path(str(item.get("destination") or ""))
+            if operation == "organize_plan":
+                by_folder.setdefault(destination.parent.name, []).append(source)
+            else:
+                by_folder.setdefault("renamed", []).append(f"{source} -> {destination.name}")
+        for folder, names in sorted(by_folder.items()):
+            shown = ", ".join(names[:20]) + (f" and {len(names) - 20} more" if len(names) > 20 else "")
+            lines.append(f"- {folder}: {shown}")
     changed = output.get("changed_paths")
     if isinstance(changed, list) and changed:
         lines.append("")
@@ -945,6 +958,33 @@ def _verify_filesystem_manage(request: ToolCallRequest, result: ToolCallResult) 
     return _verify_apply_manifest(request, result)
 
 
+def _organize_plan_summary(root: Path, manifest: list[dict[str, Any]]) -> str:
+    """What the plan would do, for the person in the chat and for the operator.
+
+    The operator sees this line, not the manifest: it said only "Prepared 24 file organization
+    action(s)", and a model told to pass the manifest on wrote one of its own, with invented files.
+    How to apply it is in the tool's catalog entry, not here: this line is shown in the chat.
+    """
+    if not manifest:
+        return f"Nothing to organize in {root}: no file needs to move."
+    folders: dict[str, int] = {}
+    for item in manifest:
+        folder = Path(str(item["destination"])).parent.name
+        folders[folder] = folders.get(folder, 0) + 1
+    grouped = ", ".join(f"{count} to {folder}" for folder, count in sorted(folders.items()))
+    # No "nothing has moved yet": the auditor reads every step, and a 9B auditor took that line
+    # as the state of the folder after a later apply_manifest had moved all 24 files.
+    return f"Planned {len(manifest)} move(s) in {root.name or root}: {grouped}."
+
+
+def _rename_plan_summary(root: Path, rename_manifest: list[dict[str, Any]]) -> str:
+    if not rename_manifest:
+        return f"Nothing to rename in {root}: every name already fits."
+    examples = "; ".join(f"{item['before']} -> {item['after']}" for item in rename_manifest[:3])
+    more = f" and {len(rename_manifest) - 3} more" if len(rename_manifest) > 3 else ""
+    return f"Planned {len(rename_manifest)} rename(s) in {root.name or root}: {examples}{more}."
+
+
 # Operations that only look. They run under filesystem.read, so the "Read-only"
 # access mode (which enables exactly that capability) gives the agent a file tool
 # that can inspect, search and read but cannot change anything. Everything not
@@ -980,7 +1020,9 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             description=(
                 "inspect, search, plan organization, and apply move/copy manifests inside configured "
-                f"roots: {', '.join(settings.adapters.computer_use.allowed_roots) or '<none>'}"
+                f"roots: {', '.join(settings.adapters.computer_use.allowed_roots) or '<none>'}. "
+                "To organize or sort a folder: organize_plan (strategy by_type or by_extension) plans "
+                "the moves, then apply_manifest with the same root and no manifest makes them"
             ),
             operations=(
                 "inspect_folder",
@@ -1044,9 +1086,14 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "apply_manifest": RiskLevel.HIGH,
             },
             verify=_verify_filesystem_manage,
+            # The console's approval card said only "Approve filesystem.manage using filesystem.write";
+            # the chat channels already said which files go where.
+            approval_reasons={"apply_manifest": lambda value: f"{describe_manifest(value)}."},
             examples=(
                 {"operation": "inspect_folder", "root": "{{folder_path}}"},
                 {"operation": "search", "root": "desktop", "query": "resume"},
+                {"operation": "organize_plan", "root": "{{folder_path}}", "strategy": "by_type"},
+                {"operation": "apply_manifest", "root": "{{folder_path}}"},
                 {"operation": "read_file", "path": "{{last_entry_path}}", "max_chars": 8000},
                 {"operation": "write_text_file", "path": "{{output_path}}", "content": "Report content"},
             ),
