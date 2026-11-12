@@ -38,6 +38,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+- A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
+  single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a
+  task of the conversation is running the summary is the heuristic one; the next message after the task re-summarizes with the model.
 - What YBM says in a chat now reads like a person wrote it. A new text pass (`human_text.py`) rewrites every task message before it
   is sent: a path becomes the file name and a place ("resume.docx (in OneDrive)"), a task id becomes "an earlier task", a
   `[file] name (123 bytes)` listing becomes a short list capped at eight names with "...and 22 more", and a reason code becomes a
