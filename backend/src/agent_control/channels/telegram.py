@@ -19,8 +19,10 @@ from agent_control.config import AppSettings, TelegramConfig
 from agent_control.config_sync import read_env_value
 from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
+from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
 from agent_control.channels.undo_command import undo_command_reply
+from agent_control.channels.chat_commands import chat_command_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
@@ -546,6 +548,9 @@ class TelegramIntakeService:
                 workflow_reply = workflow_command_reply(self.repositories, self.audit, inbound, conversation_id)
                 if workflow_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=workflow_reply)
+                command_reply = chat_command_reply(self.repositories, inbound, conversation_id)
+                if command_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=command_reply)
                 clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
                 if clarify_response is not None:
                     return ChannelUpdateResult(
@@ -841,10 +846,13 @@ class TelegramIntakeService:
             approval = self.repositories.approvals.get(approval_id) if approval_id else None
             decision = payload.get("decision")
             decided = False
-            if decision == "approve":
-                decided = self.repositories.approvals.decide_pending(approval_id, ApprovalStatus.APPROVED)
-            elif decision == "reject":
-                decided = self.repositories.approvals.decide_pending(approval_id, ApprovalStatus.REJECTED)
+            if approval is not None and decision in {"approve", "approve_task"}:
+                decided = decide_with_children(self.repositories, approval, ApprovalStatus.APPROVED)
+            elif approval is not None and decision == "reject":
+                decided = decide_with_children(self.repositories, approval, ApprovalStatus.REJECTED)
+            if decided and decision == "approve_task" and approval is not None:
+                ttl = self.settings.limits.task_budget_seconds if self.settings is not None else 3600
+                grant_for_task(self.repositories, self.audit, approval, ttl_seconds=ttl, actor=actor)
             if decided:
                 if approval is not None:
                     requeue_after_approval_decision(self.repositories, approval.task_id)
@@ -854,7 +862,10 @@ class TelegramIntakeService:
                     task_id=approval.task_id if approval is not None else None,
                     payload={"approval_id": approval_id, "decision": decision},
                 )
-                self._callback_ack = "Approved - continuing." if decision == "approve" else "Rejected."
+                self._callback_ack = {
+                    "approve": "Approved - continuing.",
+                    "approve_task": "Allowed for this task - I won't ask again for this kind of step.",
+                }.get(str(decision), "Rejected.")
             else:
                 # Every non-decision used to be silent. decide_pending() returns
                 # False for an approval that is already decided, expired, or
