@@ -3560,3 +3560,21 @@ def test_the_overwrite_rule_does_not_act_on_words_the_model_added(tmp_path) -> N
     assert enrich(asked, "filesystem.manage", write) == write
     changed = TaskRecord(objective="x", metadata={"original_message_text": "Change greeting.txt to say hi."})
     assert enrich(changed, "filesystem.manage", write)["overwrite"] is True
+
+
+def test_a_finished_replay_shows_what_the_last_step_found() -> None:
+    """"Run steam count" answered "Replayed 1/1 step(s) successfully" and nothing about the count."""
+    history = [{
+        "tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "move", "path": "b"},
+        "output_summary": "13 games are installed through Steam (about 170 GB in all).",
+    }]
+    plan = _replay_plan()[:1]
+    decision, _metadata = _next_replay_decision(plan, history, {}, _tool_defs(_WRITE_TOOL))
+    assert decision.action == OperatorAction.DONE
+    assert decision.final_answer == "Replayed 1/1 step(s) successfully.\n\n13 games are installed through Steam (about 170 GB in all)."
+
+
+def test_a_finished_replay_with_no_output_keeps_the_short_answer() -> None:
+    history = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "move", "path": "a"}}]
+    decision, _metadata = _next_replay_decision(_replay_plan()[:1], history, {}, _tool_defs(_WRITE_TOOL))
+    assert decision.final_answer == "Replayed 1/1 step(s) successfully."
