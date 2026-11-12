@@ -51,6 +51,8 @@ tasks or schedules. Folder paths are context, not permission: grant the required
 The history view is task history, not automatic retrieval or learning from all previous outcomes.
 For project-specific corrections, edit the project's instructions; global Memory remains separate.
 
+In Telegram you can do the same without the dashboard: after a task finishes, say `save that as a workflow called weekly report`; `my workflows` lists them; `run weekly report` runs one again (a workflow that takes parameters is run with `run <name> with folder=Downloads`). A message is only treated as a workflow command when it names a real workflow, so `run the tests` is still an ordinary request, and a run goes through the same approvals as any task.
+
 From a completed task's trace, choose **Save as workflow**. In **Agent -> Workflows**, choose
 **Automate**, fill any parameters, select a project if desired, and set a cadence and timezone.
 Supported cadences are `daily`, `weekly`, `every day`, `every week`, or `every N minutes/hours/days/weeks`

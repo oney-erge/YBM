@@ -342,7 +342,9 @@ def _failure_headline(task: TaskRecord, error: str | None) -> str:
     if not error:
         return "I could not complete this request."
     low = error.lower()
-    if "chrome" in low or "devtools" in low or "browser" in low or "websocket" in low:
+    # Only when Chrome itself cannot be reached. Any error that merely mentions "browser" used to say this, so a form
+    # step with no fields was reported as "Chrome is not running".
+    if any(marker in low for marker in ("devtools", "remote debugging", "websocket", "9222", "chrome is not")):
         return (
             "Browser task failed - Chrome is not running with remote debugging enabled.\n"
             "Start Chrome with: chrome --remote-debugging-port=9222 --remote-allow-origins=*"

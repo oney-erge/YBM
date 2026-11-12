@@ -19,6 +19,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
 - `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
   writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
@@ -58,6 +59,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
+- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
   all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
   The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
@@ -93,6 +95,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `schedule.manage list`, `memory.manage list` and the artifact list returned only a count to the model ("Found 35 schedule(s)."), so
   "what do I have scheduled?" was asked for again and again until the task was blocked. Each now lists its items in the text the model
   reads, and the schedule list leaves out deleted schedules, which it counted before.
+- A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
@@ -106,6 +109,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   to click the button by its visible words; a model that repeats the fill instead is told the form is still unsubmitted, and if the run stops anyway the message says so in words ("I got stuck repeating a step that had already worked (filling in a form)... the form was filled in but never submitted") instead of `Stopped: browser.control:fill_form had already succeeded`. Requests that only ask about a form, or say "submit my report", are unaffected.
 - A request that says to ask first ("Ask me before changing anything on disk") keeps its question: the guard that turns away
   optional questions judged "Rewrite this file" satisfied once the file was read and ended the task with a summary of the read.
+- A form step with nothing to fill is refused before anyone is asked to approve it. `fill_form_step` had `fields` optional, so a model that
+  sent an empty step (it sent eleven in one run) got an approval request for each, and the failure came from inside the browser adapter
+  after the person had tapped Approve. `fields` is now required, one `field`/`value` pair is read as a one-entry `fields`, and the failure
+  message no longer claims "Chrome is not running with remote debugging enabled" for every error that mentions the browser.
 - `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
   there is nothing to read.
 - A failed script shows the end of its traceback (the line that says why) and a missing package says what to do instead.
