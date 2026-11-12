@@ -10,7 +10,9 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](backend/pyproject.toml)
 [![Docker ready](https://img.shields.io/badge/docker-ready-2496ED.svg)](docker-compose.yml)
 
-![Asking YBM to organize a Downloads folder: it scans the folder, asks for approval in the console and on the phone before moving any file, then shows a receipt of exactly what it moved. Recorded from the real console with scripted responses](docs/screenshots/demo.gif)
+![Asking YBM to organize a Downloads folder: a local model (Qwen3.5 9B) plans the moves, YBM asks for approval in the console and on the phone before moving any file, then lists where every file went with a receipt of exactly what it moved. A real run's model responses, replayed at their recorded speed, with YBM, the files and the approval live](docs/screenshots/demo.gif)
+
+<sub>A real Qwen3.5 9B run (local GPU, llama.cpp) on a sample folder of 24 files. The model's responses are replayed from that run at their recorded speed; YBM, its tools, the files and the approval are live. <a href="docs/screenshots/README.md">How it is recorded</a>.</sub>
 
 </div>
 

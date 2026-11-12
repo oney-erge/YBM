@@ -580,10 +580,14 @@ test("record the README demo", async ({ page, baseURL }) => {
     }
     const meta = tasks.tasks.find((task) => task.id === approval!.task_id)?.metadata ?? {}
     const answer = String(meta.synthesized_answer ?? meta.final_answer ?? "").trim()
-    const first = answer.split("\n")[0].replace(/:\s*$/, ".")
+    // The answer's first line, and when it introduces a list ("...into the following subfolders:"),
+    // the list's own labels after it: a phone shows the gist, the console the whole answer.
+    const [first, ...rest] = answer.split("\n")
+    const labels = rest.map((line) => /^\s*[-*]\s+\*\*([^*]+)\*\*/.exec(line)?.[1]).filter(Boolean)
+    const gist = /:\s*$/.test(first) && labels.length ? `${first.trim()} ${labels.join(", ")}.` : first.trim()
     await page.evaluate((text) => {
       document.getElementById("done-text")!.textContent = text
-    }, first.length > 160 ? `${first.slice(0, 157)}...` : first)
+    }, gist.length > 240 ? `${gist.slice(0, 237)}...` : gist)
   }
   mark("done")
   await show("done")
