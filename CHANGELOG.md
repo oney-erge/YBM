@@ -9,6 +9,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
+- A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
+  library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
+  (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
+  YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+  Files kept only in OneDrive (not downloaded) are marked `[online only]`, and reading one says so instead of "File is not a
+  zip file"; a live run had reported the user's own resume as corrupted.
 - Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
@@ -18,10 +24,26 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
+- "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
+  no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
+  The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
+  for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
 
 ### Changed
 
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+- What YBM says in a chat now reads like a person wrote it. A new text pass (`human_text.py`) rewrites every task message before it
+  is sent: a path becomes the file name and a place ("resume.docx (in OneDrive)"), a task id becomes "an earlier task", a
+  `[file] name (123 bytes)` listing becomes a short list capped at eight names with "...and 22 more", and a reason code becomes a
+  sentence. It only rewrites what is already in the message; a path that does not exist on this computer is left as written.
+- Progress is one message that changes, not one new message per step. The "On it" message is the one that gets edited ("Working on it:
+  looking through your files... (3 min so far)"), the typing indicator replaces the "Got your message" text, and the answer arrives as
+  its own message while the progress message is removed. Tool names, outcome codes and the model's reasoning no longer appear.
+  Failures say what the last step was and how it ended, without "Gap:", "Retries:" or "Error:" labels.
+- The approval prompt lists what will happen as sentences ("Type \"Oney Erge\" into the \"Full name\" field", "Click \"Sign me up\"", "Control your computer: Open Steam") instead of tool names and JSON, and a value typed into a password, card or similar field is never shown.
+- A policy refusal ends the task after the second one for the same tool. A form fill refused for exceeding the browser's risk
+  ceiling was retried six more times and then reported as "something went wrong on my side"; it now stops and says the safety
+  settings do not allow that action.
 - What a person says about themselves is remembered one fact at a time. "Remember these about me: my GitHub username is oney-erge, my
   favorite language is Python, and my t-shirt size is L" was stored as that one sentence under "preference", so a form asking for a
   GitHub username had to find it inside a paragraph, and a later "my t-shirt size is XL" added a contradicting sentence. Each "my
@@ -46,6 +68,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   request expected (which ended in "Blocked"). A request that says to ask first keeps its question.
 - The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
   filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
+- A batch of calls the person approved is no longer refused when it runs. The executor fills in a tool's schema defaults before it checks policy, but a batch approval bound the model's raw input, so for any tool whose schema adds a default (browser form steps do) every approved call came back `approval_invalid_or_mismatched` and the approvals were wasted. The batch now binds the call as it will run, and finds each call's approval by that same form.
 - An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is
   delivered with a note ("Not fully confirmed ... please double-check it") instead of ending the task "Blocked". A 9B Auditor rejected
   a correct summary of a 159-character document for being short. An answer with an unsupported value is still blocked.
