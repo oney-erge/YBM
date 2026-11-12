@@ -225,7 +225,8 @@ async def test_notifier_sends_approve_reject_keyboard_when_approval_pending() ->
             [
                 {"text": "Approve", "callback_data": f"approval:{approval.id}:approve"},
                 {"text": "Reject", "callback_data": f"approval:{approval.id}:reject"},
-            ]
+            ],
+            [{"text": "Allow for this task", "callback_data": f"approval:{approval.id}:approve_task"}],
         ]
     }
 
