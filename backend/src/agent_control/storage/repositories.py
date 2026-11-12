@@ -630,14 +630,15 @@ class TaskRepository:
             )
 
     def complete_external_session(
-        self, task_id: str, session_id: str, result: dict[str, Any], brief: dict[str, Any]
-    ) -> tuple[str, TaskRecord | None]:
+        self, task_id: str, session_id: str, result: dict[str, Any], brief: dict[str, Any],
+        *, channel_available: bool = False,
+    ) -> tuple[str, TaskRecord | None, int | None]:
         """Bind a completion to the currently awaited session under the task write lock."""
         with self.database.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
             if row is None or not session_id:
-                return "ignored", None
+                return "ignored", None, None
             task = self._row_to_task(row)
             metadata = dict(task.metadata)
             awaiting = metadata.get("awaiting_external")
@@ -646,14 +647,14 @@ class TaskRepository:
                 if (not isinstance(awaiting, dict) or awaiting.get("session_id") != session_id
                         or awaiting.get("tool_name") not in (None, "coding.agent")
                         or "pending_tool_result" in metadata):
-                    return "ignored", task
+                    return "ignored", task, None
                 pending_call = metadata.get("operator_pending_call")
                 if isinstance(pending_call, dict) and (
                     pending_call.get("tool_name") not in (None, "coding.agent")
                     or (pending_call.get("step_id") and awaiting.get("step_id")
                         and pending_call["step_id"] != awaiting["step_id"])
                 ):
-                    return "ignored", task
+                    return "ignored", task, None
                 metadata["coding_agent_session"] = brief
                 metadata["pending_tool_result"] = {
                     "step_id": awaiting.get("step_id") or (pending_call.get("step_id") if isinstance(pending_call, dict) else None),
@@ -668,13 +669,54 @@ class TaskRepository:
                     "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
                     (_dump(_redact_answer_fields(metadata)), target.value, _dt(utc_now()), task_id),
                 )
+                notification_id = None
+                source_channel = metadata.get("source_channel") or ChannelType.TELEGRAM.value
+                if metadata.get("source_chat_id") and source_channel == ChannelType.TELEGRAM.value:
+                    cursor = connection.execute(
+                        "INSERT INTO coding_session_notifications (task_id, session_id, status, created_at) VALUES (?, ?, ?, ?)",
+                        (task_id, session_id, "unknown" if channel_available else "not-sent", _dt(utc_now())),
+                    )
+                    notification_id = cursor.lastrowid
                 updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-                return "applied", self._row_to_task(updated)
+                return "applied", self._row_to_task(updated), notification_id
             marker = metadata.get("operator_in_flight")
             paused_running = task.status == TaskStatus.PAUSED and metadata.get("paused_from_status") == TaskStatus.RUNNING.value
             if (task.status == TaskStatus.RUNNING or paused_running) and isinstance(marker, dict) and marker.get("tool_name") == "coding.agent":
-                return "deferred", task
-            return "ignored", task
+                return "deferred", task, None
+            return "ignored", task, None
+
+    def record_coding_session_send_returned(self, notification_id: int, task_id: str, session_id: str) -> None:
+        """Record only that the channel call returned, not that a user read it."""
+        with self.database.connect() as connection:
+            connection.execute(
+                "UPDATE coding_session_notifications SET status = 'send-returned', observed_at = ? "
+                "WHERE id = ? AND task_id = ? AND session_id = ? AND status = 'unknown'",
+                (_dt(utc_now()), notification_id, task_id, session_id),
+            )
+
+    def list_coding_session_notifications(self, task_ids: list[str]) -> dict[str, list[dict[str, Any]]]:
+        """Return up to five per task, prioritizing unresolved observations."""
+        task_ids = list(dict.fromkeys(task_ids))
+        if not task_ids:
+            return {}
+        if len(task_ids) > 200:
+            raise ValueError("At most 200 tasks may be queried")
+        placeholders = ",".join("?" for _ in task_ids)
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT task_id, session_id, status, created_at, observed_at FROM ("
+                "SELECT *, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY "
+                "CASE status WHEN 'unknown' THEN 0 WHEN 'not-sent' THEN 1 ELSE 2 END, id DESC) AS rank "
+                f"FROM coding_session_notifications WHERE task_id IN ({placeholders})) WHERE rank <= 5 "
+                "ORDER BY task_id, rank", task_ids,
+            ).fetchall()
+        result: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            result.setdefault(row["task_id"], []).append({
+                "session_id": redact_text(row["session_id"])[:200], "channel": "telegram", "status": row["status"],
+                "created_at": row["created_at"], "observed_at": row["observed_at"],
+            })
+        return result
 
     def apply_control(self, task_id: str, action: str) -> tuple[TaskRecord, TaskRecord]:
         """Apply a user control to the current row, not a stale task snapshot."""

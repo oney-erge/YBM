@@ -54,6 +54,9 @@ export function TaskTracePage() {
 
   const task = trace.task
   const usage = tokenUsageOf(task)
+  const notifications = (trace.coding_session_notifications ?? []).filter((item) => item.channel === "telegram")
+  const unconfirmed = notifications.some((item) => item.status !== "send-returned" && item.status !== "not-sent")
+  const notSent = notifications.some((item) => item.status === "not-sent")
 
   function handleSignal(name: "pause" | "resume" | "cancel") {
     if (!taskId) return
@@ -138,6 +141,16 @@ export function TaskTracePage() {
       )}
 
       {usage && <CostPanel usage={usage} />}
+
+      {(unconfirmed || notSent) && (
+        <Alert>
+          <AlertTitle>Telegram completion message needs review</AlertTitle>
+          <AlertDescription>
+            {unconfirmed && "A completion message may or may not have been sent. Check the chat before sending again. "}
+            {notSent && "A completion message was not sent because the Telegram channel was unavailable."}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div>
         <div className="mb-2 flex items-center gap-1">

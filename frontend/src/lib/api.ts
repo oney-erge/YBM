@@ -695,6 +695,13 @@ const TaskTraceSchema = z.object({
   approvals: z.array(ApprovalRequestSchema),
   artifacts: z.array(z.record(z.string(), z.unknown())),
   signals: z.array(z.record(z.string(), z.unknown())),
+  coding_session_notifications: z.array(z.object({
+    session_id: z.string(),
+    channel: z.string(),
+    status: z.string(),
+    created_at: z.string(),
+    observed_at: z.string().nullable(),
+  })).optional(),
   audit: z.array(z.record(z.string(), z.unknown())),
 })
 export type TaskTrace = z.infer<typeof TaskTraceSchema>

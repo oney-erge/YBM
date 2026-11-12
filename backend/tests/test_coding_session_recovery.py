@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 from types import SimpleNamespace
 
 import pytest
@@ -8,8 +9,10 @@ import pytest
 from agent_control import cli
 from agent_control.tools import coding_agent
 from agent_control.orchestration.signals import apply_task_signal
-from agent_control.schemas import TaskStatus
+from agent_control.schemas import Capability, TaskStatus, ToolCallRequest
+from agent_control.storage import Database, Repositories
 from agent_control.tools.coding_agent import CodingAgentAdapter, _coding_session_completion_callback
+from agent_control.tools.task_status import TaskStatusAdapter
 from helpers import make_repos
 
 
@@ -19,6 +22,191 @@ class RecordingTelegram:
 
     async def send_message(self, chat_id, text) -> None:
         self.messages.append((chat_id, text))
+
+
+@pytest.mark.asyncio
+async def test_notification_uncertainty_survives_interruption_without_resending(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("wait for a coding session")
+    _awaiting(repos, task.id, "session-1")
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    sends = []
+
+    class BlockingTelegram:
+        async def send_message(self, chat_id, text):
+            sends.append((chat_id, text))
+            entered.set()
+            await release.wait()
+
+    session = _session(task.id, "session-1")
+    pending = asyncio.create_task(cli._handle_coding_session_completion(None, repos, session, BlockingTelegram()))
+    await entered.wait()
+    pending.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    recovered = Repositories.for_database(database)
+    notifications = recovered.tasks.list_coding_session_notifications([task.id])[task.id]
+    assert [(n["session_id"], n["status"]) for n in notifications] == [("session-1", "unknown")]
+    assert await cli._handle_coding_session_completion(None, recovered, session, BlockingTelegram()) == (True, None)
+    assert len(sends) == 1
+    status = await TaskStatusAdapter(recovered).execute(ToolCallRequest(
+        task_id="status", tool_name="task.status", capability=Capability.AGENT_CORE, input={"operation": "status"},
+    ))
+    row = next(item for item in status.output["task_status"]["recent_tasks"] if item["id"] == task.id)
+    assert row["coding_session_notifications"][0]["status"] == "unknown"
+    assert "delivery is unconfirmed" in status.output["summary"]
+    from agent_control.admin import build_task_trace
+    trace = build_task_trace(recovered, task.id)
+    assert trace["coding_session_notifications"][0]["status"] == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_notification_records_returned_send_and_unavailable_channel(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    first = repos.tasks.create("first session")
+    second = repos.tasks.create("second session")
+    _awaiting(repos, first.id, "session-1")
+    _awaiting(repos, second.id, "session-2")
+    telegram = RecordingTelegram()
+    assert await cli._handle_coding_session_completion(None, repos, _session(first.id, "session-1"), telegram) == (True, None)
+    assert await cli._handle_coding_session_completion(None, repos, _session(second.id, "session-2"), None) == (True, None)
+    rows = repos.tasks.list_coding_session_notifications([first.id, second.id])
+    assert rows[first.id][0]["status"] == "send-returned"
+    assert rows[second.id][0]["status"] == "not-sent"
+    assert len(telegram.messages) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("source_channel", ["whatsapp", "web", "unknown-channel"])
+async def test_non_telegram_session_does_not_message_telegram(tmp_path, source_channel) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("wait for a coding session")
+    _awaiting(repos, task.id, "session-1")
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "source_channel": source_channel})
+    telegram = RecordingTelegram()
+    session = _session(task.id, "session-1")
+    assert not await cli._handle_coding_session_progress(repos, session, telegram)
+    assert await cli._handle_coding_session_completion(None, repos, session, telegram) == (True, None)
+    assert repos.tasks.get(task.id).status == TaskStatus.RUNNING
+    assert telegram.messages == []
+    assert repos.tasks.list_coding_session_notifications([task.id]) == {}
+
+
+@pytest.mark.asyncio
+async def test_failed_notification_stays_unknown_and_does_not_expose_error_text(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("wait for a coding session")
+    _awaiting(repos, task.id, "session-1")
+    calls = []
+
+    class FailingTelegram:
+        async def send_message(self, chat_id, text):
+            calls.append(chat_id)
+            raise RuntimeError("sensitive-value-from-provider")
+
+    session = _session(task.id, "session-1")
+    handled, error = await cli._handle_coding_session_completion(None, repos, session, FailingTelegram())
+    assert handled and "RuntimeError" in error and "sensitive-value-from-provider" not in error
+    assert repos.tasks.list_coding_session_notifications([task.id])[task.id][0]["status"] == "unknown"
+    assert await cli._handle_coding_session_completion(None, repos, session, FailingTelegram()) == (True, None)
+    assert len(calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_completion_redacts_credential_shaped_session_content(tmp_path) -> None:
+    import json
+
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("wait for a coding session")
+    _awaiting(repos, task.id, "session-1")
+    log = tmp_path / "synthetic-session.log"
+    log.write_text("TOKEN=synthetic-log-canary\n", encoding="utf-8")
+    session = _session(task.id, "session-1")
+    session.update(summary="API_KEY=synthetic-summary-canary", log_path=str(log))
+    telegram = RecordingTelegram()
+
+    assert await cli._handle_coding_session_completion(None, repos, session, telegram) == (True, None)
+    message = telegram.messages[0][1]
+    metadata = json.dumps(repos.tasks.get(task.id).metadata)
+    for secret in ("synthetic-log-canary", "synthetic-summary-canary"):
+        assert secret not in message
+        assert secret not in metadata
+    assert "***" in message and "***" in metadata
+
+
+@pytest.mark.asyncio
+async def test_notification_records_survive_metadata_updates_and_clear_with_task(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("wait for a coding session")
+    _awaiting(repos, task.id, "session-1")
+    assert await cli._handle_coding_session_completion(None, repos, _session(task.id, "session-1"), None) == (True, None)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {"other": "value"}, TaskStatus.COMPLETED)
+    assert repos.tasks.list_coding_session_notifications([task.id])[task.id][0]["status"] == "not-sent"
+    assert current is not None
+    repos.tasks.clear_history()
+    assert repos.tasks.list_coding_session_notifications([task.id]) == {}
+
+
+@pytest.mark.asyncio
+async def test_notification_reservation_failure_rolls_back_completion_before_send(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    task = repos.tasks.create("wait for a coding session")
+    _awaiting(repos, task.id, "session-1")
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    with database.connect() as connection:
+        connection.execute("DROP TABLE coding_session_notifications")
+    telegram = RecordingTelegram()
+
+    with pytest.raises(sqlite3.OperationalError):
+        await cli._handle_coding_session_completion(None, repos, _session(task.id, "session-1"), telegram)
+    assert telegram.messages == []
+    current = repos.tasks.get(task.id)
+    assert current.status == TaskStatus.AWAITING_EXTERNAL
+    assert "pending_tool_result" not in current.metadata
+    database.initialize()
+    assert await cli._handle_coding_session_completion(None, repos, _session(task.id, "session-1"), telegram) == (True, None)
+    assert len(telegram.messages) == 1
+
+
+@pytest.mark.asyncio
+async def test_late_send_cannot_update_a_new_tasks_notification(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    first = repos.tasks.create("first session")
+    _awaiting(repos, first.id, "same-session")
+    first_entered, second_entered = asyncio.Event(), asyncio.Event()
+    first_release, second_release = asyncio.Event(), asyncio.Event()
+
+    class BlockingTelegram:
+        def __init__(self, entered, release):
+            self.entered, self.release = entered, release
+
+        async def send_message(self, _chat_id, _text):
+            self.entered.set()
+            await self.release.wait()
+
+    first_send = asyncio.create_task(cli._handle_coding_session_completion(
+        None, repos, _session(first.id, "same-session"), BlockingTelegram(first_entered, first_release),
+    ))
+    await first_entered.wait()
+    repos.tasks.clear_history(include_active=True)
+    second = repos.tasks.create("second session")
+    _awaiting(repos, second.id, "same-session")
+    second_send = asyncio.create_task(cli._handle_coding_session_completion(
+        None, repos, _session(second.id, "same-session"), BlockingTelegram(second_entered, second_release),
+    ))
+    await second_entered.wait()
+    first_release.set()
+    await first_send
+    assert repos.tasks.list_coding_session_notifications([second.id])[second.id][0]["status"] == "unknown"
+    second_release.set()
+    await second_send
+    assert repos.tasks.list_coding_session_notifications([second.id])[second.id][0]["status"] == "send-returned"
 
 
 def _session(task_id: str, session_id: str) -> dict:

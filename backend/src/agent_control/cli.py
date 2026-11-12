@@ -631,6 +631,8 @@ async def _handle_coding_session_progress(repositories: Repositories, session: d
     expected_session_id = str(awaiting.get("session_id") or "") if isinstance(awaiting, dict) else ""
     if expected_session_id != str(session.get("session_id") or ""):
         return False
+    if (task.metadata.get("source_channel") or ChannelType.TELEGRAM.value) != ChannelType.TELEGRAM.value:
+        return False
     chat_id = task.metadata.get("source_chat_id")
     if not chat_id:
         return False

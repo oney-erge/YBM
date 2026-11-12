@@ -42,6 +42,7 @@ class TaskStatusAdapter:
         combined_tasks: dict[str, Any] = {task.id: task for task in recent}
         for task in (*active, *waiting_clarification):
             combined_tasks.setdefault(task.id, task)
+        notifications = self.repositories.tasks.list_coding_session_notifications(list(combined_tasks))
         task_rows = []
         for task in combined_tasks.values():
             # Progress is the Operator loop's own step count. This used to read
@@ -68,10 +69,20 @@ class TaskStatusAdapter:
                     "awaiting_external": task.metadata.get("awaiting_external"),
                     "last_failure_type": task.metadata.get("last_failure_type"),
                     "clarifying_question": question,
+                    "coding_session_notifications": notifications.get(task.id, []),
                 }
             )
 
         summary_lines = [f"Status: {len(recent)} recent task(s), {len(active)} active."]
+        uncertain = sum(
+            1 for entries in notifications.values()
+            if any(item["status"] in {"unknown", "not-sent"} for item in entries)
+        )
+        if uncertain:
+            summary_lines.append(
+                f"Telegram coding-session notification delivery is unconfirmed or not sent for {uncertain} displayed task(s). "
+                "Inspect the task before sending again."
+            )
         if waiting_clarification:
             summary_lines.append(f"Waiting for clarification: {len(waiting_clarification)}.")
             for task in waiting_clarification[:3]:

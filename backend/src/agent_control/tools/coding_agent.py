@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from agent_control.config import CodingAgentAdapterConfig
 from agent_control.schemas import Capability, ErrorClass, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.storage.redaction import redact_text
 from agent_control.tools.contracts import CodingAgentInput, CodingAgentOutput
 from agent_control.tools.spec import (
     Adapters,
@@ -324,7 +325,7 @@ class CodingAgentAdapter:
                 status=ToolResultStatus.FAILED,
                 output=output,
                 error_class=ErrorClass.ADAPTER_FAILED,
-                error_message=str(session.get("summary") or "coding agent run failed"),
+                error_message=redact_text(str(session.get("summary") or "coding agent run failed")),
             )
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
@@ -589,7 +590,7 @@ def session_progress_message(session: dict) -> str:
     if workspace:
         lines.append(f"Workspace preserved at: {workspace}")
     lines.append("I will keep monitoring it and report completion or a safe pause.")
-    return "\n".join(lines)
+    return redact_text("\n".join(lines))
 
 
 def terminal_session_result(session: dict) -> ToolCallResult:
@@ -612,7 +613,7 @@ def terminal_session_result(session: dict) -> ToolCallResult:
         status=ToolResultStatus.FAILED,
         output=output,
         error_class=ErrorClass.ADAPTER_FAILED,
-        error_message=str(session.get("summary") or "coding agent session failed"),
+        error_message=redact_text(str(session.get("summary") or "coding agent session failed")),
     )
 
 
@@ -735,7 +736,7 @@ def format_session_status(session: dict, *, log_tail: str = "", changed_files: l
         lines.append("")
         lines.append("Latest output:")
         lines.append(log_tail[-1200:])
-    return "\n".join(lines)
+    return redact_text("\n".join(lines))
 
 
 def session_completion_message(session: dict) -> str:
@@ -756,7 +757,7 @@ def session_completion_message(session: dict) -> str:
         lines.extend(f"- {item}" for item in changed[:20])
     lines.append(f"Workspace: {session.get('workspace_dir')}")
     lines.append(f"Session: {session.get('session_id')}")
-    return "\n".join(lines)
+    return redact_text("\n".join(lines))
 
 
 def _sandbox_compatible_codex_path(
@@ -931,6 +932,7 @@ def _write_session(session_root: Path, session: dict) -> None:
 
 
 def _session_output(session: dict, *, log_tail: str = "") -> dict:
+    summary = session.get("summary")
     return {
         "operation": str(session.get("operation") or "status"),
         "provider": str(session.get("provider") or ""),
@@ -944,8 +946,8 @@ def _session_output(session: dict, *, log_tail: str = "") -> dict:
         "limit_state": session.get("limit_state") or {},
         "changed_files": session.get("changed_files") or [],
         "log_path": session.get("log_path"),
-        "log_tail": log_tail,
-        "summary": session.get("summary"),
+        "log_tail": redact_text(log_tail),
+        "summary": redact_text(summary) if isinstance(summary, str) else summary,
     }
 
 
@@ -1115,17 +1117,23 @@ async def handle_session_completion(tasks, session: dict, telegram) -> tuple[boo
         key: session.get(key)
         for key in ("session_id", "provider", "status", "returncode", "changed_files", "summary", "ended_at")
     }
-    disposition, task = tasks.complete_external_session(str(task_id), session_id, result.model_dump(mode="json"), brief)
+    if isinstance(brief.get("summary"), str):
+        brief["summary"] = redact_text(brief["summary"])
+    disposition, task, notification_id = tasks.complete_external_session(
+        str(task_id), session_id, result.model_dump(mode="json"), brief, channel_available=telegram is not None,
+    )
     if disposition == "deferred":
         return False, None
     if disposition != "applied" or task is None:
         return True, None
     chat_id = task.metadata.get("source_chat_id")
-    if telegram is not None and chat_id:
+    if telegram is not None and chat_id and notification_id is not None:
         try:
             await telegram.send_message(str(chat_id), session_completion_message(session))
         except Exception as exc:
-            return True, str(exc)
+            return True, f"Notification call failed ({type(exc).__name__}); delivery is unconfirmed."
+        if notification_id is not None:
+            tasks.record_coding_session_send_returned(notification_id, str(task_id), session_id)
     return True, None
 
 
