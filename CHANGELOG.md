@@ -42,6 +42,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
+- `undo that` (or `put them back`) puts the files of the last move or rename back where they were. Each applied move now records where every file
+  came from, and the command turns that into a new task that moves them back through the ordinary replay pipeline, so it asks for approval like
+  the move did. It never overwrites: a file that is no longer where YBM left it is skipped (and the reply says how many), a name that is taken is
+  saved as a copy, and a move is undone once.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
   ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which
@@ -125,6 +129,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   count; the answer now carries the last step's result under that line.
 - Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original
   was NOT changed and how to replace it. The model had repeated the same call until the task was blocked.
+- "Add the word pears on a new line" no longer makes `list_2.txt`. There was no way to add to a file: `write_text_file` saves a copy when the path
+  exists. It has an `append` option now (the text goes to the end on its own line, the rest untouched), turned on when the request says to append,
+  add on a new line, at the end or underneath and the file exists. A model that sends the whole file again (the old lines plus the new one) is
+  taken to mean a replacement, so the old lines are not doubled.
 - When the "answer now" offer (stuck or out of steps) is spent on a question the user already answered, the model gets one more
   chance to answer or say what blocks it, instead of the task ending "blocked".
 - `filesystem.manage apply_manifest` treated a folder as the destination of a move as a name collision and renamed around it: three

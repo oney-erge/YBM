@@ -564,6 +564,8 @@ class FilesystemWriteTextFileInput(ToolInputModel):
     path: str = Field(min_length=1)
     content: str = ""
     overwrite: bool = False
+    # Add `content` to the end of a file that exists (on a new line) instead of replacing it or saving a copy.
+    append: bool = False
 
     @model_validator(mode="before")
     @classmethod

@@ -261,6 +261,8 @@ class FilesystemManageAdapter:
     def _write_text_file(self, request: ToolCallRequest) -> dict[str, Any]:
         path = self._safe_path(str(request.input["path"]))
         overwrite = bool(request.input.get("overwrite", False))
+        if bool(request.input.get("append", False)) and path.exists() and path.is_file():
+            return self._append_text_file(path, str(request.input.get("content") or ""))
         original_path = path
         renamed = False
         # If the destination already exists and the caller didn't ask to
@@ -291,6 +293,21 @@ class FilesystemManageAdapter:
         if renamed:
             result["renamed_from"] = str(original_path)
         return result
+
+    def _append_text_file(self, path: Path, content: str) -> dict[str, Any]:
+        """Add text to the end of a file that exists, on its own line, leaving what is there untouched."""
+        existing = path.read_text(encoding="utf-8", errors="replace")
+        separator = "" if not existing or existing.endswith(("\n", "\r")) or content.startswith(("\n", "\r")) else "\n"
+        with path.open("a", encoding="utf-8", newline="") as handle:
+            handle.write(separator + content)
+        return {
+            "root": str(path.parent),
+            "path": str(path),
+            "entries": [_entry(path.parent, path)],
+            "changed_paths": [str(path)],
+            "summary": f"Added {len(content)} character(s) to the end of {path}; the existing text was kept.",
+            "appended": True,
+        }
 
     def _collect_folder_snapshot(self, request: ToolCallRequest) -> dict[str, Any]:
         return self._inspect_folder(request)
