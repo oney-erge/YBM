@@ -23,7 +23,42 @@ import { test, type Page } from "@playwright/test"
  *
  *   cd frontend && YBM_RECORD_DEMO=1 npx playwright test demo.spec.ts
  *   cd .. && backend/.venv/Scripts/python scripts/make_demo_gif.py
+ *
+ * Live mode records a real run instead: set YBM_DEMO_LIVE_URL to a running
+ * YBM's console (for example http://127.0.0.1:8765/admin/) with a Downloads
+ * folder granted and a model configured. Nothing is mocked: the model plans
+ * the moves, the approval is the real one (the phone shows what it asks, built
+ * from its manifest the way the chat channels describe it), tapping Approve on
+ * the phone approves it through the console's API, and the phone's last
+ * message is the start of the real answer. A clock on the stage shows real
+ * time, so the GIF can speed through the model's thinking without hiding how
+ * long it took. YBM_DEMO_CAPTION replaces the caption (name the model).
  */
+
+const LIVE_URL = process.env.YBM_DEMO_LIVE_URL
+const LIVE_CAPTION =
+  process.env.YBM_DEMO_CAPTION ?? "A real run on a local model. The phone is a plain chat view of the same approval."
+
+type ManifestItem = { operation?: string; source?: string; destination?: string }
+
+/** The folder a path is in, for either separator. */
+function parentName(file: string): string {
+  const parts = file.split(/[\\/]+/).filter(Boolean)
+  return parts.length > 1 ? parts[parts.length - 2] : ""
+}
+
+/** What the approval asks, as the chat channels word it (backend human_text._manifest_sentence). */
+function approvalSentence(input: { manifest?: ManifestItem[] } | undefined): string {
+  const items = (input?.manifest ?? []).filter((item) => item.source && item.destination)
+  if (!items.length) return "Move or rename files."
+  const homes = new Map<string, number>()
+  for (const item of items) homes.set(parentName(item.source!), (homes.get(parentName(item.source!)) ?? 0) + 1)
+  const home = [...homes.entries()].sort((a, b) => b[1] - a[1])[0][0]
+  const folders = [...new Set(items.map((item) => parentName(item.destination!)))].sort()
+  const files = items.length === 1 ? "1 file" : `${items.length} files`
+  const where = folders.length === 1 ? `into ${folders[0]}` : `into ${folders.length} folders: ${folders.join(", ")}`
+  return `Move ${files} in ${home} ${where}.`
+}
 
 const FRAME_DIR = path.resolve(process.cwd(), ".demo-frames")
 
@@ -321,6 +356,8 @@ const STAGE_HTML = `<!doctype html>
   .approve { background: #2bc4a9; color: #062019; } .deny { background: #273046; color: #c9d1e3; }
   .approve.pressed { filter: brightness(.82); transform: scale(.97); }
   .caption { position: absolute; left: 36px; bottom: 6px; color: #6f7a92; font-size: 12px; }
+  .clock { position: absolute; right: 44px; top: 34px; width: 336px; text-align: center; color: #8b93a7;
+    font: 600 13px "Segoe UI", sans-serif; letter-spacing: .03em; font-variant-numeric: tabular-nums; }
   #cursor { position: fixed; left: -60px; top: -60px; z-index: 10; pointer-events: none; transition: left .5s ease, top .5s ease;
     filter: drop-shadow(0 2px 3px rgba(0,0,0,.5)); }
   #ring { position: fixed; width: 44px; height: 44px; margin: -22px 0 0 -22px; border-radius: 50%; border: 3px solid #ff8a3d;
@@ -329,17 +366,18 @@ const STAGE_HTML = `<!doctype html>
   @keyframes ring { 0% { opacity: .95; transform: scale(.3); } 100% { opacity: 0; transform: scale(1.25); } }
 </style></head><body>
   <div class="window"><div class="bar"><span class="dot"></span><span class="dot"></span><span class="dot"></span>
-    <span class="url">127.0.0.1:8765/admin</span></div><iframe id="console"></iframe></div>
+    <span class="url" id="url">127.0.0.1:8765/admin</span></div><iframe id="console"></iframe></div>
+  <div class="clock" id="clock"></div>
   <div class="phone"><div class="screen">
     <div class="top"><div class="avatar">Y</div><div class="who"><b>YBM</b><span>your computer</span></div></div>
     <div class="msgs">
-      <div class="bubble" id="ask"><span class="tag">Approval needed</span><br>Move 128 files in Downloads into 6 folders by type.
-        Nothing is deleted or overwritten.<div class="actions"><button class="deny">Deny</button>
+      <div class="bubble" id="ask"><span class="tag">Approval needed</span><br><span id="ask-text">Move 128 files in Downloads
+        into 6 folders by type. Nothing is deleted or overwritten.</span><div class="actions"><button class="deny">Deny</button>
         <button class="approve" id="approve">Approve once</button></div></div>
       <div class="bubble me" id="yes">Approve once</div>
-      <div class="bubble" id="done">Done: 128 files sorted into 6 folders. Nothing deleted.</div>
+      <div class="bubble" id="done"><span id="done-text">Done: 128 files sorted into 6 folders. Nothing deleted.</span></div>
     </div></div></div>
-  <div class="caption">Scripted responses. The phone is a plain chat view of the same approval.</div>
+  <div class="caption" id="caption">Scripted responses. The phone is a plain chat view of the same approval.</div>
   <svg id="cursor" width="26" height="26" viewBox="0 0 24 24"><path d="M4 2 L4 19 L8.5 15 L11.5 22 L14.5 20.7 L11.6 14 L17.5 14 Z"
     fill="#fff" stroke="#111" stroke-width="1.4" stroke-linejoin="round"/></svg><div id="ring"></div>
 </body></html>`
@@ -355,13 +393,13 @@ test.use({
 /** Records the README demo as a screencast: JPEG frames, their timestamps, and named marks. */
 test("record the README demo", async ({ page, baseURL }) => {
   test.skip(process.env.YBM_RECORD_DEMO !== "1", "Set YBM_RECORD_DEMO=1 to re-record the README demo.")
-  test.setTimeout(180_000)
+  test.setTimeout(LIVE_URL ? 900_000 : 180_000)
 
   await rm(FRAME_DIR, { recursive: true, force: true })
   await mkdir(FRAME_DIR, { recursive: true })
 
   let phase: Phase = "empty"
-  await mockConsole(page, () => phase)
+  if (!LIVE_URL) await mockConsole(page, () => phase)
   await page.setViewportSize({ width: 1600, height: 900 })
   // One-time notices are not the product's steady state, and the demo is in the dark theme.
   await page.addInitScript(() => {
@@ -372,10 +410,47 @@ test("record the README demo", async ({ page, baseURL }) => {
   await page.emulateMedia({ colorScheme: "dark" })
   // The stage is served from the console's own origin, so the console in its iframe keeps its
   // local storage (a page with no origin would leave the iframe without one).
-  const consoleUrl = baseURL ?? "http://127.0.0.1:4173/admin/"
+  const consoleUrl = LIVE_URL ?? baseURL ?? "http://127.0.0.1:4173/admin/"
   const stageUrl = new URL("/demo-stage.html", consoleUrl).toString()
   await page.route(stageUrl, (route) => route.fulfill({ contentType: "text/html", body: STAGE_HTML }))
   await page.goto(stageUrl)
+  const api = (route: string) => new URL(`api/${route}`, consoleUrl).toString()
+  if (LIVE_URL) {
+    // The console refuses to be framed (X-Frame-Options: DENY, frame-ancestors 'none'), as it
+    // should. The stage needs it in an iframe, so this browser alone drops those two headers from
+    // the console's pages; the server sends them as before.
+    await page.route(`${new URL(consoleUrl).origin}/admin/**`, async (route) => {
+      if (route.request().resourceType() !== "document") return route.continue()
+      const response = await route.fetch()
+      const headers = { ...response.headers() }
+      delete headers["x-frame-options"]
+      if (headers["content-security-policy"]) {
+        headers["content-security-policy"] = headers["content-security-policy"].replace(/frame-ancestors[^;]*;?\s*/, "")
+      }
+      await route.fulfill({ response, headers })
+    })
+    await page.evaluate(
+      ([host, caption]) => {
+        document.getElementById("url")!.textContent = host
+        document.getElementById("caption")!.textContent = caption
+      },
+      [`${new URL(consoleUrl).host}/admin`, LIVE_CAPTION] as const,
+    )
+  }
+  /** The stage clock: real seconds since the request was sent, until it is stopped. */
+  const startClock = () =>
+    page.evaluate(() => {
+      const started = performance.now()
+      const clock = document.getElementById("clock")!
+      const tick = () => {
+        const seconds = Math.floor((performance.now() - started) / 1000)
+        clock.textContent = `Real time ${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`
+      }
+      tick()
+      ;(window as unknown as { clockTimer: number }).clockTimer = window.setInterval(tick, 250)
+    })
+  const stopClock = () =>
+    page.evaluate(() => window.clearInterval((window as unknown as { clockTimer: number }).clockTimer))
   await page.evaluate((src) => {
     ;(document.getElementById("console") as HTMLIFrameElement).src = src
   }, consoleUrl)
@@ -456,12 +531,30 @@ test("record the README demo", async ({ page, baseURL }) => {
   phase = "scanning"
   await composer.press("Enter")
   mark("sent")
-  await app.getByText("Scanned", { exact: false }).waitFor()
-  await hold(1500)
+  let approval: { id: string; task_id: string; action_payload?: { input?: { manifest?: ManifestItem[] } } } | undefined
+  if (LIVE_URL) {
+    // The model plans the moves; nothing to stage here but the clock.
+    await startClock()
+    await app.getByRole("button", { name: "Approve once" }).waitFor({ timeout: 600_000 })
+    const listed = (await (await page.request.get(api("approvals"))).json()) as {
+      approvals: { approval?: typeof approval; status?: string }[]
+    }
+    approval = listed.approvals
+      .map((item) => (item.approval ?? item) as NonNullable<typeof approval> & { status?: string })
+      .find((item) => item.status === "pending")
+    if (!approval) throw new Error("the console shows an approval, but none is pending")
+    const asked = approvalSentence(approval.action_payload?.input)
+    await page.evaluate((text) => {
+      document.getElementById("ask-text")!.textContent = text
+    }, asked)
+  } else {
+    await app.getByText("Scanned", { exact: false }).waitFor()
+    await hold(1500)
+    phase = "approval"
+    await app.getByRole("button", { name: "Approve once" }).waitFor({ timeout: 15_000 })
+  }
 
   // Nothing moves until a person says so: the request reaches the console and the phone.
-  phase = "approval"
-  await app.getByRole("button", { name: "Approve once" }).waitFor({ timeout: 15_000 })
   mark("approval")
   await hold(700)
   await show("ask")
@@ -470,12 +563,28 @@ test("record the README demo", async ({ page, baseURL }) => {
   await glideTo(approve, 800)
   if (approve) await ring(approve)
   await page.evaluate(() => document.getElementById("approve")!.classList.add("pressed"))
+  if (approval) {
+    const decided = await page.request.post(api(`approvals/${approval.id}/decide`), { data: { decision: "approve" } })
+    if (!decided.ok()) throw new Error(`approving ${approval.id} failed: ${decided.status()} ${await decided.text()}`)
+  }
   mark("approved")
   await show("yes")
   await hold(500)
 
   phase = "done"
-  await app.getByText("What this task touched").waitFor({ timeout: 15_000 })
+  await app.getByText("What this task touched").waitFor({ timeout: LIVE_URL ? 600_000 : 15_000 })
+  if (approval) {
+    await stopClock()
+    const tasks = (await (await page.request.get(api("tasks"))).json()) as {
+      tasks: { id: string; metadata?: Record<string, unknown> }[]
+    }
+    const meta = tasks.tasks.find((task) => task.id === approval!.task_id)?.metadata ?? {}
+    const answer = String(meta.synthesized_answer ?? meta.final_answer ?? "").trim()
+    const first = answer.split("\n")[0].replace(/:\s*$/, ".")
+    await page.evaluate((text) => {
+      document.getElementById("done-text")!.textContent = text
+    }, first.length > 160 ? `${first.slice(0, 157)}...` : first)
+  }
   mark("done")
   await show("done")
   await hold(800)

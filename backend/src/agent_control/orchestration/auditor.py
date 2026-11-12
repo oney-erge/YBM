@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 AUDITOR_SYSTEM_PROMPT = prompt_text("base/auditor_system.md")
 
+# How much of the raw output the auditor is shown. The worker's multi-step evidence is laid out to
+# fit it (orchestration/worker.py, _operator_audit_evidence).
+RAW_OUTPUT_CHARS = 6000
+
 CONTENT_TOOLS = frozenset({
     "browser.open",
     "browser.control",
@@ -94,7 +98,7 @@ class AuditorService:
         prompt_values = {
             "objective": objective,
             "original_message": (original_message or "(same as normalized objective)").strip()[:1000],
-            "raw_output": raw_output.strip()[:6000],
+            "raw_output": raw_output.strip()[:RAW_OUTPUT_CHARS],
             # Facts about what the task produced, so the Auditor can judge
             # whether the request's actual deliverable landed. Empty string
             # keeps callers that don't supply it (and their recorded fixtures)

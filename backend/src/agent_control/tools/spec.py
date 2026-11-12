@@ -117,7 +117,9 @@ class ToolDefinition:
     # runtime-owned approval gate replaced them (docs/archive/HISTORY.md Part 4's
     # concurrent-hardening note) - optional; operations not listed here still
     # get PolicyEngine.approval_request()'s generic "Approve X using Y".
-    approval_reasons: dict[str, str] = field(default_factory=dict)
+    # Why an operation needs approval, shown on the approval. A function of the call's input when
+    # the reason depends on it (what a manifest moves, and where).
+    approval_reasons: dict[str, str | Callable[[dict], str | None]] = field(default_factory=dict)
     risk_resolver: Callable[[dict], RiskLevel] | None = None
     approval_resolver: Callable[[dict], bool] | None = None
     # Worked usage examples shown to the Operator's decide() call. Each entry
@@ -182,7 +184,8 @@ class ToolDefinition:
 
     def approval_reason(self, value: dict) -> str | None:
         operation = str(value.get("operation") or self.default_operation or "")
-        return self.approval_reasons.get(operation)
+        reason = self.approval_reasons.get(operation)
+        return reason(value) if callable(reason) else reason
 
     def validate_input(self, value: dict) -> dict:
         return self._validate_schema(value, self.input_schema, self.operation_schemas, "input")
