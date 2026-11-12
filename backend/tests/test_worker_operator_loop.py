@@ -2970,8 +2970,8 @@ async def test_a_model_that_keeps_repeating_a_done_side_effect_is_stopped(tmp_pa
 
     assert len(adapter.requests) == 1
     assert result.status == TaskStatus.BLOCKED
-    assert "had already succeeded" in result.metadata["last_worker_error"]
-    assert "Nothing was done twice" in result.metadata["last_worker_error"]
+    assert "had already worked" in result.metadata["last_worker_error"]
+    assert "nothing was done twice" in result.metadata["last_worker_error"]
 
 
 @pytest.mark.asyncio

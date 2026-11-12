@@ -1,4 +1,4 @@
-"""Assemble the README demo GIF from the frames the Playwright recorder wrote.
+"""Assemble the README demo GIF from the screencast the Playwright recorder wrote.
 
 Two steps on purpose: Playwright owns "what the console looked like", this owns
 "how long each beat is held". Re-timing the demo does not mean re-recording it.
@@ -6,12 +6,18 @@ Two steps on purpose: Playwright owns "what the console looked like", this owns
     cd frontend && YBM_RECORD_DEMO=1 npx playwright test demo.spec.ts
     backend/.venv/Scripts/python scripts/make_demo_gif.py
 
+The recorder writes JPEG frames with the browser's own timestamps (times.json)
+and named moments (marks.json). This samples them at a steady frame rate, in
+real time, and holds the beats a reader needs a moment for.
+
 Pillow only - no ffmpeg, no imagemagick, nothing a contributor has to install
 beyond what `ybm setup` already put in the backend venv.
 """
 
 from __future__ import annotations
 
+import bisect
+import json
 from pathlib import Path
 import sys
 
@@ -22,64 +28,99 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 FRAME_DIR = REPO_ROOT / "frontend" / ".demo-frames"
 OUTPUT = REPO_ROOT / "docs" / "screenshots" / "demo.gif"
 
-# Rendered at 1280 wide; GitHub shows the README at roughly half that, and
-# every pixel here is paid for on every page load.
-TARGET_WIDTH = 960
+# Rendered at 2400 wide; GitHub shows the README at roughly 880, and every
+# pixel here is paid for on every page load.
+TARGET_WIDTH = 880
+FPS = 10
 
-# How long each beat holds, in milliseconds, keyed by the frame's name suffix.
-# The approval frame is the one the whole demo exists for, so it gets the
-# longest hold - it is the difference between "an agent ran a command" and "an
-# agent asked first".
-HOLD_MS = {
-    "empty": 2000,
-    "typing": 450,
-    "typed": 900,
-    "scanning": 1500,
-    "approval": 3000,
-    "done": 3000,
-    "tasks": 2600,
-}
-DEFAULT_HOLD_MS = 1500
+# Extra time on a beat, in milliseconds: (mark, seconds after it, hold). The
+# approval is the one the whole demo exists for - the difference between "an
+# agent ran a command" and "an agent asked first" - so it gets the longest.
+HOLDS = [
+    ("approval", 2.6, 1600),
+    ("done", 1.4, 1800),
+    ("end", 0.0, 1200),
+]
 
 
-def load_frames() -> list[tuple[Path, Image.Image]]:
-    paths = sorted(FRAME_DIR.glob("*.png"))
-    if not paths:
+def load() -> tuple[list[dict], dict[str, float]]:
+    times_file = FRAME_DIR / "times.json"
+    if not times_file.exists():
         raise SystemExit(
-            f"No frames in {FRAME_DIR}.\n"
-            "Record them first: cd frontend && YBM_RECORD_DEMO=1 npx playwright test demo.spec.ts"
+            f"No recording in {FRAME_DIR}.\n"
+            "Record it first: cd frontend && YBM_RECORD_DEMO=1 npx playwright test demo.spec.ts"
         )
-    frames = []
-    for path in paths:
-        image = Image.open(path).convert("RGB")
-        if image.width != TARGET_WIDTH:
-            height = round(image.height * TARGET_WIDTH / image.width)
-            image = image.resize((TARGET_WIDTH, height), Image.LANCZOS)
-        frames.append((path, image))
-    widths = {image.size for _, image in frames}
-    if len(widths) != 1:
-        raise SystemExit(f"Frames disagree on size ({widths}); re-record them in one run.")
-    return frames
+    times = json.loads(times_file.read_text(encoding="utf-8"))
+    marks = json.loads((FRAME_DIR / "marks.json").read_text(encoding="utf-8"))
+    return times, marks
 
 
-def hold_for(path: Path) -> int:
-    # "03-typed.png" -> "typed"
-    beat = path.stem.split("-", 1)[-1]
-    return HOLD_MS.get(beat, DEFAULT_HOLD_MS)
+def frame_at(times: list[dict], starts: list[float], t: float) -> Path:
+    """The frame on screen at time t: the last one the browser painted at or before it."""
+    index = max(0, bisect.bisect_right(starts, t) - 1)
+    return FRAME_DIR / times[index]["file"]
+
+
+def build_palette(sheet: Image.Image, accents: int = 40) -> Image.Image:
+    """A 256-color palette: median cut for the console's many dark tones, plus slots kept for the
+    small saturated accents (the red risk badge, the amber banner, the green check) that median
+    cut would merge into the greys around them."""
+    tones = sheet.quantize(colors=256 - accents, method=Image.Quantize.MEDIANCUT)
+    hsv = sheet.convert("HSV")
+    vivid = [
+        rgb
+        for rgb, (_, saturation, value) in zip(sheet.get_flattened_data(), hsv.get_flattened_data())
+        if saturation > 70 and value > 60
+    ]
+    colors = (tones.getpalette() or [])[: 3 * (256 - accents)]
+    if vivid:
+        strip = Image.new("RGB", (len(vivid), 1))
+        strip.putdata(vivid)
+        pick = strip.quantize(colors=accents, method=Image.Quantize.MAXCOVERAGE)
+        colors += (pick.getpalette() or [])[: 3 * accents]
+    colors += [0] * (768 - len(colors))
+    palette = Image.new("P", (1, 1))
+    palette.putpalette(colors[:768])
+    return palette
 
 
 def main() -> int:
-    frames = load_frames()
-    durations = [hold_for(path) for path, _ in frames]
-    images = [image for _, image in frames]
+    times, marks = load()
+    starts = [frame["t"] for frame in times]
+    end = marks.get("end", starts[-1])
+    step = 1.0 / FPS
+    samples = [k * step for k in range(int(end / step) + 1)]
+    holds = {}
+    for mark, after, extra in HOLDS:
+        at = min(samples, key=lambda s: abs(s - (marks[mark] + after)))
+        holds[at] = holds.get(at, 0) + extra
 
-    # ADAPTIVE keeps the console's flat UI colors clean at 256 entries; the
-    # default web palette visibly banded the card backgrounds.
-    quantized = [
-        image.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE)
-        for image in images
-    ]
+    images, durations, previous = [], [], None
+    cache: dict[Path, Image.Image] = {}
+    for t in samples:
+        path = frame_at(times, starts, t)
+        duration = round(1000 * step) + holds.get(t, 0)
+        if path == previous and not holds.get(t):
+            durations[-1] += duration  # nothing changed on screen: lengthen the last frame
+            continue
+        if path not in cache:
+            image = Image.open(path).convert("RGB")
+            height = round(image.height * TARGET_WIDTH / image.width)
+            cache[path] = image.resize((TARGET_WIDTH, height), Image.LANCZOS)
+        images.append(cache[path])
+        durations.append(duration)
+        previous = path
 
+    # One palette for the whole GIF, taken from the frames where the most is on screen (the
+    # approval and the receipt): frames that share it compress far better than per-frame ones,
+    # and the console's flat colors stay clean without dithering.
+    keys = [("typing", 2.0), ("approval", 2.6), ("approved", 0.6), ("done", 1.4)]
+    sheet = Image.new("RGB", (TARGET_WIDTH, images[0].height * len(keys)))
+    for row, (mark, after) in enumerate(keys):
+        key = frame_at(times, starts, marks[mark] + after)
+        sheet.paste(cache[key] if key in cache else images[-1], (0, row * images[0].height))
+    palette = build_palette(sheet)
+    quantized = [image.quantize(palette=palette, dither=Image.Dither.NONE) for image in images]
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     quantized[0].save(
         OUTPUT,
@@ -89,12 +130,12 @@ def main() -> int:
         loop=0,
         optimize=True,
     )
-
     size_kb = OUTPUT.stat().st_size / 1024
     print(f"Wrote {OUTPUT.relative_to(REPO_ROOT)}")
-    print(f"  {len(images)} frames, {images[0].width}x{images[0].height}, {size_kb:.0f} KB")
-    for path, duration in zip((p for p, _ in frames), durations):
-        print(f"  {path.name:<20} {duration:>5} ms")
+    print(
+        f"  {len(images)} frames, {images[0].width}x{images[0].height}, "
+        f"{sum(durations) / 1000:.1f} s, {size_kb:.0f} KB"
+    )
     return 0
 
 
