@@ -1001,3 +1001,23 @@ def test_only_the_schedules_made_since_the_case_started_are_deleted(tmp_path, mo
     assert runner.delete_schedules_created_since("2026-11-10T10:00:00+00:00") == 0  # nothing left to delete
     monkeypatch.setattr(runner, "DB_PATH", tmp_path / "missing" / "none.db")
     assert runner.delete_schedules_created_since("2026-11-10T10:00:00+00:00") == 0  # no database: not an error
+
+
+def test_diagnose_turn_fills_in_values_measured_when_the_fixtures_were_built() -> None:
+    runner = _runner_module()
+    text = "You have 14 Steam games installed."
+    turn = runner.TurnResult(
+        final_status="completed", bot_reply_text=text,
+        telegram_sent_events=[{"payload": {"kind": "text", "text": text}}], telegram_confirmed_text=text,
+    )
+    fixtures = {"h3_steam_count": "14", "h3_wrong": "99"}
+
+    def case(**assertions):
+        return {"assertions": {"final_status_in": ["completed"], **assertions}}
+
+    assert runner._diagnose_turn(case(bot_reply_contains_any=["{{h3_steam_count}}"]), turn, is_followup=False, fixtures=fixtures) == (True, None)
+    assert runner._diagnose_turn(case(bot_reply_contains_all=["{{h3_steam_count}}", "steam"]), turn, is_followup=False, fixtures=fixtures) == (True, None)
+    passed, reason = runner._diagnose_turn(case(bot_reply_contains_any=["{{h3_wrong}}"]), turn, is_followup=False, fixtures=fixtures)
+    assert passed is False and "99" in reason and "{{" not in reason
+    passed, reason = runner._diagnose_turn(case(bot_reply_excludes_all=["{{h3_steam_count}}"]), turn, is_followup=False, fixtures=fixtures)
+    assert passed is False and "14" in reason

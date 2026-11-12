@@ -29,7 +29,7 @@ from agent_control.orchestration.fulfillment import (
 from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
-from agent_control.channels.undo_command import undo_moves_from_output
+from agent_control.channels.undo_command import merge_undo_moves, undo_moves_from_output
 from agent_control.orchestration.signals import STALE_SWEEP_INTERVAL_SECONDS, sweep_expired_approvals, sweep_stale_blocked
 from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
@@ -2594,7 +2594,7 @@ class TaskWorker:
             # Where every moved file came from, so "undo that" can put them back (channels/undo_command.py).
             undo = undo_moves_from_output(output)
             if undo is not None:
-                metadata["undo_moves"] = undo
+                metadata["undo_moves"] = merge_undo_moves(latest.metadata.get("undo_moves"), undo)
         if tool_name == "workspace.manage" and output.get("server_pid") and output.get("url"):
             # So "what apps are running?" and "stop the recipe app" can find it again (channels/app_commands.py).
             metadata["preview_server"] = {

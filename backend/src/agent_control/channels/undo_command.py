@@ -51,6 +51,27 @@ def undo_moves_from_output(output: dict) -> dict | None:
     return {"root": str(output.get("root") or ""), "moves": moves[:MAX_UNDO_MOVES]}
 
 
+def merge_undo_moves(previous: object, new: dict) -> dict:
+    """Add one applied manifest to what the task has moved so far, as where each file is now and where it started.
+
+    A task often moves the same file twice (it sorts a folder by type, then moves the pictures somewhere else). "Undo that" has to
+    put the file back where it began, not where it was one step ago, so a file moved again keeps its first origin, and a file moved
+    back to where it started drops out. Moves made under a different root start a new record.
+    """
+    if not isinstance(previous, dict) or previous.get("root") != new.get("root") or not isinstance(previous.get("moves"), list):
+        return new
+    moves = [dict(move) for move in previous["moves"]]
+    for step in new["moves"]:
+        earlier = next((move for move in moves if move["from"] == step["to"]), None)
+        if earlier is None:
+            moves.append(dict(step))
+        elif earlier["to"] == step["from"]:
+            moves.remove(earlier)
+        else:
+            earlier["from"] = step["from"]
+    return {"root": new["root"], "moves": moves[:MAX_UNDO_MOVES]}
+
+
 def undo_command_reply(
     repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str | None
 ) -> OutboundMessage | None:

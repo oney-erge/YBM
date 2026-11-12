@@ -6,7 +6,7 @@ import asyncio
 
 import pytest
 
-from agent_control.channels.undo_command import MAX_UNDO_MOVES, undo_command_reply, undo_moves_from_output
+from agent_control.channels.undo_command import MAX_UNDO_MOVES, merge_undo_moves, undo_command_reply, undo_moves_from_output
 from agent_control.orchestration import TaskWorker
 from agent_control.schemas import ChannelType, InboundMessage, MessageKind, TaskStatus, ToolCallResult, ToolResultStatus
 from agent_control.tools.filesystem_manage import FilesystemManageAdapter
@@ -153,3 +153,60 @@ def test_the_worker_records_the_moves_when_a_manifest_is_applied(env):
                 "changed_paths": [str(tmp_path / "pdfs" / "a.pdf")]},
     ))
     assert updated.metadata["undo_moves"]["moves"] == [{"from": str(tmp_path / "pdfs" / "a.pdf"), "to": str(tmp_path / "a.pdf")}]
+
+
+# --- a task that moves the same file twice is undone back to where it started -----------------------------------------
+
+
+def _record(*pairs, root="/r"):
+    return {"root": root, "moves": [{"from": now, "to": before} for now, before in pairs]}
+
+
+def test_moves_made_one_after_another_are_all_kept():
+    merged = merge_undo_moves(_record(("/r/pdf/a.pdf", "/r/a.pdf")), _record(("/r/txt/b.txt", "/r/b.txt")))
+    assert merged == _record(("/r/pdf/a.pdf", "/r/a.pdf"), ("/r/txt/b.txt", "/r/b.txt"))
+
+
+def test_a_file_moved_twice_goes_back_to_where_it_started():
+    merged = merge_undo_moves(_record(("/r/png/a.png", "/r/a.png")), _record(("/r/pictures/a.png", "/r/png/a.png")))
+    assert merged == _record(("/r/pictures/a.png", "/r/a.png"))
+
+
+def test_a_file_moved_away_and_back_needs_no_undo():
+    merged = merge_undo_moves(_record(("/r/x/a.png", "/r/a.png"), ("/r/x/b.png", "/r/b.png")), _record(("/r/a.png", "/r/x/a.png")))
+    assert merged == _record(("/r/x/b.png", "/r/b.png"))
+
+
+def test_moves_under_another_root_start_a_new_record():
+    new = _record(("/other/x/a.png", "/other/a.png"), root="/other")
+    assert merge_undo_moves(_record(("/r/x/a.png", "/r/a.png")), new) == new
+    assert merge_undo_moves(None, new) == new
+    assert merge_undo_moves("not a record", new) == new
+
+
+def test_the_merged_record_is_capped():
+    first = _record(*[(f"/r/x/{n}.txt", f"/r/{n}.txt") for n in range(MAX_UNDO_MOVES)])
+    merged = merge_undo_moves(first, _record(("/r/y/extra.txt", "/r/extra.txt")))
+    assert len(merged["moves"]) == MAX_UNDO_MOVES
+
+
+def test_a_task_that_sorts_a_folder_and_then_moves_the_pictures_is_undone_to_the_start(env):
+    from test_worker_operator_loop import QueueOperator, _executor, _settings
+
+    repos, audit, conv, tmp_path = env
+    task = repos.tasks.create("tidy", conversation_id=conv, metadata={"source_chat_id": "42"})
+    worker = TaskWorker(repos, audit, executor=_executor(_settings(), audit, repos), operator=QueueOperator([]))
+
+    def applied(source, destination, new):
+        return worker._record_tool_result(task.id, "filesystem.manage", ToolCallResult(
+            request_id="r", status=ToolResultStatus.SUCCEEDED,
+            output={"operation": "apply_manifest", "root": str(tmp_path), "dry_run": False,
+                    "manifest": [{"source": str(source), "destination": str(destination)}], "changed_paths": [str(new)]},
+        ))
+
+    start = tmp_path / "shot.png"
+    sorted_png = tmp_path / "png" / "shot.png"
+    final = tmp_path / "pictures" / "shot.png"
+    applied(start, tmp_path / "png", sorted_png)
+    updated = applied(sorted_png, tmp_path / "pictures", final)
+    assert updated.metadata["undo_moves"]["moves"] == [{"from": str(final), "to": str(start)}]
