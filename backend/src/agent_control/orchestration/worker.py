@@ -18,7 +18,7 @@ from agent_control.error_text import describe_exception
 from agent_control.llm.call_log import cap_messages, merge_token_usage
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, hosted_allowed, is_yes
 from agent_control.logging_setup import bind_task_context
-from agent_control.orchestration.auditor import AuditorService
+from agent_control.orchestration.auditor import AuditorService, RAW_OUTPUT_CHARS
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -1093,6 +1093,7 @@ class TaskWorker:
         tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_path_relative_to_a_listed_root(tool_name, tool_input, history)
         tool_input = _filesystem_overwrite_when_asked_to_change(latest, tool_name, tool_input)
+        tool_input = _apply_manifest_from_plan(latest, tool_name, tool_input, history)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
         tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
@@ -3099,6 +3100,62 @@ def _document_summary_call(
 _SCHEDULE_ID = re.compile(r"\bschedule_[0-9a-f]{32}\b")
 
 
+_PLAN_OPERATIONS = frozenset({"organize_plan", "rename_plan"})
+
+
+def _apply_manifest_from_plan(
+    latest: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply the plan this task just made, which the model never saw in full.
+
+    The operator sees a plan's one-line summary, not its moves (one per file, each with two
+    absolute paths). Told to pass the manifest on, a 9B model copied 4 of 24 moves and planned
+    again in one live run, and in the next wrote 26 moves of its own, most for files that do not
+    exist. So an apply_manifest that follows an unused organize_plan or rename_plan of this task
+    gets that plan's manifest: when it leaves the manifest out (what the catalog and the plan's
+    summary tell it to do), and when what it wrote is not an exact part of the plan. An exact part
+    (moves the plan has, with the same destinations) is kept: that is a deliberate selection. An
+    apply that ran after the plan spends it (its own output replaces the stored manifest). The
+    folder is the plan's when the call names none. The user approves whatever runs.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") != "apply_manifest":
+        return tool_input
+    plan_entry = None
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("tool_name") != "filesystem.manage":
+            continue
+        entry_input = entry.get("input") if isinstance(entry.get("input"), dict) else {}
+        operation = entry_input.get("operation")
+        if operation == "apply_manifest" and entry.get("status") == ToolResultStatus.SUCCEEDED.value:
+            return tool_input
+        if operation in _PLAN_OPERATIONS and entry.get("status") == ToolResultStatus.SUCCEEDED.value:
+            plan_entry = entry
+            break
+    plan = latest.metadata.get("file_manifest") if isinstance(latest.metadata, dict) else None
+    if plan_entry is None or not isinstance(plan, list) or not plan:
+        return tool_input
+    written = tool_input.get("manifest")
+    if isinstance(written, list) and written and _moves(written) <= _moves(plan):
+        return tool_input
+    plan_input = plan_entry.get("input") if isinstance(plan_entry.get("input"), dict) else {}
+    root = tool_input.get("root") or plan_entry.get("output_root") or plan_input.get("root")
+    return {**tool_input, "root": root, "manifest": plan}
+
+
+def _moves(manifest: list[Any]) -> set[tuple[str, str]]:
+    """A manifest's (source, destination) pairs, compared the way the file system would."""
+    pairs = set()
+    for item in manifest:
+        if isinstance(item, dict):
+            pairs.add(tuple(os.path.normcase(os.path.normpath(str(item.get(key) or ""))) for key in ("source", "destination")))
+        else:
+            pairs.add(("", repr(item)))
+    return pairs
+
+
 def _schedule_id_from_this_task(
     tool_name: str | None,
     tool_input: dict[str, Any],
@@ -3577,7 +3634,7 @@ def _operator_audit_evidence(
     real_entries = [entry for entry in history if entry.get("tool_name") not in CHECK_ENTRY_NAMES]
     if len(real_entries) <= 1:
         return last_raw_output
-    parts: list[str] = []
+    steps: list[tuple[str, str, str]] = []
     for index, entry in enumerate(real_entries, 1):
         tool_name = str(entry.get("tool_name") or "unknown")
         status = str(entry.get("status") or "unknown")
@@ -3586,13 +3643,24 @@ def _operator_audit_evidence(
         else:
             evidence = str(entry.get("output_summary") or entry.get("error") or "")
         tool_input = entry.get("input")
-        input_text = json.dumps(tool_input, ensure_ascii=False, default=str)[:8000] if tool_input else ""
+        input_text = json.dumps(tool_input, ensure_ascii=False, default=str) if tool_input else ""
+        steps.append((f"{index}. {tool_name} ({status})", evidence, input_text))
+    # The auditor sees the first RAW_OUTPUT_CHARS of this. What each step returned is what grounds an
+    # answer, so outputs come first and inputs share the room left over (they still carry what a write
+    # wrote). Laid out input-first with 8,000 characters per input, an apply_manifest's 24-move input
+    # pushed its own "Moved 24 file(s)" out of view, and the auditor reported that nothing had moved.
+    inputs = sum(1 for _, _, input_text in steps if input_text)
+    used = sum(len(head) + len(evidence) + 20 for head, evidence, _ in steps)
+    room = min(8000, max(400, (RAW_OUTPUT_CHARS - used) // max(1, inputs)))
+    parts: list[str] = []
+    for head, evidence, input_text in steps:
         details = []
-        if input_text:
-            details.append(f"Input: {input_text}")
         if evidence:
             details.append(f"Output: {evidence}")
-        parts.append(f"{index}. {tool_name} ({status})\n" + "\n".join(details))
+        if input_text:
+            shown = input_text if len(input_text) <= room else f"{input_text[:room]}...[{len(input_text) - room} more characters]"
+            details.append(f"Input: {shown}")
+        parts.append(head + "\n" + "\n".join(details))
     return "\n\n".join(parts)
 
 
@@ -4066,6 +4134,59 @@ _NEGATED_CLAIM = re.compile(
 )
 
 
+# "The Downloads folder has been organized by type", "moved the PDFs into a Documents folder". A
+# claim that files were rearranged, which the write claim above does not cover: a live run spent
+# its steps listing and searching a folder, then answered that it had organized it, and completed.
+_MOVE_CLAIM = re.compile(
+    r"(?i)\b(?:folders?|files|downloads|desktop|documents)\b[^.!?\n]{0,60}?"
+    r"\b(?:has been|have been|was|were|is now|are now)\s+(?:organi[sz]ed|rearranged|sorted|moved|grouped|tidied)\b"
+    r"|\b(?:organi[sz]ed|rearranged|tidied up)\b[^.!?\n]{0,60}?\b(?:folders?|files|downloads|desktop|documents)\b"
+    r"|\b(?:moved|sorted|grouped|relocated)\b[^.!?\n]{0,90}?\binto\b[^.!?\n]{0,60}?"
+    r"\b(?:folders?|subfolders?|director(?:y|ies))\b"
+)
+
+# Words that make a move a plan, an offer or a state rather than something done: "24 files will be
+# moved into folders once you approve", "the folder is already organized".
+_UNDONE_MOVE = re.compile(
+    r"(?i)\b(?:will|would|can|could|should|may|might|shall|already|plan(?:ned)?|propos(?:e|ed|al)|"
+    r"approve|approval|once|if|ready to|to be)\b"
+)
+
+# Where a real move shows up: the tool layer's changed-path keys, or a succeeded apply_manifest that
+# was not a dry run.
+_MOVE_EVIDENCE_KEYS = ("organized_paths", "moved_files", "changed_paths", "changed_files")
+
+
+def _unsupported_move_claim(answer: str, history: list[dict[str, Any]], metadata: dict[str, Any] | None) -> bool:
+    """Whether the answer says files were moved or organized and nothing moved any."""
+    claims = [
+        match
+        for match in _MOVE_CLAIM.finditer(answer)
+        if not _claim_is_negated(answer, match.start()) and not _UNDONE_MOVE.search(_clause_before(answer, match.end()))
+    ]
+    if not claims:
+        return False
+    if isinstance(metadata, dict) and any(metadata.get(key) for key in _MOVE_EVIDENCE_KEYS):
+        return False
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("status") != ToolResultStatus.SUCCEEDED.value:
+            continue
+        tool_input = entry.get("input")
+        if (
+            isinstance(tool_input, dict)
+            and tool_input.get("operation") == "apply_manifest"
+            and not tool_input.get("dry_run")
+        ):
+            return False
+    return True
+
+
+def _clause_before(answer: str, end: int) -> str:
+    """The clause a claim ends in, up to the claim's end."""
+    clause_start = max(answer.rfind(".", 0, end), answer.rfind("\n", 0, end), answer.rfind(";", 0, end))
+    return answer[clause_start + 1:end]
+
+
 def _claim_is_negated(answer: str, start: int) -> bool:
     """Whether a write claim sits inside a denial of that same write.
 
@@ -4107,6 +4228,9 @@ def _unsupported_write_claim(
     """
     if not answer:
         return None
+    if _unsupported_move_claim(answer, history, metadata):
+        # Its own code, so the replan names the operations that actually move files.
+        return "expected_file_organization_missing"
     claims = [match for match in _WRITE_CLAIM.finditer(answer) if not _claim_is_negated(answer, match.start())]
     if not claims:
         return None
