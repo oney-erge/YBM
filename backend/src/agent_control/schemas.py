@@ -193,6 +193,7 @@ class PostconditionType(StrEnum):
     TASK_STATUS = "task_status"
     GITHUB_PR = "github_pr"
     EXTERNAL_COMMAND = "external_command"
+    PAGE_MATCHES_REQUEST = "page_matches_request"
     FORM_SUBMITTED = "form_submitted"
 
 

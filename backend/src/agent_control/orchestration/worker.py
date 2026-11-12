@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
+import time
 import os
 from pathlib import Path
 import re
@@ -28,7 +29,7 @@ from agent_control.orchestration.fulfillment import (
 from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
-from agent_control.orchestration.signals import sweep_expired_approvals
+from agent_control.orchestration.signals import STALE_SWEEP_INTERVAL_SECONDS, sweep_expired_approvals, sweep_stale_blocked
 from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
 from agent_control.recovery.usage_limits import describe_wait, next_attempt_at
@@ -252,6 +253,7 @@ class TaskWorker:
         task_budget_seconds: float | None = None,
         operator: OperatorLoopService | None = None,
         operator_max_steps: int = 12,
+        auto_close_blocked_hours: int = 0,
         auditor: AuditorService | None = None,
         persist_llm_calls: bool = True,
         llm_call_max_chars: int = 8000,
@@ -280,6 +282,8 @@ class TaskWorker:
         # execution path. See orchestration/operator.py.
         self.operator = operator
         self.operator_max_steps = operator_max_steps
+        self.auto_close_blocked_hours = auto_close_blocked_hours
+        self._last_stale_sweep: float | None = None  # the first poll sweeps (monotonic time can be small on a fresh boot)
         # The Auditor (docs/archive/HISTORY.md P3 §2.1) - grounds a `done` decision
         # against raw tool output before letting it complete. Optional: a
         # worker with no auditor configured skips straight to the
@@ -458,8 +462,23 @@ class TaskWorker:
             # only). Every tick, not just when a task was actually claimed,
             # since the tasks it sweeps are never claimable by process_next.
             sweep_expired_approvals(self.repositories)
+            self._close_stale_tasks()
             if processed is None:
                 await asyncio.sleep(poll_interval_seconds)
+
+    def _close_stale_tasks(self) -> list[str]:
+        """Close blocked or unanswered tasks that stopped long ago (signals.sweep_stale_blocked), at most every ten minutes."""
+        if self.auto_close_blocked_hours <= 0:
+            return []
+        now = time.monotonic()
+        if self._last_stale_sweep is not None and now - self._last_stale_sweep < STALE_SWEEP_INTERVAL_SECONDS:
+            return []
+        self._last_stale_sweep = now
+        try:
+            return sweep_stale_blocked(self.repositories, self.audit, max_age=timedelta(hours=self.auto_close_blocked_hours))
+        except Exception:  # noqa: BLE001 - housekeeping must never stop the worker
+            logger.warning("closing stale tasks failed", exc_info=True)
+            return []
 
     async def process_task(self, task_id: str) -> TaskRecord:
         # Rebind (not merge) so every log line for this tick is greppable by
@@ -2568,6 +2587,14 @@ class TaskWorker:
             metadata["preview_url"] = output["preview_url"]
         elif tool_name == "workspace.manage" and output.get("url"):
             metadata["preview_url"] = output["url"]
+        if tool_name == "workspace.manage" and output.get("server_pid") and output.get("url"):
+            # So "what apps are running?" and "stop the recipe app" can find it again (channels/app_commands.py).
+            metadata["preview_server"] = {
+                "pid": int(output["server_pid"]), "url": str(output["url"]), "workspace_dir": str(output.get("workspace_dir") or ""),
+            }
+        if tool_name == "workspace.manage" and isinstance(output.get("page_controls"), dict):
+            # What the launched page actually offers, read back from the page (tools/page_check.py); a relaunch replaces it.
+            metadata["page_controls"] = output["page_controls"]
         if tool_name == "artifact.deliver":
             metadata["artifact_delivery"] = output
             if output.get("artifact_id"):
