@@ -3705,13 +3705,13 @@ def _next_replay_decision(
         }
 
     if completed >= len(replay_plan):
-        return (
-            OperatorDecision(
-                action=OperatorAction.DONE,
-                final_answer=f"Replayed {len(replay_plan)}/{len(replay_plan)} step(s) successfully.",
-            ),
-            metadata,
-        )
+        # What the last step found is the point of running it again ("how many Steam games" -> the count); saying only that
+        # the steps ran sent a person who asked for a saved workflow to the dashboard to see the result.
+        found = str((last or {}).get("output_summary") or "").strip()
+        answer = f"Replayed {len(replay_plan)}/{len(replay_plan)} step(s) successfully."
+        if found:
+            answer += f"\n\n{found[:1500]}"
+        return OperatorDecision(action=OperatorAction.DONE, final_answer=answer), metadata
 
     step = replay_plan[completed]
     decision = _replay_call_decision(step, completed + 1, len(replay_plan))

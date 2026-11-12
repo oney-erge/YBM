@@ -86,6 +86,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   delivery check was skipped.
 - A file read by the path a listing showed (`resumes/notes.txt`, relative to the folder the search or listing looked in) is
   completed with that folder, instead of being looked for in the program's own folder and reported as not existing three times.
+- A finished workflow replay shows what its last step found. `run steam count` answered "Replayed 1/1 step(s) successfully" and nothing about the
+  count; the answer now carries the last step's result under that line.
 - Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original
   was NOT changed and how to replace it. The model had repeated the same call until the task was blocked.
 - When the "answer now" offer (stuck or out of steps) is spent on a question the user already answered, the model gets one more
