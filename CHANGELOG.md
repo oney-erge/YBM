@@ -25,6 +25,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   task, and it covers 200 calls at most. A batch approval now decides every call in it from the button too, where before only the batch itself
   was decided and the calls were left pending.
 - Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
+- Three things to say to the assistant about itself, instantly and without a model call: `what apps are running?` lists the apps YBM started that
+  still answer (by the name of the page and its address), `stop the recipe app` stops one (only after checking that the process with the recorded id
+  is still the static server it started, so a reused id is never killed), `what do you know about me?` shows the remembered profile and rules, and
+  `forget my t-shirt size` forgets the one fact that matches (several matches are listed and asked about; `forget everything` is declined as one
+  message). A message only counts when it names something that exists, so `stop the music` and `forget the meeting` are ordinary requests.
 - `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
   writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
