@@ -19,6 +19,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- A third held-out suite of 16 open-ended requests (`--suite heldout3`, ids `h3_*`, frozen by a recorded hash like the second): the number of Steam
+  games and free disk space (computed on the machine at fixture time, never typed in), finding a file by name, what a document is about, comparing
+  files, adding a line to a file, moving files and then `undo that`, what YBM remembers about the person and forgetting it, saving and running a
+  workflow from the chat, honest "I can't" answers, and building a small web page. Written once and run once on the code as it stands.
 - The Telegram approval message has an "Allow for this task" button under Approve and Reject. A web sign-up asks three times (go to the page, fill
   the form, click the button), which was three taps for one decision. The button grants the same kind of step for the rest of that task, with
   the dashboard's existing limits: it never widens what policy allows (the risk ceiling, scope and patterns still run first), it ends with the
@@ -38,10 +42,19 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
+- A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
+  replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
+  ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which
+  would be the wrong reading of a request to run it later. Parameters work as for a run (`run folder digest weekly with folder=Downloads`).
 - "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
   no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
   The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
   for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
+- What a message sent while a task runs *is* to that task (a status question, a change to the job, "stop", a new request, or chat) is now asked of
+  the local decision model too, in shadow: its answer is recorded next to the concierge's in the intake-decision event (`decision_kind`,
+  `final_kind`, `kind_agrees`) and decides nothing. The console's decision stats gain `kind_stats`: how often they agree and whether it has earned
+  the right to take over (at least 95% agreement on at least 100 real messages). It would replace a model call that queues behind the running task
+  with a forward pass on the CPU; until the numbers say so, the concierge keeps deciding. The question is only sent while a task runs.
 
 ### Changed
 
@@ -70,6 +83,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   as "remember that I prefer short answers" are unchanged.
 - YBM remembers who it is talking to: the first message from a Telegram sender stores `Name: <their Telegram name>` as a profile fact, so "my
   resume" has an owner. A name they state later ("my name is Oney Erge") replaces it.
+- A task that stopped and was never answered is closed quietly after a day. A blocked task is an honest "I could not do that" that was already
+  reported; left open (there were 88) it cluttered the dashboard, and a later "any update?" dug one up and quoted it back. A question nobody
+  answered stayed a live question too, so a reply days later would have been taken as its answer. After `limits.auto_close_blocked_hours`
+  (default 24, 0 keeps them) with no change, a blocked or unanswered task is cancelled the ordinary way (so its cleanup runs) and marked
+  `auto_closed` with the reason, which the dashboard can show as "Closed automatically". Nothing is sent to the person: they were told when
+  it stopped, and a message about housekeeping is noise. Asking again starts fresh. The worker checks at most every ten minutes.
 
 ### Fixed
 
@@ -129,6 +148,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
   what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
   the task as before.
+- `find_files` finds a file the Windows Search index does not cover. The index answers in milliseconds but only for what it has indexed; a hidden
+  or just-created folder (every E2E fixture lives under `.agent_control`) came back as "No file matching ... was found" even though the file was
+  there. When the index returns nothing readable, a bounded walk of the folders YBM may read looks for the name; a content search still needs the
+  index.
 - A request to submit a web form is not done until the form was submitted. "Sign me up" with the details you have on me ended with every
   field typed, a page summary as the answer, and nobody signed up: a new `form_submitted` check expects a successful click (or a fill
   that asked to submit) after the first fill when the request says submit, sign up, register or apply on a web page, and the model is told

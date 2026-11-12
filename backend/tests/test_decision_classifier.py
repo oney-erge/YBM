@@ -48,9 +48,11 @@ def _opinion(route: IntentRoute, confidence: float) -> DecisionOpinion:
 class _Client:
     def __init__(self, opinion: DecisionOpinion | None = None, error: Exception | None = None) -> None:
         self.opinion, self.error, self.calls = opinion, error, 0
+        self.asked_kind = None
 
-    async def route_of(self, text: str) -> DecisionOpinion:
+    async def route_of(self, text: str, *, with_kind: bool = False) -> DecisionOpinion:
         self.calls += 1
+        self.asked_kind = with_kind
         if self.error is not None:
             raise self.error
         return self.opinion
@@ -460,3 +462,95 @@ def test_the_decision_model_is_off_by_default_and_local_only() -> None:
 def test_a_misspelled_route_in_the_config_is_rejected() -> None:
     with pytest.raises(ValidationError):
         DecisionConfig(cascade_routes=["filesystem.manager"])
+
+
+
+# --- the mid-task kind, asked in shadow only ----------------------------------------------------------------
+
+from agent_control.llm.decision import KIND_QUESTION, MESSAGE_KINDS, kind_of_classification, summarize_kinds  # noqa: E402
+
+
+def _kind_opinion(kind: str, confidence: float = 0.97) -> DecisionOpinion:
+    return DecisionOpinion(IntentRoute.STATUS, 0.9, {"status": 0.9}, 9.0, kind=kind, kind_confidence=confidence)
+
+
+def _classification(*, steers=False, task_type=TaskType.OTHER, route=IntentRoute.FILESYSTEM_MANAGE) -> MessageClassification:
+    return MessageClassification(
+        is_task=route != IntentRoute.CONVERSATION, task_type=task_type, confidence=0.97, reason="x", steers_active_task=steers,
+        intent=OrchestrationIntent(route=route, reasoning="x", objective="x"),
+    )
+
+
+def test_the_concierges_decision_is_put_in_the_same_words_as_the_kinds() -> None:
+    assert kind_of_classification(_classification(steers=True)) == "steer"
+    assert kind_of_classification(_classification(task_type=TaskType.STATUS_REQUEST, route=IntentRoute.STATUS)) == "status"
+    assert kind_of_classification(_classification(route=IntentRoute.STATUS)) == "status"
+    assert kind_of_classification(_classification(route=IntentRoute.CONVERSATION)) == "chat"
+    assert kind_of_classification(_classification()) == "new"
+    assert set(MESSAGE_KINDS) == {"status", "steer", "stop", "new", "chat"} and KIND_QUESTION["criteria"] == MESSAGE_KINDS
+
+
+@pytest.mark.asyncio
+async def test_a_message_during_a_running_task_also_asks_the_kind_and_records_it_beside_the_concierges(tmp_path) -> None:
+    client = _Client(_kind_opinion("status"))
+    classifier, concierge = _make_busy("decision", client, lambda message: True, tmp_path=tmp_path)
+    await classifier.classify(_message("how is it going?"))
+    payload = _events(tmp_path)[0].payload
+    assert client.asked_kind is True
+    assert payload["decision_kind"] == "status" and payload["decision_kind_confidence"] == 0.97
+    assert payload["final_kind"] == "new" and payload["kind_agrees"] is False
+    assert concierge.calls == 1 and payload["used"] is False  # recorded, never acted on
+
+
+@pytest.mark.asyncio
+async def test_with_no_task_running_the_kind_is_not_asked(tmp_path) -> None:
+    client = _Client(_opinion(IntentRoute.FILESYSTEM_MANAGE, 0.99))
+    classifier, _ = _make_busy("shadow", client, lambda message: False, tmp_path=tmp_path)
+    await classifier.classify(_message("what is in Downloads?"))
+    payload = _events(tmp_path)[0].payload
+    assert payload["decision_kind"] is None and payload["final_kind"] is None and payload["kind_agrees"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_client_asks_for_the_kind_only_when_told_to_and_reads_it() -> None:
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        body = json.loads(request.content)
+        seen.append(sorted(body["questions"]))
+        answers = {"route": {"choice": "status", "confidence": 0.9, "probabilities": {"status": 0.9}}}
+        if "kind" in body["questions"]:
+            answers["kind"] = {"choice": "steer", "confidence": 0.88, "probabilities": {"steer": 0.88, "status": 0.07}}
+        return httpx.Response(200, json={"answers": answers})
+
+    client = _client(handler)
+    plain = await client.route_of("hi")
+    kinded = await client.route_of("make it five", with_kind=True)
+    assert seen == [["ability", "route"], ["ability", "kind", "route"]]
+    assert plain.kind is None and (kinded.kind, kinded.kind_confidence) == ("steer", 0.88)
+
+
+@pytest.mark.asyncio
+async def test_a_kind_that_is_not_one_of_the_five_is_ignored() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"answers": {
+            "route": {"choice": "status", "confidence": 0.9, "probabilities": {"status": 0.9}},
+            "kind": {"choice": "banana", "confidence": 0.99}}})
+
+    opinion = await _client(handler).route_of("hi", with_kind=True)
+    assert opinion.kind is None and opinion.kind_confidence is None
+
+
+def test_the_kind_is_ready_to_take_over_only_with_enough_agreeing_messages() -> None:
+    def rows(agree, disagree):
+        return ([{"decision_kind": "status", "final_kind": "status", "kind_agrees": True, "text": "ok"}] * agree
+                + [{"decision_kind": "status", "final_kind": "new", "kind_agrees": False, "text": "hmm"}] * disagree)
+
+    assert summarize_kinds(rows(99, 0))["ready"] is False and summarize_kinds(rows(99, 0))["needs_more_messages"] == 1
+    assert summarize_kinds(rows(95, 5))["ready"] is True and summarize_kinds(rows(95, 5))["agreement"] == 0.95
+    assert summarize_kinds(rows(90, 10))["ready"] is False
+    empty = summarize_kinds([])
+    assert empty["compared"] == 0 and empty["agreement"] is None and empty["ready"] is False
+    assert summarize_kinds(rows(1, 1))["disagreements"] == [{"text": "hmm", "decision_kind": "status", "llm_kind": "new"}]
