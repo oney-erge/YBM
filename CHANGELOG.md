@@ -94,6 +94,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `schedule.manage list`, `memory.manage list` and the artifact list returned only a count to the model ("Found 35 schedule(s)."), so
   "what do I have scheduled?" was asked for again and again until the task was blocked. Each now lists its items in the text the model
   reads, and the schedule list leaves out deleted schedules, which it counted before.
+- A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
