@@ -54,6 +54,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   as "remember that I prefer short answers" are unchanged.
 - YBM remembers who it is talking to: the first message from a Telegram sender stores `Name: <their Telegram name>` as a profile fact, so "my
   resume" has an owner. A name they state later ("my name is Oney Erge") replaces it.
+- A task that stopped and was never answered is closed quietly after a day. A blocked task is an honest "I could not do that" that was already
+  reported; left open (there were 88) it cluttered the dashboard, and a later "any update?" dug one up and quoted it back. A question nobody
+  answered stayed a live question too, so a reply days later would have been taken as its answer. After `limits.auto_close_blocked_hours`
+  (default 24, 0 keeps them) with no change, a blocked or unanswered task is cancelled the ordinary way (so its cleanup runs) and marked
+  `auto_closed` with the reason, which the dashboard can show as "Closed automatically". Nothing is sent to the person: they were told when
+  it stopped, and a message about housekeeping is noise. Asking again starts fresh. The worker checks at most every ten minutes.
 
 ### Fixed
 
