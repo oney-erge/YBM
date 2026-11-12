@@ -468,6 +468,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
             else None
         ),
         "operator_max_steps": settings.operator.max_steps,
+        "auto_close_blocked_hours": settings.limits.auto_close_blocked_hours,
         "fulfillment_mode": settings.operator.fulfillment_mode,
         "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
         "scope_tools": settings.operator.scope_tools,

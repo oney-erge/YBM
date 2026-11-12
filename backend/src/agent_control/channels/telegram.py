@@ -21,6 +21,7 @@ from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
 from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
+from agent_control.channels.chat_commands import chat_command_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
@@ -543,6 +544,9 @@ class TelegramIntakeService:
                 workflow_reply = workflow_command_reply(self.repositories, self.audit, inbound, conversation_id)
                 if workflow_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=workflow_reply)
+                command_reply = chat_command_reply(self.repositories, inbound, conversation_id)
+                if command_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=command_reply)
                 clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
                 if clarify_response is not None:
                     return ChannelUpdateResult(
