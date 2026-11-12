@@ -291,7 +291,8 @@ def describe_manifest(data: dict[str, Any]) -> str:
     for kind, verb in (("move", "move"), ("copy", "copy")):
         if counts[kind]:
             folders = sorted(groups[kind])
-            shown = ", ".join(folders[:6]) + (f" and {len(folders) - 6} more" if len(folders) > 6 else "")
+            # "and 1 more" is longer than the one name it hides: list up to seven, then abbreviate.
+            shown = ", ".join(folders) if len(folders) <= 7 else ", ".join(folders[:6]) + f" and {len(folders) - 6} more"
             where = f"into {folders[0]}" if len(folders) == 1 else f"into {len(folders)} folders: {shown}"
             parts.append(f"{verb} {_files(counts[kind])} {where}")
     if counts["rename"]:

@@ -100,3 +100,13 @@ def test_the_console_approval_for_a_manifest_says_the_same():
     moves = [{"operation": "move", "source": "/home/sam/Downloads/a.pdf", "destination": "/home/sam/Downloads/documents/a.pdf"}]
     assert manage.approval_reason({"operation": "apply_manifest", "manifest": moves}) == "Move 1 file in Downloads into documents."
     assert manage.approval_reason({"operation": "write_text_file", "path": "x.txt"}) is None
+
+
+def test_a_manifest_names_up_to_seven_folders():
+    def moves(count):
+        return [{"operation": "move", "source": f"/d/Downloads/f{n}.x", "destination": f"/d/Downloads/k{n}/f{n}.x"} for n in range(count)]
+
+    seven = describe_action("filesystem.manage", {"operation": "apply_manifest", "manifest": moves(7)})
+    assert seven.endswith("k0, k1, k2, k3, k4, k5, k6") and "more" not in seven
+    nine = describe_action("filesystem.manage", {"operation": "apply_manifest", "manifest": moves(9)})
+    assert nine.endswith("k0, k1, k2, k3, k4, k5 and 3 more")

@@ -1,12 +1,24 @@
 # Screenshots
 
-`demo.gif` is the README's opening demo, recorded in scripted mode (below).
+`demo.gif` is the README's opening demo: a real run, replayed. Qwen3.5 9B (on
+a laptop GPU through llama.cpp) organized a sample Downloads folder of 24
+placeholder files in 44 seconds. YBM logged every model call of that run, and
+[`demo-run.json`](demo-run.json) holds them: each prompt, the model's exact
+response, and how long it took. For the recording,
+[`scripts/replay_model_server.py`](../../scripts/replay_model_server.py) serves
+those responses as the model, each after its recorded time. Everything else is
+live: YBM, its tools, the files it moves, the approval, the console. A response
+is served only in the situation it was recorded in (its role and the steps
+taken before it), so the replay cannot show a run that went another way.
 
-Live mode records a real run instead: a local model organizes a sample
-Downloads folder, nothing in the console is mocked, and the phone beside it is
-a plain chat view of the same approval (no real account). Tapping Approve there
-approves it through the console's API. The model's thinking is played faster,
-with the speed marked on the frame, and a clock above the phone shows real time.
+The phone beside the console is a plain chat view of the same approval (no
+real account); tapping Approve there approves it through the console's API.
+Long model waits play faster, with the speed marked on the frame, and a clock
+above the phone shows real time.
+
+A replay keeps the GIF reproducible without a GPU: a shared or busy GPU made
+the same model 20 times slower in a direct live take, which would misstate how
+long the work takes.
 
 ## Regenerating demo.gif
 
@@ -24,6 +36,18 @@ cd frontend
 YBM_RECORD_DEMO=1 YBM_DEMO_LIVE_URL=http://127.0.0.1:8765/admin/ \
   YBM_DEMO_CAPTION="A real run: <model> on <hardware>. ..." npx playwright test demo.spec.ts
 cd .. && backend/.venv/Scripts/python scripts/make_demo_gif.py
+```
+
+For the committed GIF, the model is the replay of `demo-run.json`: serve it,
+point the instance's model profile's `base_url` at `http://127.0.0.1:8781/v1`,
+start from an empty database and a sample folder holding the same 24 files,
+and record live as above. To replay a new run instead, export it from the
+database it ran in:
+
+```
+python scripts/replay_model_server.py serve docs/screenshots/demo-run.json --port 8781
+python scripts/replay_model_server.py export .agent_control/agent_control.db <task id> \
+  docs/screenshots/demo-run.json --replace "<your sample home>=C:\Users\sam"
 ```
 
 **Scripted** mocks every API response, so it costs nothing, needs no model, and
