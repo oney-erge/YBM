@@ -193,6 +193,7 @@ class PostconditionType(StrEnum):
     TASK_STATUS = "task_status"
     GITHUB_PR = "github_pr"
     EXTERNAL_COMMAND = "external_command"
+    FORM_SUBMITTED = "form_submitted"
 
 
 class AuditEventType(StrEnum):
