@@ -28,6 +28,7 @@ from agent_control.orchestration.fulfillment import (
 from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
+from agent_control.channels.undo_command import undo_moves_from_output
 from agent_control.orchestration.signals import sweep_expired_approvals
 from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
@@ -1073,6 +1074,7 @@ class TaskWorker:
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_path_relative_to_a_listed_root(tool_name, tool_input, history)
+        tool_input = _filesystem_append_when_asked(latest, tool_name, tool_input)
         tool_input = _filesystem_overwrite_when_asked_to_change(latest, tool_name, tool_input)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
@@ -2568,6 +2570,11 @@ class TaskWorker:
             metadata["preview_url"] = output["preview_url"]
         elif tool_name == "workspace.manage" and output.get("url"):
             metadata["preview_url"] = output["url"]
+        if tool_name == "filesystem.manage" and output.get("operation") == "apply_manifest":
+            # Where every moved file came from, so "undo that" can put them back (channels/undo_command.py).
+            undo = undo_moves_from_output(output)
+            if undo is not None:
+                metadata["undo_moves"] = undo
         if tool_name == "artifact.deliver":
             metadata["artifact_delivery"] = output
             if output.get("artifact_id"):
@@ -2833,6 +2840,39 @@ _RECENCY_INTENT = re.compile(
 _CHANGE_INTENT = re.compile(r"\b(?:change|update|edit|modify|replace|overwrite|rewrite|revise|correct)\b", re.IGNORECASE)
 
 
+_APPEND_INTENT = re.compile(
+    r"\bappend\b|\b(?:on|in|as|onto)\s+(?:a\s+|the\s+)?(?:new|next|separate|second|another)\s+line\b"
+    r"|\b(?:at|to)\s+the\s+(?:end|bottom|back)\b|\badd\s+(?:one\s+more|another|a\s+new|a)\s+(?:line|entry|item|row)\b|\bunderneath\b",
+    re.IGNORECASE,
+)
+
+
+def _filesystem_append_when_asked(
+    task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]
+) -> dict[str, Any]:
+    """Add to the end of a file that exists when the request says to add to it.
+
+    "Add the word pears on a new line" wrote list_2.txt: write_text_file saves a copy when the path exists, and there was no
+    way to add to a file. Only a request that says to append (or to add on a new line, at the end, underneath) and only a path
+    that exists turns `append` on. A model that sends the whole file again (the old text plus the new line) meant to replace it,
+    so that is written over instead of doubling the old lines."""
+    if tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file":
+        return tool_input
+    if tool_input.get("append") or tool_input.get("overwrite"):
+        return tool_input
+    path = str(tool_input.get("path") or "").strip()
+    if not path or not Path(path).is_file() or not _APPEND_INTENT.search(_users_own_words(task)):
+        return tool_input
+    try:
+        existing = Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return tool_input
+    content = str(tool_input.get("content") or "")
+    if existing and content.strip().startswith(existing):
+        return {**tool_input, "overwrite": True}
+    return {**tool_input, "append": True}
+
+
 def _filesystem_overwrite_when_asked_to_change(
     task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]
 ) -> dict[str, Any]:
@@ -2843,7 +2883,10 @@ def _filesystem_overwrite_when_asked_to_change(
     original (still "hello") and repeated the same call until the task was blocked. Only a request that names a change, and only
     a path that exists, turns overwrite on.
     """
-    if tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file" or tool_input.get("overwrite"):
+    if (
+        tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file"
+        or tool_input.get("overwrite") or tool_input.get("append")
+    ):
         return tool_input
     path = str(tool_input.get("path") or "").strip()
     if not path or not Path(path).is_file():

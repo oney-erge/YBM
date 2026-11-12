@@ -20,6 +20,7 @@ from agent_control.config_sync import read_env_value
 from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
+from agent_control.channels.undo_command import undo_command_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
@@ -539,6 +540,9 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=plain_response,
                     )
+                undo_reply = undo_command_reply(self.repositories, self.audit, inbound, conversation_id)
+                if undo_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=undo_reply)
                 workflow_reply = workflow_command_reply(self.repositories, self.audit, inbound, conversation_id)
                 if workflow_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=workflow_reply)
