@@ -101,6 +101,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
+- An app is not called done until the launched page offers what the person said they would enter. Asked for "a web app that scales a recipe: I
+  enter ingredient amounts and the number of servings", a live run launched a page with two servings fields and a fixed example recipe, and the
+  person had nowhere to type an ingredient. After a launch YBM now fetches the page and lists its fields and buttons in the launch result ("Page
+  check: 2 field(s) (Original Servings:, Target Servings) and 1 button(s). The request says the user enters ingredient amounts, but no field on
+  the page is named for it"), and a new `page_matches_request` completion check compares every thing the request says the user enters with
+  those labels, whatever the classifier declared. A page with a free-text area is never faulted, a request that states nothing to enter is not
+  judged, and an app built another way (no page record) is not blocked.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
   "what is the total on the receipt?" got the whole file back as its answer.
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with

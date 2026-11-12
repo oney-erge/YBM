@@ -2568,6 +2568,9 @@ class TaskWorker:
             metadata["preview_url"] = output["preview_url"]
         elif tool_name == "workspace.manage" and output.get("url"):
             metadata["preview_url"] = output["url"]
+        if tool_name == "workspace.manage" and isinstance(output.get("page_controls"), dict):
+            # What the launched page actually offers, read back from the page (tools/page_check.py); a relaunch replaces it.
+            metadata["page_controls"] = output["page_controls"]
         if tool_name == "artifact.deliver":
             metadata["artifact_delivery"] = output
             if output.get("artifact_id"):
