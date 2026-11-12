@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 import sys
 
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -41,6 +41,17 @@ HOLDS = [
     ("done", 1.4, 1800),
     ("end", 0.0, 1200),
 ]
+
+# A live recording (demo.spec.ts with YBM_DEMO_LIVE_URL) waits on a real model: from the request
+# to the approval, and from the approval to the answer. Waits longer than FAST_MIN_SECONDS play
+# faster, from a little after the first mark to a little before the second: FAST times, or more
+# when that would still take longer than FAST_MAX_SECONDS on screen. The speed is shown on the
+# frame, and the stage's own clock keeps showing real time. The scripted recording has no wait
+# that long, so its GIF is unchanged.
+FAST = 8
+FAST_MIN_SECONDS = 4.0
+FAST_MAX_SECONDS = 4.0
+FAST_SPANS = [("sent", 1.5, "approval", -0.5), ("approved", 1.0, "done", -0.5)]
 
 
 def load() -> tuple[list[dict], dict[str, float]]:
@@ -84,12 +95,49 @@ def build_palette(sheet: Image.Image, accents: int = 40) -> Image.Image:
     return palette
 
 
+def fast_spans(marks: dict[str, float]) -> list[tuple[float, float, int]]:
+    """(start, stop, speed) of each long wait."""
+    spans = []
+    for first, after, second, before in FAST_SPANS:
+        if first in marks and second in marks:
+            start, stop = marks[first] + after, marks[second] + before
+            if stop - start >= FAST_MIN_SECONDS:
+                spans.append((start, stop, max(FAST, round((stop - start) / FAST_MAX_SECONDS))))
+    return spans
+
+
+def speed_at(spans: list[tuple[float, float, int]], t: float) -> int:
+    return next((speed for start, stop, speed in spans if start <= t < stop), 1)
+
+
+def badge(image: Image.Image, text: str) -> Image.Image:
+    """The playback speed, in a pill at the top left of the frame."""
+    marked = image.copy()
+    draw = ImageDraw.Draw(marked)
+    try:
+        font = ImageFont.truetype("segoeuib.ttf", 15)
+    except OSError:
+        font = ImageFont.load_default(size=15)
+    left, top, right, bottom = draw.textbbox((0, 0), text, font=font)
+    x, y = 14, 8
+    draw.rounded_rectangle((x, y, x + right - left + 20, y + bottom - top + 12), radius=9, fill=(245, 197, 66))
+    draw.text((x + 10 - left, y + 6 - top), text, font=font, fill=(20, 22, 30))
+    return marked
+
+
 def main() -> int:
     times, marks = load()
     starts = [frame["t"] for frame in times]
     end = marks.get("end", starts[-1])
     step = 1.0 / FPS
-    samples = [k * step for k in range(int(end / step) + 1)]
+    spans = fast_spans(marks)
+    samples: list[float] = []
+    speeds: dict[float, int] = {}
+    t = 0.0
+    while t <= end:
+        samples.append(t)
+        speeds[t] = speed_at(spans, t)
+        t += step * speeds[t]
     holds = {}
     for mark, after, extra in HOLDS:
         at = min(samples, key=lambda s: abs(s - (marks[mark] + after)))
@@ -100,16 +148,17 @@ def main() -> int:
     for t in samples:
         path = frame_at(times, starts, t)
         duration = round(1000 * step) + holds.get(t, 0)
-        if path == previous and not holds.get(t):
+        speed = speeds[t]
+        if (path, speed) == previous and not holds.get(t):
             durations[-1] += duration  # nothing changed on screen: lengthen the last frame
             continue
         if path not in cache:
             image = Image.open(path).convert("RGB")
             height = round(image.height * TARGET_WIDTH / image.width)
             cache[path] = image.resize((TARGET_WIDTH, height), Image.LANCZOS)
-        images.append(cache[path])
+        images.append(badge(cache[path], f"{speed}x speed") if speed > 1 else cache[path])
         durations.append(duration)
-        previous = path
+        previous = (path, speed)
 
     # One palette for the whole GIF, taken from the frames where the most is on screen (the
     # approval and the receipt): frames that share it compress far better than per-frame ones,
