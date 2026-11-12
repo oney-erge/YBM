@@ -9,6 +9,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
+- A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
+  library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
+  (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
+  YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+  Files kept only in OneDrive (not downloaded) are marked `[online only]`, and reading one says so instead of "File is not a
+  zip file"; a live run had reported the user's own resume as corrupted.
 - Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
@@ -53,6 +59,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
+- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
   all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
   The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
@@ -88,6 +95,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `schedule.manage list`, `memory.manage list` and the artifact list returned only a count to the model ("Found 35 schedule(s)."), so
   "what do I have scheduled?" was asked for again and again until the task was blocked. Each now lists its items in the text the model
   reads, and the schedule list leaves out deleted schedules, which it counted before.
+- A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
