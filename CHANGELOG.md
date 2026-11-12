@@ -19,6 +19,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- The Telegram approval message has an "Allow for this task" button under Approve and Reject. A web sign-up asks three times (go to the page, fill
+  the form, click the button), which was three taps for one decision. The button grants the same kind of step for the rest of that task, with
+  the dashboard's existing limits: it never widens what policy allows (the risk ceiling, scope and patterns still run first), it ends with the
+  task, and it covers 200 calls at most. A batch approval now decides every call in it from the button too, where before only the batch itself
+  was decided and the calls were left pending.
 - Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
 - `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
   writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
@@ -33,6 +38,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+- A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
+  single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a
+  task of the conversation is running the summary is the heuristic one; the next message after the task re-summarizes with the model.
 - What YBM says in a chat now reads like a person wrote it. A new text pass (`human_text.py`) rewrites every task message before it
   is sent: a path becomes the file name and a place ("resume.docx (in OneDrive)"), a task id becomes "an earlier task", a
   `[file] name (123 bytes)` listing becomes a short list capped at eight names with "...and 22 more", and a reason code becomes a
