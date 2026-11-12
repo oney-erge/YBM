@@ -12,6 +12,8 @@ import re
 import zipfile
 from pathlib import Path
 
+from agent_control.tools.path_utils import ONLINE_ONLY_MESSAGE, is_online_only
+
 MAX_MEMBER_BYTES = 8 * 1024 * 1024  # a larger member is skipped, so a zip bomb cannot fill memory
 MAX_MEMBERS = 500
 MAX_ROWS = 2000
@@ -108,6 +110,8 @@ def office_text(path: Path) -> str | None:
     suffix = path.suffix.lower()
     if suffix not in SUFFIXES:
         return None
+    if is_online_only(path):
+        raise ValueError(ONLINE_ONLY_MESSAGE.format(name=path.name))
     try:
         with zipfile.ZipFile(path) as archive:
             if suffix == ".docx":

@@ -74,6 +74,7 @@ CAPABILITY_MINIMUM_RISKS: dict[Capability, RiskLevel] = {
     Capability.GITHUB_PUSH: RiskLevel.CRITICAL,
     Capability.DEPENDENCIES_INSTALL: RiskLevel.HIGH,
     Capability.MEMORY_MANAGE: RiskLevel.LOW,
+    Capability.SYSTEM_INVENTORY: RiskLevel.LOW,
 }
 
 
@@ -85,6 +86,9 @@ class ToolDefinition:
     description: str
     operations: tuple[str, ...] = ()
     lifecycle: str = "runtime"
+    # False for a tool added after the recorded scenario fixtures were made: while it is switched off the prompt
+    # does not name it, so a prompt a fixture was recorded against stays byte-for-byte the same.
+    named_when_disabled: bool = True
     input_schema: type[BaseModel] | None = None
     operation_schemas: dict[str, type[BaseModel]] | None = None
     output_schema: type[BaseModel] | None = None
@@ -252,7 +256,7 @@ class ToolRegistry:
         * `lifecycle=...` on every row, which no prompt rule refers to.
         """
         enabled = [definition for definition in self.definitions if definition.enabled]
-        disabled = [definition for definition in self.definitions if not definition.enabled]
+        disabled = [definition for definition in self.definitions if not definition.enabled and definition.named_when_disabled]
         lines = ["Available worker tools:"]
         for definition in enabled:
             operations = f" operations={','.join(definition.operations)}" if definition.operations else ""
