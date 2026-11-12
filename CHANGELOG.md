@@ -25,6 +25,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   task, and it covers 200 calls at most. A batch approval now decides every call in it from the button too, where before only the batch itself
   was decided and the calls were left pending.
 - Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
+- `are my coding agents working?` (also `check codex`, `can you use codex?`) answers in a second without spending any quota: whether `codex` and
+  `claude` are installed, their versions, and the model Codex is configured to use, so a Codex config that names a model the plan cannot use is
+  visible before a task is queued on it (it cannot prove the plan allows the model; only a run can, and the reply says so).
 - Three things to say to the assistant about itself, instantly and without a model call: `what apps are running?` lists the apps YBM started that
   still answer (by the name of the page and its address), `stop the recipe app` stops one (only after checking that the process with the recorded id
   is still the static server it started, so a reused id is never killed), `what do you know about me?` shows the remembered profile and rules, and
