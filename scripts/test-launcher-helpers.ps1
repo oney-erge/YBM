@@ -71,4 +71,19 @@ try {
   Stop-YbmProcessTree -ProcessId $server.Id
   Remove-Item -LiteralPath $localDeploy -Recurse -Force -ErrorAction SilentlyContinue
 }
+# 5. Only this checkout's services are orphans to stop: the base interpreter a venv launcher starts
+#    is matched through its parent, and another checkout's YBM is left alone.
+$here = "C:\Users\sam\YBM"
+$backendPatterns = @("run_backend.ps1", "agent_control.serve_backend", "uvicorn agent_control.main:app")
+$launcher = "`"$here\backend\.venv\Scripts\python.exe`" -m agent_control.serve_backend"
+$baseChild = "`"C:\Users\sam\AppData\Roaming\uv\python\cpython-3.12\python.exe`" -m agent_control.serve_backend"
+Assert-That (Test-YbmServiceProcess -CommandLine $launcher -Patterns $backendPatterns -RootPath $here) "this checkout's venv launcher is matched"
+Assert-That (Test-YbmServiceProcess -CommandLine $baseChild -ParentCommandLine $launcher -Patterns $backendPatterns -RootPath $here) "its base-interpreter child is matched through the launcher"
+$otherLauncher = "`"D:\demo\ybm-venv\Scripts\python.exe`" -m agent_control.serve_backend"
+Assert-That (-not (Test-YbmServiceProcess -CommandLine $otherLauncher -Patterns $backendPatterns -RootPath $here)) "another checkout's launcher is left alone"
+Assert-That (-not (Test-YbmServiceProcess -CommandLine $baseChild -ParentCommandLine $otherLauncher -Patterns $backendPatterns -RootPath $here)) "another checkout's base-interpreter child is left alone"
+Assert-That (-not (Test-YbmServiceProcess -CommandLine $baseChild -Patterns $backendPatterns -RootPath $here)) "a child whose parent is gone is not guessed at"
+$scriptLaunch = "powershell -File `"$here\scripts\services\run_backend.ps1`""
+Assert-That (Test-YbmServiceProcess -CommandLine $scriptLaunch -Patterns $backendPatterns -RootPath $here) "this checkout's service script is matched"
+
 Write-Host "All launcher helper checks passed."
