@@ -116,3 +116,57 @@ def test_other_channels_are_left_alone(chat):
     repos, audit, conv = chat
     inbound = InboundMessage(channel=ChannelType.WHATSAPP, chat_id="42", sender_id="1", text="list my workflows", kind=MessageKind.TEXT)
     assert workflow_command_reply(repos, audit, inbound, conv) is None
+
+
+# ---- scheduling a saved workflow from the chat -------------------------------------------------------------
+
+def _saved(chat, name="steam count", parameters=None, plan=None):
+    repos, audit, conv = chat
+    source = _finished(repos, conv)
+    plan = plan or [{"tool_name": "system.inventory", "tool_input": {"operation": "steam_games"}}]
+    return repos.workflows.create(TaskWorkflow(
+        name=name, source_task_id=source.id, objective_template="x", plan=plan, parameters=parameters or []))
+
+
+def test_a_workflow_can_be_scheduled_on_an_interval(chat):
+    repos, audit, conv = chat
+    workflow = _saved(chat)
+    reply = _say(repos, audit, conv, "run steam count every 2 days")
+    assert reply.text.startswith('Scheduled "steam count" to run every 2 days. The first run is ')
+    schedule = repos.schedules.list_recent()[0]
+    assert schedule.cadence == "every 2 days" and schedule.source_chat_id == "42"
+    assert schedule.objective == "steam count (scheduled workflow)"
+    assert schedule.metadata["workflow_id"] == workflow.id and schedule.metadata["replay_plan"][0]["tool_name"] == "system.inventory"
+
+
+@pytest.mark.parametrize("phrase, cadence", [("daily", "daily"), ("weekly", "weekly"), ("every day", "every day"), ("every 3 hours", "every 3 hours")])
+def test_the_cadences_the_scheduler_accepts(chat, phrase, cadence):
+    repos, audit, conv = chat
+    _saved(chat)
+    assert _say(repos, audit, conv, f"run steam count {phrase}").text.startswith(f'Scheduled "steam count" to run {cadence}.')
+
+
+def test_a_weekday_or_a_time_of_day_is_explained_and_nothing_runs(chat):
+    repos, audit, conv = chat
+    _saved(chat)
+    before = {t.id for t in repos.tasks.list_recent(50)}
+    for phrase in ("run steam count every Monday at 9", "run steam count weekdays", "run steam count at 9am"):
+        reply = _say(repos, audit, conv, phrase)
+        assert "not on a particular weekday or at a time of day yet" in reply.text and "run steam count every 2 days" in reply.text
+    assert {t.id for t in repos.tasks.list_recent(50)} == before  # not run now either
+
+
+def test_scheduling_a_workflow_with_parameters_asks_for_them(chat):
+    repos, audit, conv = chat
+    _saved(chat, name="folder digest", parameters=["folder"],
+           plan=[{"tool_name": "filesystem.manage", "tool_input": {"operation": "inspect_folder", "root": "{{folder}}"}}])
+    assert "needs folder" in _say(repos, audit, conv, "run folder digest weekly").text
+    ok = _say(repos, audit, conv, "run folder digest weekly with folder=Downloads")
+    assert ok.text.startswith('Scheduled "folder digest" to run weekly.')
+
+
+def test_scheduling_something_that_is_not_a_workflow_is_left_alone(chat):
+    repos, audit, conv = chat
+    _saved(chat)
+    assert _say(repos, audit, conv, "run the tests daily") is None
+    assert _say(repos, audit, conv, "remind me to stretch every 2 hours") is None

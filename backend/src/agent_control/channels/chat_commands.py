@@ -18,6 +18,7 @@ import subprocess
 from typing import Any
 from urllib.parse import urlparse
 
+from agent_control.channels.agent_check import agent_check_reply
 from agent_control.schemas import ChannelType, InboundMessage, OutboundMessage, TaskRecord
 from agent_control.storage.repositories import Repositories
 from agent_control.tools.page_check import fetch_page
@@ -195,4 +196,8 @@ def chat_command_reply(
     text = (inbound.text or "").strip()
     if not text or len(text) > 120 or inbound.channel != ChannelType.TELEGRAM:
         return None
-    return _memory_command(repositories, inbound, text) or _app_command(repositories, inbound, conversation_id, text)
+    return (
+        _memory_command(repositories, inbound, text)
+        or _app_command(repositories, inbound, conversation_id, text)
+        or agent_check_reply(inbound)
+    )
