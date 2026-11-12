@@ -92,7 +92,7 @@ def test_find_files_filters_by_extension(files):
 def test_find_files_says_when_matches_are_out_of_bounds(files, monkeypatch):
     monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [
         {"path": str(files.secret / "resume-private.docx"), "size_bytes": 2, "modified": None}])
-    result = _run(SystemInventoryAdapter([str(files.readable)]), operation="find_files", query="resume")
+    result = _run(SystemInventoryAdapter([str(files.readable)]), operation="find_files", query="resume-private")
     assert result.output["count"] == 0
     assert "1 matches are in folders I am not allowed to read" in result.output["summary"]
 
@@ -234,3 +234,41 @@ def test_a_local_file_is_not_online_only(tmp_path):
     local.write_text("x")
     assert is_online_only(local) is False
     assert is_online_only(tmp_path / "missing.txt") is False
+
+
+def test_a_file_the_index_does_not_cover_is_still_found_by_name(tmp_path, monkeypatch):
+    """The index answered (with nothing) because a hidden or just-created folder is not indexed yet."""
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [])
+    hidden = tmp_path / ".agent_control" / "fixtures"
+    hidden.mkdir(parents=True)
+    (tmp_path / "plain").mkdir()
+    (tmp_path / "plain" / "quarterly-report.docx").write_text("x")
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="quarterly-report")
+    assert [i["name"] for i in result.output["items"]] == ["quarterly-report.docx"]
+    assert result.output["source"] == "a search of the folders I can read"
+
+
+def test_when_the_index_has_the_answer_the_walk_is_not_run(tmp_path, monkeypatch):
+    path = str(tmp_path / "a-report.docx")
+    (tmp_path / "a-report.docx").write_text("x")
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [{"path": path, "size_bytes": 1, "modified": None}])
+
+    def boom(*args, **kwargs):
+        raise AssertionError("the walk must not run when the index answered")
+
+    monkeypatch.setattr(system_inventory, "walk_search", boom)
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="report")
+    assert result.output["source"] == "the Windows Search index"
+
+
+def test_nothing_anywhere_still_says_nothing_was_found(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [])
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="does-not-exist-anywhere")
+    assert result.output["count"] == 0 and "No file matching 'does-not-exist-anywhere' was found" in result.output["summary"]
+
+
+def test_a_content_search_does_not_fall_back_to_a_name_walk(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [])
+    (tmp_path / "invoice.txt").write_text("cardamom")
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="cardamom", match="content")
+    assert result.output["count"] == 0
