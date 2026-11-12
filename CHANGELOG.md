@@ -109,6 +109,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
   what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
   the task as before.
+- `find_files` finds a file the Windows Search index does not cover. The index answers in milliseconds but only for what it has indexed; a hidden
+  or just-created folder (every E2E fixture lives under `.agent_control`) came back as "No file matching ... was found" even though the file was
+  there. When the index returns nothing readable, a bounded walk of the folders YBM may read looks for the name; a content search still needs the
+  index.
 - A request to submit a web form is not done until the form was submitted. "Sign me up" with the details you have on me ended with every
   field typed, a page summary as the answer, and nobody signed up: a new `form_submitted` check expects a successful click (or a fill
   that asked to submit) after the first fill when the request says submit, sign up, register or apply on a web page, and the model is told
