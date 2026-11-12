@@ -283,7 +283,7 @@ class TaskWorker:
         self.operator = operator
         self.operator_max_steps = operator_max_steps
         self.auto_close_blocked_hours = auto_close_blocked_hours
-        self._last_stale_sweep = 0.0
+        self._last_stale_sweep: float | None = None  # the first poll sweeps (monotonic time can be small on a fresh boot)
         # The Auditor (docs/archive/HISTORY.md P3 §2.1) - grounds a `done` decision
         # against raw tool output before letting it complete. Optional: a
         # worker with no auditor configured skips straight to the
@@ -471,7 +471,7 @@ class TaskWorker:
         if self.auto_close_blocked_hours <= 0:
             return []
         now = time.monotonic()
-        if now - self._last_stale_sweep < STALE_SWEEP_INTERVAL_SECONDS:
+        if self._last_stale_sweep is not None and now - self._last_stale_sweep < STALE_SWEEP_INTERVAL_SECONDS:
             return []
         self._last_stale_sweep = now
         try:
