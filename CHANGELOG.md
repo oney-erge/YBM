@@ -19,6 +19,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- A third held-out suite of 16 open-ended requests (`--suite heldout3`, ids `h3_*`, frozen by a recorded hash like the second): the number of Steam
+  games and free disk space (computed on the machine at fixture time, never typed in), finding a file by name, what a document is about, comparing
+  files, adding a line to a file, moving files and then `undo that`, what YBM remembers about the person and forgetting it, saving and running a
+  workflow from the chat, honest "I can't" answers, and building a small web page. Written once and run once on the code as it stands.
 - The Telegram approval message has an "Allow for this task" button under Approve and Reject. A web sign-up asks three times (go to the page, fill
   the form, click the button), which was three taps for one decision. The button grants the same kind of step for the rest of that task, with
   the dashboard's existing limits: it never widens what policy allows (the risk ceiling, scope and patterns still run first), it ends with the
