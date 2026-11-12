@@ -19,6 +19,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- A third held-out suite of 16 open-ended requests (`--suite heldout3`, ids `h3_*`, frozen by a recorded hash like the second): the number of Steam
+  games and free disk space (computed on the machine at fixture time, never typed in), finding a file by name, what a document is about, comparing
+  files, adding a line to a file, moving files and then `undo that`, what YBM remembers about the person and forgetting it, saving and running a
+  workflow from the chat, honest "I can't" answers, and building a small web page. Written once and run once on the code as it stands.
 - The Telegram approval message has an "Allow for this task" button under Approve and Reject. A web sign-up asks three times (go to the page, fill
   the form, click the button), which was three taps for one decision. The button grants the same kind of step for the rest of that task, with
   the dashboard's existing limits: it never widens what policy allows (the risk ceiling, scope and patterns still run first), it ends with the
@@ -35,6 +39,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
+- A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
+  replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
+  ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which
+  would be the wrong reading of a request to run it later. Parameters work as for a run (`run folder digest weekly with folder=Downloads`).
 - "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
   no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
   The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
