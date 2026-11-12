@@ -92,7 +92,7 @@ def test_find_files_filters_by_extension(files):
 def test_find_files_says_when_matches_are_out_of_bounds(files, monkeypatch):
     monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [
         {"path": str(files.secret / "resume-private.docx"), "size_bytes": 2, "modified": None}])
-    result = _run(SystemInventoryAdapter([str(files.readable)]), operation="find_files", query="resume")
+    result = _run(SystemInventoryAdapter([str(files.readable)]), operation="find_files", query="resume-private")
     assert result.output["count"] == 0
     assert "1 matches are in folders I am not allowed to read" in result.output["summary"]
 
