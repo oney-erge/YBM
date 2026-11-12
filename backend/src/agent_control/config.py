@@ -258,6 +258,9 @@ class LimitsConfig(StrictBaseModel):
     # task is forcibly transitioned to FAILED so the queue keeps moving.
     # Individual tasks can override via metadata["task_budget_seconds"].
     task_budget_seconds: int = Field(default=600, ge=30)
+    # A task that stopped (blocked) or asked a question nobody answered is closed quietly after this many hours, so it stops
+    # cluttering the dashboard and being quoted back by "any update?". 0 keeps them forever.
+    auto_close_blocked_hours: int = Field(default=24, ge=0)
 
 
 class OperatorConfig(StrictBaseModel):

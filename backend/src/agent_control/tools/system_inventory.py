@@ -416,10 +416,18 @@ class SystemInventoryAdapter:
         cap = max(limit * 12, 100)
         rows = search_index(words, extensions, match, cap=cap)
         source = "the Windows Search index"
-        if rows is None:
-            rows = walk_search(self.allowed_roots, words, extensions, cap=cap) if match == "name" else []
-            source = "a search of the folders I can read"
-        readable = [r for r in rows if _inside(r["path"], self.allowed_roots)]
+        readable = [r for r in rows or [] if _inside(r["path"], self.allowed_roots)]
+        if not readable and match == "name":
+            # No index, or an index that does not cover where the file is (a hidden or just-created folder is not indexed
+            # yet): a bounded walk of the folders YBM may read finds it by name.
+            walked = walk_search(self.allowed_roots, words, extensions, cap=cap)
+            if walked:
+                rows, readable, source = walked, [r for r in walked if _inside(r["path"], self.allowed_roots)], "a search of the folders I can read"
+            elif rows is None:
+                rows, source = [], "a search of the folders I can read"
+        elif rows is None:
+            rows, source = [], "a search of the folders I can read"
+        rows = rows or []
         skipped = len(rows) - len(readable)
         tokens = self._name_tokens() if self._name_tokens else []
         items = _ranked(readable, self.allowed_roots, tokens)[:limit]

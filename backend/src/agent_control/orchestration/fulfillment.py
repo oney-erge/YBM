@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import re
 from typing import Any
 
+from agent_control.tools.page_check import PageControls, requirement_items, unmet_items
 from agent_control.schemas import PlanPostcondition, PostconditionType, TaskRecord
 
 
@@ -49,6 +50,7 @@ _POSTCONDITION_DESCRIPTIONS: dict[PostconditionType, str] = {
     PostconditionType.GITHUB_PR: "A GitHub pull request URL or number is reported.",
     PostconditionType.EXTERNAL_COMMAND: "External command completion is reported.",
     PostconditionType.FORM_SUBMITTED: "A form that was filled in was actually submitted.",
+    PostconditionType.PAGE_MATCHES_REQUEST: "The launched page has a field for each thing the request says the user enters.",
 }
 
 
@@ -135,8 +137,9 @@ def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
     # A declaration says what the classifier expected ("browser_state" for a page to open); it does not drop what the
     # words of the request already demand. A request to submit a form is not done until it is submitted, whatever
     # was declared: a live run declared only browser_state, navigated to the page and reported "signed you up".
-    if not any(item.type == PostconditionType.FORM_SUBMITTED for item in chosen):
-        chosen.extend(item for item in _dedupe(inferred) if item.type == PostconditionType.FORM_SUBMITTED)
+    for always in (PostconditionType.FORM_SUBMITTED, PostconditionType.PAGE_MATCHES_REQUEST):
+        if not any(item.type == always for item in chosen):
+            chosen.extend(item for item in _dedupe(inferred) if item.type == always)
     return tuple(chosen)
 
 
@@ -373,6 +376,14 @@ def _postconditions_from_objective(objective: str) -> list[PlanPostcondition]:
                 description="A form that was filled in was actually submitted.",
             )
         )
+    # "I enter ingredient amounts and the number of servings": the page that gets launched has to have somewhere to enter them.
+    if app_request and requirement_items(lowered):
+        expected.append(
+            PlanPostcondition(
+                type=PostconditionType.PAGE_MATCHES_REQUEST,
+                description="The launched page has a field for each thing the request says the user enters.",
+            )
+        )
     if (bool(words & {"screenshot", "screen", "desktop"}) or "what do you see" in lowered) and not _desktop_file_listing_request(
         lowered
     ):
@@ -526,6 +537,8 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
         )
     if expected == PostconditionType.FORM_SUBMITTED:
         return _form_submitted(task)
+    if expected == PostconditionType.PAGE_MATCHES_REQUEST:
+        return _page_matches_request(task)
     if expected == PostconditionType.SCHEDULE_CREATED:
         return bool(_any_value(task, metadata_keys=("schedule_id",), output_keys=("schedule_id", "task_id")))
     if expected == PostconditionType.BROWSER_STATE:
@@ -571,6 +584,17 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
     if expected == PostconditionType.EXTERNAL_COMMAND:
         return _external_command_succeeded(task)
     return False
+
+
+def _page_matches_request(task: TaskRecord) -> bool:
+    """True when every thing the user said they would enter has a field on the page that was launched.
+
+    With no record of a launched page (the app was built another way) there is nothing to compare, so it does not block."""
+    data = task.metadata.get("page_controls") if isinstance(task.metadata, dict) else None
+    if not isinstance(data, dict):
+        return True
+    said = " ".join(str(part) for part in (task.metadata.get("original_message_text"), task.objective) if part)
+    return not unmet_items(said, PageControls.from_dict(data))
 
 
 def _form_submitted(task: TaskRecord) -> bool:
@@ -763,6 +787,10 @@ def fulfillment_guidance(gap: str) -> str:
             "Call filesystem.manage organize_plan, then pass its returned manifest unchanged to apply_manifest."
         ),
         "expected_external_command_missing": "Use code.interpreter or the configured terminal tool and verify exit code 0.",
+        "expected_page_matches_request_missing": (
+            "The launched page has no field for something the request says the user enters (see the Page check line of the launch result). "
+            "Rewrite index.html with workspace.manage write_files and overwrite=true so it has those fields, then launch it again."
+        ),
         "expected_form_submitted_missing": (
             "The form was filled in but never submitted. Call browser.control with operation=click and the button's "
             "visible words in 'text' (for example \"Sign me up\"), or fill the form again with submit=true."
