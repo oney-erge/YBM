@@ -103,3 +103,18 @@ def test_the_stop_message_is_in_words_and_says_what_was_left():
     assert text.startswith("I got stuck repeating a step that had already worked (filling in a form)")
     assert text.endswith("The form was filled in but never submitted, so the sign-up is not done.")
     assert "browser.control" not in text and "operation=" not in text
+
+
+def test_a_declared_postcondition_does_not_drop_the_submission():
+    """The classifier declared only browser_state for this request in a live run; the run navigated and said it was done."""
+    task = _task(SIGN_UP, [OPEN])
+    task.metadata["expected_postconditions"] = ["browser_state"]
+    kinds = {item.type for item in expected_postconditions(task)}
+    assert kinds == {PostconditionType.BROWSER_STATE, PostconditionType.FORM_SUBMITTED}
+    assert PostconditionType.FORM_SUBMITTED in _missing(task)
+
+
+def test_a_declaration_for_another_kind_of_request_is_untouched():
+    task = _task("Open https://example.test/news and tell me the headline.", [OPEN])
+    task.metadata["expected_postconditions"] = ["browser_state"]
+    assert {item.type for item in expected_postconditions(task)} == {PostconditionType.BROWSER_STATE}

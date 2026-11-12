@@ -131,9 +131,13 @@ def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
     if isinstance(original_message, str) and original_message.strip():
         inferred.extend(_postconditions_from_objective(original_message))
     declared = _corroborated(_declared_postconditions(task), inferred)
-    if declared:
-        return tuple(_dedupe(declared))
-    return tuple(_dedupe(inferred))
+    chosen = list(_dedupe(declared)) if declared else list(_dedupe(inferred))
+    # A declaration says what the classifier expected ("browser_state" for a page to open); it does not drop what the
+    # words of the request already demand. A request to submit a form is not done until it is submitted, whatever
+    # was declared: a live run declared only browser_state, navigated to the page and reported "signed you up".
+    if not any(item.type == PostconditionType.FORM_SUBMITTED for item in chosen):
+        chosen.extend(item for item in _dedupe(inferred) if item.type == PostconditionType.FORM_SUBMITTED)
+    return tuple(chosen)
 
 
 _DELIVERY_TYPES = frozenset({PostconditionType.ARTIFACT_DELIVERED, PostconditionType.SCREENSHOT_DELIVERED})
