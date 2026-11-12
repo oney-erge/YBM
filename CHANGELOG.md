@@ -103,7 +103,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A request to submit a web form is not done until the form was submitted. "Sign me up" with the details you have on me ended with every
   field typed, a page summary as the answer, and nobody signed up: a new `form_submitted` check expects a successful click (or a fill
   that asked to submit) after the first fill when the request says submit, sign up, register or apply on a web page, and the model is told
-  to click the button by its visible words. Requests that only ask about a form, or say "submit my report", are unaffected.
+  to click the button by its visible words; a model that repeats the fill instead is told the form is still unsubmitted, and if the run stops anyway the message says so in words ("I got stuck repeating a step that had already worked (filling in a form)... the form was filled in but never submitted") instead of `Stopped: browser.control:fill_form had already succeeded`. Requests that only ask about a form, or say "submit my report", are unaffected.
 - A request that says to ask first ("Ask me before changing anything on disk") keeps its question: the guard that turns away
   optional questions judged "Rewrite this file" satisfied once the file was read and ended the task with a summary of the read.
 - `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
