@@ -276,6 +276,12 @@ class BrowserAdapter:
         if not selector and not text:
             raise ValueError("selector or text is required for browser click")
         clicked = client.click(target, selector=selector or None, text=text or None)
+        if not (isinstance(clicked, dict) and clicked.get("clicked")):
+            # Reporting this as a success sent a live run on to "verify" a form it had never submitted.
+            raise ValueError(
+                f"Nothing on the page matched {text or selector!r}, so nothing was clicked. "
+                "Give the visible words of the button in 'text', or a CSS selector in 'selector'."
+            )
         client.wait(float(input_payload.get("wait_seconds") or self.config.default_wait_seconds))
         output = self._summarize_target(client, target)
         output["browser_state"] = {**(output.get("browser_state") or {}), "clicked": clicked}
@@ -868,10 +874,14 @@ def _click_script(selector: str | None, text: str | None) -> str:
   const selector = {selector_json};
   const wantedText = {text_json};
   const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
-  let node = selector ? document.querySelector(selector) : null;
-  if (!node && wantedText) {{
+  let node = null;
+  try {{ node = selector ? document.querySelector(selector) : null; }} catch (error) {{ node = null; }}
+  // Words in the selector slot ("Sign me up") are a button's visible text, not CSS: try them as text when no element matches.
+  const spoken = !wantedText && selector && /^[\\w'-]+( [\\w'-]+)+$/.test(selector) ? normalize(selector) : null;
+  const textToFind = wantedText || spoken;
+  if (!node && textToFind) {{
     node = Array.from(document.querySelectorAll('button,a,input,[role="button"]'))
-      .find((item) => normalize(item.innerText || item.value || item.getAttribute('aria-label')).includes(wantedText));
+      .find((item) => normalize(item.innerText || item.value || item.getAttribute('aria-label')).includes(textToFind));
   }}
   if (!node) return {{ clicked: false, reason: 'element_not_found' }};
   node.click();
