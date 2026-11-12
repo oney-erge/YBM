@@ -19,7 +19,17 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- The Telegram approval message has an "Allow for this task" button under Approve and Reject. A web sign-up asks three times (go to the page, fill
+  the form, click the button), which was three taps for one decision. The button grants the same kind of step for the rest of that task, with
+  the dashboard's existing limits: it never widens what policy allows (the risk ceiling, scope and patterns still run first), it ends with the
+  task, and it covers 200 calls at most. A batch approval now decides every call in it from the button too, where before only the batch itself
+  was decided and the calls were left pending.
 - Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
+- Three things to say to the assistant about itself, instantly and without a model call: `what apps are running?` lists the apps YBM started that
+  still answer (by the name of the page and its address), `stop the recipe app` stops one (only after checking that the process with the recorded id
+  is still the static server it started, so a reused id is never killed), `what do you know about me?` shows the remembered profile and rules, and
+  `forget my t-shirt size` forgets the one fact that matches (several matches are listed and asked about; `forget everything` is declined as one
+  message). A message only counts when it names something that exists, so `stop the music` and `forget the meeting` are ordinary requests.
 - `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
   writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
@@ -57,6 +67,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   as "remember that I prefer short answers" are unchanged.
 - YBM remembers who it is talking to: the first message from a Telegram sender stores `Name: <their Telegram name>` as a profile fact, so "my
   resume" has an owner. A name they state later ("my name is Oney Erge") replaces it.
+- A task that stopped and was never answered is closed quietly after a day. A blocked task is an honest "I could not do that" that was already
+  reported; left open (there were 88) it cluttered the dashboard, and a later "any update?" dug one up and quoted it back. A question nobody
+  answered stayed a live question too, so a reply days later would have been taken as its answer. After `limits.auto_close_blocked_hours`
+  (default 24, 0 keeps them) with no change, a blocked or unanswered task is cancelled the ordinary way (so its cleanup runs) and marked
+  `auto_closed` with the reason, which the dashboard can show as "Closed automatically". Nothing is sent to the person: they were told when
+  it stopped, and a message about housekeeping is noise. Asking again starts fresh. The worker checks at most every ten minutes.
 
 ### Fixed
 
@@ -104,6 +120,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
+- An app is not called done until the launched page offers what the person said they would enter. Asked for "a web app that scales a recipe: I
+  enter ingredient amounts and the number of servings", a live run launched a page with two servings fields and a fixed example recipe, and the
+  person had nowhere to type an ingredient. After a launch YBM now fetches the page and lists its fields and buttons in the launch result ("Page
+  check: 2 field(s) (Original Servings:, Target Servings) and 1 button(s). The request says the user enters ingredient amounts, but no field on
+  the page is named for it"), and a new `page_matches_request` completion check compares every thing the request says the user enters with
+  those labels, whatever the classifier declared. A page with a free-text area is never faulted, a request that states nothing to enter is not
+  judged, and an app built another way (no page record) is not blocked.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
   "what is the total on the receipt?" got the whole file back as its answer.
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with

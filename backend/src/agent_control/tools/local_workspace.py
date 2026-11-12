@@ -25,6 +25,7 @@ from agent_control.tools.contracts import (
     WorkspaceWriteFilesInput,
     WorkspaceWriteFilesOutput,
 )
+from agent_control.tools.page_check import describe, fetch_page, inspect_html, unmet_items
 from agent_control.tools.path_utils import safe_path_segment
 from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDefinition, capability_enabled, failed_result
 
@@ -115,13 +116,20 @@ class LocalWorkspaceAdapter:
         process = _start_static_server(workspace_dir, self.config.web_host, port)
         if bool(request.input.get("open_browser", self.config.open_browser)):
             webbrowser.open(url)
-        return {
+        launched = {
             "workspace_dir": str(workspace_dir),
             "url": url,
             "server_pid": process.pid,
             "files": sorted(set([*prepared.get("files", []), *_workspace_preview_files(workspace_dir), *fallback_files])),
             "changed_paths": fallback_files,
         }
+        # Read the page back: the model's own report of what it built is the weakest evidence there is.
+        html = fetch_page(url)
+        if html is not None:
+            page = inspect_html(html)
+            launched["page_controls"] = page.as_dict()
+            launched["page_check"] = describe(page, unmet_items(objective, page))
+        return launched
 
     def _materialize_static_app(self, request: ToolCallRequest) -> dict[str, Any]:
         prepared = self._prepare(request)
@@ -578,6 +586,8 @@ def _terminal_output(operation: str, output: dict[str, Any]) -> dict[str, Any]:
         lines.append(f"Workspace: {output['workspace_dir']}")
     if output.get("server_pid"):
         lines.append(f"Server PID: {output['server_pid']}")
+    if output.get("page_check"):
+        lines.append(str(output["page_check"]))
     if output.get("files"):
         lines.append("Files:")
         lines.extend(f"- {path}" for path in output["files"])
