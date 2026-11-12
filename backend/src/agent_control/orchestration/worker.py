@@ -9,6 +9,7 @@ import time
 import os
 from pathlib import Path
 import re
+import shutil
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -19,6 +20,7 @@ from agent_control.llm.call_log import cap_messages, merge_token_usage
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, hosted_allowed, is_yes
 from agent_control.logging_setup import bind_task_context
 from agent_control.orchestration.auditor import AuditorService, RAW_OUTPUT_CHARS
+from agent_control.orchestration import ladder
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -108,8 +110,12 @@ CHECK_ENTRY_CLARIFICATION = "_clarification_check"
 CHECK_ENTRY_STUCK = "_stuck_check"
 # A calculated number in the answer that no tool result produced (orchestration/number_check.py).
 CHECK_ENTRY_NUMBER = "_number_check"
+# What the task's own evidence says to do next (orchestration/ladder.py): a search that is settled, a script to write, a result
+# that is not where the request said.
+CHECK_ENTRY_STRATEGY = "_strategy_check"
 CHECK_ENTRY_NAMES = frozenset(
-    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER}
+    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER,
+     CHECK_ENTRY_STRATEGY}
 )
 
 def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
@@ -657,6 +663,8 @@ class TaskWorker:
                 return self.repositories.tasks.update_metadata(
                     latest.id, metadata, TaskStatus.RUNNING
                 )
+            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                return self._offer_claude_code(latest, history)
             return self._transition_operator(
                 latest, {**latest.metadata, "operator_history": history},
                 TaskStatus.BLOCKED, "operator_step_budget_exhausted",
@@ -702,7 +710,15 @@ class TaskWorker:
         # tool_name/tool_input.
         step_id = new_id("step")
         replay_plan = latest.metadata.get("replay_plan")
-        if isinstance(replay_plan, list) and replay_plan:
+        forced_decision: OperatorDecision | None = None
+        if not (isinstance(replay_plan, list) and replay_plan) and self.operator is not None:
+            steered = self._ladder_step(latest, history, step_id)
+            if isinstance(steered, TaskRecord):
+                return steered
+            forced_decision = steered
+        if forced_decision is not None:
+            decision = forced_decision
+        elif isinstance(replay_plan, list) and replay_plan:
             # docs/ROADMAP.md "reusable verified workflows": walk a recorded
             # plan instead of asking an LLM what to do next. Everything past
             # this point - approval, retry, verification, fulfillment - is
@@ -788,8 +804,13 @@ class TaskWorker:
             # operator.audit_min_tool_calls (1 restores auditing everything),
             # because it is a real trade - see that setting's comment. An answer
             # copied line by line from the results has nothing synthesized to audit.
+            real_steps = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
+            request_text = _users_own_words(latest)
+            # Something the request named that the history proves is not there: "it does not exist" is the whole answer, and a
+            # model asked whether that answer is "sufficient" has no content to judge it by.
+            absence = ladder.proven_absent(request_text, real_steps)
             worth_auditing = (
-                _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
+                _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results and absence is None
             )
             unseen_addresses, unseen = self._values_no_tool_produced(latest, history, final_answer, answer_copied_from_results)
             if unseen_addresses or unseen:
@@ -817,6 +838,19 @@ class TaskWorker:
                     {**latest.metadata, "operator_history": history, "operator_number_gap_count": 1},
                     TaskStatus.RUNNING,
                 )
+            receipt_gap = (
+                ladder.write_receipt_gap(request_text, [str(path) for path in latest.metadata.get("changed_paths") or []])
+                or ladder.move_scope_gap(request_text, latest.metadata.get("undo_moves"))
+            )
+            receipt_rounds = sum(
+                1 for e in history if isinstance(e, dict) and str(e.get("hint_id") or "").startswith("receipt")
+            )
+            if receipt_gap and receipt_rounds < 2:
+                history.append({
+                    "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": f"receipt{receipt_rounds + 1}",
+                    "error": f"Declared done, but {receipt_gap}", "step_id": step_id,
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)
             evidence_offset = _post_clarification_history_offset(latest, history)
             content_entry = (
                 _last_content_tool_history_entry(history[evidence_offset:])
@@ -905,6 +939,8 @@ class TaskWorker:
                         "operator_audit_gap_exhausted",
                     )
 
+            if absence and "looked through" not in final_answer and absence.casefold() not in final_answer.casefold():
+                final_answer = f"{final_answer}\n\n{absence}"
             metadata = {
                 **latest.metadata, "operator_history": history, "synthesized_answer": final_answer,
                 **({"operator_audit_unconfirmed": True} if audit_unconfirmed else {}),
@@ -2293,6 +2329,78 @@ class TaskWorker:
         metadata = {**task.metadata, "operator_history": history, "synthesized_answer": answer}
         return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "operator_redundant_read_finished")
 
+    def _claude_code_ready(self) -> bool:
+        """Claude Code can be offered: its tool is on and the command is installed on this computer."""
+        if self.executor is None:
+            return False
+        definition = self.executor.tool_definitions.get("coding.agent")
+        return bool(definition is not None and definition.enabled and shutil.which("claude"))
+
+    def _ladder_step(self, task: TaskRecord, history: list[dict[str, Any]], step_id: str) -> TaskRecord | OperatorDecision | None:
+        """Before each model decision, act on what the task's own history proves (orchestration/ladder.py).
+
+        Appends at most one check entry to `history`, which the caller persists with the decision's own entry. Returns a task
+        when this tick is spent on something else (asking the user, or taking their answer), a decision when the user has said
+        yes to handing the task to Claude Code, and None otherwise.
+        """
+        offer = task.metadata.get("claude_code_offer")
+        if isinstance(offer, dict):
+            if offer.get("state") == "pending" and task.metadata.get("answered_clarifying_question") == offer.get("question"):
+                accepted = is_yes(task.metadata.get("clarification_answer"))
+                task = self.repositories.tasks.update_metadata(
+                    task.id, {**task.metadata, "claude_code_offer": {**offer, "state": "accepted" if accepted else "declined"}}
+                )
+                self.audit.append(
+                    AuditEventType.TASK_STATE_CHANGED, actor="user", task_id=task.id,
+                    payload={"reason": "claude_code_handoff_accepted" if accepted else "claude_code_handoff_declined"},
+                )
+                if not accepted:
+                    history.append({
+                        "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "declined", "step_id": step_id,
+                        "error": (
+                            "The user did not agree to hand this to Claude Code, so do not offer it again. Answer now with what "
+                            "you have (action done): what you found, and plainly what you could not do."
+                        ),
+                    })
+                    return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history}, TaskStatus.RUNNING)
+            offer = task.metadata.get("claude_code_offer")
+            if isinstance(offer, dict) and offer.get("state") == "accepted" and not any(
+                isinstance(e, dict) and e.get("tool_name") == "coding.agent" for e in history
+            ):
+                return _claude_code_decision(task, history)
+            if offer.get("state") != "pending":
+                return None
+        steps = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
+        if offer is None and ladder.exhausted(steps) and self._claude_code_ready():
+            return self._offer_claude_code(task, history)
+        given = {
+            str(e.get("hint_id")) for e in history
+            if isinstance(e, dict) and e.get("tool_name") == CHECK_ENTRY_STRATEGY and e.get("hint_id")
+        }
+        code = self.executor.tool_definitions.get(ladder.CODE_TOOL) if self.executor is not None else None
+        hint = ladder.next_hint(_users_own_words(task), steps, given, code_enabled=bool(code is not None and code.enabled))
+        if hint is not None:
+            history.append({
+                "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": hint.id,
+                "error": hint.text, "step_id": step_id,
+            })
+        return None
+
+    def _offer_claude_code(self, task: TaskRecord, history: list[dict[str, Any]]) -> TaskRecord:
+        """The local model has run out of ways: ask the user whether to hand the task to Claude Code. Nothing is sent without a yes."""
+        question = (
+            "I tried several ways to do this on my own and could not finish it. Do you want me to hand it to Claude Code on this "
+            "computer? It would see your request and what I tried, and it uses your Claude account. Reply yes to hand it over, "
+            "or no and I will tell you what I found."
+        )
+        updated = self.repositories.tasks.update_metadata(
+            task.id, {**task.metadata, "operator_history": history, "claude_code_offer": {"question": question, "state": "pending"}}
+        )
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor="worker", task_id=task.id, payload={"reason": "claude_code_handoff_offered"},
+        )
+        return self._operator_ask_user(updated, question)
+
     def _ask_hosted_permission(self, task: TaskRecord, history: list[dict[str, Any]], exc: CloudFallbackNeeded) -> TaskRecord:
         """The local model did not answer and the only fallback is a hosted one: nothing is sent, the user is asked."""
         question = (
@@ -3484,11 +3592,7 @@ def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: di
     return bool(_DELETE_INTENT.search(request)) and not _MOVE_INTENT.search(request)
 
 
-_NOT_FOUND_ERROR = re.compile(
-    r"does not exist|doesn't exist|not found|no such file|could not find|couldn't find|cannot find|can't find|unable to find|"
-    r"no deliverable artifact or file path was found",
-    re.IGNORECASE,
-)
+_NOT_FOUND_ERROR = ladder.NOT_FOUND_ERROR
 
 
 def _named_target_not_found(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
@@ -3898,6 +4002,27 @@ def _replay_call_decision(step: dict[str, Any], step_number: int, total: int) ->
 
 
 _TOOL_RUNNING_ACTIONS = frozenset({OperatorAction.CALL_TOOL, OperatorAction.CALL_TOOLS_PARALLEL, OperatorAction.DELEGATE})
+
+
+def _claude_code_decision(task: TaskRecord, history: list[dict[str, Any]]) -> OperatorDecision:
+    """The call the user said yes to: Claude Code gets the request and a plain account of what was already tried."""
+    tried = []
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("tool_name") in CHECK_ENTRY_NAMES:
+            continue
+        operation = (entry.get("input") or {}).get("operation") if isinstance(entry.get("input"), dict) else None
+        outcome = str(entry.get("error") or entry.get("output_summary") or entry.get("status") or "")[:140].replace("\n", " ")
+        tried.append(f"{entry.get('tool_name')}{':' + str(operation) if operation else ''}: {outcome}")
+    account = "\n".join(f"- {line}" for line in tried[-10:]) or "- nothing yet"
+    objective = (
+        f"{_users_own_words(task)}\n\nA smaller local assistant already tried this on the user's computer and could not finish "
+        f"it. What it tried:\n{account}\nDo the task yourself on this computer and report plainly what you did and found."
+    )
+    return OperatorDecision(
+        action=OperatorAction.CALL_TOOL, tool_name="coding.agent",
+        tool_input={"operation": "run_goal", "provider": "claude_code", "objective": objective},
+        risk_level=RiskLevel.HIGH, reasoning="The user agreed to hand this task to Claude Code.",
+    )
 
 
 def _finish_offer_pending(history: list[dict[str, Any]]) -> bool:

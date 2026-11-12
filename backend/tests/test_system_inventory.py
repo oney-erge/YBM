@@ -272,3 +272,74 @@ def test_a_content_search_does_not_fall_back_to_a_name_walk(tmp_path, monkeypatc
     (tmp_path / "invoice.txt").write_text("cardamom")
     result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="cardamom", match="content")
     assert result.output["count"] == 0
+
+
+# --- the walk says how hard it looked ---------------------------------------------------------------------------------
+
+
+def test_a_file_in_a_hidden_folder_is_found_by_the_second_pass(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [])
+    deep = tmp_path / ".agent_control" / "e2e_fixtures" / "deep"
+    deep.mkdir(parents=True)
+    (deep / "h3-annual-budget-2026.xlsx").write_text("x")
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="h3-annual-budget-2026")
+    assert [i["name"] for i in result.output["items"]] == ["h3-annual-budget-2026.xlsx"]
+
+
+def test_the_first_pass_leaves_hidden_and_system_folders_to_the_second(tmp_path):
+    (tmp_path / ".hidden").mkdir()
+    (tmp_path / ".hidden" / "needle.txt").write_text("x")
+    (tmp_path / "Windows").mkdir()
+    (tmp_path / "Windows" / "needle2.txt").write_text("x")
+    assert system_inventory.walk_search([tmp_path], ["needle"], [], cap=10) == []
+    found = system_inventory.walk_search([tmp_path], ["needle"], [], cap=10, include_hidden=True)
+    assert sorted(Path(item["path"]).name for item in found) == ["needle.txt", "needle2.txt"]
+
+
+def test_a_folder_that_cannot_be_opened_is_counted_and_skipped_not_fatal(tmp_path, monkeypatch):
+    (tmp_path / "locked").mkdir()
+    (tmp_path / "open").mkdir()
+    (tmp_path / "open" / "needle.txt").write_text("x")
+    real_walk = os.walk
+
+    def walk(top, onerror=None, **kwargs):
+        for folder, dirs, files in real_walk(top, onerror=onerror, **kwargs):
+            if folder == str(tmp_path) and onerror is not None:
+                onerror(PermissionError(13, "Access is denied", str(tmp_path / "locked")))
+            yield folder, dirs, files
+
+    monkeypatch.setattr(system_inventory.os, "walk", walk)
+    report = system_inventory.WalkReport()
+    found = system_inventory.walk_search([tmp_path], ["needle"], [], cap=10, report=report)
+    assert [Path(item["path"]).name for item in found] == ["needle.txt"]
+    assert report.denied == 1 and report.denied_examples == [str(tmp_path / "locked")] and report.complete is True
+
+
+def test_a_walk_that_runs_out_of_time_says_it_is_not_complete(tmp_path):
+    for n in range(5):
+        (tmp_path / f"d{n}").mkdir()
+    ticks = iter(range(0, 1000, 10))
+    report = system_inventory.WalkReport()
+    system_inventory.walk_search([tmp_path], ["needle"], [], cap=10, budget_seconds=25, report=report, clock=lambda: next(ticks))
+    assert report.complete is False and 0 < report.folders < 6
+
+
+def test_nothing_found_says_what_was_looked_through_and_whether_it_was_everything(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [])
+    (tmp_path / "a").mkdir()
+    (tmp_path / ".b").mkdir()
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="nothing-like-this")
+    searched = result.output["searched"]
+    assert result.output["count"] == 0 and searched["complete"] is True and searched["including_hidden_and_system_folders"] is True
+    assert searched["folders"] == 3 and searched["roots"] == [str(tmp_path.resolve())]
+    assert "I looked through all 3 folders" in result.output["summary"] and "so it is not in any folder I can read" in result.output["summary"]
+
+
+def test_an_incomplete_walk_does_not_claim_the_file_is_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: [])
+    monkeypatch.setattr(system_inventory, "_WALK_FIRST_PASS_SECONDS", -1.0)
+    monkeypatch.setattr(system_inventory, "_WALK_DEEP_PASS_SECONDS", -1.0)
+    (tmp_path / "a").mkdir()
+    result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="nothing-like-this")
+    assert result.output["searched"]["complete"] is False
+    assert "does not prove it is not there" in result.output["summary"]

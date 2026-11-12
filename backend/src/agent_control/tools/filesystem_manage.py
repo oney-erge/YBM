@@ -662,13 +662,25 @@ def _walk_limited(root: Path, *, max_depth: int):
     def walk(directory: Path, depth: int):
         if depth >= max_depth:
             return
-        children = sorted(
-            directory.iterdir(),
-            key=lambda path: (path.name.casefold(), path.name),
-        )
+        try:
+            children = sorted(
+                directory.iterdir(),
+                key=lambda path: (path.name.casefold(), path.name),
+            )
+        except OSError:
+            # A folder inside the walk that Windows will not open ("My Music" inside Documents is the usual one) is skipped. It
+            # used to end the whole search with "Access is denied", and the model then searched the same place again. The
+            # folder the call named is different: failing to open that one is the answer.
+            if depth == 0:
+                raise
+            return
         for path in children:
             yield path
-            if path.is_dir() and not path.is_symlink():
+            try:
+                descend = path.is_dir() and not path.is_symlink()
+            except OSError:
+                descend = False
+            if descend:
                 yield from walk(path, depth + 1)
 
     yield from walk(root, 0)

@@ -41,3 +41,35 @@ async def test_filesystem_collect_folder_snapshot_matches_inspection(tmp_path) -
 
     assert result.status.value == "succeeded"
     assert result.output["entries"][0]["relative_path"] == "a.txt"
+
+
+def test_a_locked_folder_inside_a_search_is_skipped_not_fatal(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from agent_control.tools.filesystem_manage import _walk_limited
+
+    (tmp_path / "locked").mkdir()
+    (tmp_path / "open").mkdir()
+    (tmp_path / "open" / "needle.txt").write_text("x")
+    real = Path.iterdir
+
+    def iterdir(self):
+        if self.name == "locked":
+            raise PermissionError(13, "Access is denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert [p.name for p in _walk_limited(tmp_path, max_depth=4)] == [tmp_path.name, "locked", "open", "needle.txt"]
+
+
+def test_the_folder_a_search_was_pointed_at_still_fails_loudly_when_it_cannot_be_opened(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from agent_control.tools.filesystem_manage import _walk_limited
+
+    def iterdir(self):
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    with pytest.raises(PermissionError):
+        list(_walk_limited(tmp_path, max_depth=2))
