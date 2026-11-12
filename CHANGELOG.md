@@ -9,10 +9,17 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
+- A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
+  library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
+  (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
+  YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+  Files kept only in OneDrive (not downloaded) are marked `[online only]`, and reading one says so instead of "File is not a
+  zip file"; a live run had reported the user's own resume as corrupted.
 - Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
   (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
   task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
   YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
 - `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
   writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
@@ -35,6 +42,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   its own message while the progress message is removed. Tool names, outcome codes and the model's reasoning no longer appear.
   Failures say what the last step was and how it ended, without "Gap:", "Retries:" or "Error:" labels.
 - The approval prompt lists what will happen as sentences ("Type \"Oney Erge\" into the \"Full name\" field", "Click \"Sign me up\"", "Control your computer: Open Steam") instead of tool names and JSON, and a value typed into a password, card or similar field is never shown.
+  Going to a page, reading it and a chain of page steps read the same way ("Go to http://...", "Read what is on the page") instead of "Use the web page".
 - A policy refusal ends the task after the second one for the same tool. A form fill refused for exceeding the browser's risk
   ceiling was retried six more times and then reported as "something went wrong on my side"; it now stops and says the safety
   settings do not allow that action.
@@ -52,6 +60,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
+- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
   all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
   The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
@@ -62,6 +71,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   request expected (which ended in "Blocked"). A request that says to ask first keeps its question.
 - The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
   filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
+- A batch of calls the person approved is no longer refused when it runs. The executor fills in a tool's schema defaults before it checks policy, but a batch approval bound the model's raw input, so for any tool whose schema adds a default (browser form steps do) every approved call came back `approval_invalid_or_mismatched` and the approvals were wasted. The batch now binds the call as it will run, and finds each call's approval by that same form.
 - An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is
   delivered with a note ("Not fully confirmed ... please double-check it") instead of ending the task "Blocked". A 9B Auditor rejected
   a correct summary of a 159-character document for being short. An answer with an unsupported value is still blocked.
@@ -86,6 +96,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `schedule.manage list`, `memory.manage list` and the artifact list returned only a count to the model ("Found 35 schedule(s)."), so
   "what do I have scheduled?" was asked for again and again until the task was blocked. Each now lists its items in the text the model
   reads, and the schedule list leaves out deleted schedules, which it counted before.
+- A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
@@ -93,11 +104,23 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
   what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
   the task as before.
+- A request to submit a web form is not done until the form was submitted. "Sign me up" with the details you have on me ended with every
+  field typed, a page summary as the answer, and nobody signed up: a new `form_submitted` check expects a successful click (or a fill
+  that asked to submit) after the first fill when the request says submit, sign up, register or apply on a web page, and the model is told
+  to click the button by its visible words; a model that repeats the fill instead is told the form is still unsubmitted, and if the run stops anyway the message says so in words ("I got stuck repeating a step that had already worked (filling in a form)... the form was filled in but never submitted") instead of `Stopped: browser.control:fill_form had already succeeded`. Requests that only ask about a form, or say "submit my report", are unaffected.
 - A request that says to ask first ("Ask me before changing anything on disk") keeps its question: the guard that turns away
   optional questions judged "Rewrite this file" satisfied once the file was read and ended the task with a summary of the read.
+- A form step with nothing to fill is refused before anyone is asked to approve it. `fill_form_step` had `fields` optional, so a model that
+  sent an empty step (it sent eleven in one run) got an approval request for each, and the failure came from inside the browser adapter
+  after the person had tapped Approve. `fields` is now required, one `field`/`value` pair is read as a one-entry `fields`, and the failure
+  message no longer claims "Chrome is not running with remote debugging enabled" for every error that mentions the browser.
 - `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
   there is nothing to read.
 - A failed script shows the end of its traceback (the line that says why) and a missing package says what to do instead.
+- A form fill that typed nothing is a failure. Run against a blank tab (the model skipped opening the page) it matched no field, came back as
+  succeeded, and made the real attempt that followed look like a duplicate of it; the form was then submitted empty and the model reported
+  "signed up" on the page's thank-you message. It now fails with "None of the fields ... matched anything on a blank tab" and the step to take
+  (open the page first, use the labels as shown); a fill that matched only some fields succeeds and names the ones it missed.
 - A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
   result; otherwise the model is sent back once to calculate it with code.
 

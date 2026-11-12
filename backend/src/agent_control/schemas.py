@@ -113,6 +113,7 @@ class Capability(StrEnum):
     GITHUB_PUSH = "github.push"
     DEPENDENCIES_INSTALL = "dependencies.install"
     MEMORY_MANAGE = "memory.manage"
+    SYSTEM_INVENTORY = "system.inventory"
 
 
 class TaskType(StrEnum):
@@ -206,6 +207,7 @@ class PostconditionType(StrEnum):
     TASK_STATUS = "task_status"
     GITHUB_PR = "github_pr"
     EXTERNAL_COMMAND = "external_command"
+    FORM_SUBMITTED = "form_submitted"
 
 
 class AuditEventType(StrEnum):

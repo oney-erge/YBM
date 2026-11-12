@@ -10,7 +10,7 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](backend/pyproject.toml)
 [![Docker ready](https://img.shields.io/badge/docker-ready-2496ED.svg)](docker-compose.yml)
 
-![Asking YBM to organize a Downloads folder: it plans the work, asks for approval before moving any file, then reports exactly what it moved](docs/screenshots/demo.gif)
+![Asking YBM to organize a Downloads folder: it scans the folder, asks for approval in the console and on the phone before moving any file, then shows a receipt of exactly what it moved. Recorded from the real console with scripted responses](docs/screenshots/demo.gif)
 
 </div>
 
