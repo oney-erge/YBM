@@ -32,6 +32,17 @@ _RUN = re.compile(
     r"(?:\s+(?:with|using|for)\s+(?P<values>.+?))?\s*[.!]*\s*$",
     re.IGNORECASE,
 )
+_CADENCE = (
+    r"(?P<cadence>daily|weekly|every\s+(?:day|week)|every\s+[1-9]\d{0,3}\s+(?:minutes?|hours?|days?|weeks?))"
+)
+_SCHEDULE = re.compile(
+    rf"^\s*(?:please\s+)?(?:run|start|do|repeat)\s+(?:my\s+|the\s+)?(?:{_NOUN}\s+)?(?P<name>.+?)(?:\s+{_NOUN})?\s+{_CADENCE}"
+    r"(?:\s+(?:with|using|for)\s+(?P<values>.+?))?\s*[.!]*\s*$",
+    re.IGNORECASE,
+)
+#: Words that say when, which the scheduler cannot do yet (it repeats on an interval, with no time of day or weekday).
+_WHEN_WORDS = re.compile(r"\b(?:every|each|daily|weekly|monthly|weekdays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|nightly|hourly)\b|\bat\s+\d", re.IGNORECASE)
+DEFAULT_TIMEZONE = "America/Chicago"
 _PAIR = re.compile(r"(\w+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^,;]+)")
 
 
@@ -150,6 +161,40 @@ def _run(repositories: Repositories, audit: AuditLogger, inbound: InboundMessage
     return _reply(inbound, f"Running \"{workflow.name}\" now. I'll message you when it is done.")
 
 
+def _schedule(repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, workflow: TaskWorkflow,
+              cadence: str, spoken_values: str | None) -> OutboundMessage:
+    """Run a saved workflow on a repeat, through the same replay pipeline and approvals as a run made by hand."""
+    from agent_control.orchestration.workflows import instantiate_plan
+    from agent_control.schemas import ScheduleRecord, utc_now
+    from agent_control.scheduler import next_run_after, validate_schedule
+
+    cadence = " ".join(cadence.lower().split())
+    values = _values(spoken_values, workflow)
+    missing = [name for name in workflow.parameters if name not in values]
+    if missing:
+        example = ", ".join(f"{name}=<value>" for name in missing)
+        return _reply(inbound, f"\"{workflow.name}\" needs {', '.join(missing)}. Say: run {workflow.name} {cadence} with {example}")
+    try:
+        validate_schedule(cadence, DEFAULT_TIMEZONE)
+        plan = instantiate_plan(workflow.plan, values)
+    except ValueError as exc:
+        return _reply(inbound, f"I can't schedule \"{workflow.name}\" yet: {exc}")
+    schedule = repositories.schedules.create(ScheduleRecord(
+        source_channel=inbound.channel, source_chat_id=inbound.chat_id, objective=f"{workflow.name} (scheduled workflow)",
+        cadence=cadence, timezone=DEFAULT_TIMEZONE, next_run_at=next_run_after(cadence, utc_now(), DEFAULT_TIMEZONE),
+        metadata={"workflow_id": workflow.id, "workflow_run_values": values, "replay_plan": plan},
+    ))
+    audit.append(
+        AuditEventType.TASK_CREATED, actor=f"{inbound.channel.value}:user:{inbound.sender_id}",
+        payload={"workflow_id": workflow.id, "schedule_id": schedule.id, "cadence": cadence},
+    )
+    from zoneinfo import ZoneInfo
+
+    first = schedule.next_run_at.astimezone(ZoneInfo(DEFAULT_TIMEZONE)).strftime("%A %B %d at %H:%M")
+    return _reply(inbound, f"Scheduled \"{workflow.name}\" to run {cadence}. The first run is {first} ({DEFAULT_TIMEZONE} time). "
+                           "It goes through the same approvals as a run by hand.")
+
+
 def workflow_command_reply(
     repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str | None
 ) -> OutboundMessage | None:
@@ -161,8 +206,21 @@ def workflow_command_reply(
         return _save(repositories, audit, inbound, conversation_id, match.group("name") or "")
     if _LIST.match(text):
         return _listing(repositories, inbound)
-    if (match := _RUN.match(text)) is not None:
+    if (match := _SCHEDULE.match(text)) is not None:
         workflow = _find(repositories.workflows.list_all(), match.group("name"))
+        if workflow is not None:
+            return _schedule(repositories, audit, inbound, workflow, match.group("cadence"), match.group("values"))
+    if (match := _RUN.match(text)) is not None:
+        workflows = repositories.workflows.list_all()
+        workflow = _find(workflows, match.group("name"))
+        # Words beyond the workflow's own name ("weekly report" is a name, "every Monday" is a when).
+        own = set(_norm(workflow.name).split()) if workflow is not None else set()
+        rest = " ".join(w for w in (match.group("name") or "").split() if _norm(w) not in own)
+        if workflow is not None and _WHEN_WORDS.search(rest):
+            # "run steam count every Monday at 9": the scheduler repeats on an interval, with no weekday or time of day, and
+            # running it now would be the wrong reading of a request to run it later.
+            return _reply(inbound, "I can repeat a workflow daily, weekly, or every N minutes, hours, days or weeks, but not on a particular "
+                                   f"weekday or at a time of day yet. For example: run {workflow.name} every 2 days.")
         if workflow is not None:
             return _run(repositories, audit, inbound, conversation_id, workflow, match.group("values"))
     return None

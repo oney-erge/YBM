@@ -39,6 +39,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
 - The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
   saved as a workflow from its page.
+- A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
+  replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
+  ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which
+  would be the wrong reading of a request to run it later. Parameters work as for a run (`run folder digest weekly with folder=Downloads`).
 - "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
   no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
   The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
