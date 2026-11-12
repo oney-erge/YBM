@@ -1105,7 +1105,12 @@ class TaskWorker:
                 "tool_name": tool_name,
                 "input": tool_input,
                 "status": ALREADY_DONE_STATUS,
-                "output_summary": _already_done_summary(*earlier, read=read_again),
+                # A repeated write is also told what is still missing, so a model that has not finished (a form
+                # filled and never submitted) has something else to do.
+                "output_summary": (
+                    _already_done_summary(*earlier, read=True) if read_again
+                    else _with_what_is_missing(latest, history, _already_done_summary(*earlier))
+                ),
                 "step_id": step_id,
                 **normalization,
             })
@@ -1128,10 +1133,7 @@ class TaskWorker:
                 return self._offer_finish_or_block(
                     latest, history,
                     called=f"{tool_name}:{tool_input.get('operation') or ''}".rstrip(":"),
-                    blocked_message=(
-                        f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
-                        "model kept asking to repeat it. Nothing was done twice."
-                    ),
+                    blocked_message=_repeat_stop_message(latest, history, tool_name, tool_input),
                 )
             return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
         tool_def = self.executor.tool_definitions.get(tool_name)
@@ -3809,6 +3811,49 @@ def _succeeded_side_effect(
         ):
             return index, entry
     return None
+
+
+def _what_is_missing(task: TaskRecord, history: list[dict[str, Any]]) -> PostconditionType | None:
+    """What the request still needs, as an instruction for the next step.
+
+    Only for gaps the step history alone can prove (today: a form filled in and never submitted). The other
+    checks read what the tools reported into the task's metadata, which is not yet updated mid-step, so using
+    them here would call a finished task unfinished.
+    """
+    probe = task.model_copy(update={"metadata": {**task.metadata, "operator_history": history}})
+    try:
+        missing = validate_fulfillment(probe).missing
+    except Exception:  # noqa: BLE001 - a hint must never break the loop
+        return None
+    if PostconditionType.FORM_SUBMITTED in missing:
+        return PostconditionType.FORM_SUBMITTED
+    return None
+
+
+def _with_what_is_missing(task: TaskRecord, history: list[dict[str, Any]], summary: str) -> str:
+    """A repeated step the model should not run again, plus what it should do instead.
+
+    Told only "this already succeeded", a model that has not finished (a form filled but never submitted) repeats the
+    step; told what is still missing, it can do that.
+    """
+    missing = _what_is_missing(task, history)
+    if missing is None:
+        return summary
+    return f"{summary} Still missing for the request: {fulfillment_guidance(f'expected_{missing.value}_missing')}"
+
+
+#: What a person is told when the request is not finished (the instruction above is for the model, not for them).
+_UNFINISHED_IN_WORDS = {PostconditionType.FORM_SUBMITTED: "The form was filled in but never submitted, so the sign-up is not done."}
+
+
+def _repeat_stop_message(task: TaskRecord, history: list[dict[str, Any]], tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Why the task stopped, in words: a step that had worked was asked for again and again."""
+    step = progress_phrase(tool_name, str(tool_input.get("operation") or ""), tool_input)
+    missing = _what_is_missing(task, history)
+    return (
+        f"I got stuck repeating a step that had already worked ({step}), so I stopped; nothing was done twice."
+        + (f" {_UNFINISHED_IN_WORDS[missing]}" if missing in _UNFINISHED_IN_WORDS else "")
+    )
 
 
 def _already_done_summary(step_number: int, entry: dict[str, Any], *, read: bool = False) -> str:
