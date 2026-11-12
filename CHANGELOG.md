@@ -34,6 +34,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
   The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
   for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
+- What a message sent while a task runs *is* to that task (a status question, a change to the job, "stop", a new request, or chat) is now asked of
+  the local decision model too, in shadow: its answer is recorded next to the concierge's in the intake-decision event (`decision_kind`,
+  `final_kind`, `kind_agrees`) and decides nothing. The console's decision stats gain `kind_stats`: how often they agree and whether it has earned
+  the right to take over (at least 95% agreement on at least 100 real messages). It would replace a model call that queues behind the running task
+  with a forward pass on the CPU; until the numbers say so, the concierge keeps deciding. The question is only sent while a task runs.
 
 ### Changed
 
