@@ -108,6 +108,28 @@ _USER_FACING_RULES: tuple[tuple[tuple[str, ...], str], ...] = (
 )
 
 
+_MODEL_NOT_SUPPORTED = re.compile(r"the '([^']+)' model is not supported when using (codex|claude)", re.IGNORECASE)
+
+
+def _coding_model_refused(text: str) -> str | None:
+    """Codex (or Claude Code) rejected the model named in the user's own CLI config for their account.
+
+    The CLI's JSON error went to the chat verbatim. Nothing in YBM is wrong and nothing in YBM can fix it:
+    the model is set in the CLI's own config file, so say that, and say what YBM can do instead.
+    """
+    match = _MODEL_NOT_SUPPORTED.search(text or "")
+    if match is None and "model_not_found" not in (text or "").lower():
+        return None
+    model = match.group(1) if match else "the configured model"
+    tool = "Codex" if (match is None or match.group(2).lower() == "codex") else "Claude Code"
+    other = "Claude Code" if tool == "Codex" else "Codex"
+    config = "~/.codex/config.toml" if tool == "Codex" else "its settings"
+    return (
+        f"{tool} is set to use {model}, which your account cannot use, so it stopped before doing anything. "
+        f"Change the model in {config} to one your plan includes, or tell me to use {other} instead."
+    )
+
+
 def explain_for_user(exc: BaseException | str) -> str:
     """A sentence on what happened and a sentence on what to do next.
 
@@ -120,6 +142,9 @@ def explain_for_user(exc: BaseException | str) -> str:
     itself is long gone.
     """
     haystack = (exc if isinstance(exc, str) else f"{type(exc).__name__}: {exc}").lower()
+    coding_model = _coding_model_refused(exc if isinstance(exc, str) else str(exc))
+    if coding_model is not None:
+        return coding_model
     for needles, message in _USER_FACING_RULES:
         if any(needle in haystack for needle in needles):
             return message
