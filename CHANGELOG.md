@@ -45,7 +45,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `undo that` (or `put them back`) puts the files of the last move or rename back where they were. Each applied move now records where every file
   came from, and the command turns that into a new task that moves them back through the ordinary replay pipeline, so it asks for approval like
   the move did. It never overwrites: a file that is no longer where YBM left it is skipped (and the reply says how many), a name that is taken is
-  saved as a copy, and a move is undone once.
+  saved as a copy, and a move is undone once. Everything a task moved is undone, not only its last step: a file moved twice (sorted into a
+  folder by type, then moved again) goes back to where it started.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
   ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which

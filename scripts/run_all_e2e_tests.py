@@ -1025,7 +1025,11 @@ def _diagnose_turn(
                 f"exceeds telegram_update_max_gap_seconds={max_update_gap}"
             )
 
-    reply_needles = [str(item).lower() for item in assertions.get("bot_reply_contains_any") or [] if str(item).strip()]
+    def reply_terms(key: str) -> list[str]:
+        # A value measured when the fixtures were built ({{h3_steam_count}}) is filled in here, as it is in the message.
+        return [render_text(str(item), fixtures or {}) for item in assertions.get(key) or [] if str(item).strip()]
+
+    reply_needles = [item.lower() for item in reply_terms("bot_reply_contains_any")]
     if reply_needles:
         # Truth source is the union of the task-metadata-derived reply AND the
         # audit log's record of what was actually sent to Telegram - a task
@@ -1044,7 +1048,7 @@ def _diagnose_turn(
                 f"reply={reply[:240]!r}; audit_confirmed={confirmed[:240]!r}"
             )
 
-    all_needles = [str(item).lower() for item in assertions.get("bot_reply_contains_all") or [] if str(item).strip()]
+    all_needles = [item.lower() for item in reply_terms("bot_reply_contains_all")]
     if all_needles:
         reply_and_confirmed = f"{_turn_reply_text(turn)}\n{turn.telegram_confirmed_text}".lower()
         absent = [needle for needle in all_needles if needle not in reply_and_confirmed]
@@ -1054,7 +1058,7 @@ def _diagnose_turn(
     # Leak checks. A secret that reaches the user is a failure even when every
     # positive assertion passed, so these are evaluated against both the
     # task-derived reply and what Telegram actually received.
-    excluded = [str(item) for item in assertions.get("bot_reply_excludes_all") or [] if str(item).strip()]
+    excluded = reply_terms("bot_reply_excludes_all")
     if excluded:
         haystack = f"{_turn_reply_text(turn)}\n{turn.telegram_confirmed_text}".lower()
         leaked = [needle for needle in excluded if needle.lower() in haystack]
@@ -1424,7 +1428,9 @@ async def _run_turn(
             # the blame attribution and the diagnosis dump.
             verdict = fetch_classifier_verdict_for_text(message)
             turn.classifier_verdict = verdict
-            if expects_task == "auto" and verdict is not None and verdict.get("is_task") is False:
+            # No verdict at all means a chat command ("save that as a workflow", "forget my cat") answered the message before it was
+            # classified; collect_chat_reply still fails the turn when no reply arrives.
+            if expects_task == "auto" and (verdict is None or verdict.get("is_task") is False):
                 return await collect_chat_reply()
             if verdict is not None:
                 reason = str(verdict.get("reason") or "")
