@@ -19,7 +19,9 @@ def _approval_inline_keyboard(approval_id: str) -> dict[str, Any]:
             [
                 {"text": "Approve", "callback_data": f"approval:{approval_id}:approve"},
                 {"text": "Reject", "callback_data": f"approval:{approval_id}:reject"},
-            ]
+            ],
+            # One decision for the whole job: a web sign-up asks to go to the page, fill the form and click the button.
+            [{"text": "Allow for this task", "callback_data": f"approval:{approval_id}:approve_task"}],
         ]
     }
 
