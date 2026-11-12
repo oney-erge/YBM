@@ -2568,6 +2568,11 @@ class TaskWorker:
             metadata["preview_url"] = output["preview_url"]
         elif tool_name == "workspace.manage" and output.get("url"):
             metadata["preview_url"] = output["url"]
+        if tool_name == "workspace.manage" and output.get("server_pid") and output.get("url"):
+            # So "what apps are running?" and "stop the recipe app" can find it again (channels/app_commands.py).
+            metadata["preview_server"] = {
+                "pid": int(output["server_pid"]), "url": str(output["url"]), "workspace_dir": str(output.get("workspace_dir") or ""),
+            }
         if tool_name == "workspace.manage" and isinstance(output.get("page_controls"), dict):
             # What the launched page actually offers, read back from the page (tools/page_check.py); a relaunch replaces it.
             metadata["page_controls"] = output["page_controls"]

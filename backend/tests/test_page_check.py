@@ -119,3 +119,21 @@ def test_a_real_page_is_fetched_and_read(served_page):
 
 def test_an_unreachable_page_is_none_not_an_error():
     assert fetch_page("http://127.0.0.1:9/", timeout=0.5) is None
+
+
+def test_a_launched_server_is_recorded_on_its_task_so_it_can_be_found_and_stopped(tmp_path):
+    from agent_control.orchestration import TaskWorker
+    from agent_control.schemas import ToolCallResult, ToolResultStatus
+    from helpers import make_repos
+    from test_worker_operator_loop import QueueOperator, _executor, _settings
+
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Build the recipe scaler and run it")
+    worker = TaskWorker(repos, audit, executor=_executor(_settings(), audit, repos), operator=QueueOperator([]))
+    controls = inspect_html(SERVINGS_ONLY).as_dict()
+    updated = worker._record_tool_result(task.id, "workspace.manage", ToolCallResult(
+        request_id="r", status=ToolResultStatus.SUCCEEDED,
+        output={"workspace_dir": str(tmp_path / "w"), "url": "http://127.0.0.1:8891/", "server_pid": 4242, "page_controls": controls},
+    ))
+    assert updated.metadata["preview_server"] == {"pid": 4242, "url": "http://127.0.0.1:8891/", "workspace_dir": str(tmp_path / "w")}
+    assert updated.metadata["page_controls"] == controls
