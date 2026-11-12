@@ -315,6 +315,19 @@ class BrowserAdapter:
                     "The page appears to require login or account access before the requested form/prompt can be filled. "
                     "No fields were changed."
                 )
+                return output
+            # Nothing was typed. Reporting that as a success let a live run "fill" a blank tab, then treat its real
+            # attempt as a duplicate of the "successful" one and submit an empty form.
+            where = "a blank tab" if url in {"", "about:blank"} else url
+            raise ValueError(
+                f"None of the fields ({', '.join(str(key) for key in fields)}) matched anything on {where}, so nothing was filled in. "
+                "Open the form's page first (browser.open) and use the field labels exactly as the page shows them."
+            )
+        if isinstance(filled_items, list):
+            unmatched = [str(key) for key in fields if str(key) not in {str(item) for item in filled_items}]
+            if unmatched:
+                output["browser_state"] = {**(output.get("browser_state") or {}), "unmatched_fields": unmatched}
+                output["summary"] = f"{output.get('summary') or ''}\nNot found on the page, so not filled: {', '.join(unmatched)}.".strip()
         return output
 
     def _chain(self, client: "ChromeDevToolsClient", request: ToolCallRequest) -> dict[str, Any]:

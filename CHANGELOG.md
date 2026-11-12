@@ -116,6 +116,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
   there is nothing to read.
 - A failed script shows the end of its traceback (the line that says why) and a missing package says what to do instead.
+- A form fill that typed nothing is a failure. Run against a blank tab (the model skipped opening the page) it matched no field, came back as
+  succeeded, and made the real attempt that followed look like a duplicate of it; the form was then submitted empty and the model reported
+  "signed up" on the page's thank-you message. It now fails with "None of the fields ... matched anything on a blank tab" and the step to take
+  (open the page first, use the labels as shown); a fill that matched only some fields succeeds and names the ones it missed.
 - A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
   result; otherwise the model is sent back once to calculate it with code.
 
