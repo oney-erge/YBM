@@ -14,6 +14,23 @@ And the three jobs that have to be excellent:
 
 ## Built
 
+- **Finds a way, and says what it proved.** A search says how hard it looked ("I looked through all 250,804 folders ...") or that it
+  ran out of time; "it is not there" is only said when a read of the very path failed or a search finished. When searches come up
+  empty the loop is pushed down a ladder: the everywhere search, then a short Python script run on the computer, then an offer to hand
+  the task to Claude Code (only a plain yes does it). What a task has proven, and what to try next, is read off its own history by
+  code ([`orchestration/ladder.py`](../backend/src/agent_control/orchestration/ladder.py)), and shown to the model as a check
+  entry, never as a prompt change.
+- **Big requests run as parts.** A long request, or one naming several places, is split once by the model into parts; each part runs in
+  its own sub-loop and the answer is written from what every part returned
+  ([`orchestration/planner.py`](../backend/src/agent_control/orchestration/planner.py)). Short requests are never sent to the planner.
+- **Answers a person can read.** A bare value or a tool's own wording is said as a sentence, a quoted title or name must be in something
+  the task saw, a long step re-sends its progress line with the time, and every file a task changed is compared with the places the
+  request named.
+- **Open web reads.** With `adapters.http_request.allow_public_reads`, `http.request` reads any public page (GET and HEAD, redirects
+  checked hop by hop, never this computer or its network) and hands the model the exact page title and readable text.
+- **A permanent check that it still does what was asked.** `--suite vision` runs Oney's own examples (Steam games, find a file, read
+  five sites, build and run an app, a script-only answer, Claude Code on request, parts, memory, an honest "I can't") live on the real
+  bot before a release. It is frozen like the held-out suites.
 - **Ask once, not thirty times.** Organising 128 files used to ask 128 times, because the only batching
   primitive failed any call that needed approval. A parallel batch is now pre-flighted through the
   policy engine and the user gets one approval listing every call; each call still has its own approval
@@ -80,7 +97,8 @@ Smaller items that are real and unfinished:
 - **An embedding stack by default.** Start project retrieval with explicit corrections and provenance.
   Add semantic retrieval only when measured recall failures justify its dependency and resource cost.
 - **Multi-agent runtimes** (gateways, swarms, agent-to-agent). Feature competition; none of it makes the
-  three jobs better. `delegate` stays a bounded inner loop.
+  three jobs better. `delegate` stays a bounded inner loop. Splitting one request into parts that run one after another, each in its
+  own bounded sub-loop (see Built), is not this: there is no second agent, no gateway, and one place that decides.
 - **A plugin marketplace.** If extensibility becomes a priority, the differentiated answer is the
   existing `adapter.factory`: "I do not know how to operate your application. I generated a connector.
   Here is exactly what it will access. Tests pass. Install it?" A hosted registry is a network-effects

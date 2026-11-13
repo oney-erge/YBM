@@ -114,6 +114,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A request to remember or change a setting (the `configuration` route) may not read a file whose path appears only in an earlier turn of
   the conversation: the call is refused once with the reason. A live run answered "Remember these about me ..." by reading a file named
   three requests earlier.
+- A fourth frozen suite, `--suite vision` (16 cases, `e2e/vision_cases.json`), holds the examples the owner named as what YBM must do,
+  in fresh wording: how many Steam games, where is a file in a hidden folder, what is a document about, a missing file, a count that
+  needs a script, which of two files has more words, a request that splits into parts, the exact titles of three public sites, a
+  tip calculator built and run, adding a line to a file, creating a file in a named folder, moving files and `undo that`,
+  remembering a list of facts, Claude Code on request, an order it cannot place, and a refused delete. It is the "does it still do
+  what I asked for" run before a release, frozen with a hash like the held-out suites.
 - A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
