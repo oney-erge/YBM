@@ -182,6 +182,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A script that only printed its answer no longer gets "Workspace: task_task_..." added to the message. The code interpreter
+  lists its own `script.py` among the files it created, so the message named the scratch folder as if it held a result (the
+  frozen vision suite caught it: two cases failed on the leaked `task_`). The folder is named only when the run made something
+  else, and `Created files:` no longer lists `script.py`.
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
