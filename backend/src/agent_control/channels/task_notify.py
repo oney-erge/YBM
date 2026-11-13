@@ -113,7 +113,7 @@ def _with_result_links(task: TaskRecord, message: str) -> str:
     extras = []
     for label, value in (
         ("Open it here", task.metadata.get("preview_url") or _output_value(task, "preview_url")),
-        ("Workspace", task.metadata.get("workspace_dir") or _output_value(task, "workspace_dir")),
+        ("Workspace", (task.metadata.get("workspace_dir") or _output_value(task, "workspace_dir")) if _workspace_holds_the_result(task) else None),
         ("Pull request", task.metadata.get("pull_request_url") or _output_value(task, "pull_request_url")),
     ):
         text = str(value or "").strip()
@@ -272,12 +272,36 @@ def _computer_answer(output: dict) -> str:
     return "\n".join(lines) or "I inspected the desktop."
 
 
+#: The file a code interpreter run writes its own code to. It is in `files_created` like anything else the run wrote, but it is an
+#: implementation detail, never what the user asked to be made (artifact registration leaves it out for the same reason).
+_INTERPRETER_SCRIPT = "script.py"
+
+
+def _files_made_for_the_user(output: dict) -> list[str]:
+    files = output.get("files_created") if isinstance(output.get("files_created"), list) else []
+    return [str(item) for item in files if str(item) != _INTERPRETER_SCRIPT]
+
+
+def _workspace_holds_the_result(task: TaskRecord) -> bool:
+    """Whether the folder a task worked in is worth telling the user about.
+
+    "Workspace: task_task_ab12..." is a label for a program. A script that only printed its answer ran in a scratch folder
+    nobody needs; the folder that holds what was made (a page, a report, a project) is where the user goes next.
+    """
+    result = task.metadata.get("last_tool_result")
+    output = result.get("output") if isinstance(result, dict) else None
+    tool_name = str(task.metadata.get("last_tool_name") or (result.get("tool_name") if isinstance(result, dict) else "") or "")
+    if tool_name == "code.interpreter" and isinstance(output, dict):
+        return bool(_files_made_for_the_user(output))
+    return True
+
+
 def _code_interpreter_answer(output: dict) -> str:
     summary = str(output.get("summary") or "").strip()
     stdout = str(output.get("stdout") or "").strip()
     stderr = str(output.get("stderr") or "").strip()
     workspace = output.get("workspace_dir")
-    files = output.get("files_created") if isinstance(output.get("files_created"), list) else []
+    files = _files_made_for_the_user(output)
 
     lines: list[str] = []
     if stdout:
