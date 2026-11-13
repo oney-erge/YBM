@@ -154,6 +154,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The operator's rules about the model's habits are three ordered lists in their own modules, not branches in the worker's tick (the worker lost about 780 lines, no behavior changed):
+  `orchestration/request_facts.py` reads what a request says once, each fact from the text it always came from;
+  `orchestration/call_policy.py` is what happens to a tool call before it runs (refusals, canonical form, fourteen labeled rewrites, in order);
+  `orchestration/answer_checks.py` is what a script checks in a `done` answer (a value no tool produced, a sum that does not add up,
+  a quotation nothing contains, a receipt that does not match), with how often each may speak. The moved rules keep their names in the
+  worker, so existing imports work. `docs/ARCHITECTURE.md` has a table of which module decides what.
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 - A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
   single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a

@@ -160,6 +160,24 @@ remembered facts never held is flagged ("do not make up values"), and for a requ
 that no tool produced is sent back to be calculated with `code.interpreter`. The local model once answered a lookup with an email
 address that was not in the file.
 
+### Where the operator's rules live
+
+The worker's tick used to hold every rule about the model's habits inline (thirty lines of `if`, then fourteen rewrites in a row, then
+four checks on the answer), and the order of them mattered without saying so. Each kind is now one small module with the order written
+once, and the worker only calls them:
+
+| Module | What it decides | Reads |
+|---|---|---|
+| `orchestration/request_facts.py` | What the request says: that it deletes, moves, adds to a file, changes one, wants the newest, asks to be asked first, names a coding agent, asks what a document is about, holds URLs. Each fact is read from one text, the same text it always came from (the user's own words, or those plus the objective the concierge wrote). | the task |
+| `orchestration/call_policy.py` | What happens to a tool call before it runs: a refusal on the call as written, canonical form, a refusal on the canonical call, then the labeled rewrites in `REWRITES`, in order. A refusal comes back as a `Refusal`; the worker writes it into the history because it owns the repositories. The rules themselves are in `call_rewrites.py`. | the call, the history, the tool definitions |
+| `orchestration/answer_checks.py` | What a script can find wrong in a `done` answer, in the order of `CHECKS`: a value no tool produced, a sum that does not add up, a quotation nothing contains, a receipt that does not match the request. The first failing check returns a `Pushback` (one history entry and any metadata) and the model is sent back with it; each check says how often it may speak. | the answer, the history |
+| `orchestration/check_entries.py` | The names of the pseudo-entries a check appends to the history (`_number_check`, `_strategy_check`, ...), which the step budget does not count. | |
+
+None of them touches storage, runs a tool or calls a model, so each is tested on its own (`tests/test_request_facts.py`,
+`tests/test_call_policy.py`, `tests/test_answer_checks.py`). The move out of the worker changed no behavior: the same recorded
+scenarios, the same frozen end-to-end suites. To add a rule, add it to the list where it belongs, with a test, not a branch in the tick.
+What follows the checks (the Auditor's grounding pass, fulfillment, the voice pass) stays in the worker, which owns the model calls.
+
 ## Task states
 
 ```mermaid
