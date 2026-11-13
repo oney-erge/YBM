@@ -28,7 +28,7 @@ from agent_control.orchestration.fulfillment import (
     fulfillment_guidance,
     validate_fulfillment,
 )
-from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
+from agent_control.orchestration.number_check import inconsistent_sum, ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.channels.undo_command import merge_undo_moves, undo_moves_from_output
@@ -935,6 +935,17 @@ class TaskWorker:
                     {**latest.metadata, "operator_history": history, "operator_number_gap_count": 1},
                     TaskStatus.RUNNING,
                 )
+            wrong_sum = inconsistent_sum(final_answer)
+            if wrong_sum and not any(isinstance(e, dict) and e.get("hint_id") == "sum" for e in history):
+                terms, total = wrong_sum
+                history.append({
+                    "tool_name": CHECK_ENTRY_NUMBER, "input": None, "status": "number_gap", "hint_id": "sum", "step_id": step_id,
+                    "error": (
+                        f"Declared done, but your answer adds {' + '.join(terms)}, which is {total}, and never says {total}. "
+                        f"Check the arithmetic and give the correct total ({total})."
+                    ),
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)
             invented_quotes = ladder.ungrounded_quotes(final_answer, request_text, real_steps, str(latest.metadata.get("memory_context") or ""))
             if invented_quotes and not any(isinstance(e, dict) and e.get("hint_id") == "quotes" for e in history):
                 history.append({

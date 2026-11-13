@@ -101,3 +101,42 @@ def ungrounded_numbers(request_text: str, answer: str, history: Iterable[dict[st
         if number is not None and number not in grounded and _is_result_sized(number) and number not in found:
             found.append(number)
     return found
+
+
+# --- an answer that shows its sum and gets it wrong --------------------------------------------------------------------------------------------
+
+_NUMBER_AT = re.compile(r"(?<![\w.])\d[\d,]*(?:\.\d+)?(?![\w])")
+
+
+def inconsistent_sum(answer: str | None) -> tuple[list[str], str] | None:
+    """The terms and the true total of an addition written out in the answer, when the answer never states that total.
+
+    Asked for the lines in all the .txt files, a local model wrote "5 lines in total (4 lines in a.txt + 5 lines in b.txt + 6 lines in
+    c.txt)": every term right, the total wrong, and the number check passed it because 5 is in a tool result. Whenever an answer writes
+    "a + b + c" out, the total is arithmetic code can do, and a total the answer does not state is the one that was got wrong.
+    """
+    text = str(answer or "")
+    matches = list(_NUMBER_AT.finditer(text))
+    best: list[Any] = []
+    chain: list[Any] = [matches[0]] if matches else []
+    for previous, current in zip(matches, matches[1:]):
+        gap = text[previous.end() : current.start()]
+        if "+" in gap and len(gap) <= 40 and gap.count("+") == 1 and not re.search(r"\d", gap) and "\n" not in gap:
+            chain.append(current)
+            continue
+        if len(chain) > len(best):
+            best = chain
+        chain = [current]
+    if len(chain) > len(best):
+        best = chain
+    if len(best) < 2:
+        return None
+    values = [_normalise(match.group(0)) for match in best]
+    if any(value is None for value in values):
+        return None
+    total = sum(Decimal(str(value)) for value in values)
+    stated = format(total.normalize(), "f")
+    stated = stated[:-2] if stated.endswith(".0") else stated
+    if stated in _numbers(text):
+        return None
+    return [str(value) for value in values], stated

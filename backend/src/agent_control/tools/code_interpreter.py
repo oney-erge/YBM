@@ -569,7 +569,10 @@ class CodeInterpreterAdapter:
         code = str(request.input["code"])
         if len(code) > self.config.max_code_chars:
             raise ValueError(f"code exceeds configured limit of {self.config.max_code_chars} characters")
-        _validate_python(code, allowed_imports=set(self.config.allowed_imports), blocked_imports=set(self.config.blocked_imports))
+        _validate_python(
+            code, allowed_imports=set(self.config.allowed_imports), blocked_imports=set(self.config.blocked_imports),
+            allow_deletion=self.config.allow_file_deletion,
+        )
         workspace = self._workspace(request)
         workspace.mkdir(parents=True, exist_ok=True)
         execution_profile = _execution_profile(request, generated=generated)
@@ -819,8 +822,58 @@ class CodeInterpreterAdapter:
         return workspace
 
 
-def _validate_python(code: str, *, allowed_imports: set[str], blocked_imports: set[str]) -> None:
+#: Calls that remove a file or folder whatever they are called on (Path.unlink, shutil.rmtree, ...).
+_DELETING_METHODS = frozenset({"unlink", "rmtree", "rmdir", "removedirs", "send2trash", "trash"})
+_DELETING_MODULE_NAMES = {"os": {"remove", "unlink", "rmdir", "removedirs"}, "shutil": {"rmtree"}, "pathlib": set()}
+_SHELL_CALLS = frozenset({"run", "call", "Popen", "check_call", "check_output", "system", "popen"})
+_SHELL_DELETE = re.compile(r"(?:^|[\s;&|(])(?:rm|del|erase|rd|rmdir|Remove-Item|ri)(?=[\s;&|)]|$)", re.IGNORECASE)
+
+
+def script_deletes_files(code: str) -> list[str]:
+    """What a Python script calls to delete files or folders ([] when it deletes none, or cannot be parsed)."""
+    try:
+        tree = ast.parse(code, mode="exec")
+    except SyntaxError:
+        return []
+    imported_deleters: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in _DELETING_MODULE_NAMES:
+            for alias in node.names:
+                if alias.name in _DELETING_MODULE_NAMES[node.module]:
+                    imported_deleters.add(alias.asname or alias.name)
+    found: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if isinstance(func, ast.Attribute):
+            owner = func.value.id if isinstance(func.value, ast.Name) else None
+            if func.attr in _DELETING_METHODS or (owner is not None and func.attr in _DELETING_MODULE_NAMES.get(owner, ())):
+                found.add(func.attr)
+            if func.attr in _SHELL_CALLS and any(
+                isinstance(part, ast.Constant) and isinstance(part.value, str) and _SHELL_DELETE.search(part.value)
+                for argument in [*node.args, *(keyword.value for keyword in node.keywords)] for part in ast.walk(argument)
+            ):
+                found.add("a shell delete command")
+        elif isinstance(func, ast.Name) and func.id in imported_deleters:
+            found.add(func.id)
+    return sorted(found)
+
+
+_CODE_OPERATION_RISKS = {
+    "inspect_state": RiskLevel.LOW, "health": RiskLevel.LOW, "run_python": RiskLevel.HIGH, "generate_and_run": RiskLevel.HIGH,
+    "solve_once": RiskLevel.HIGH, "build_temp_helper": RiskLevel.HIGH, "repair_script": RiskLevel.HIGH,
+}
+
+
+def _validate_python(code: str, *, allowed_imports: set[str], blocked_imports: set[str], allow_deletion: bool = False) -> None:
     tree = ast.parse(code, mode="exec")
+    deleters = [] if allow_deletion else script_deletes_files(code)
+    if deleters:
+        raise ValueError(
+            f"blocked: this script deletes files ({', '.join(deleters)}), and YBM does not delete files. "
+            "Tell the user plainly that you cannot delete, and offer to move the files into a folder they name instead."
+        )
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
@@ -1377,6 +1430,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "health": CodeInterpreterOutput,
             },
             default_operation="run_python",
+            risk_resolver=lambda value: (
+                RiskLevel.CRITICAL
+                if settings.adapters.code_interpreter.allow_file_deletion and script_deletes_files(str(value.get("code") or ""))
+                else _CODE_OPERATION_RISKS.get(str(value.get("operation") or "run_python"), RiskLevel.HIGH)
+            ),
             operation_risks={
                 "inspect_state": RiskLevel.LOW,
                 "health": RiskLevel.LOW,
