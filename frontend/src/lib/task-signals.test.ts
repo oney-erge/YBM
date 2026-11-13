@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest"
-import { CANCELLABLE, PAUSABLE, RESUMABLE } from "@/lib/task-signals"
-import { TaskStatusSchema, type TaskStatus } from "@/lib/api"
+import { CANCELLABLE, PAUSABLE, RESUMABLE, canSignal } from "@/lib/task-signals"
+import { TaskStatusSchema, type TaskRecord, type TaskStatus } from "@/lib/api"
 
 const ALL_STATUSES = TaskStatusSchema.options
 
 describe("task status → action gating", () => {
+  it("prefers the server's current actions and falls back for old servers", () => {
+    const task: Pick<TaskRecord, "status" | "allowed_actions"> = { status: "running", allowed_actions: ["cancel"] }
+    expect(canSignal(task, "pause")).toBe(false)
+    expect(canSignal(task, "cancel")).toBe(true)
+    expect(canSignal({ ...task, allowed_actions: undefined }, "pause")).toBe(true)
+  })
+
   it("only running/retrying tasks can be paused", () => {
     expect(PAUSABLE).toEqual(new Set<TaskStatus>(["running", "retrying"]))
   })

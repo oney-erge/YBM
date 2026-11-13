@@ -31,6 +31,9 @@ async def test_task_status_adapter_reports_recent_active_and_blocked_tasks(tmp_p
 
     assert result.status.value == "succeeded"
     assert result.output["task_status"]["active_count"] == 1
+    rows = {row["id"]: row for row in result.output["task_status"]["recent_tasks"]}
+    assert rows[active.id]["allowed_actions"] == ["pause", "cancel"]
+    assert rows[failed.id]["allowed_actions"] == []
     assert "Blocked or failed recently: 1" in result.output["summary"]
     assert result.output["terminal_output"]
 
@@ -113,6 +116,41 @@ async def test_task_status_finds_stale_waiting_task_beyond_recency_limit(tmp_pat
     row_ids = {row["id"] for row in output["recent_tasks"]}
     assert stuck_approval.id in row_ids
     assert stuck_clarify.id in row_ids
+
+
+@pytest.mark.asyncio
+async def test_task_status_exposes_redacted_recovery_question_for_agents(tmp_path) -> None:
+    import json
+
+    from agent_control.orchestration.worker import _tool_output_text
+
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    task = repos.tasks.create("investigate an interrupted operation")
+    # Older stored rows may predate answer-field redaction.
+    metadata = {
+        "clarifying_question": "Check whether it took effect; API_KEY=do-not-expose",
+        "interrupted_step": {"input": {"private": "do-not-copy"}},
+    }
+    repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    with database.connect() as connection:
+        connection.execute("UPDATE tasks SET metadata_json = ? WHERE id = ?", (json.dumps(metadata), task.id))
+
+    result = await TaskStatusAdapter(repos).execute(ToolCallRequest(
+        task_id="task_status", tool_name="task.status", capability=Capability.AGENT_CORE,
+        input={"operation": "status"},
+    ))
+
+    row = next(row for row in result.output["task_status"]["recent_tasks"] if row["id"] == task.id)
+    assert "Check whether it took effect" in row["clarifying_question"]
+    assert "do-not-expose" not in row["clarifying_question"]
+    assert "interrupted_step" not in row
+    terminal_text = result.output["terminal_output"][0]["content"]
+    assert "Check whether it took effect" in terminal_text
+    assert "do-not-expose" not in terminal_text
+    assert "Check whether it took effect" in _tool_output_text(result)
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
 
 
 def test_registry_exposes_task_status_when_repositories_are_available(tmp_path) -> None:

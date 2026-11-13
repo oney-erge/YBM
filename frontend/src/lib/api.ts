@@ -209,6 +209,7 @@ export const TaskRecordSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   metadata: z.record(z.string(), z.unknown()),
+  allowed_actions: z.array(z.enum(["pause", "resume", "cancel"])).optional(),
   // Only populated by the chat endpoints (docs/archive/UI_UX_AUDIT.md Phase 1's
   // artifact cards) - optional so /api/tasks and /api/tasks/{id}/trace,
   // which don't send this key, still parse.
@@ -694,6 +695,13 @@ const TaskTraceSchema = z.object({
   approvals: z.array(ApprovalRequestSchema),
   artifacts: z.array(z.record(z.string(), z.unknown())),
   signals: z.array(z.record(z.string(), z.unknown())),
+  coding_session_notifications: z.array(z.object({
+    session_id: z.string(),
+    channel: z.string(),
+    status: z.string(),
+    created_at: z.string(),
+    observed_at: z.string().nullable(),
+  })).optional(),
   audit: z.array(z.record(z.string(), z.unknown())),
 })
 export type TaskTrace = z.infer<typeof TaskTraceSchema>

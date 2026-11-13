@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any
 
 from agent_control.config import AppSettings
-from agent_control.schemas import Capability, TaskStatus, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.schemas import Capability, TaskStatus, ToolCallRequest, ToolCallResult, ToolResultStatus, task_control_actions
 from agent_control.storage.repositories import Repositories
+from agent_control.storage.redaction import redact_text
 from agent_control.tools.coding_agent import load_sessions
 from agent_control.tools.contracts import TaskStatusInput, TaskStatusOutput
 from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDefinition, capability_enabled
@@ -41,6 +42,7 @@ class TaskStatusAdapter:
         combined_tasks: dict[str, Any] = {task.id: task for task in recent}
         for task in (*active, *waiting_clarification):
             combined_tasks.setdefault(task.id, task)
+        notifications = self.repositories.tasks.list_coding_session_notifications(list(combined_tasks))
         task_rows = []
         for task in combined_tasks.values():
             # Progress is the Operator loop's own step count. This used to read
@@ -49,10 +51,16 @@ class TaskStatusAdapter:
             # "plan": null regardless of how much work the task had done.
             history = task.metadata.get("operator_history")
             steps_taken = len(history) if isinstance(history, list) else 0
+            question = task.metadata.get("clarifying_question")
+            if task.status == TaskStatus.CLARIFYING and isinstance(question, str):
+                question = redact_text(question)[:1000]
+            else:
+                question = None
             task_rows.append(
                 {
                     "id": task.id,
                     "status": task.status.value,
+                    "allowed_actions": task_control_actions(task.status),
                     "objective": task.objective,
                     "updated_at": task.updated_at.isoformat(),
                     "steps_taken": steps_taken,
@@ -60,10 +68,28 @@ class TaskStatusAdapter:
                     "last_error": task.metadata.get("last_error"),
                     "awaiting_external": task.metadata.get("awaiting_external"),
                     "last_failure_type": task.metadata.get("last_failure_type"),
+                    "clarifying_question": question,
+                    "coding_session_notifications": notifications.get(task.id, []),
                 }
             )
 
         summary_lines = [f"Status: {len(recent)} recent task(s), {len(active)} active."]
+        uncertain = sum(
+            1 for entries in notifications.values()
+            if any(item["status"] in {"unknown", "not-sent"} for item in entries)
+        )
+        if uncertain:
+            summary_lines.append(
+                f"Telegram coding-session notification delivery is unconfirmed or not sent for {uncertain} displayed task(s). "
+                "Inspect the task before sending again."
+            )
+        if waiting_clarification:
+            summary_lines.append(f"Waiting for clarification: {len(waiting_clarification)}.")
+            for task in waiting_clarification[:3]:
+                question = task.metadata.get("clarifying_question")
+                if isinstance(question, str) and question.strip():
+                    safe_question = " ".join(redact_text(question).split())[:300]
+                    summary_lines.append(f"- {task.id}: {safe_question}")
         if active:
             summary_lines.append("Current active work:")
             summary_lines.extend(f"- {task.id}: {task.status.value} - {task.objective[:120]}" for task in active[:5])
@@ -77,8 +103,6 @@ class TaskStatusAdapter:
             )
         if awaiting_external:
             summary_lines.append(f"Waiting on external sessions: {len(awaiting_external)}.")
-        if waiting_clarification:
-            summary_lines.append(f"Waiting for clarification: {len(waiting_clarification)}.")
         if waiting_approval:
             summary_lines.append(f"Waiting for approval: {len(waiting_approval)}.")
         if recent:

@@ -18,7 +18,7 @@ import { useAdvancedMode } from "@/lib/advanced-mode"
 import { ApiError, tokenUsageOf, type EvidenceItem } from "@/lib/api"
 import { isTerminal } from "@/lib/chat"
 import { EFFECT_DISPLAY } from "@/lib/evidence"
-import { CANCELLABLE, PAUSABLE, RESUMABLE } from "@/lib/task-signals"
+import { canSignal } from "@/lib/task-signals"
 import { cn } from "@/lib/utils"
 
 type TraceView = "steps" | "timeline" | "duration" | "graph"
@@ -54,6 +54,9 @@ export function TaskTracePage() {
 
   const task = trace.task
   const usage = tokenUsageOf(task)
+  const notifications = (trace.coding_session_notifications ?? []).filter((item) => item.channel === "telegram")
+  const unconfirmed = notifications.some((item) => item.status !== "send-returned" && item.status !== "not-sent")
+  const notSent = notifications.some((item) => item.status === "not-sent")
 
   function handleSignal(name: "pause" | "resume" | "cancel") {
     if (!taskId) return
@@ -98,17 +101,17 @@ export function TaskTracePage() {
       </div>
 
       <div className="flex gap-2">
-        {PAUSABLE.has(task.status) && (
+        {canSignal(task, "pause") && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("pause")}>
             Pause
           </Button>
         )}
-        {RESUMABLE.has(task.status) && (
+        {canSignal(task, "resume") && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("resume")}>
             Resume
           </Button>
         )}
-        {CANCELLABLE.has(task.status) && (
+        {canSignal(task, "cancel") && (
           <Button variant="outline" size="sm" disabled={signal.isPending} onClick={() => handleSignal("cancel")}>
             Cancel
           </Button>
@@ -138,6 +141,16 @@ export function TaskTracePage() {
       )}
 
       {usage && <CostPanel usage={usage} />}
+
+      {(unconfirmed || notSent) && (
+        <Alert>
+          <AlertTitle>Telegram completion message needs review</AlertTitle>
+          <AlertDescription>
+            {unconfirmed && "A completion message may or may not have been sent. Check the chat before sending again. "}
+            {notSent && "A completion message was not sent because the Telegram channel was unavailable."}
+          </AlertDescription>
+        </Alert>
+      )}
 
       <div>
         <div className="mb-2 flex items-center gap-1">

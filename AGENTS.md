@@ -10,6 +10,7 @@ provides the editor bridge.
 Use these as the durable sources of truth:
 
 - `docs/ARCHITECTURE.md` for current components and message flow.
+- `docs/STATE_MACHINES.md` for task-control ownership and recovery boundaries.
 - `docs/CAPABILITIES.md` for the tool catalog and the access each tool needs.
 - `docs/ROADMAP.md` for what is built, what is next, and the known limits.
 - `config/config.example.yaml` for supported configuration.

@@ -440,6 +440,29 @@ def test_admin_lists_tasks_and_audit(monkeypatch, tmp_path) -> None:
     assert filtered[0]["category"] == "spawned_task"
 
 
+def test_admin_exposes_uncertain_recovery_question_without_restarting_work(tmp_path) -> None:
+    from agent_control.orchestration import reconcile_orphaned_tasks
+
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    task = repositories.tasks.create("deliver a report")
+    repositories.tasks.update_metadata(task.id, {
+        "operator_in_flight": {
+            "tool_name": "artifact.deliver", "capability": "telegram.send",
+            "risk_level": "low", "input": {"operation": "send_file"},
+        },
+    }, TaskStatus.RUNNING)
+    assert reconcile_orphaned_tasks(repositories, AuditLogger(repositories.audit)) == 1
+
+    response = _admin_client(repositories).get("/admin/api/tasks")
+
+    assert response.status_code == 200
+    visible = next(item for item in response.json()["tasks"] if item["id"] == task.id)
+    assert visible["status"] == "clarifying"
+    question = visible["metadata"]["clarifying_question"]
+    assert "previous worker" in question and "whether it took effect" in question
+    assert repositories.tasks.get(task.id).status == TaskStatus.CLARIFYING
+
+
 def test_admin_task_signal_updates_task(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)  # see test_admin_page_and_summary for why chdir, not just delenv
     database_url = f"sqlite:///{tmp_path / 'admin.db'}"
@@ -453,6 +476,7 @@ def test_admin_task_signal_updates_task(monkeypatch, tmp_path) -> None:
     assert response.status_code == 200
     assert updated is not None
     assert updated.status == TaskStatus.PAUSED
+    assert response.json()["task"]["allowed_actions"] == ["resume", "cancel"]
 
 
 def _pending_approval(repositories, task_id: str) -> ApprovalRequest:

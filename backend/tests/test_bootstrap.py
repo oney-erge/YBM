@@ -4,6 +4,8 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from agent_control import bootstrap
 from agent_control.config import AppSettings
 from agent_control.config_sync import read_env_value
@@ -134,7 +136,7 @@ def test_check_node_ok_when_present(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(
         bootstrap.subprocess,
         "run",
-        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="v22.22.0\n"),
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout="v22.22.2\n"),
     )
     check = bootstrap._check_node()
     assert check.status == "ok"
@@ -152,7 +154,32 @@ def test_check_node_warns_when_too_old(monkeypatch, tmp_path) -> None:
     check = bootstrap._check_node()
 
     assert check.status == "warn"
-    assert "22.22+" in check.detail
+    assert "22.22.2" in check.detail
+
+
+@pytest.mark.parametrize(
+    ("version", "supported"),
+    [("22.22.0", False), ("22.22.1", False), ("22.22.2", True),
+     ("23.0.0", False), ("24.14.0", False), ("24.15.0", True),
+     ("25.0.0", False), ("26.0.0", True)],
+)
+def test_node_check_matches_frontend_lockfile_engines(monkeypatch, tmp_path, version, supported) -> None:
+    _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/node" if name == "node" else None)
+    monkeypatch.setattr(
+        bootstrap.subprocess, "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=0, stdout=f"v{version}\n"),
+    )
+    assert (bootstrap._check_node().status == "ok") is supported
+
+
+def test_node_doctor_does_not_apply_build_only_range_to_prebuilt_whatsapp(monkeypatch, tmp_path) -> None:
+    _isolate(monkeypatch, tmp_path)
+    _write(tmp_path / "backend" / "src" / "agent_control" / "static" / "admin" / "index.html", "built")
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: "/usr/bin/node" if name == "node" else None)
+    monkeypatch.setattr(bootstrap, "_node_version", lambda _node: (22, 22, 0))
+    settings = AppSettings(_env_file=None, channels={"whatsapp": {"enabled": True}})
+    assert bootstrap._check_node(settings, assume_needed=False).status == "ok"
 
 
 def test_check_node_warns_not_fails_when_missing(monkeypatch, tmp_path) -> None:
@@ -314,6 +341,22 @@ def test_build_admin_console_rebuilds_when_a_source_file_changed(monkeypatch, tm
     bootstrap._build_admin_console()
 
     assert any(cmd[:2] == ["npm", "run"] for cmd in calls)
+
+
+def test_build_admin_console_warns_but_attempts_legacy_node(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.chdir(tmp_path)
+    frontend_dir = tmp_path / "frontend"
+    _write(frontend_dir / "src" / "App.tsx", "const App = () => null")
+    (frontend_dir / "node_modules").mkdir()
+    monkeypatch.setattr(bootstrap.shutil, "which", lambda name: f"/usr/bin/{name}")
+    monkeypatch.setattr(bootstrap, "_node_version", lambda _node: (22, 22, 0))
+    calls = []
+    monkeypatch.setattr(bootstrap.subprocess, "run", lambda cmd, **kw: calls.append(cmd) or SimpleNamespace(returncode=0))
+
+    bootstrap._build_admin_console()
+
+    assert ["npm", "run", "build"] in calls
+    assert "outside the console lock's declared ranges" in capsys.readouterr().out
 
 
 def test_build_admin_console_rebuilds_when_no_prior_build_exists(monkeypatch, tmp_path) -> None:

@@ -5,7 +5,7 @@ import { StatusBadge } from "@/components/tasks/StatusBadge"
 import { ACTIVE_STATUSES, ApiError, type TaskRecord } from "@/lib/api"
 import { extractLastOutput } from "@/lib/chat"
 import { formatRelativeTime } from "@/lib/time"
-import { CANCELLABLE, PAUSABLE } from "@/lib/task-signals"
+import { canSignal } from "@/lib/task-signals"
 import { useTaskSignal, useTasks } from "@/lib/queries"
 
 /**
@@ -79,7 +79,7 @@ function ActiveTaskRow({
         <Button
           variant="outline"
           size="sm"
-          disabled={pending || !PAUSABLE.has(task.status)}
+          disabled={pending || !canSignal(task, "pause")}
           onClick={() => onSignal(task.id, "pause")}
         >
           Pause
@@ -87,7 +87,7 @@ function ActiveTaskRow({
         <Button
           variant="outline"
           size="sm"
-          disabled={pending || !CANCELLABLE.has(task.status)}
+          disabled={pending || !canSignal(task, "cancel")}
           onClick={() => onSignal(task.id, "cancel")}
         >
           Cancel

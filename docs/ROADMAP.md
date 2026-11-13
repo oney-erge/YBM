@@ -148,8 +148,8 @@ Git history and [archive/](archive/), not here.
   becomes a task, and conversation-memory summary calls, have no task to attach to and are not recorded.
 - Status requests cost two LLM calls. The old LLM-free keyword shortcut was deliberately not rebuilt: it
   was brittle and silently misroutable.
-- Installing from a source checkout needs Node.js 22.22 or newer to build the console, because the built
-  console is not committed; with less, the launcher continues with the JSON API only. Release installs
+- Installing from a source checkout uses Node 22.22.2+ on Node 22, 24.15.0+ on Node 24, or Node 26+ to build the console, because the built
+  console is not committed. Unsupported versions are warned about; versions below 22.22.0 skip the build and keep the JSON API. Release installs
   ship it prebuilt.
 
 ### Maintainability

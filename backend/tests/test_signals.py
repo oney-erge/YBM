@@ -44,6 +44,44 @@ def _pending_approval(repositories, task_id: str) -> ApprovalRequest:
     )
 
 
+def test_pause_survives_in_flight_progress_and_repeated_pause(tmp_path) -> None:
+    repositories, audit = make_repos(tmp_path)
+    task = repositories.tasks.create("run a task")
+    repositories.tasks.update_status(task.id, TaskStatus.RUNNING)
+    stale = repositories.tasks.get(task.id)
+
+    apply_task_signal(repositories, audit, task.id, "pause", "operator", {})
+    apply_task_signal(repositories, audit, task.id, "pause", "operator", {})
+    returned = repositories.tasks.update_metadata(
+        task.id, {**stale.metadata, "tool_result": "saved"}, TaskStatus.RUNNING
+    )
+    assert returned.status == TaskStatus.PAUSED
+    assert returned.metadata["tool_result"] == "saved"
+    assert returned.metadata["paused_from_status"] == "running"
+    assert returned.metadata["last_control_signal"] == "pause"
+
+    _, _, status = apply_task_signal(repositories, audit, task.id, "resume", "operator", {})
+    assert status == TaskStatus.RUNNING
+    assert repositories.tasks.get(task.id).metadata["tool_result"] == "saved"
+
+
+def test_resume_uses_terminal_outcome_observed_while_paused(tmp_path) -> None:
+    repositories, audit = make_repos(tmp_path)
+    task = repositories.tasks.create("finish in flight")
+    repositories.tasks.update_status(task.id, TaskStatus.RUNNING)
+    apply_task_signal(repositories, audit, task.id, "pause", "operator", {})
+    observed = repositories.tasks.update_metadata(
+        task.id, {"synthesized_answer": "done"}, TaskStatus.COMPLETED
+    )
+    assert observed.status == TaskStatus.PAUSED
+    stale = repositories.tasks.update_metadata(task.id, {"stale": True}, TaskStatus.RUNNING)
+    assert stale.metadata["synthesized_answer"] == "done"
+    assert stale.metadata["paused_from_status"] == "completed"
+    _, _, status = apply_task_signal(repositories, audit, task.id, "resume", "operator", {})
+    assert status == TaskStatus.COMPLETED
+    assert repositories.tasks.get(task.id).metadata["synthesized_answer"] == "done"
+
+
 def test_cancelling_a_task_rejects_its_pending_approval(tmp_path) -> None:
     repositories, audit = make_repos(tmp_path)
     task = repositories.tasks.create("write a report")

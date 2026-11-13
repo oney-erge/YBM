@@ -138,6 +138,45 @@ def test_task_claim_releases_when_terminal(tmp_path) -> None:
     assert claim_b.id == task.id
 
 
+def test_expired_claim_cannot_be_extended(tmp_path) -> None:
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    task = repos.tasks.create("expired claim")
+    repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="old", claim_expiry_seconds=0)
+
+    assert not repos.tasks.extend_claim(task.id, worker_id="old", claim_expiry_seconds=1200)
+    assert repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="new") is not None
+    assert not repos.tasks.extend_claim(task.id, worker_id="old", claim_expiry_seconds=1200)
+
+
+def test_inflight_reservation_does_not_overwrite_a_damaged_record(tmp_path) -> None:
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    task = repos.tasks.create("existing uncertain work")
+    repos.tasks.update_metadata(task.id, {"operator_in_flight": {}}, TaskStatus.RUNNING)
+
+    current, admitted = repos.tasks.admit_operator_call(task.id, {"tool_name": "new action"})
+
+    assert not admitted
+    assert current.metadata["operator_in_flight"] == {}
+
+
+def test_stale_worker_cannot_release_a_new_workers_claim(tmp_path) -> None:
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    task = repos.tasks.create("claimed by a replacement worker")
+    repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="old", claim_expiry_seconds=0)
+    assert repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="new") is not None
+
+    repos.tasks.release_claim(task.id, worker_id="old")
+    assert repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="third") is None
+    repos.tasks.release_claim(task.id, worker_id="new")
+    assert repos.tasks.claim_next([TaskStatus.RECEIVED], worker_id="third") is not None
+
+
 def test_task_claim_recovers_after_expiry(tmp_path) -> None:
     """An expired claim becomes eligible again, so a crashed worker doesn't
     permanently strand the task."""

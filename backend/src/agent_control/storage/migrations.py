@@ -58,6 +58,18 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS coding_session_notifications (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id TEXT NOT NULL,
+        session_id TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('unknown', 'not-sent', 'send-returned')),
+        created_at TEXT NOT NULL,
+        observed_at TEXT,
+        FOREIGN KEY(task_id) REFERENCES tasks(id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS ix_coding_session_notifications_task_id ON coding_session_notifications(task_id, id DESC)",
+    """
     CREATE TABLE IF NOT EXISTS approvals (
         id TEXT PRIMARY KEY,
         task_id TEXT NOT NULL,

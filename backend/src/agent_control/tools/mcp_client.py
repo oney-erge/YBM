@@ -13,6 +13,7 @@ from mcp.client.stdio import stdio_client
 from agent_control.config import MCPConfig, MCPServerConfig
 from agent_control.config_sync import ConfigManager
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus, utc_now
+from agent_control.storage.redaction import redact_text
 from agent_control.tools.contracts import MCPClientInput, MCPClientOutput
 from agent_control.tools.spec import (
     UNTRUSTED_EXTERNAL,
@@ -24,6 +25,27 @@ from agent_control.tools.spec import (
     failed_result,
     same_output_schema,
 )
+
+
+def _discovery_error(exc: Exception) -> str:
+    """Keep grouped failure types visible without copying nested error messages."""
+    message = redact_text(str(exc).strip()) or type(exc).__name__
+    if not isinstance(exc, BaseExceptionGroup):
+        return message
+    pending: list[BaseException] = [exc]
+    types: list[str] = []
+    inspected = 0
+    while pending and inspected < 64 and len(types) < 5:
+        current = pending.pop()
+        inspected += 1
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(current.exceptions[:8])
+        else:
+            name = type(current).__name__
+            if name not in types:
+                types.append(name)
+    suffix = f" (causes: {', '.join(types)})" if types else ""
+    return message[:200] + suffix
 
 
 class MCPClientAdapter:
@@ -74,7 +96,7 @@ class MCPClientAdapter:
                     {"name": name, "enabled": server.enabled, "healthy": True, "tool_count": len(server_tools)}
                 )
             except Exception as exc:
-                servers.append({"name": name, "enabled": server.enabled, "healthy": False, "error": str(exc)})
+                servers.append({"name": name, "enabled": server.enabled, "healthy": False, "error": _discovery_error(exc)})
         catalog = write_mcp_catalog(self.config, servers=servers, tools=catalog_entries, replace_all=not bool(selected))
         return {
             "servers": servers,

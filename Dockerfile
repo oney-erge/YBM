@@ -18,7 +18,7 @@
 # ybm ui-build" placeholder, and that instruction cannot be followed inside a
 # container: there is no frontend/ directory and no node. The whole UI was
 # missing until this stage existed.
-FROM node:22.22.0-bookworm-slim@sha256:dd9d21971ec4395903fa6143c2b9267d048ae01ca6d3ea96f16cb30df6187d94 AS frontend
+FROM node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e AS frontend
 
 WORKDIR /build/frontend
 COPY frontend/package.json frontend/package-lock.json ./
