@@ -121,7 +121,36 @@ class PolicyEngine:
             approved_request = ToolCallRequest.model_validate(approval.action_payload)
         except (TypeError, ValueError):
             return False
-        return PolicyEngine._approval_binding(approved_request) == PolicyEngine._approval_binding(request)
+        approved = PolicyEngine._canonical_approval_binding(approved_request)
+        requested = PolicyEngine._canonical_approval_binding(request)
+        return approved is not None and requested is not None and approved == requested
+
+    @staticmethod
+    def _canonical_approval_binding(request: ToolCallRequest) -> str | None:
+        """Compare exact JSON values without Python's bool/int equality shortcuts."""
+        value = PolicyEngine._approval_binding(request)
+        pending: list[tuple[object, bool]] = [(value, False)]
+        active: set[int] = set()
+        while pending:
+            item, leaving = pending.pop()
+            if type(item) in (dict, list):
+                if leaving:
+                    active.remove(id(item))
+                    continue
+                if id(item) in active:
+                    return None
+                if type(item) is dict and not all(type(key) is str for key in item):
+                    return None
+                active.add(id(item))
+                pending.append((item, True))
+                children = item.values() if type(item) is dict else item
+                pending.extend((child, False) for child in children)
+            elif type(item) not in (str, int, float, bool, type(None)):
+                return None
+        try:
+            return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        except (TypeError, ValueError, RecursionError):
+            return None
 
     @staticmethod
     def _approval_binding(request: ToolCallRequest) -> dict:
@@ -130,7 +159,8 @@ class PolicyEngine:
         Request ids, timestamps, and idempotency keys are intentionally
         excluded because the worker reconstructs the call after a human
         decision. Tool identity, authority, and every validated parameter
-        must remain byte-for-byte equivalent after model normalization.
+        must preserve their JSON values and types after model normalization;
+        object key order does not matter.
         """
         return {
             "task_id": request.task_id,

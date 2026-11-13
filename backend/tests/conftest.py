@@ -27,6 +27,7 @@ from pathlib import Path
 import pytest
 
 from agent_control import config_sync
+from agent_control.llm import hardware
 
 
 @pytest.fixture(autouse=True)
@@ -51,3 +52,13 @@ def isolate_repo_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
         return real_read_env_file(env_path)
 
     monkeypatch.setattr(config_sync, "read_env_file", read_env_file_without_repo_dotenv)
+
+
+@pytest.fixture(autouse=True)
+def isolate_localdeploy_probe(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not probe a developer's running LocalDeploy during unrelated tests.
+
+    Tests of the HTTP probe can explicitly provide their own addresses and
+    mock transport; the production defaults remain unchanged.
+    """
+    monkeypatch.setattr(hardware, "_LOCALDEPLOY_BASE_URLS", ())
