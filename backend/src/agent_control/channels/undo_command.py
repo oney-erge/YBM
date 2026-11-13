@@ -48,7 +48,8 @@ def undo_moves_from_output(output: dict) -> dict | None:
     ]
     if not moves:
         return None
-    return {"root": str(output.get("root") or ""), "moves": moves[:MAX_UNDO_MOVES]}
+    folders = [str(folder) for folder in output.get("created_folders") or []]
+    return {"root": str(output.get("root") or ""), "moves": moves[:MAX_UNDO_MOVES], **({"created_folders": folders} if folders else {})}
 
 
 def merge_undo_moves(previous: object, new: dict) -> dict:
@@ -61,6 +62,7 @@ def merge_undo_moves(previous: object, new: dict) -> dict:
     if not isinstance(previous, dict) or previous.get("root") != new.get("root") or not isinstance(previous.get("moves"), list):
         return new
     moves = [dict(move) for move in previous["moves"]]
+    folders = [*previous.get("created_folders", []), *(f for f in new.get("created_folders", []) if f not in previous.get("created_folders", []))]
     for step in new["moves"]:
         earlier = next((move for move in moves if move["from"] == step["to"]), None)
         if earlier is None:
@@ -69,7 +71,29 @@ def merge_undo_moves(previous: object, new: dict) -> dict:
             moves.remove(earlier)
         else:
             earlier["from"] = step["from"]
-    return {"root": new["root"], "moves": moves[:MAX_UNDO_MOVES]}
+    return {"root": new["root"], "moves": moves[:MAX_UNDO_MOVES], **({"created_folders": folders} if folders else {})}
+
+
+def remove_empty_folders_the_move_made(record: object) -> list[str]:
+    """After the files are put back: take away the folders the move had made, if nothing is left in them.
+
+    Only a folder this task's own move created (recorded in `created_folders`), only inside the folder the move was made in, and only
+    when it is empty: `rmdir` refuses anything else, and a folder the user put something into since stays. Deepest first, so a
+    folder made inside a folder made by the move goes before its parent.
+    """
+    if not isinstance(record, dict) or not record.get("root"):
+        return []
+    root = Path(str(record["root"]))
+    removed: list[str] = []
+    for folder in sorted((Path(str(item)) for item in record.get("created_folders") or []), key=lambda path: len(path.parts), reverse=True):
+        if folder == root or root not in folder.parents or not folder.is_dir():
+            continue
+        try:
+            folder.rmdir()
+        except OSError:
+            continue  # not empty (or in use): it stays
+        removed.append(str(folder))
+    return removed
 
 
 def undo_command_reply(

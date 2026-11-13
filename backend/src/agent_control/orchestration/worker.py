@@ -41,7 +41,7 @@ from agent_control.orchestration.fulfillment import (
 from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
-from agent_control.channels.undo_command import merge_undo_moves, undo_moves_from_output
+from agent_control.channels.undo_command import merge_undo_moves, remove_empty_folders_the_move_made, undo_moves_from_output
 from agent_control.orchestration.signals import STALE_SWEEP_INTERVAL_SECONDS, sweep_expired_approvals, sweep_stale_blocked
 from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
@@ -3086,6 +3086,13 @@ class TaskWorker:
             undo = undo_moves_from_output(output)
             if undo is not None:
                 metadata["undo_moves"] = merge_undo_moves(latest.metadata.get("undo_moves"), undo)
+            undone_task_id = latest.metadata.get("undo_of_task_id")
+            if undone_task_id and not output.get("dry_run"):
+                # This task is the "undo that" of an earlier one: the files are back, so the folders that move made can go.
+                undone = self.repositories.tasks.get(str(undone_task_id))
+                removed = remove_empty_folders_the_move_made((undone.metadata.get("undo_moves") if undone else None))
+                if removed:
+                    metadata["removed_empty_folders"] = removed
         if tool_name == "workspace.manage" and output.get("server_pid") and output.get("url"):
             # So "what apps are running?" and "stop the recipe app" can find it again (channels/app_commands.py).
             metadata["preview_server"] = {
