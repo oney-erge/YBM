@@ -312,7 +312,8 @@ def walk_search(
             folder = queue.popleft()
             try:
                 with os.scandir(folder) as scan:
-                    entries = list(scan)
+                    # In name order on every platform (ext4 hashes names), so a walk that ends early ends the same way everywhere.
+                    entries = sorted(scan, key=lambda entry: (entry.name.casefold(), entry.name))
             except OSError:
                 note_denied(folder)
                 continue
