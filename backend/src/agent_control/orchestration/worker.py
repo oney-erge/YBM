@@ -1134,6 +1134,8 @@ class TaskWorker:
             return self._refuse_unrequested_coding_agent(latest, history, tool_input, step_id)
         if _is_simulated_delete(latest, tool_name, tool_input):
             return self._refuse_simulated_delete(latest, history, tool_name, tool_input, step_id)
+        if _is_blind_persona_replace(tool_name, tool_input, history):
+            return self._refuse_blind_persona_replace(latest, history, tool_input, step_id)
         tool_name, tool_input = _ordered_artifact_delivery_call(
             latest,
             tool_name,
@@ -2307,6 +2309,23 @@ class TaskWorker:
         })
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
 
+    def _refuse_blind_persona_replace(
+        self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
+    ) -> TaskRecord:
+        """Not run: persona.manage update replaces the whole document, and this task has not read what is in it."""
+        history.append({
+            "tool_name": "persona.manage", "input": tool_input, "status": ToolResultStatus.DENIED.value,
+            "error": (
+                "Not run: persona.manage update replaces the whole persona document, and you have not read it in this task. "
+                "To note a fact about the user (a name, a pet, a number, something they like), use memory.manage with operation "
+                "remember: that adds to the facts YBM keeps and shows when the user asks what it knows. The persona is only for how "
+                "YBM should talk and behave; to change it, read it first (persona.manage get) and send back the whole text with "
+                "your change."
+            ),
+            "step_id": step_id,
+        })
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
     def _refuse_unrequested_coding_agent(
         self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
     ) -> TaskRecord:
@@ -2930,6 +2949,9 @@ def _coding_agent_requested(task: TaskRecord, tool_input: dict[str, Any]) -> boo
     """Whether the user asked for an outside coding agent: a provider named, or a coding agent asked for."""
     if str(tool_input.get("operation") or "start") not in _CODING_AGENT_STARTING_OPERATIONS:
         return True
+    offer = task.metadata.get("claude_code_offer")
+    if isinstance(offer, dict) and offer.get("state") == "accepted" and tool_input.get("provider") == "claude_code":
+        return True  # the user said yes to handing this task to Claude Code (_offer_claude_code)
     request_text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
     return bool(_named_coding_providers(task) or _CODING_AGENT_MENTION.search(request_text))
 
@@ -3600,6 +3622,17 @@ def _users_own_words(task: TaskRecord) -> str:
 _DELETE_INTENT = re.compile(r"\b(?:delete|erase|wipe|trash|get rid of|remove all|throw away|destroy)\b", re.IGNORECASE)
 _MOVE_INTENT = re.compile(r"\b(?:move|organi[sz]e|rename|sort|tidy|clean ?up|archive|copy|group|put (?:them|it|these|those)? ?(?:in|into|under))\b", re.IGNORECASE)
 _FILE_REARRANGING_OPERATIONS = frozenset({"organize_plan", "rename_plan", "apply_manifest"})
+
+
+def _is_blind_persona_replace(tool_name: str | None, tool_input: dict[str, Any], history: list[dict[str, Any]]) -> bool:
+    """A persona update (a replacement of the whole document) in a task that has not read it first."""
+    if tool_name != "persona.manage" or str(tool_input.get("operation") or "") != "update":
+        return False
+    return not any(
+        isinstance(entry, dict) and entry.get("tool_name") == "persona.manage"
+        and isinstance(entry.get("input"), dict) and entry["input"].get("operation") == "get" and entry.get("status") == "succeeded"
+        for entry in history
+    )
 
 
 def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]) -> bool:

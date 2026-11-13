@@ -438,3 +438,39 @@ async def test_a_question_asked_after_a_web_search_that_found_nothing_usable_is_
     ask = OperatorDecision(action=OperatorAction.ASK_USER, question="Which pizza place?")
     first = await _worker(repos, audit, _Seen([ask])).process_task(task.id)
     assert first.status == TaskStatus.RUNNING and first.metadata["operator_history"][-1]["hint_id"] == "feasibility"
+
+
+# --- a persona update replaces the whole document: not before it has been read ---------------------------------------------------
+
+from agent_control.orchestration.worker import _coding_agent_requested, _is_blind_persona_replace  # noqa: E402
+
+
+def test_a_persona_update_without_reading_the_persona_first_is_refused():
+    assert _is_blind_persona_replace("persona.manage", {"operation": "update", "content": "x"}, []) is True
+    read = [{"tool_name": "persona.manage", "input": {"operation": "get"}, "status": "succeeded"}]
+    assert _is_blind_persona_replace("persona.manage", {"operation": "update", "content": "x"}, read) is False
+    failed_read = [{"tool_name": "persona.manage", "input": {"operation": "get"}, "status": "failed"}]
+    assert _is_blind_persona_replace("persona.manage", {"operation": "update", "content": "x"}, failed_read) is True
+    assert _is_blind_persona_replace("persona.manage", {"operation": "get"}, []) is False
+    assert _is_blind_persona_replace("memory.manage", {"operation": "remember"}, []) is False
+
+
+@pytest.mark.asyncio
+async def test_a_refused_persona_update_tells_the_model_to_use_memory_for_a_fact_about_the_user(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "Remember that my cat is called Pixel", [])
+    update = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="persona.manage",
+                              tool_input={"operation": "update", "content": "cat is Pixel"}, risk_level=RiskLevel.LOW)
+    refused = await _worker(repos, audit, _Seen([update])).process_task(task.id)
+    last = refused.metadata["operator_history"][-1]
+    assert last["status"] == "denied" and "memory.manage with operation remember" in last["error"]
+
+
+def test_a_hand_off_the_user_agreed_to_is_a_requested_coding_agent():
+    from agent_control.schemas import TaskRecord
+
+    accepted = TaskRecord(objective="x", metadata={"claude_code_offer": {"state": "accepted", "question": "q"}})
+    call = {"operation": "start", "provider": "claude_code", "objective": "do it"}
+    assert _coding_agent_requested(accepted, call) is True
+    pending = TaskRecord(objective="x", metadata={"claude_code_offer": {"state": "pending", "question": "q"}})
+    assert _coding_agent_requested(pending, call) is False
