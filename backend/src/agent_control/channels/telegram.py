@@ -42,8 +42,11 @@ from agent_control.schemas import (
     MessageKind,
     OutboundMessage,
     TaskSignal,
+    TaskStatus,
     VoiceAttachment,
+    utc_now,
 )
+from agent_control.clarification import resume_clarifying_task
 from agent_control.error_text import explain_for_user, explain_voice_failure
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
@@ -421,6 +424,8 @@ class TelegramAdapter:
             return {"kind": "approval", "approval_id": parts[1], "decision": parts[2]}
         if len(parts) == 3 and parts[0] == "task":
             return {"kind": "task", "task_id": parts[1], "action": parts[2]}
+        if len(parts) == 3 and parts[0] == "answer" and parts[2] in {"yes", "no"}:
+            return {"kind": "answer", "task_id": parts[1], "answer": parts[2]}
         return {"kind": "unknown", "data": data}
 
     def _audit_telegram_access(
@@ -883,7 +888,24 @@ class TelegramIntakeService:
 
         if payload.get("kind") == "task" and payload.get("action") in {"pause", "resume", "cancel"}:
             return self._create_task_signal(payload["task_id"], payload["action"], actor, payload)
+        if payload.get("kind") == "answer":
+            self._answer_offer(payload, actor)
         return None
+
+    def _answer_offer(self, payload: dict[str, Any], actor: str) -> None:
+        """A Yes / No button under the Claude Code offer: the same as typing the answer, once, and only while the question is open."""
+        task = self.repositories.tasks.get(str(payload.get("task_id") or ""))
+        offer = task.metadata.get("claude_code_offer") if task is not None else None
+        if task is None or task.status != TaskStatus.CLARIFYING or not isinstance(offer, dict) or offer.get("state") != "pending":
+            self._callback_ack = "That question was already answered."
+            return
+        yes = payload.get("answer") == "yes"
+        resume_clarifying_task(
+            self.repositories, self.audit, task,
+            text="Yes, please ask Claude Code" if yes else "No thanks",
+            actor=actor, message_id=str(payload.get("callback_query_id") or "button"), received_at=utc_now(),
+        )
+        self._callback_ack = "Okay, asking Claude Code." if yes else "Okay, I'll answer with what I have."
 
     def _create_task_signal(
         self,

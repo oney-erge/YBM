@@ -26,6 +26,23 @@ def _approval_inline_keyboard(approval_id: str) -> dict[str, Any]:
     }
 
 
+def _claude_code_offer_keyboard(task: TaskRecord) -> dict[str, Any] | None:
+    """Yes / No under the question "shall I hand this to Claude Code?", so answering it is one tap (typing still works).
+
+    "No" sends "No thanks", not "no": a bare "no" is one of the words that cancel a task, and declining the offer should end the
+    task with what was found, not cancel it.
+    """
+    offer = task.metadata.get("claude_code_offer")
+    if task.status != TaskStatus.CLARIFYING or not isinstance(offer, dict) or offer.get("state") != "pending":
+        return None
+    return {
+        "inline_keyboard": [[
+            {"text": "Yes, ask Claude Code", "callback_data": f"answer:{task.id}:yes"},
+            {"text": "No thanks", "callback_data": f"answer:{task.id}:no"},
+        ]]
+    }
+
+
 #: Telegram allows an edit about once a second per chat; two seconds keeps well inside that and is
 #: still quicker than anyone reads.
 PROGRESS_EDIT_INTERVAL_SECONDS = 2.0
@@ -60,7 +77,7 @@ class TelegramTaskNotifier:
             await self._edit_progress(chat_id, anchor, task.id, message_text)
             return
 
-        reply_markup = self._pending_approval_keyboard(task)
+        reply_markup = self._pending_approval_keyboard(task) or _claude_code_offer_keyboard(task)
         await self.client.send_message(chat_id, message_text, reply_markup=reply_markup)
         if anchor and task.status in _FINISHED_STATUSES:
             # The answer is its own message (so the phone buzzes); the progress bubble has done its job.
