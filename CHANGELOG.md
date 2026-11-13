@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The offer to hand a task to Claude Code (made when the local model has failed repeatedly and Claude Code is set up) comes with
+  Yes and No buttons in Telegram. A tap answers the question exactly as typing does, once, and only while the question is open. "No"
+  sends "No thanks", because a bare "no" is one of the words that cancel a task and declining should end the task with what was
+  found. Typing the answer still works.
 - Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
   onto the task for the operator to read; adding a folder to a project never grants access to it.
 - A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
