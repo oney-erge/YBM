@@ -170,3 +170,198 @@ def test_require_allowed_url_rejects_prefix_lookalikes(url: str) -> None:
 def test_require_allowed_url_accepts_genuine_prefix_match() -> None:
     config = HttpRequestAdapterConfig(allowed_url_prefixes=["https://api.example.com"])
     _require_allowed_url("https://api.example.com/v1/users", config)  # must not raise
+
+
+# --- reading any public web page, read only ------------------------------------------------------------------------------------------
+
+
+from agent_control.tools import http_request as http_module  # noqa: E402
+
+
+@pytest.mark.parametrize("address, public", [
+    ("93.184.216.34", True), ("8.8.8.8", True), ("2606:4700:4700::1111", True),
+    ("127.0.0.1", False), ("10.1.2.3", False), ("192.168.0.5", False), ("172.16.0.1", False), ("169.254.169.254", False),
+    ("0.0.0.0", False), ("::1", False), ("fe80::1", False), ("fd00::1", False), ("224.0.0.1", False), ("not-an-address", False),
+])
+def test_only_public_addresses_count_as_public(address, public):
+    assert http_module._is_public_address(address) is public
+
+
+def _resolver(*addresses):
+    return lambda host, port: [(2, 1, 6, "", (address, 0)) for address in addresses]
+
+
+def test_a_name_that_resolves_to_a_private_address_is_not_a_public_site_even_if_another_answer_is_public():
+    assert http_module._resolves_only_to_public_addresses("x.example", resolver=_resolver("93.184.216.34")) is True
+    assert http_module._resolves_only_to_public_addresses("x.example", resolver=_resolver("93.184.216.34", "10.0.0.7")) is False
+
+    def broken(host, port):
+        raise OSError("no such host")
+
+    assert http_module._resolves_only_to_public_addresses("nope.invalid", resolver=broken) is False
+
+
+def test_public_reads_are_off_by_default_and_a_get_to_a_public_host_is_then_refused():
+    config = HttpRequestAdapterConfig(allowed_hosts=["api.example.com"])
+    with pytest.raises(ValueError, match="not allowlisted"):
+        _require_allowed_url("https://news.example.org/", config, method="GET")
+
+
+def test_with_public_reads_on_a_get_or_head_to_a_public_host_is_allowed_and_anything_else_is_not(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", _resolver("93.184.216.34"))
+    config = HttpRequestAdapterConfig(allow_public_reads=True)
+    _require_allowed_url("https://news.example.org/front", config, method="GET")
+    _require_allowed_url("https://news.example.org/front", config, method="head")
+    for method in ("POST", "PUT", "DELETE"):
+        with pytest.raises(ValueError, match="not allowlisted"):
+            _require_allowed_url("https://news.example.org/front", config, method=method)
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8765/admin", "http://localhost:8000/", "http://192.168.1.1/", "http://169.254.169.254/latest/meta-data/",
+])
+def test_public_reads_never_reach_this_computer_or_its_network(url):
+    with pytest.raises(ValueError, match="not a public website"):
+        _require_allowed_url(url, HttpRequestAdapterConfig(allow_public_reads=True), method="GET")
+
+
+def test_public_reads_still_honour_the_block_list_and_the_userinfo_rule(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", _resolver("93.184.216.34"))
+    config = HttpRequestAdapterConfig(allow_public_reads=True, blocked_hosts=["bad.example.org"])
+    with pytest.raises(ValueError, match="blocked"):
+        _require_allowed_url("https://bad.example.org/", config, method="GET")
+    with pytest.raises(ValueError, match="userinfo"):
+        _require_allowed_url("https://user:pw@news.example.org/", config, method="GET")
+
+
+def test_the_tool_is_on_with_public_reads_even_with_no_allowlist_and_says_so():
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+        adapters={"http_request": {"enabled": True, "allow_public_reads": True}},
+    )
+    definition = build_tool_registry(settings, "http://127.0.0.1:8765").definition_index["http.request"]
+    assert definition.enabled is True and "any public website" in definition.description
+    off = AppSettings(
+        _env_file=None,
+        capabilities={Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+        adapters={"http_request": {"enabled": True}},
+    )
+    assert build_tool_registry(off, "http://127.0.0.1:8765").definition_index["http.request"].enabled is False
+
+
+# --- the exact title of a page, read by code ---------------------------------------------------------------------------------------
+
+
+def test_the_title_and_visible_text_of_a_page_are_read_without_scripts_and_markup():
+    page = (
+        "<!doctype html><html><head><title>\n  Welcome to  Python.org </title><style>p{color:red}</style></head>"
+        "<body><script>var x = 'not text';</script><h1>Hello</h1><p>First <b>bold</b> paragraph.</p><noscript>no js</noscript></body></html>"
+    )
+    title, text = http_module.html_digest(page)
+    assert title == "Welcome to Python.org"
+    assert text == "Hello First bold paragraph."
+
+
+def test_a_page_with_no_title_gives_none_and_text_is_capped():
+    title, text = http_module.html_digest("<html><body>" + "word " * 1000 + "</body></html>")
+    assert title is None and len(text) == 1500
+
+
+@pytest.mark.asyncio
+async def test_an_html_response_carries_its_exact_title_in_the_summary_and_a_json_one_does_not():
+    html = "<html><head><title>Mozilla - Internet for people</title></head><body>Hello world</body></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api":
+            return httpx.Response(200, json={"a": 1})
+        return httpx.Response(200, text=html, headers={"content-type": "text/html; charset=utf-8"})
+
+    adapter = HttpRequestAdapter(
+        HttpRequestAdapterConfig(allowed_hosts=["site.example"]), SecretVaultConfig(), transport=httpx.MockTransport(handler),
+    )
+    page = await adapter.execute(ToolCallRequest(
+        task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": "https://site.example/", "method": "GET"},
+    ))
+    assert page.output["page_title"] == "Mozilla - Internet for people"
+    assert 'The page title is exactly: "Mozilla - Internet for people".' in page.output["summary"]
+    assert "The page text starts: Hello world" in page.output["summary"]
+    data = await adapter.execute(ToolCallRequest(
+        task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": "https://site.example/api", "method": "GET"},
+    ))
+    assert data.output["page_title"] is None and "page title" not in data.output["summary"]
+
+
+def test_the_model_is_shown_the_readable_part_of_an_html_page_before_its_source():
+    from agent_control.orchestration.worker import _tool_output_text
+    from agent_control.schemas import ToolCallResult
+
+    head = "<script>" + "x" * 5000 + "</script>"
+    markup = f"<html><head>{head}<title>Welcome to Python.org</title></head><body><h1>Python</h1></body></html>"
+    title, readable = http_module.html_digest(markup)
+    output = {
+        "operation": "request", "status_code": 200, "json": None, "text": markup, "page_title": title,
+        "summary": f'HTTP GET https://x/ returned 200. The page title is exactly: "{title}". The page text starts: {readable}',
+    }
+    shown = _tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=output))
+    assert shown.startswith('HTTP GET https://x/ returned 200. The page title is exactly: "Welcome to Python.org"')
+    assert shown.index("--- page source ---") < shown.index("<script>") and shown.endswith(markup)
+    plain = {"operation": "request", "status_code": 200, "json": None, "text": "plain words", "page_title": None, "summary": "HTTP GET x returned 200."}
+    assert _tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=plain)) == "plain words"
+
+
+# --- reads follow redirects, one checked hop at a time ----------------------------------------------------------------------------------------
+
+
+def _adapter(handler, **config):
+    return HttpRequestAdapter(HttpRequestAdapterConfig(**config), SecretVaultConfig(), transport=httpx.MockTransport(handler))
+
+
+def _get(url, method="GET"):
+    return ToolCallRequest(task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": url, "method": method})
+
+
+@pytest.mark.asyncio
+async def test_a_read_follows_a_redirect_to_the_page_it_points_at(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/":
+            return httpx.Response(301, headers={"location": "/en-US/"})
+        return httpx.Response(200, text="<html><head><title>Home</title></head><body>Hi</body></html>", headers={"content-type": "text/html"})
+
+    result = await _adapter(handler, allow_public_reads=True).execute(_get("https://www.site.org/"))
+    assert result.output["status_code"] == 200 and result.output["page_title"] == "Home"
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_this_computer_is_not_followed(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://127.0.0.1:8765/admin"})
+
+    result = await _adapter(handler, allow_public_reads=True).execute(_get("https://www.site.org/"))
+    assert result.status.value == "failed" and "not a public website" in (result.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_redirects_stop_after_five_hops_and_other_methods_never_follow(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    calls = []
+
+    def loop(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(302, headers={"location": "/again"})
+
+    result = await _adapter(loop, allow_public_reads=True).execute(_get("https://www.site.org/"))
+    assert result.output["status_code"] == 302 and len(calls) == 6
+
+    posted = []
+
+    def post_handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.method)
+        return httpx.Response(302, headers={"location": "/elsewhere"})
+
+    await _adapter(post_handler, allowed_hosts=["www.site.org"]).execute(_get("https://www.site.org/", method="POST"))
+    assert posted == ["POST"]

@@ -866,6 +866,8 @@ class HttpRequestOutput(ToolOutputModel):
     text: str = ""
     truncated: bool = False
     elapsed_ms: int | None = Field(default=None, ge=0)
+    #: The exact <title> of an HTML page (what a request for "the title of this site" wants), read by code rather than by the model.
+    page_title: str | None = None
     summary: str | None = None
 
 

@@ -123,6 +123,9 @@ class LLMConfig(StrictBaseModel):
     operator_profile: str | None = None
     auditor_profile: str | None = None
     profiles: dict[str, LLMProfileConfig] = Field(default_factory=dict)
+    # Send a one-token request to a model on this machine the moment a message arrives, so a model that was unloaded while idle
+    # loads while the message is being routed (llm/warmup.py). Never sent to a hosted model.
+    warm_on_message: bool = True
 
     @field_validator("profiles")
     @classmethod
@@ -302,6 +305,15 @@ class OperatorConfig(StrictBaseModel):
     # because it was measured: on the local Qwen3.5-9B over the 60-case held-out suite, calls the tool refused fell from 52 of
     # 266 steps to 5 of 150 and made-up tool names from 30 to 0.
     constrain_calls: bool = True
+    # A long request, or one that names several places, is first split into parts by one short model call; each part runs in
+    # its own sub-loop and the answer is written from what every part returned (orchestration/planner.py). A short single-line
+    # request is never sent to the planner.
+    plan_parts: bool = True
+    # A final answer that is a bare value ("13655") or a tool's own wording ("Wrote text file ...") is said as a sentence or two by
+    # one short model call (orchestration/voice.py); the rewrite is refused if it adds any number the answer did not have.
+    voice_pass: bool = True
+    # While one step runs long, re-send the progress line every this many seconds so the person can see it is still going. 0 = off.
+    heartbeat_seconds: float = Field(default=25.0, ge=0.0, le=600.0)
 
 
 class VSCodeAdapterConfig(StrictBaseModel):
@@ -343,6 +355,9 @@ class HttpRequestAdapterConfig(StrictBaseModel):
     allowed_hosts: list[str] = Field(default_factory=list)
     allowed_url_prefixes: list[str] = Field(default_factory=list)
     blocked_hosts: list[str] = Field(default_factory=list)
+    # Read any public web page. GET and HEAD only; a host that resolves to this computer or its network (loopback, private,
+    # link-local or reserved addresses) is refused, and so is every other method unless the host is allowlisted. Off by default.
+    allow_public_reads: bool = False
     timeout_seconds: int = Field(default=30, ge=1, le=300)
     max_response_chars: int = Field(default=100000, ge=100, le=1000000)
     max_body_chars: int = Field(default=100000, ge=0, le=1000000)

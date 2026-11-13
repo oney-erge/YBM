@@ -267,3 +267,110 @@ def needs_feasibility_check(given: set[str], *, route: object, questions_asked: 
     is the one most likely to be asked about because it cannot be done, so the model is asked once to check that before the user is.
     """
     return not questions_asked and "feasibility" not in given and str(route or "") in {"unknown", "None", ""}
+
+
+# --- a path that came from an earlier turn, not from this request ----------------------------------------------------------------------------
+
+_PATH_KEYS = ("path", "root", "folder_path", "file_path", "source", "destination")
+_ABSOLUTE = re.compile(r"^[A-Za-z]:[\\/]")
+
+
+def facts_block(memory_context: str | None) -> str:
+    """The "Remembered facts" lines of a memory context: things the person asked to be remembered, not the conversation summary."""
+    lines: list[str] = []
+    collecting = False
+    for line in str(memory_context or "").splitlines():
+        if line.startswith("Remembered facts:"):
+            collecting = True
+            continue
+        if collecting:
+            if line.startswith("- ["):
+                lines.append(line)
+            else:
+                break
+    return "\n".join(lines)
+
+
+def _call_paths(tool_input: object) -> list[str]:
+    if not isinstance(tool_input, dict):
+        return []
+    found = [str(tool_input[key]).strip() for key in _PATH_KEYS if isinstance(tool_input.get(key), str)]
+    manifest = tool_input.get("manifest")
+    if isinstance(manifest, list):
+        for item in manifest[:50]:
+            if isinstance(item, dict):
+                found += [str(item[key]).strip() for key in ("source", "destination") if isinstance(item.get(key), str)]
+    return [path for path in found if _ABSOLUTE.match(path)]
+
+
+def _grounded_in(corpus: str, path: str) -> bool:
+    """The path, a folder above it, or something inside it appears in the text."""
+    wanted = _norm(path)
+    if wanted in corpus:
+        return True
+    parents = PureWindowsPath(path).parents
+    if any(len(parent.parts) > 1 and _names_place(corpus, str(parent)) for parent in parents):
+        return True
+    return re.search(re.escape(wanted) + r"[\\]", corpus) is not None
+
+
+def ungrounded_paths(request: str, tool_input: object, history: list[dict[str, Any]], memory_context: str | None) -> list[str]:
+    """Paths a call names that nothing in this task supports: not the request, not any result so far, not a remembered fact.
+
+    A "remember these about me" request was answered by reading a file that an earlier turn of the conversation had named; the
+    conversation summary is in the prompt, so the model took it for the task. A person's own words, what this task found, and
+    what they asked to be remembered are grounds for a path. An earlier turn is not.
+    """
+    paths = _call_paths(tool_input)
+    if not paths:
+        return []
+    parts = [request, facts_block(memory_context)]
+    for step in history:
+        if isinstance(step, dict):
+            parts += [str(step.get("output_summary") or ""), str(step.get("error") or ""), str(step.get("input") or "")]
+    corpus = _norm(" ".join(parts))
+    return [path for path in paths if not _grounded_in(corpus, path)]
+
+
+UNGROUNDED_TEXT = (
+    "Not run: {paths} is not in the user's request, nothing in this task found it, and it is not something they asked to be "
+    "remembered. It only appears in earlier conversation. Act on what the user asked just now. If the request really does refer "
+    "back to that, say which file you mean and call again."
+)
+
+
+# --- a quoted value no tool returned -----------------------------------------------------------------------------------------------------------
+
+_QUOTED = re.compile(r"[\"\u201c]([^\"\u201c\u201d\n]{4,120})[\"\u201d]")
+
+
+def ungrounded_quotes(answer: str | None, request: str, steps: list[dict[str, Any]], memory_context: str | None = None) -> list[str]:
+    """Quoted strings in an answer that appear in nothing the task saw: not the request, not a remembered fact, not any tool result.
+
+    Asked for "the exact page title" of four sites, the local model answered with "Mozilla Firefox" for a page whose title is
+    "Internet for people, not profit - Mozilla Global", and "Python.org" for "Welcome to Python.org". A string put in quotation marks
+    is presented as what something said, so it has to be what a tool returned.
+    """
+    quoted = [" ".join(match.group(1).split()) for match in _QUOTED.finditer(str(answer or ""))]
+    if not quoted:
+        return []
+    parts = [request, facts_block(memory_context)]
+    for step in steps:
+        if isinstance(step, dict):
+            parts += [str(step.get("output_summary") or ""), str(step.get("error") or ""), str(step.get("input") or "")]
+    corpus = " ".join(" ".join(parts).split()).casefold()
+    seen: set[str] = set()
+    missing = []
+    for item in quoted:
+        key = item.casefold()
+        if key not in corpus and key not in seen:
+            seen.add(key)
+            missing.append(item)
+    return missing
+
+
+UNGROUNDED_QUOTES_TEXT = (
+    "Declared done, but {quotes} is in quotation marks in your answer and no tool result contains it. A quoted title, name or "
+    "phrase must be copied exactly from a tool result. Look again at what the tool returned and quote that, or say plainly that "
+    "you could not find it."
+)

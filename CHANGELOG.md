@@ -85,6 +85,41 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   remember command like "remember that ...", before any model sees it, instead of reaching a small model that filed the facts in the persona.
 - A script that only printed its answer is answered with what it printed. The reply used to end with "Workspace: task_task_...", the folder the
   script ran in; the workspace is named when the script created files.
+- A big request is split into parts (`operator.plan_parts`, on by default). A request that is long, names two or more places, or runs over
+  several lines is first put to the model once (`orchestration/planner.py`): "does this have separate pieces of work?" The answer is
+  JSON, never a word list, and a short single-line request is never sent. With two or more parts, each part runs through the existing
+  delegate path (its own sub-loop, history and step budget), one after another, and the Operator then writes the final answer from what
+  every part returned and says which part failed. The task gets the time its parts need, and the progress line says "Working on part 2
+  of 5: ...".
+- While one step runs long (a search of every drive, a script, a slow model call) the progress line is sent again every 25 seconds with
+  how long the step has taken (`operator.heartbeat_seconds`); it used to stay unchanged for the whole step.
+- A bare final answer ("13655") or a tool's own wording ("Wrote text file ...", "Found 3 result(s) ...") is said as a sentence or two by one
+  short model call (`operator.voice_pass`, `orchestration/voice.py`). The rewrite is thrown away if it contains any number the answer and
+  the request did not, and a sentence is never touched.
+- `http.request` can read any public web page with `adapters.http_request.allow_public_reads: true` (off by default): GET and HEAD only, a
+  name that resolves to this computer or its network (loopback, private, link-local, reserved) is refused, a GET or HEAD follows
+  up to five redirects (most sites redirect "www.site.org" to a language or https page) with every hop checked the same way, so a
+  public page cannot send it to this computer, and every other method still needs the allowlist. This is what a request like "get the headline from each of these five sites" needs.
+- A quoted title, name or phrase in an answer must be in something the task saw: the request, a remembered fact, or a tool result. If
+  not, the model is sent back once (inside the part, for a part of a plan). The local model had answered "Mozilla Firefox" for a page
+  titled "Internet for people, not profit - Mozilla Global".
+- The model is shown an HTML page's readable text, with its exact title first, before the page source. It saw only the first two
+  thousand characters of a result, which were scripts and meta tags, so it could not find the title it was asked for and gave up.
+- `http.request` reads an HTML page's exact `<title>` and the start of its visible text with code, and puts both in the result (`page_title`,
+  and the summary the model sees). Asked for "the title of each of these five sites", the local model had returned a shortened title
+  ("Python.org" for "Welcome to Python.org") for two of them, because it was reading the title out of raw markup.
+- When a message arrives, a one-token request wakes a local model that was unloaded while idle (`llm.warm_on_message`, `llm/warmup.py`), so
+  the model loads while the message is routed instead of on the first real call. At most one every four minutes, and never to a hosted
+  model.
+- A request to remember or change a setting (the `configuration` route) may not read a file whose path appears only in an earlier turn of
+  the conversation: the call is refused once with the reason. A live run answered "Remember these about me ..." by reading a file named
+  three requests earlier.
+- A fourth frozen suite, `--suite vision` (16 cases, `e2e/vision_cases.json`), holds the examples the owner named as what YBM must do,
+  in fresh wording: how many Steam games, where is a file in a hidden folder, what is a document about, a missing file, a count that
+  needs a script, which of two files has more words, a request that splits into parts, the exact titles of three public sites, a
+  tip calculator built and run, adding a line to a file, creating a file in a named folder, moving files and `undo that`,
+  remembering a list of facts, Claude Code on request, an order it cannot place, and a refused delete. It is the "does it still do
+  what I asked for" run before a release, frozen with a hash like the held-out suites.
 - A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day

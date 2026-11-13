@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import copy
+import html.parser
+import ipaddress
 import json
+import socket
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -58,8 +61,8 @@ class HttpRequestAdapter:
 
     async def _request(self, request: ToolCallRequest) -> dict[str, Any]:
         url = str(request.input["url"]).strip()
-        _require_allowed_url(url, self.config)
         method = str(request.input.get("method") or "GET").upper()
+        _require_allowed_url(url, self.config, method=method)
         headers = {str(key): str(value) for key, value in dict(request.input.get("headers") or {}).items()}
         headers.setdefault("User-Agent", self.config.user_agent)
         query = dict(request.input.get("query") or {})
@@ -91,6 +94,17 @@ class HttpRequestAdapter:
                 json=json_body if json_body is not None else None,
                 content=str(body).encode("utf-8") if body is not None else None,
             )
+            # A read follows a redirect (most public sites redirect "www.site.org" to a language or https page), one hop at a time,
+            # and every hop passes the same host check as the first request, so a public page cannot send it to this computer.
+            hops = 0
+            while method in {"GET", "HEAD"} and response.status_code in _REDIRECTS and hops < _MAX_REDIRECTS:
+                location = response.headers.get("location")
+                if not location:
+                    break
+                url = urljoin(str(response.url), location)
+                _require_allowed_url(url, self.config, method=method)
+                response = await client.request(method, url, headers=headers)
+                hops += 1
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         text = response.text
         truncated = len(text) > max_response_chars
@@ -102,6 +116,14 @@ class HttpRequestAdapter:
                 parsed_json = response.json()
             except ValueError:
                 parsed_json = None
+        page_title, readable = (None, "")
+        if parsed_json is None and _looks_like_html(response.headers.get("content-type", ""), text):
+            page_title, readable = html_digest(text)
+        summary = f"HTTP {method} {url} returned {response.status_code}."
+        if page_title:
+            summary += f' The page title is exactly: "{page_title}".'
+        if readable:
+            summary += f" The page text starts: {readable}"
         output = {
             "url": url,
             "method": method,
@@ -112,7 +134,8 @@ class HttpRequestAdapter:
             "text": text,
             "truncated": truncated,
             "elapsed_ms": elapsed_ms,
-            "summary": f"HTTP {method} {url} returned {response.status_code}.",
+            "page_title": page_title,
+            "summary": summary,
         }
         return redact_payload(output, _SENSITIVE_PATTERNS, injected_values)
 
@@ -149,7 +172,85 @@ class HttpRequestAdapter:
         return secret, template.replace("{secret}", secret)
 
 
-def _require_allowed_url(url: str, config: HttpRequestAdapterConfig) -> None:
+_READABLE_EXCERPT_CHARS = 1500
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+_MAX_REDIRECTS = 5
+_SKIPPED_TAGS = frozenset({"script", "style", "noscript", "template", "svg", "head"})
+
+
+class _Digest(html.parser.HTMLParser):
+    """The <title> and the visible text of a page, without scripts, styles and markup."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title_parts: list[str] = []
+        self.text_parts: list[str] = []
+        self._in_title = False
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "title":
+            self._in_title = True
+        elif tag in _SKIPPED_TAGS and tag != "head":
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+        elif tag in _SKIPPED_TAGS and tag != "head" and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title_parts.append(data)
+        elif not self._skip_depth and data.strip():
+            self.text_parts.append(data)
+
+
+def html_digest(markup: str) -> tuple[str | None, str]:
+    """The exact <title> of a page and the start of its visible text. Both empty when the markup cannot be read."""
+    digest = _Digest()
+    try:
+        digest.feed(markup)
+        digest.close()
+    except Exception:  # noqa: BLE001 - a page that will not parse is still returned whole in `text`
+        return None, ""
+    title = " ".join("".join(digest.title_parts).split()) or None
+    excerpt = " ".join(" ".join(digest.text_parts).split())[:_READABLE_EXCERPT_CHARS]
+    return title, excerpt
+
+
+def _looks_like_html(content_type: str, text: str) -> bool:
+    return "html" in content_type.lower() or text.lstrip()[:15].lower().startswith(("<!doctype html", "<html"))
+
+
+def _is_public_address(address: str) -> bool:
+    """Whether an address is somewhere on the public internet (not this computer, not its network)."""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    return not (
+        ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+        or getattr(ip, "is_site_local", False)
+    )
+
+
+def _resolves_only_to_public_addresses(host: str, *, resolver=None) -> bool:
+    """Every address the name resolves to must be public: one private answer is enough to refuse (DNS rebinding, internal names)."""
+    try:
+        return _is_public_address(str(ipaddress.ip_address(host.strip("[]"))))  # a literal address needs no lookup
+    except ValueError:
+        pass
+    try:
+        infos = (resolver or socket.getaddrinfo)(host, None)
+    except OSError:
+        return False
+    addresses = {str(info[4][0]) for info in infos}
+    return bool(addresses) and all(_is_public_address(address) for address in addresses)
+
+
+def _require_allowed_url(url: str, config: HttpRequestAdapterConfig, *, method: str = "GET") -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("http.request only supports absolute http:// or https:// URLs")
@@ -167,13 +268,17 @@ def _require_allowed_url(url: str, config: HttpRequestAdapterConfig) -> None:
     blocked = {item.lower() for item in config.blocked_hosts}
     if host in blocked or netloc in blocked:
         raise ValueError(f"HTTP host is blocked: {host}")
-    if not config.allowed_hosts and not config.allowed_url_prefixes:
+    if not config.allowed_hosts and not config.allowed_url_prefixes and not config.allow_public_reads:
         raise ValueError("no HTTP allowlist is configured")
     normalized_url = url.lower()
     if any(_prefix_matches(normalized_url, host, prefix) for prefix in config.allowed_url_prefixes):
         return
     if any(_host_matches(host, netloc, allowed) for allowed in config.allowed_hosts):
         return
+    if config.allow_public_reads and method.upper() in {"GET", "HEAD"}:
+        if _resolves_only_to_public_addresses(host):
+            return
+        raise ValueError(f"HTTP host is not a public website (it is this computer or its network, or it could not be found): {host}")
     raise ValueError(f"HTTP host is not allowlisted: {host}")
 
 
@@ -276,10 +381,11 @@ def _terminal_output(output: dict[str, Any]) -> dict[str, Any]:
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
     allowlist = [*settings.adapters.http_request.allowed_hosts, *settings.adapters.http_request.allowed_url_prefixes]
+    public_reads = settings.adapters.http_request.allow_public_reads
     enabled = (
         capability_enabled(settings, Capability.NETWORK_HTTP)
         and settings.adapters.http_request.enabled
-        and bool(allowlist)
+        and (bool(allowlist) or public_reads)
     )
     definitions.append(
         ToolDefinition(
@@ -288,7 +394,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             description=(
                 "call allowlisted HTTP/REST APIs with optional secret injection; "
-                f"allowed targets: {', '.join(allowlist) or '<none configured>'}"
+                + ("any public website for GET and HEAD; " if public_reads else "")
+                + f"allowed targets: {', '.join(allowlist) or ('any public website (read only)' if public_reads else '<none configured>')}"
             ),
             operations=("request",),
             input_schema=HttpRequestInput,

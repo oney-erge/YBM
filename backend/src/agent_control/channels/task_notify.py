@@ -408,6 +408,13 @@ def progress_text(task: TaskRecord) -> str:
     for whoever wants them. A person asked for something and wants to know it is being worked on,
     roughly where it is, and how long it has been.
     """
+    plan = task.metadata.get("plan_parts") if isinstance(task.metadata, dict) else None
+    if isinstance(plan, list) and plan and task.status == TaskStatus.RUNNING:
+        # A planned task: say which part is being worked on, which is more use than the last tool's name.
+        started = min(max(int(task.metadata.get("plan_index") or 0), 1), len(plan))
+        title = str(plan[started - 1].get("title") or "") if isinstance(plan[started - 1], dict) else ""
+        text = f"Working on part {started} of {len(plan)}" + (f": {title}…" if title else "…")
+        return text + _time_so_far(task)
     step = _latest_real_step(task)
     if step is None:
         return "Working on it: that did not work, so I am trying another way…" if task.status == TaskStatus.RETRYING else "On it."
@@ -415,15 +422,24 @@ def progress_text(task: TaskRecord) -> str:
         text = "Working on it: that last step did not work, so I am trying another way…"
     else:
         text = f"Working on it: {_step_phrase(step)}…"
+    return text + _time_so_far(task)
+
+
+def _time_so_far(task: TaskRecord) -> str:
+    """How long it has been, once it has been a while; the heartbeat adds how long the current step has taken."""
     created = getattr(task, "created_at", None)
+    minutes = 0
     if created is not None:
         try:
             minutes = int((utc_now() - created).total_seconds() // 60)
         except TypeError:
             minutes = 0
-        if minutes >= 2:
-            text += f" ({minutes} min so far)"
-    return text
+    waiting = int(task.metadata.get("progress_waiting_seconds") or 0) if isinstance(task.metadata, dict) else 0
+    if minutes >= 2:
+        return f" ({minutes} min so far)"
+    if waiting >= 20:
+        return f" (still going, {waiting} s on this step)"
+    return ""
 
 
 def _last_attempt_sentence(task: TaskRecord) -> str | None:
