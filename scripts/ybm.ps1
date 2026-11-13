@@ -73,7 +73,9 @@ YBM - local agentic control stack
   ybm package-extension        build the VS Code bridge extension .vsix
   ybm tray                     launch the system tray icon (Open Admin Console / Start / Stop / Status)
   ybm autostart enable|disable|status
-                                run the tray icon automatically at login (per-user Startup folder shortcut)
+                                start YBM at login: the tray icon, then `ybm start` 45 seconds later (per-user Startup folder
+                                shortcut). The model is not loaded until the first message; set idle_stop_seconds on the
+                                LocalDeploy profile to free the GPU again after a pause
   ybm backup [--out <dir>]     zip the database, config.yaml, .env, and secret vault (default: .agent_control/backups)
   ybm check-updates            compare the installed version against the latest GitHub release (read-only)
   ybm ui-build                 build the admin console (Node 22.22.2+, 24.15.0+, or 26+)
@@ -107,13 +109,14 @@ function Invoke-YbmAutostart {
       $shell = New-Object -ComObject WScript.Shell
       $shortcut = $shell.CreateShortcut($shortcutPath)
       $shortcut.TargetPath = Get-YbmPythonW
-      $shortcut.Arguments = "`"$Script:YbmRoot\scripts\tray_app.py`""
+      # --start: the tray runs `ybm start` itself, 45 s after sign-in so sign-in is not slowed.
+      $shortcut.Arguments = "`"$Script:YbmRoot\scripts\tray_app.py`" --start --delay 45"
       $shortcut.WorkingDirectory = $Script:YbmRoot
-      $shortcut.Description = "YBM tray icon"
+      $shortcut.Description = "Start YBM at login"
       $shortcut.Save()
-      Write-Host "Autostart enabled - $shortcutPath will launch the tray icon at login."
-      Write-Host "Launching it now too, so you don't have to log out and back in..."
-      Start-Process -FilePath (Get-YbmPythonW) -ArgumentList "`"$Script:YbmRoot\scripts\tray_app.py`"" -WorkingDirectory $Script:YbmRoot
+      Write-Host "Autostart enabled - $shortcutPath will start YBM at login (45 seconds after sign-in)."
+      Write-Host "Starting it now too, so you don't have to log out and back in..."
+      Start-Process -FilePath (Get-YbmPythonW) -ArgumentList "`"$Script:YbmRoot\scripts\tray_app.py`" --start" -WorkingDirectory $Script:YbmRoot
     }
     "disable" {
       if (Test-Path -LiteralPath $shortcutPath) {
