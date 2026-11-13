@@ -174,6 +174,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   into `pictures` and then undoing it no longer leaves an empty `pictures` behind. `apply_manifest` reports the folders it created
   (`created_folders`), the task's undo record keeps them, and the undo removes only those, only inside the folder the move was made
   in, and only if empty (a folder that holds anything now stays). The answer says which folder was removed.
+- `ybm autostart enable` now starts YBM at login, not only the tray icon: the Startup shortcut runs the tray with
+  `--start --delay 45`, which runs `ybm start` 45 seconds after sign-in (so sign-in is not slowed) and does nothing for a service
+  that is already running. Starting the services does not load a model: LocalDeploy loads one on the first message, and a
+  profile with `idle_stop_seconds` gives the GPU back after a pause. A shortcut made by an older version keeps starting only the
+  tray icon until `ybm autostart enable` is run again.
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 - A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
   single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a
