@@ -74,6 +74,7 @@ CAPABILITY_MINIMUM_RISKS: dict[Capability, RiskLevel] = {
     Capability.GITHUB_PUSH: RiskLevel.CRITICAL,
     Capability.DEPENDENCIES_INSTALL: RiskLevel.HIGH,
     Capability.MEMORY_MANAGE: RiskLevel.LOW,
+    Capability.SYSTEM_INVENTORY: RiskLevel.LOW,
 }
 
 
@@ -85,6 +86,9 @@ class ToolDefinition:
     description: str
     operations: tuple[str, ...] = ()
     lifecycle: str = "runtime"
+    # False for a tool added after the recorded scenario fixtures were made: while it is switched off the prompt
+    # does not name it, so a prompt a fixture was recorded against stays byte-for-byte the same.
+    named_when_disabled: bool = True
     input_schema: type[BaseModel] | None = None
     operation_schemas: dict[str, type[BaseModel]] | None = None
     output_schema: type[BaseModel] | None = None
@@ -113,7 +117,9 @@ class ToolDefinition:
     # runtime-owned approval gate replaced them (docs/archive/HISTORY.md Part 4's
     # concurrent-hardening note) - optional; operations not listed here still
     # get PolicyEngine.approval_request()'s generic "Approve X using Y".
-    approval_reasons: dict[str, str] = field(default_factory=dict)
+    # Why an operation needs approval, shown on the approval. A function of the call's input when
+    # the reason depends on it (what a manifest moves, and where).
+    approval_reasons: dict[str, str | Callable[[dict], str | None]] = field(default_factory=dict)
     risk_resolver: Callable[[dict], RiskLevel] | None = None
     approval_resolver: Callable[[dict], bool] | None = None
     # Worked usage examples shown to the Operator's decide() call. Each entry
@@ -178,7 +184,8 @@ class ToolDefinition:
 
     def approval_reason(self, value: dict) -> str | None:
         operation = str(value.get("operation") or self.default_operation or "")
-        return self.approval_reasons.get(operation)
+        reason = self.approval_reasons.get(operation)
+        return reason(value) if callable(reason) else reason
 
     def validate_input(self, value: dict) -> dict:
         return self._validate_schema(value, self.input_schema, self.operation_schemas, "input")
@@ -252,7 +259,7 @@ class ToolRegistry:
         * `lifecycle=...` on every row, which no prompt rule refers to.
         """
         enabled = [definition for definition in self.definitions if definition.enabled]
-        disabled = [definition for definition in self.definitions if not definition.enabled]
+        disabled = [definition for definition in self.definitions if not definition.enabled and definition.named_when_disabled]
         lines = ["Available worker tools:"]
         for definition in enabled:
             operations = f" operations={','.join(definition.operations)}" if definition.operations else ""

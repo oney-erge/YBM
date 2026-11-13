@@ -123,3 +123,72 @@ def test_rejecting_installs_nothing(tmp_path) -> None:
     assert store.decide(suggestion.id, accept=False).status == "rejected"
     assert _load_skills(config.root_dir) == []
     assert SkillSuggestionStore.load(config).pending() == []
+
+
+# --- helpers: the script that worked is kept, without a model call or a review ------------------------------------------------
+
+from agent_control.skill_learning import MAX_HELPERS, helper_name, helper_script, save_helper  # noqa: E402
+
+SCRIPT = "from pathlib import Path\nprint(sum(1 for _ in Path('.').rglob('*.py')))"
+
+
+def _script_task(*, status=TaskStatus.COMPLETED, code=SCRIPT, output="42", request="How many .py files are in my project folder?"):
+    history = [
+        {"tool_name": "filesystem.manage", "input": {"operation": "inspect_folder"}, "status": "succeeded", "output_summary": "ok"},
+        {"tool_name": "code.interpreter", "input": {"operation": "run_python", "code": code}, "status": "succeeded", "output_summary": output},
+    ]
+    return TaskRecord(objective=request, status=status, metadata={"original_message_text": request, "operator_history": history})
+
+
+def test_the_script_that_produced_the_answer_is_found_in_the_history():
+    assert helper_script(_script_task()) == SCRIPT
+    assert helper_script(_script_task(output="")) is None
+    assert helper_script(TaskRecord(objective="x", metadata={})) is None
+    failed = _script_task()
+    failed.metadata["operator_history"][-1]["status"] = "failed"
+    assert helper_script(failed) is None
+
+
+def test_a_helper_is_named_from_the_requests_own_words_so_the_same_kind_of_request_finds_it():
+    assert helper_name("How many .py files are in my project folder?") == "helper-py-files-project-folder"
+    assert helper_name("???") == "helper-script"
+
+
+def test_a_finished_task_that_a_script_answered_leaves_a_helper_skill_with_the_script_in_it(tmp_path):
+    config = SkillsAdapterConfig(root_dir=str(tmp_path), helpers_enabled=True)
+    saved = save_helper(config, _script_task())
+    assert saved["name"] == "helper-py-files-project-folder" and saved["tools"] == ["code.interpreter"]
+    assert SCRIPT in saved["body"] and "run_python" in saved["body"]
+    assert [s["name"] for s in _load_skills(str(tmp_path))] == ["helper-py-files-project-folder"]
+
+
+def test_the_first_script_that_worked_is_kept_not_overwritten_by_a_later_run(tmp_path):
+    config = SkillsAdapterConfig(root_dir=str(tmp_path), helpers_enabled=True)
+    save_helper(config, _script_task())
+    assert save_helper(config, _script_task(code="print('a worse way')")) is None
+    assert SCRIPT in _load_skills(str(tmp_path))[0]["body"]
+
+
+@pytest.mark.parametrize("config_kwargs, status", [
+    ({"helpers_enabled": False}, TaskStatus.COMPLETED),
+    ({"helpers_enabled": True, "enabled": False}, TaskStatus.COMPLETED),
+    ({"helpers_enabled": True}, TaskStatus.FAILED),
+])
+def test_nothing_is_saved_when_helpers_are_off_or_the_task_did_not_finish(tmp_path, config_kwargs, status):
+    config = SkillsAdapterConfig(root_dir=str(tmp_path), **config_kwargs)
+    assert save_helper(config, _script_task(status=status)) is None
+    assert _load_skills(str(tmp_path)) == []
+
+
+def test_the_number_of_helpers_is_capped(tmp_path):
+    config = SkillsAdapterConfig(root_dir=str(tmp_path), helpers_enabled=True)
+    for number in range(MAX_HELPERS):
+        assert save_helper(config, _script_task(request=f"Task number{number} alpha")) is not None
+    assert save_helper(config, _script_task(request="One more unique request")) is None
+
+
+def test_a_long_request_is_shortened_at_a_word_boundary_in_the_helper_description(tmp_path):
+    config = SkillsAdapterConfig(root_dir=str(tmp_path), helpers_enabled=True)
+    request = "How many lines of Python code are there in total in all the .py files under the folder called orchestration please"
+    saved = save_helper(config, _script_task(request=request))
+    assert saved["description"].endswith("...") and "orchestra..." not in saved["description"] and len(saved["description"]) <= 135

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import logging
+import re
 
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
@@ -24,6 +25,10 @@ from agent_control.schemas import StrictBaseModel
 logger = logging.getLogger(__name__)
 
 AUDITOR_SYSTEM_PROMPT = prompt_text("base/auditor_system.md")
+
+# How much of the raw output the auditor is shown. The worker's multi-step evidence is laid out to
+# fit it (orchestration/worker.py, _operator_audit_evidence).
+RAW_OUTPUT_CHARS = 6000
 
 CONTENT_TOOLS = frozenset({
     "browser.open",
@@ -93,7 +98,7 @@ class AuditorService:
         prompt_values = {
             "objective": objective,
             "original_message": (original_message or "(same as normalized objective)").strip()[:1000],
-            "raw_output": raw_output.strip()[:6000],
+            "raw_output": raw_output.strip()[:RAW_OUTPUT_CHARS],
             # Facts about what the task produced, so the Auditor can judge
             # whether the request's actual deliverable landed. Empty string
             # keeps callers that don't supply it (and their recorded fixtures)
@@ -118,9 +123,47 @@ class AuditorService:
             logger.warning("auditor provider call failed; not blocking completion on it", exc_info=True)
             return AuditResult(sufficient=True, answer=None, reason="auditor_error")
         text = result.strip()
+        if text and looks_like_audit_commentary(text):
+            # The reply discusses the check instead of giving a verdict. Ask once for the verdict alone: the essay often
+            # concludes that something is missing (a screenshot never sent), which is exactly what the check is for.
+            try:
+                retry = await self.provider.generate_text(
+                    AUDITOR_SYSTEM_PROMPT,
+                    f"{user_prompt}\n\n{_VERDICT_ONLY}",
+                )
+                text = retry.strip() or text
+                self.last_response_text = getattr(self.provider, "last_response_text", None)
+            except Exception:
+                logger.warning("auditor verdict retry failed; judging its first reply", exc_info=True)
         if not text:
             return AuditResult(sufficient=False, reason="auditor_returned_empty")
         if text.upper().startswith("INSUFFICIENT"):
             reason = text.split(":", 1)[1].strip() if ":" in text else text
             return AuditResult(sufficient=False, reason=(reason[:300] or "insufficient"))
+        if looks_like_audit_commentary(text):
+            # A small model sometimes writes up its checking instead of answering. Sent to the user as the answer, that
+            # was a page of "Sufficiency Check: Data Presence..." in place of the Operator's reply. Keep the Operator's.
+            return AuditResult(sufficient=True, answer=None, reason="auditor_wrote_commentary_not_an_answer")
         return AuditResult(sufficient=True, answer=text)
+
+
+_VERDICT_ONLY = (
+    "Your last reply discussed the audit instead of giving its result. Reply with ONLY one of these, nothing else: the "
+    "answer to the user's request in plain words, or one line that starts with INSUFFICIENT: and says what is missing."
+)
+
+# Phrases that talk about the check (its evidence, the objective, the steps) and that a plain answer to a user does not use.
+_AUDIT_COMMENTARY = re.compile(
+    r"\b(?:sufficiency check|the raw output|the (?:normalized )?objective (?:is to|requires|asks|states)|"
+    r"the user'?s? (?:request|objective) (?:is to|requires|asks)|steps? \d+(?:\s*-\s*\d+)? (?:failed|succeeded)|"
+    r"evidence is (?:sufficient|insufficient)|deliverable check)\b",
+    re.IGNORECASE,
+)
+# A numbered list of bold headings ("1.  **Describe the page**:") is an audit write-up, not an answer.
+_NUMBERED_BOLD = re.compile(r"^\s*\d+\.\s+\*\*", re.MULTILINE)
+
+
+def looks_like_audit_commentary(text: str) -> bool:
+    """Whether an auditor reply talks about the audit (its evidence, its checks) rather than answering the request."""
+    head = text[:800]
+    return bool(_AUDIT_COMMENTARY.search(head)) or len(_NUMBERED_BOLD.findall(head)) >= 2

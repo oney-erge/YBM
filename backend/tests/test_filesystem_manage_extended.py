@@ -41,3 +41,65 @@ async def test_filesystem_collect_folder_snapshot_matches_inspection(tmp_path) -
 
     assert result.status.value == "succeeded"
     assert result.output["entries"][0]["relative_path"] == "a.txt"
+
+
+def test_a_locked_folder_inside_a_search_is_skipped_not_fatal(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from agent_control.tools.filesystem_manage import _walk_limited
+
+    (tmp_path / "locked").mkdir()
+    (tmp_path / "open").mkdir()
+    (tmp_path / "open" / "needle.txt").write_text("x")
+    real = Path.iterdir
+
+    def iterdir(self):
+        if self.name == "locked":
+            raise PermissionError(13, "Access is denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert [p.name for p in _walk_limited(tmp_path, max_depth=4)] == [tmp_path.name, "locked", "open", "needle.txt"]
+
+
+def test_the_folder_a_search_was_pointed_at_still_fails_loudly_when_it_cannot_be_opened(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from agent_control.tools.filesystem_manage import _walk_limited
+
+    def iterdir(self):
+        raise PermissionError(13, "Access is denied", str(self))
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    with pytest.raises(PermissionError):
+        list(_walk_limited(tmp_path, max_depth=2))
+
+
+@pytest.mark.asyncio
+async def test_a_search_that_runs_out_of_time_says_so_and_proves_nothing(tmp_path, monkeypatch) -> None:
+    from agent_control.tools import filesystem_manage
+
+    for n in range(200):
+        (tmp_path / f"file-{n}.txt").write_text("x", encoding="utf-8")
+    monkeypatch.setattr(filesystem_manage, "_SEARCH_SECONDS", -1.0)
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(ToolCallRequest(
+        task_id="t", tool_name="filesystem.manage", capability=Capability.FILESYSTEM_READ,
+        input={"operation": "search", "root": str(tmp_path), "query": "nothing-like-this"},
+    ))
+    assert result.status.value == "succeeded"
+    assert result.output["complete"] is False
+    assert filesystem_manage.SEARCH_STOPPED_MARK in result.output["summary"] and "system.inventory find_files" in result.output["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_search_that_finishes_says_nothing_about_stopping(tmp_path) -> None:
+    from agent_control.tools import filesystem_manage
+
+    (tmp_path / "needle.txt").write_text("x", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(ToolCallRequest(
+        task_id="t", tool_name="filesystem.manage", capability=Capability.FILESYSTEM_READ,
+        input={"operation": "search", "root": str(tmp_path), "query": "needle"},
+    ))
+    assert result.output["complete"] is True and filesystem_manage.SEARCH_STOPPED_MARK not in result.output["summary"]

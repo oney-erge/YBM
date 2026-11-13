@@ -47,6 +47,7 @@ from agent_control.heartbeat import run_heartbeat_forever
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
 from agent_control.storage import ApprovalRepository, AuditLogger, Database, Repositories
+from agent_control.tools.call_schema import CachedOperatorSchema
 from agent_control.tools.registry import build_tool_registry
 from agent_control.tools.stt import build_stt_adapter
 from agent_control.tools.coding_agent import (
@@ -457,11 +458,21 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "config_context_factory": lambda registry=registry, settings=settings: _worker_config_context(registry, settings),
         "notification_sink": RoutingNotificationSink(settings, audit, approvals=repositories.approvals),
         "task_budget_seconds": float(settings.limits.task_budget_seconds),
-        "operator": OperatorLoopService(operator_provider, major_provider=major_provider) if operator_provider else None,
+        "operator": (
+            OperatorLoopService(
+                operator_provider,
+                major_provider=major_provider,
+                response_schema=CachedOperatorSchema(registry) if settings.operator.constrain_calls else None,
+            )
+            if operator_provider
+            else None
+        ),
         "operator_max_steps": settings.operator.max_steps,
+        "auto_close_blocked_hours": settings.limits.auto_close_blocked_hours,
         "fulfillment_mode": settings.operator.fulfillment_mode,
         "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
         "scope_tools": settings.operator.scope_tools,
+        "verify_numbers": settings.operator.verify_numbers,
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
         "auditor": AuditorService(auditor_provider) if auditor_provider else None,
@@ -566,6 +577,7 @@ async def run_scheduler() -> None:
         poll_interval_seconds=settings.scheduler.poll_interval_seconds,
         max_consecutive_failures=settings.scheduler.max_consecutive_failures,
         retention_days=settings.storage.retention_days,
+        settings_loader=load_settings,
     )
 
 

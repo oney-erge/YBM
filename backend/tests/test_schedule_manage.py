@@ -50,6 +50,20 @@ def test_objective_from_schedule_text_removes_scheduling_wrapper() -> None:
 
     assert objective == "check https://example.com and tell me if a new episode came out"
 
+
+@pytest.mark.asyncio
+async def test_schedule_metadata_cannot_create_an_unvalidated_folder_trigger(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create('schedule a task')
+    adapter = ScheduleManageAdapter(repos, audit)
+    result = await adapter.execute(ToolCallRequest(
+        task_id=task.id, tool_name='schedule.manage', capability=Capability.SCHEDULE_MANAGE,
+        input={'operation': 'create', 'objective': 'check files', 'metadata': {'folder_trigger': {}}},
+    ))
+    assert result.status == ToolResultStatus.FAILED
+    assert 'Workflows' in result.error_message
+    assert repos.schedules.list_recent() == []
+
 @pytest.mark.asyncio
 async def test_schedule_manage_creates_lists_pauses_resumes_and_runs_now(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
@@ -256,3 +270,41 @@ async def test_creating_the_same_schedule_again_returns_the_existing_one(tmp_pat
     repos.schedules.update_status(first.output["schedule_id"], ScheduleStatus.DELETED)
     recreated = await create("Check example.com for new episodes", "daily")
     assert recreated.output["schedule_id"] != first.output["schedule_id"]  # a deleted one does not count
+
+
+
+@pytest.mark.asyncio
+async def test_list_shows_each_schedule_to_the_model_and_leaves_out_deleted_ones(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("what do I have scheduled")
+    adapter = ScheduleManageAdapter(repos, audit)
+
+    async def run(**payload):
+        return await adapter.execute(ToolCallRequest(
+            task_id=task.id, tool_name="schedule.manage", capability=Capability.SCHEDULE_MANAGE,
+            risk_level=RiskLevel.MEDIUM, input=payload,
+        ))
+
+    keep = await run(operation="create", objective="Send me a summary of the news every morning at 8am", source_chat_id="100")
+    gone = await run(operation="create", objective="Check the fixture server every hour", source_chat_id="100")
+    await run(operation="delete", schedule_id=gone.output["schedule_id"])
+
+    listed = await run(operation="list")
+
+    summary = listed.output["summary"]
+    assert summary.startswith("Found 1 schedule(s).")
+    assert keep.output["schedule_id"] in summary and "news every morning" in summary and "[enabled, next run " in summary
+    assert "fixture server" not in summary
+    assert [item["id"] for item in listed.output["schedules"]] == [keep.output["schedule_id"]]
+
+
+@pytest.mark.asyncio
+async def test_an_empty_list_says_so_plainly(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("what do I have scheduled")
+    adapter = ScheduleManageAdapter(repos, audit)
+    listed = await adapter.execute(ToolCallRequest(
+        task_id=task.id, tool_name="schedule.manage", capability=Capability.SCHEDULE_MANAGE,
+        risk_level=RiskLevel.MEDIUM, input={"operation": "list"},
+    ))
+    assert listed.output["summary"] == "Found 0 schedule(s)."

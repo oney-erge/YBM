@@ -37,6 +37,7 @@ _EFFECT_BY_TOOL_OPERATION: dict[tuple[str, str], EffectKind] = {
     ("document.manage", "extract_text"): "read",
     ("document.manage", "summarize_pdf"): "read",
     ("document.manage", "create_presentation"): "created",
+    ("document.manage", "compare_documents"): "created",
     ("document.manage", "update_presentation"): "modified",
     # code.interpreter - every run operation executes generated code,
     # regardless of which of the near-identical run/repair/build/solve
@@ -108,6 +109,11 @@ _EFFECT_BY_TOOL_OPERATION: dict[tuple[str, str], EffectKind] = {
     ("memory.manage", "remember"): "created",
     ("memory.manage", "list"): "read",
     ("memory.manage", "forget"): "deleted",
+    # system.inventory - read-only questions about this computer.
+    ("system.inventory", "steam_games"): "read",
+    ("system.inventory", "installed_apps"): "read",
+    ("system.inventory", "disk_space"): "read",
+    ("system.inventory", "find_files"): "read",
     # coding.agent - every operation but the read-only ones drives a real
     # coding session that can touch a workspace; "other" for those rather
     # than claiming a specific file effect this tool doesn't expose.

@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import fnmatch
-import json
+from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import os
 import re
 import shutil
+import time
 from typing import Any
 
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus, ToolVerification
+from agent_control.tools.office_text import SUFFIXES as OFFICE_SUFFIXES, office_text
 from agent_control.tools.contracts import (
     FilesystemApplyManifestInput,
     FilesystemCollectFolderSnapshotInput,
@@ -27,6 +29,7 @@ from agent_control.tools.contracts import (
     FilesystemSearchInput,
     FilesystemWriteTextFileInput,
 )
+from agent_control.human_text import describe_manifest
 from agent_control.tools.spec import (
     Adapters,
     Definitions,
@@ -39,6 +42,15 @@ from agent_control.tools.spec import (
 
 
 logger = logging.getLogger(__name__)
+
+# A search for a word that no file name contains reads files up to this size to look for it in their text.
+_TEXT_SEARCH_MAX_BYTES = 1_000_000
+#: A search names a folder, and with whole drives readable that folder can hold millions of files. It looks for this long and then
+#: says so, instead of working for ten minutes with nothing sent to the user. The text pass (reading files for a word) gets less.
+_SEARCH_SECONDS = 20.0
+_TEXT_SEARCH_SECONDS = 15.0
+#: The words a search that ran out of time ends with. orchestration/ladder.py looks for them: such a search proves nothing.
+SEARCH_STOPPED_MARK = "I stopped looking after"
 
 
 class FilesystemManageAdapter:
@@ -81,6 +93,7 @@ class FilesystemManageAdapter:
             return failed_result(request, f"filesystem operation failed: {exc}")
 
         output["operation"] = operation
+        output["with_dates"] = bool(request.input.get("with_dates"))
         output["terminal_output"] = [_terminal_output(operation, output)]
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
@@ -105,16 +118,59 @@ class FilesystemManageAdapter:
 
     def _search(self, request: ToolCallRequest) -> dict[str, Any]:
         root = self._safe_path(str(request.input["root"]))
-        query = str(request.input["query"]).lower()
+        query = str(request.input["query"]).lower().replace("\\", "/")
         wildcard_query = any(char in query for char in "*?[")
+        # A model writes the pattern the way a shell would: "**/budget*.csv", "docs/*.pdf". The match is on a file's name
+        # and on its path under the root, so the folder prefix cannot make a name that is there match nothing.
+        name_pattern = query.rsplit("/", 1)[-1] if wildcard_query else query
         include_content = bool(request.input.get("include_content", False))
         max_results = int(request.input.get("max_results") or 100)
-        results = []
+        started = time.monotonic()
+        stats = {"visited": 0, "stopped": False}
+        results = self._search_pass(
+            root, query, name_pattern, wildcard_query, include_content, max_results, deadline=started + _SEARCH_SECONDS, stats=stats,
+        )
+        in_text = False
+        if not results and not include_content and not wildcard_query and not stats["stopped"]:
+            # "Which file mentions tangerine?" names no file. A search by word that matches no file name is looked for in
+            # the text of the files instead of coming back empty, which the model then repeated until it was stopped.
+            results = self._search_pass(
+                root, query, name_pattern, wildcard_query, True, max_results, text_only=True,
+                deadline=time.monotonic() + _TEXT_SEARCH_SECONDS, stats=stats,
+            )
+            in_text = bool(results)
+        where = " (no file name matched; found in the text of the file)" if in_text else ""
+        stopped = (
+            f" {SEARCH_STOPPED_MARK} {round(time.monotonic() - started)} seconds, after {stats['visited']:,} files and folders, so part of "
+            f"{root} was not looked at. For a whole drive or every folder, use system.inventory find_files (it covers every folder "
+            "it may read), or write a short script with code.interpreter."
+            if stats["stopped"] else ""
+        )
+        return {
+            "root": str(root),
+            "entries": results,
+            "complete": not stats["stopped"],
+            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}{where}.{stopped}",
+        }
+
+    def _search_pass(
+        self, root: Path, query: str, name_pattern: str, wildcard_query: bool, include_content: bool, max_results: int,
+        *, text_only: bool = False, deadline: float | None = None, stats: dict[str, Any] | None = None,
+    ) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        stats = stats if stats is not None else {"visited": 0, "stopped": False}
         for path in _walk_limited(root, max_depth=20):
             if path == root:
                 continue
-            matched = (
-                fnmatch.fnmatch(path.name.lower(), query)
+            stats["visited"] += 1
+            if deadline is not None and stats["visited"] % 64 == 0 and time.monotonic() > deadline:
+                stats["stopped"] = True
+                break
+            if text_only and not (path.is_file() and path.stat().st_size <= _TEXT_SEARCH_MAX_BYTES):
+                continue
+            matched = False if text_only else (
+                fnmatch.fnmatch(path.name.lower(), name_pattern)
+                or fnmatch.fnmatch(path.relative_to(root).as_posix().lower(), query)
                 if wildcard_query
                 else query in path.name.lower()
             )
@@ -145,11 +201,7 @@ class FilesystemManageAdapter:
                 results.append(item)
                 if len(results) >= max_results:
                     break
-        return {
-            "root": str(root),
-            "entries": results,
-            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}.",
-        }
+        return results
 
     def _resolve_desktop_item(self, request: ToolCallRequest) -> dict[str, Any]:
         query = str(request.input.get("query") or request.input.get("name") or "").lower().strip()
@@ -214,10 +266,13 @@ class FilesystemManageAdapter:
         if not path.exists() or not path.is_file():
             raise ValueError(f"file does not exist: {path}")
         max_chars = int(request.input.get("max_chars") or 12000)
-        text = _extract_supported_text(path, max_chars=max_chars)
+        text = _extract_supported_text(path, max_chars=max_chars, keep_lines=True)
         if not text:
-            text = path.read_bytes()[:max_chars].decode("utf-8", errors="ignore")
-        text = _compact_text(text, limit=max_chars)
+            raw = path.read_bytes()[:max_chars]
+            # A file that is not text (an image, an archive, a format no reader here knows) used to come back as its
+            # bytes decoded, a page of noise the model then tried to answer from. Say there is nothing to read instead.
+            text = "" if b"\x00" in raw[:4096] else raw.decode("utf-8", errors="ignore")
+        text = _line_text(text, limit=max_chars)
         summary = _simple_summary(text) if text else "No readable text was extracted from this file."
         return {
             "root": str(path.parent),
@@ -232,6 +287,8 @@ class FilesystemManageAdapter:
     def _write_text_file(self, request: ToolCallRequest) -> dict[str, Any]:
         path = self._safe_path(str(request.input["path"]))
         overwrite = bool(request.input.get("overwrite", False))
+        if bool(request.input.get("append", False)) and path.exists() and path.is_file():
+            return self._append_text_file(path, str(request.input.get("content") or ""))
         original_path = path
         renamed = False
         # If the destination already exists and the caller didn't ask to
@@ -252,12 +309,31 @@ class FilesystemManageAdapter:
             "summary": (
                 f"Wrote text file {path}."
                 if not renamed
-                else f"Wrote text file {path} (requested path {original_path.name} already existed; auto-renamed)."
+                else (
+                    f"Wrote text file {path} (requested path {original_path.name} already existed; auto-renamed). "
+                    f"{original_path.name} itself was NOT changed. To replace it, call write_text_file again with the same "
+                    "path and overwrite set to true."
+                )
             ),
         }
         if renamed:
             result["renamed_from"] = str(original_path)
         return result
+
+    def _append_text_file(self, path: Path, content: str) -> dict[str, Any]:
+        """Add text to the end of a file that exists, on its own line, leaving what is there untouched."""
+        existing = path.read_text(encoding="utf-8", errors="replace")
+        separator = "" if not existing or existing.endswith(("\n", "\r")) or content.startswith(("\n", "\r")) else "\n"
+        with path.open("a", encoding="utf-8", newline="") as handle:
+            handle.write(separator + content)
+        return {
+            "root": str(path.parent),
+            "path": str(path),
+            "entries": [_entry(path.parent, path)],
+            "changed_paths": [str(path)],
+            "summary": f"Added {len(content)} character(s) to the end of {path}; the existing text was kept.",
+            "appended": True,
+        }
 
     def _collect_folder_snapshot(self, request: ToolCallRequest) -> dict[str, Any]:
         return self._inspect_folder(request)
@@ -363,7 +439,7 @@ class FilesystemManageAdapter:
             "root": str(root),
             "manifest": manifest,
             "dry_run": True,
-            "summary": f"Prepared {len(manifest)} file organization action(s) for {root}.",
+            "summary": _organize_plan_summary(root, manifest),
         }
 
     def _rename_plan(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -407,7 +483,7 @@ class FilesystemManageAdapter:
             "manifest": manifest,
             "rename_manifest": rename_manifest,
             "dry_run": True,
-            "summary": f"Prepared {len(rename_manifest)} rename action(s) with before/after names.",
+            "summary": _rename_plan_summary(root, rename_manifest),
         }
 
     def _apply_manifest(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -435,6 +511,12 @@ class FilesystemManageAdapter:
                 continue
             if not source.exists() or not source.is_file():
                 raise ValueError(f"source file does not exist: {source}")
+            if destination.is_dir():
+                # A folder as the destination means "into that folder", and the file keeps its name. It used to count as a
+                # name collision: moving three files to "." renamed them trash_2, trash_3, trash_4 outside the folder.
+                destination = destination / source.name
+            if destination.resolve() == source.resolve():
+                raise ValueError(f"source and destination are the same file, nothing to move: {source}")
             destination.parent.mkdir(parents=True, exist_ok=True)
             if destination.exists() and not overwrite:
                 destination = _dedupe_destination(destination)
@@ -606,13 +688,25 @@ def _walk_limited(root: Path, *, max_depth: int):
     def walk(directory: Path, depth: int):
         if depth >= max_depth:
             return
-        children = sorted(
-            directory.iterdir(),
-            key=lambda path: (path.name.casefold(), path.name),
-        )
+        try:
+            children = sorted(
+                directory.iterdir(),
+                key=lambda path: (path.name.casefold(), path.name),
+            )
+        except OSError:
+            # A folder inside the walk that Windows will not open ("My Music" inside Documents is the usual one) is skipped. It
+            # used to end the whole search with "Access is denied", and the model then searched the same place again. The
+            # folder the call named is different: failing to open that one is the answer.
+            if depth == 0:
+                raise
+            return
         for path in children:
             yield path
-            if path.is_dir() and not path.is_symlink():
+            try:
+                descend = path.is_dir() and not path.is_symlink()
+            except OSError:
+                descend = False
+            if descend:
                 yield from walk(path, depth + 1)
 
     yield from walk(root, 0)
@@ -639,6 +733,13 @@ def _entry(root: Path, path: Path) -> dict[str, Any]:
         "size_bytes": stat.st_size if path.is_file() else None,
         "modified_at": stat.st_mtime,
     }
+
+
+def _modified_label(epoch: object) -> str:
+    """", modified 2026-11-10 06:30 UTC" for a listing line, so "which file changed last?" can be answered from the listing."""
+    if not isinstance(epoch, (int, float)):
+        return ""
+    return ", modified " + datetime.fromtimestamp(epoch, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
 
 
 def _rename_stem(path: Path) -> str:
@@ -721,30 +822,52 @@ def _is_image_file(path: Path) -> bool:
     return path.suffix.lower() in {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff"}
 
 
-def _extract_supported_text(path: Path, *, max_chars: int) -> str:
+def _extract_supported_text(path: Path, *, max_chars: int, keep_lines: bool = False) -> str:
     suffix = path.suffix.lower()
+
+    # A file read for its content keeps its line breaks: a CSV collapsed to one line ("name,score Ana,71 Ben,88 ...") cannot be
+    # parsed by the script the model writes, and a table, a list or code loses its meaning. Previews and search results are
+    # still compacted to one line.
+    def compact(value: str) -> str:
+        return _line_text(value, limit=max_chars) if keep_lines else _compact_text(value, limit=max_chars)
+
     if _is_text_file(path):
         text = path.read_text(encoding="utf-8", errors="ignore")
         if suffix in {".html", ".htm"}:
             text = re.sub(r"<script\b.*?</script>", " ", text, flags=re.IGNORECASE | re.DOTALL)
             text = re.sub(r"<style\b.*?</style>", " ", text, flags=re.IGNORECASE | re.DOTALL)
             text = re.sub(r"<[^>]+>", " ", text)
-        return _compact_text(text, limit=max_chars)
+        return compact(text)
     if suffix == ".pdf":
         try:
             from pypdf import PdfReader
 
             reader = PdfReader(str(path))
             text = "\n\n".join((page.extract_text() or "").strip() for page in reader.pages).strip()
-            return _compact_text(text, limit=max_chars)
+            return compact(text)
         except Exception:
             logger.debug("pypdf extraction failed for %s; falling back to raw bytes decode", path, exc_info=True)
-            return _compact_text(path.read_bytes().decode("utf-8", errors="ignore"), limit=max_chars)
+            return compact(path.read_bytes().decode("utf-8", errors="ignore"))
+    if suffix in OFFICE_SUFFIXES:
+        # Word, Excel, PowerPoint and zip files are archives: reading them as text returned the archive's bytes. The
+        # same reader document.manage extract_text uses gives their paragraphs, cells, slide text or file list.
+        try:
+            return compact(office_text(path) or "")
+        except ValueError:
+            logger.debug("%s is not a readable %s file", path, suffix, exc_info=True)
+            return ""
     return ""
 
 
 def _compact_text(text: str, *, limit: int) -> str:
     return re.sub(r"\s+", " ", text).strip()[:limit]
+
+
+def _line_text(text: str, *, limit: int) -> str:
+    """Text with its line breaks kept: runs of spaces and tabs become one space, blank lines become one."""
+    text = re.sub(r"[ \t\r\f\v]+", " ", text)
+    text = re.sub(r" ?\n ?", "\n", text)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()[:limit]
 
 
 def _simple_summary(text: str) -> str:
@@ -776,7 +899,8 @@ def _human_filesystem_output(operation: str, output: dict[str, Any]) -> str:
             kind = "folder" if item.get("is_dir") else "file"
             name = item.get("relative_path") or item.get("path") or ""
             size = item.get("size_bytes")
-            suffix = f" ({size} bytes)" if size is not None and not item.get("is_dir") else ""
+            modified = _modified_label(item.get("modified_at")) if output.get("with_dates") else ""
+            suffix = f" ({size} bytes{modified})" if size is not None and not item.get("is_dir") else ""
             lines.append(f"- [{kind}] {name}{suffix}")
             preview = item.get("content_preview") or item.get("content_summary")
             if preview:
@@ -790,13 +914,26 @@ def _human_filesystem_output(operation: str, output: dict[str, Any]) -> str:
         lines.append(str(text)[:5000])
     manifest = output.get("manifest")
     if operation in {"organize_plan", "rename_plan"} and isinstance(manifest, list) and manifest:
-        # The Operator only sees this human output on its next decide() call,
-        # not the raw result object. Omitting the manifest meant it was told
-        # merely "Prepared 3 actions" and then expected to invent those three
-        # actions for apply_manifest. Keep the actionable hand-off bounded.
+        # The Operator reads this text, not the result object, and keeps 1,000 characters of each
+        # step. The manifest's JSON used to be handed off here: that showed a model three or four
+        # moves, which it passed on as the whole plan (or padded with files it made up). An
+        # apply_manifest with no manifest now applies the plan, so the plan is listed by folder,
+        # file names only, for the Operator, the auditor and the person reading the trace.
         lines.append("")
-        lines.append("Manifest for the next apply_manifest call:")
-        lines.append(json.dumps(manifest[:60], ensure_ascii=False, separators=(",", ":")))
+        lines.append("Planned:")
+        by_folder: dict[str, list[str]] = {}
+        for item in manifest:
+            if not isinstance(item, dict):
+                continue
+            source = Path(str(item.get("source") or "")).name
+            destination = Path(str(item.get("destination") or ""))
+            if operation == "organize_plan":
+                by_folder.setdefault(destination.parent.name, []).append(source)
+            else:
+                by_folder.setdefault("renamed", []).append(f"{source} -> {destination.name}")
+        for folder, names in sorted(by_folder.items()):
+            shown = ", ".join(names[:20]) + (f" and {len(names) - 20} more" if len(names) > 20 else "")
+            lines.append(f"- {folder}: {shown}")
     changed = output.get("changed_paths")
     if isinstance(changed, list) and changed:
         lines.append("")
@@ -859,6 +996,33 @@ def _verify_filesystem_manage(request: ToolCallRequest, result: ToolCallResult) 
     return _verify_apply_manifest(request, result)
 
 
+def _organize_plan_summary(root: Path, manifest: list[dict[str, Any]]) -> str:
+    """What the plan would do, for the person in the chat and for the operator.
+
+    The operator sees this line, not the manifest: it said only "Prepared 24 file organization
+    action(s)", and a model told to pass the manifest on wrote one of its own, with invented files.
+    How to apply it is in the tool's catalog entry, not here: this line is shown in the chat.
+    """
+    if not manifest:
+        return f"Nothing to organize in {root}: no file needs to move."
+    folders: dict[str, int] = {}
+    for item in manifest:
+        folder = Path(str(item["destination"])).parent.name
+        folders[folder] = folders.get(folder, 0) + 1
+    grouped = ", ".join(f"{count} to {folder}" for folder, count in sorted(folders.items()))
+    # No "nothing has moved yet": the auditor reads every step, and a 9B auditor took that line
+    # as the state of the folder after a later apply_manifest had moved all 24 files.
+    return f"Planned {len(manifest)} move(s) in {root.name or root}: {grouped}."
+
+
+def _rename_plan_summary(root: Path, rename_manifest: list[dict[str, Any]]) -> str:
+    if not rename_manifest:
+        return f"Nothing to rename in {root}: every name already fits."
+    examples = "; ".join(f"{item['before']} -> {item['after']}" for item in rename_manifest[:3])
+    more = f" and {len(rename_manifest) - 3} more" if len(rename_manifest) > 3 else ""
+    return f"Planned {len(rename_manifest)} rename(s) in {root.name or root}: {examples}{more}."
+
+
 # Operations that only look. They run under filesystem.read, so the "Read-only"
 # access mode (which enables exactly that capability) gives the agent a file tool
 # that can inspect, search and read but cannot change anything. Everything not
@@ -894,7 +1058,9 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             description=(
                 "inspect, search, plan organization, and apply move/copy manifests inside configured "
-                f"roots: {', '.join(settings.adapters.computer_use.allowed_roots) or '<none>'}"
+                f"roots: {', '.join(settings.adapters.computer_use.allowed_roots) or '<none>'}. "
+                "To organize or sort a folder: organize_plan (strategy by_type or by_extension) plans "
+                "the moves, then apply_manifest with the same root and no manifest makes them"
             ),
             operations=(
                 "inspect_folder",
@@ -958,9 +1124,14 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "apply_manifest": RiskLevel.HIGH,
             },
             verify=_verify_filesystem_manage,
+            # The console's approval card said only "Approve filesystem.manage using filesystem.write";
+            # the chat channels already said which files go where.
+            approval_reasons={"apply_manifest": lambda value: f"{describe_manifest(value)}."},
             examples=(
                 {"operation": "inspect_folder", "root": "{{folder_path}}"},
                 {"operation": "search", "root": "desktop", "query": "resume"},
+                {"operation": "organize_plan", "root": "{{folder_path}}", "strategy": "by_type"},
+                {"operation": "apply_manifest", "root": "{{folder_path}}"},
                 {"operation": "read_file", "path": "{{last_entry_path}}", "max_chars": 8000},
                 {"operation": "write_text_file", "path": "{{output_path}}", "content": "Report content"},
             ),

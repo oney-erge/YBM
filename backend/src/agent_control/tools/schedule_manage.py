@@ -56,6 +56,8 @@ class ScheduleManageAdapter:
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
     def _create(self, request: ToolCallRequest) -> dict:
+        if {'folder_trigger', 'workflow_plan_template'} & set(request.input.get('metadata') or {}):
+            raise ValueError('Configure folder automations from a saved workflow in Workflows.')
         raw_objective = str(request.input.get("objective") or request.input.get("prompt") or "").strip()
         if not raw_objective:
             raise ValueError("objective is required")
@@ -93,11 +95,20 @@ class ScheduleManageAdapter:
         }
 
     def _list(self) -> dict:
-        schedules = self.repositories.schedules.list_recent(50)
-        return {
-            "schedules": [schedule_to_output(schedule) for schedule in schedules],
-            "summary": f"Found {len(schedules)} schedule(s).",
-        }
+        # Deleted schedules are gone as far as the user is concerned: they were counted ("Found 35 schedule(s)") and listed.
+        schedules = [
+            schedule for schedule in self.repositories.schedules.list_recent(50) if schedule.status != ScheduleStatus.DELETED
+        ]
+        lines = [
+            f"- {schedule.id}: {schedule.cadence} -> {schedule.objective} [{schedule.status.value}, next run "
+            f"{schedule.next_run_at.strftime('%Y-%m-%d %H:%M UTC') if schedule.next_run_at else 'not scheduled'}]"
+            for schedule in schedules[:25]
+        ]
+        if len(schedules) > 25:
+            lines.append(f"- ... {len(schedules) - 25} more")
+        # The text is what the model reads: a bare count left it asking for the same list again and again.
+        summary = f"Found {len(schedules)} schedule(s)." + ("\n" + "\n".join(lines) if lines else "")
+        return {"schedules": [schedule_to_output(schedule) for schedule in schedules], "summary": summary}
 
     def _status(self, request: ToolCallRequest, status: ScheduleStatus) -> dict:
         schedule_id = str(request.input.get("schedule_id") or "")
@@ -118,6 +129,8 @@ class ScheduleManageAdapter:
         schedule = self.repositories.schedules.get(schedule_id)
         if schedule is None:
             raise ValueError(f"schedule not found: {schedule_id}")
+        if schedule.metadata.get('folder_trigger'):
+            raise ValueError('Folder automations run when a matching file changes; use Workflows to manage them.')
         task = create_due_task(self.repositories, self.audit, schedule)
         updated = self.repositories.schedules.get(schedule.id) or schedule
         return {

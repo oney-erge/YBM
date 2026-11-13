@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react"
 import { toast } from "sonner"
+import { Link, useSearchParams } from "react-router"
 import { Bot, LoaderCircle, Maximize2, Minimize2, Paperclip, Send, ShieldCheck, Sparkles, Square, Columns3, User, X } from "lucide-react"
 import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
@@ -21,6 +22,7 @@ import {
   useBootstrap,
   useChatMessages,
   usePendingApprovals,
+  useProjects,
   useSendChatMessage,
   useTaskSignal,
   useUploadChatAttachment,
@@ -65,10 +67,13 @@ const STARTER_PROMPTS = [
 ]
 
 export function ChatPage() {
-  const { data, isPending, isError, error } = useChatMessages()
+  const [searchParams, setSearchParams] = useSearchParams()
+  const projectId = searchParams.get("project") ?? ""
+  const { data, isPending, isError, error } = useChatMessages(projectId || undefined)
   const { data: bootstrap } = useBootstrap()
   const { data: voice } = useVoiceConfig()
   const sendMessage = useSendChatMessage()
+  const { data: projects } = useProjects()
   const uploadAttachment = useUploadChatAttachment()
   const [draft, setDraft] = useState("")
   const [modes, setModes] = useState<string[]>([])
@@ -133,10 +138,10 @@ export function ChatPage() {
     const body = instructions ? `${trimmed}
 
 ${instructions}` : trimmed
-    sendMessage.mutate({ text: body, attachmentIds })
-    setDraft("")
-    setAttachments([])
-    setModes([])
+    sendMessage.mutate({ text: body, attachmentIds, projectId: projectId || undefined }, {
+      onSuccess: () => { setDraft(""); setAttachments([]); setModes([]) },
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not send your message. Your draft is saved."),
+    })
   }
 
   return (
@@ -268,6 +273,24 @@ ${instructions}` : trimmed
               setModes((prev) => (prev.includes(key) ? prev.filter((k) => k !== key) : [...prev, key]))
             }
           />
+          {projects && (
+            <label className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <span>Project</span>
+              <select
+                value={projectId}
+                onChange={(event) => setSearchParams(event.target.value ? { project: event.target.value } : {})}
+                disabled={sendMessage.isPending}
+                className="h-7 max-w-56 rounded-md border border-input bg-background px-2 text-xs text-foreground"
+                aria-label="Project context"
+              >
+                <option value="">General chat</option>
+                {projects.projects.map((project) => (
+                  <option key={project.id} value={project.id}>{project.name}</option>
+                ))}
+              </select>
+              <Link to="/projects" className="underline">Manage projects</Link>
+            </label>
+          )}
           {/* Message on its own row, controls on the next one.
               Everything used to share a single row: five controls of two
               different heights, bottom-aligned, with the textarea squeezed
@@ -359,6 +382,9 @@ ${instructions}` : trimmed
 }
 
 function ChatExchange({ task }: { task: TaskRecord }) {
+  const projectId = typeof task.metadata.project_id === "string" ? task.metadata.project_id : undefined
+  const triggerEvent = task.metadata.folder_trigger_event
+  const triggerPath = triggerEvent && typeof triggerEvent === "object" && "path" in triggerEvent && typeof triggerEvent.path === "string" ? triggerEvent.path : undefined
   const settled = isTerminal(task.status)
   const taskSignal = useTaskSignal()
   const sendMessage = useSendChatMessage()
@@ -375,8 +401,10 @@ function ChatExchange({ task }: { task: TaskRecord }) {
     event.preventDefault()
     const trimmed = clarifyDraft.trim()
     if (!trimmed || sendMessage.isPending) return
-    sendMessage.mutate({ text: trimmed })
-    setClarifyDraft("")
+    sendMessage.mutate({ text: trimmed, projectId }, {
+      onSuccess: () => setClarifyDraft(""),
+      onError: (error) => toast.error(error.message),
+    })
   }
 
   const clarificationAnswers = Array.isArray(task.metadata.clarification_answers)
@@ -386,6 +414,7 @@ function ChatExchange({ task }: { task: TaskRecord }) {
   return (
     <div className="flex flex-col gap-3">
       <Bubble role="user" text={displayedObjective(task.objective)} />
+      {triggerPath && <p className="px-2 text-xs text-muted-foreground [overflow-wrap:anywhere]">Started by a file change: {triggerPath}</p>}
       {clarificationAnswers.map((entry, index) => (
         <div key={index} className="flex flex-col gap-2">
           {entry.question && <Bubble role="assistant" text={entry.question} muted />}
@@ -400,7 +429,9 @@ function ChatExchange({ task }: { task: TaskRecord }) {
         {blockedAccess && (
           <AccessHintCard
             access={blockedAccess}
-            onRetry={() => sendMessage.mutate({ text: displayedObjective(task.objective) })}
+            onRetry={() => sendMessage.mutate({ text: displayedObjective(task.objective), projectId }, {
+              onError: (error) => toast.error(error.message),
+            })}
           />
         )}
         {!settled && !clarifying && (
@@ -422,6 +453,7 @@ function ChatExchange({ task }: { task: TaskRecord }) {
               value={clarifyDraft}
               onChange={(event) => setClarifyDraft(event.target.value)}
               placeholder="Type your answer..."
+              disabled={sendMessage.isPending}
               autoFocus
               className="h-8 min-w-0 flex-1 rounded-lg border border-input bg-background px-2.5 text-xs outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
             />

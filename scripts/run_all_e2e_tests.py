@@ -61,6 +61,9 @@ ROOT = Path(__file__).resolve().parents[1]
 ENV_PATH = ROOT / ".env"
 RESULTS_ROOT = ROOT / ".agent_control" / "e2e_results"
 CASES_PATH = ROOT / "e2e" / "all_cases.json"
+HELDOUT_PATH = ROOT / "e2e" / "heldout_cases.json"
+HELDOUT2_PATH = ROOT / "e2e" / "heldout2_cases.json"
+HELDOUT3_PATH = ROOT / "e2e" / "heldout3_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -77,6 +80,8 @@ GUARDED_TAGS = {"codex", "copilot", "external", "quota", "limit", "presentation"
 # a catalogue test fails if a case declares a budget this cannot honor.
 HARD_CEILING_S = 1260
 TASK_SPAWN_TIMEOUT_S = 180
+AUTO_SPAWN_TIMEOUT_S = 60  # expects_task "auto": how long to wait for a task before taking a chat reply
+SECOND_QUESTION_GRACE_S = 120  # how long to wait after answering a question for the task to move on, before failing it
 
 # The runner must wait AT LEAST this long after the case's declared timeout so
 # the worker's own per-task budget (settings.limits.task_budget_seconds,
@@ -268,6 +273,40 @@ def cleanup_catalog_memory_facts(cases: list[dict]) -> None:
         conn.close()
     except Exception:
         pass
+
+
+def case_may_create_schedules(case: dict) -> bool:
+    """Whether a case can leave a schedule behind: tagged for it, asserting one, or expecting a schedule.manage call."""
+    assertion_sets = [case.get("assertions") or {}, *[(fu.get("assertions") or {}) for fu in case.get("follow_ups") or []]]
+    tools = [str(item) for item in case.get("tools_required") or []]
+    for assertions in assertion_sets:
+        tools += [str(item) for item in assertions.get("tools_all") or []]
+    return (
+        "schedule" in (case.get("tags") or [])
+        or any(assertions.get("schedule_created") for assertions in assertion_sets)
+        or any(tool.startswith("schedule.manage") for tool in tools)
+    )
+
+
+def delete_schedules_created_since(since_iso: str) -> int:
+    """Delete the schedules created since ``since_iso``: the ones a finished case made.
+
+    A schedule a case creates is real: it fires in the database the stack uses. The "Review my career evidence" cases of August
+    left seven weekly schedules that kept firing for three months, and an hourly check against a fixture server that no longer
+    existed would have messaged the user every hour. Rows are marked deleted, as the schedule tool does.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.execute(
+            "UPDATE schedules SET status = 'deleted', updated_at = ? WHERE created_at >= ? AND status != 'deleted'",
+            (datetime.now(timezone.utc).isoformat(), since_iso),
+        )
+        conn.commit()
+        deleted = cursor.rowcount
+        conn.close()
+        return int(deleted)
+    except Exception:
+        return 0
 
 
 def cancel_task(task_id: str) -> bool:
@@ -593,8 +632,22 @@ def render_text(text: str, fixtures: dict[str, str]) -> str:
 # ---------- Case selection ----------
 
 
+def expects_task_mode(value: object) -> bool | str:
+    """True: wait for a task. False: a chat reply, no task. "auto": follow a task if one is spawned, else take the chat reply.
+
+    A plain question ("What is 18 percent of 2,450?") is answered in chat or run as a task depending on how the classifier reads
+    its wording, so a case about such a question cannot say which in advance.
+    """
+    return "auto" if isinstance(value, str) and value.strip().lower() == "auto" else bool(value)
+
+
 def load_cases() -> list[dict]:
-    return json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
+    cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
+    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH):
+        if path.exists():
+            cases += json.loads(path.read_text(encoding="utf-8"))
+    return cases
 
 
 def is_guarded(case: dict) -> bool:
@@ -616,6 +669,10 @@ def select_cases(
         if only and cid not in only:
             continue
         if cid in skip:
+            continue
+        # The held-out suite is the yardstick, not something to run by accident on every pass: it runs with
+        # `--suite heldout` or when its cases are named with `--only`.
+        if c.get("heldout") and not only and not (set(c.get("suites") or []) & suites):
             continue
         if sizes and (c.get("size") or "small") not in sizes:
             continue
@@ -968,7 +1025,11 @@ def _diagnose_turn(
                 f"exceeds telegram_update_max_gap_seconds={max_update_gap}"
             )
 
-    reply_needles = [str(item).lower() for item in assertions.get("bot_reply_contains_any") or [] if str(item).strip()]
+    def reply_terms(key: str) -> list[str]:
+        # A value measured when the fixtures were built ({{h3_steam_count}}) is filled in here, as it is in the message.
+        return [render_text(str(item), fixtures or {}) for item in assertions.get(key) or [] if str(item).strip()]
+
+    reply_needles = [item.lower() for item in reply_terms("bot_reply_contains_any")]
     if reply_needles:
         # Truth source is the union of the task-metadata-derived reply AND the
         # audit log's record of what was actually sent to Telegram - a task
@@ -987,10 +1048,17 @@ def _diagnose_turn(
                 f"reply={reply[:240]!r}; audit_confirmed={confirmed[:240]!r}"
             )
 
+    all_needles = [item.lower() for item in reply_terms("bot_reply_contains_all")]
+    if all_needles:
+        reply_and_confirmed = f"{_turn_reply_text(turn)}\n{turn.telegram_confirmed_text}".lower()
+        absent = [needle for needle in all_needles if needle not in reply_and_confirmed]
+        if absent:
+            return False, f"bot reply is missing {absent}; reply={reply_and_confirmed[:240]!r}"
+
     # Leak checks. A secret that reaches the user is a failure even when every
     # positive assertion passed, so these are evaluated against both the
     # task-derived reply and what Telegram actually received.
-    excluded = [str(item) for item in assertions.get("bot_reply_excludes_all") or [] if str(item).strip()]
+    excluded = reply_terms("bot_reply_excludes_all")
     if excluded:
         haystack = f"{_turn_reply_text(turn)}\n{turn.telegram_confirmed_text}".lower()
         leaked = [needle for needle in excluded if needle.lower() in haystack]
@@ -1291,7 +1359,7 @@ async def _run_turn(
     *,
     resume_task_id: str | None = None,
     settled_statuses: set[str] | None = None,
-    expects_task: bool = True,
+    expects_task: bool | str = True,
 ) -> TurnResult:
     """Send one message + poll the spawned task until terminal/timeout. All errors caught.
 
@@ -1322,7 +1390,7 @@ async def _run_turn(
             turn.duration_s = round(time.monotonic() - start_mono, 1)
             return turn
 
-        if not expects_task:
+        async def collect_chat_reply() -> TurnResult:
             turn.final_status = "chat"
             turn.classifier_verdict = fetch_classifier_verdict_for_text(message)
             deadline = time.monotonic() + min(max_seconds, CHAT_REPLY_TIMEOUT_S)
@@ -1344,7 +1412,11 @@ async def _run_turn(
             print(f"    [chat] {turn.telegram_update_count} reply message(s)")
             return turn
 
-        spawn_timeout_s = min(TASK_SPAWN_TIMEOUT_S, max_seconds)
+        if not expects_task:
+            return await collect_chat_reply()
+
+        # In auto mode a chat answer comes quickly, so a task that has not appeared by then is not coming.
+        spawn_timeout_s = min(AUTO_SPAWN_TIMEOUT_S if expects_task == "auto" else TASK_SPAWN_TIMEOUT_S, max_seconds)
         task_id = resume_task_id or await _find_new_task(
             known,
             message,
@@ -1356,6 +1428,10 @@ async def _run_turn(
             # the blame attribution and the diagnosis dump.
             verdict = fetch_classifier_verdict_for_text(message)
             turn.classifier_verdict = verdict
+            # No verdict at all means a chat command ("save that as a workflow", "forget my cat") answered the message before it was
+            # classified; collect_chat_reply still fails the turn when no reply arrives.
+            if expects_task == "auto" and (verdict is None or verdict.get("is_task") is False):
+                return await collect_chat_reply()
             if verdict is not None:
                 reason = str(verdict.get("reason") or "")
                 if verdict.get("is_task") is False:
@@ -1381,6 +1457,7 @@ async def _run_turn(
         last_status = None
         last_step = None
         last_replan = None
+        clarification_sent_at = 0.0
         ceiling, clipped = _turn_ceiling_seconds(max_seconds)
         if clipped:
             print(
@@ -1426,8 +1503,18 @@ async def _run_turn(
             # One neutral confirmation per turn, echoing the original request
             # so the answer cannot smuggle in new instructions, and logged
             # loudly so a pass here is never mistaken for an unprompted one.
+            # A second question after that answer means the agent is not finishing. Waiting out the whole ceiling (about 11
+            # minutes a case, three cases in one run) only delays the same failure, so the wait ends shortly after the reply.
+            if (
+                status == "clarifying"
+                and turn.clarification_sent
+                and time.monotonic() - clarification_sent_at > SECOND_QUESTION_GRACE_S
+            ):
+                print(f"    [clarify] asked again after the reply; not waiting {SECOND_QUESTION_GRACE_S:.0f}s more")
+                break
             if status == "clarifying" and not turn.clarification_sent:
                 turn.clarification_sent = True
+                clarification_sent_at = time.monotonic()
                 answer = (
                     "Yes, please go ahead with what you proposed, staying within the "
                     "constraints in my original message."
@@ -1543,7 +1630,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
             rendered_message,
             max_seconds=max_seconds,
             settled_statuses={str(item) for item in case.get("settled_statuses") or []},
-            expects_task=bool(case.get("expects_task", True)),
+            expects_task=expects_task_mode(case.get("expects_task", True)),
         )
         stage.turns.append(initial)
         passed, reason = _diagnose_turn(case, initial, is_followup=False, fixtures=fixtures)
@@ -1559,7 +1646,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
                 max_seconds=fu_to,
                 resume_task_id=initial.task_id if fu.get("resume_task") else None,
                 settled_statuses={str(item) for item in fu.get("settled_statuses") or []},
-                expects_task=bool(fu.get("expects_task", True)),
+                expects_task=expects_task_mode(fu.get("expects_task", True)),
             )
             stage.turns.append(fu_turn)
             fu_case = {**case, "assertions": fu.get("assertions", case.get("assertions") or {})}
@@ -1923,7 +2010,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",
@@ -2054,6 +2141,7 @@ async def main() -> int:
               f"| elapsed {_fmt_duration(suite_elapsed)} "
               f"| ETA {eta_s}")
 
+        stage_started_iso = datetime.now(timezone.utc).isoformat()
         try:
             stage = await _run_one(case, fixtures)
         except Exception as exc:
@@ -2068,6 +2156,10 @@ async def main() -> int:
                 failure_reason=f"outer runner exception: {exc}",
             )
         results.append(stage)
+        if case_may_create_schedules(case):
+            removed = delete_schedules_created_since(stage_started_iso)
+            if removed:
+                print(f"  [cleanup] deleted {removed} schedule(s) this case created")
         _write_stage_artifacts(stage_dir, case, stage)
         _write_summary(run_dir, results)
         status = "PASS" if stage.passed else "FAIL"

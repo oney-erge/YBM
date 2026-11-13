@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from gap_fixtures import prepare_gap_fixtures
+from heldout_fixtures import prepare_heldout_fixtures
+from heldout2_fixtures import prepare_heldout2_fixtures
+from heldout3_fixtures import prepare_heldout3_fixtures
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -290,6 +293,9 @@ if __name__ == "__main__":
         "fake_mcp_server_path": str(fake_mcp_server_path),
     }
     values.update(prepare_gap_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_heldout_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_heldout2_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_heldout3_fixtures(fixture_root, _remove_fixture_tree))
 
     server: ThreadingHTTPServer | None = None
     if start_web_server:

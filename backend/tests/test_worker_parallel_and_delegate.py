@@ -34,10 +34,12 @@ class QueueOperator:
         self.decisions = list(decisions)
         self._usages = list(usages) if usages is not None else None
         self.calls = 0
+        self.contexts: list[str] = []
         self.last_usage: dict | None = None
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False):
         self.calls += 1
+        self.contexts.append(config_context)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
         return self.decisions.pop(0)
@@ -229,6 +231,11 @@ async def test_call_tools_parallel_counts_as_n_steps_toward_the_budget(tmp_path)
             action=OperatorAction.CALL_TOOLS_PARALLEL,
             parallel_calls=[ParallelToolCall(tool_name=n, tool_input={}) for n in ("a", "b", "c")],
         ),
+        # Offered a last answer, the model asks for yet another batch instead: it is not run.
+        OperatorDecision(
+            action=OperatorAction.CALL_TOOLS_PARALLEL,
+            parallel_calls=[ParallelToolCall(tool_name=n, tool_input={}) for n in ("a", "b")],
+        ),
     ])
     worker = TaskWorker(repos, audit, executor=executor, operator=operator, operator_max_steps=3)
 
@@ -236,7 +243,11 @@ async def test_call_tools_parallel_counts_as_n_steps_toward_the_budget(tmp_path)
 
     # 3 history entries already consumes the whole budget of 3.
     assert len(running.metadata["operator_history"]) == 3
-    exhausted = await worker.process_task(running.id)
+    offered = await worker.process_task(running.id)
+    assert offered.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+    refused = await worker.process_task(offered.id)
+    exhausted = await worker.process_task(refused.id)
+    assert [entry["tool_name"] for entry in exhausted.metadata["operator_history"]].count("a") == 1  # the second batch never ran
     assert exhausted.status.value == "blocked"
     events = repos.audit.list_for_task(exhausted.id)
     assert any(event.payload.get("error") == "operator_step_budget_exhausted" for event in events)
@@ -384,7 +395,9 @@ async def test_delegate_isolates_sub_task_history_from_parent(tmp_path) -> None:
     """The whole point of delegation: the sub-agent's own step-by-step
     history never appears in the parent's history - only the summary does."""
     repos, audit = make_repos(tmp_path)
-    task = repos.tasks.create("summarize a file via a sub-task")
+    task = repos.tasks.create("summarize a file via a sub-task", metadata={
+        "project_context": {"name": "Review", "instructions": "Keep exact source references."},
+    })
     settings = _settings(Capability.LLM_GENERATE)
     executor = _executor(settings, audit, repos, {"filesystem.manage": RecordingAdapter("filesystem.manage", delay=0.0, output={"text": "file contents here"})})
     parent_operator = QueueOperator([
@@ -413,6 +426,8 @@ async def test_delegate_isolates_sub_task_history_from_parent(tmp_path) -> None:
     # The sub-task's own filesystem.manage call must NOT appear at the
     # parent level - only the one "delegate" summary entry does.
     assert all(entry["tool_name"] != "filesystem.manage" for entry in history)
+    assert len(parent_operator.contexts) == 3
+    assert all("Keep exact source references." in context for context in parent_operator.contexts)
 
 
 @pytest.mark.asyncio

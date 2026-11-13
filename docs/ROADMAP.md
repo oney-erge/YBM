@@ -25,6 +25,39 @@ And the three jobs that have to be excellent:
 - **A first run with nothing to enter.** The launcher creates the config and admin token, picks a model
   from what is already on the machine, signs the console in, and offers to grant a folder; access,
   folders, and the model apply to the next task without a restart.
+- **Editable projects.** Save folders, instructions, corrections, and criteria; open a project-specific
+  chat and history. New tasks capture that context without granting file access. Existing tasks and
+  schedules keep their original context when a project changes.
+- **Recurring saved workflows.** Schedule a recorded workflow with parameters, timezone, and optional
+  project context. Inspect the next run and last receipt, pause, resume, or delete it. Approval waits
+  cannot pile up overlapping runs or block unrelated schedules.
+- **Document evidence exports.** Compare literal passages across supported documents into XLSX and
+  Markdown, with source fingerprints, extraction limits, collision-safe filenames, and output checks.
+  This is an evidence collection tool, not a semantic ranking engine.
+- **Folder-triggered workflows.** Bind a saved workflow's input-file parameter to an inbox. New or
+  changed files settle before they run, one at a time. Observations survive restarts; task creation
+  and event acknowledgement share a transaction. Normal approvals apply, and registered artifact
+  outputs are excluded to prevent feedback loops. Read access is checked on every poll. See
+  [USING.md](USING.md#projects-and-recurring-work) for the top-level polling limits.
+
+## Next: features that make YBM useful every week
+
+These are proposed features, not implemented capabilities. Prioritize a complete user outcome and
+measure repeat use after a real task. The differentiator to validate is a local work system that keeps
+project instructions, produces reviewable deliverables, and repeats successful work with receipts.
+
+| Priority | User-visible feature | Completion condition |
+|---|---|---|
+| 1 | **Whole-batch inbox reports:** drop several related files and get one combined result. | Add reviewed multi-file bindings, version snapshots, exclusion rules, and recursive watching. Current inbox triggers persist and deduplicate observed changes, wait for stable files, recover after restart, and show the triggering file, but process files separately rather than combining a batch. |
+| 2 | **Decision-ready comparisons:** an evidence-backed recommendation using the user's rubric. | Extract typed facts with source page/section citations; label missing and conflicting evidence; let the user set weights; recompute scores deterministically; export a readable report. Evaluate against reviewed documents, including misleading numbers and scanned files. Current keyword tables do not meet this bar. |
+| 3 | **Reviewed project memory:** a correction improves the next relevant task. | Offer a proposed correction with provenance, ask before retaining it, retrieve it only in its project, and support edit/delete. Measure repeat-error reduction. Manual instructions and task history exist; automatic retrieval and outcome learning do not. |
+| 4 | **One complete connected-work flow:** import selected work documents, prepare a deliverable, and draft its handoff. | Choose one ecosystem based on pilot users; implement OAuth, least-privilege scopes, secure token storage, refresh/revocation, account selection, and reviewed sends. Existing MCP/HTTP primitives are not a finished connector experience. |
+| 5 | **Explicit browser/file handoff:** act on exactly what the user selected. | Show the selected tab or file, capture its identity and context, detect stale selections, and confirm destinations before consequential actions. Generic browser control is not this workflow. |
+| 6 | **Recoverable file work:** inspect changes and restore a mistaken operation. | Record a change manifest and recoverable originals, preview the restore, detect files modified since the run, and verify restoration. A receipt alone is not undo. |
+
+Ship each vertical slice with a short guided example and a real-stack integration test. Track time to
+first usable artifact, verified completion, corrections per task, repeat workflow use, and retained
+weekly users. Do not use tool count or a scripted demo as evidence that users will prefer YBM.
 
 ## Next: proof
 
@@ -44,10 +77,8 @@ Smaller items that are real and unfinished:
 
 ## Not doing
 
-- **Memory upgrades.** `remember` / `list` / `forget` with task provenance is enough for now. Semantic
-  retrieval buys better recall of facts about the user, which none of the three jobs need, and costs a
-  ~274MB embedding model plus a new dependency on a product whose selling point is that it runs on a bare
-  machine. Revisit only if recall is observed failing in practice.
+- **An embedding stack by default.** Start project retrieval with explicit corrections and provenance.
+  Add semantic retrieval only when measured recall failures justify its dependency and resource cost.
 - **Multi-agent runtimes** (gateways, swarms, agent-to-agent). Feature competition; none of it makes the
   three jobs better. `delegate` stays a bounded inner loop.
 - **A plugin marketplace.** If extensibility becomes a priority, the differentiated answer is the
@@ -81,6 +112,11 @@ Git history and [archive/](archive/), not here.
   broader.
 
 ### Behavior still needing live validation
+
+- The project/comparison/automation flow has a browser test using the real API, SQLite, worker,
+  approvals, and file adapter with scripted model decisions. It does not demonstrate that a live model
+  selects the right tools or follows a user's comparison rubric. Live model and desktop/Office checks
+  remain necessary before advertising that reliability.
 
 - The Auditor checks grounding and objective completion, but does not reliably challenge an implausible
   value such as a zero total for a non-empty expense file. Improving it needs a reviewed live fixture

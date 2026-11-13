@@ -1194,7 +1194,28 @@ def _summary(returncode: int, stdout: str, stderr: str, created: list[str]) -> s
         text = stdout.strip()
         return f"{prefix} {text[:500]}" if text else prefix
     text = (stderr or stdout).strip()
-    return f"Python failed with exit code {returncode}." + (f" {text[:500]}" if text else "")
+    return f"Python failed with exit code {returncode}." + (f" {_failure_text(text)}" if text else "")
+
+
+_MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'")
+_FAILURE_TEXT_CHARS = 500
+
+
+def _failure_text(text: str) -> str:
+    """What a failed script said, ending with the line that says why.
+
+    A Python traceback puts the cause last. Cutting a long one to its first 500 characters kept the frames and lost the
+    line (a missing package) the model needed, and it tried the same import again. A missing package also gets the way
+    round it, since the model cannot see which packages exist here.
+    """
+    shown = text if len(text) <= _FAILURE_TEXT_CHARS else "..." + text[-(_FAILURE_TEXT_CHARS - 3):]
+    missing = _MISSING_MODULE.search(text)
+    if missing:
+        shown += (
+            f" [The package {missing.group(1).split('.')[0]!r} is not installed here. Use the standard library. For text in "
+            "a Word, Excel or PowerPoint file call document.manage extract_text, then calculate from that text.]"
+        )
+    return shown
 
 
 # Bounds for the file-content previews added to created/modified files below.
@@ -1368,12 +1389,18 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             # Execution may fall back to a local unsandboxed process. This
             # gate is runtime-owned and cannot be bypassed by Full Access or
             # by setting input.approved in model output.
+            # A person who runs this on their own computer with a local model can switch the prompt off with
+            # adapters.code_interpreter.require_approval_for_untrusted_run_python: false; the default keeps it.
             approval_required_operations=(
-                "run_python",
-                "generate_and_run",
-                "solve_once",
-                "build_temp_helper",
-                "repair_script",
+                (
+                    "run_python",
+                    "generate_and_run",
+                    "solve_once",
+                    "build_temp_helper",
+                    "repair_script",
+                )
+                if settings.adapters.code_interpreter.require_approval_for_untrusted_run_python
+                else ()
             ),
             approval_reasons={
                 "run_python": "runs the given Python code, possibly unsandboxed if Docker is unavailable",

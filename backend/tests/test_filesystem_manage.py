@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import TypeVar
 
@@ -90,19 +89,25 @@ async def test_apply_manifest_resolves_relative_paths_from_requested_root(tmp_pa
 
 
 @pytest.mark.asyncio
-async def test_organize_plan_terminal_output_carries_manifest_for_next_operator_step(tmp_path) -> None:
+async def test_organize_plan_text_lists_the_plan_and_how_to_apply_it(tmp_path) -> None:
+    """The operator reads this text, cut to 1,000 characters. It used to carry the manifest's JSON,
+    and a 9B model passed on the three or four moves it could see as the whole plan; the worker now
+    fills an apply_manifest that leaves the manifest out with the plan itself."""
     root = tmp_path / "documents"
     root.mkdir()
     (root / "notes.txt").write_text("hello", encoding="utf-8")
+    (root / "photo.jpg").write_text("x", encoding="utf-8")
     adapter = FilesystemManageAdapter([str(tmp_path)])
 
     result = await adapter.execute(_request(root, "organize_plan"))
 
     terminal_text = result.output["terminal_output"][0]["content"]
-    assert "Manifest for the next apply_manifest call" in terminal_text
-    emitted_manifest = json.loads(terminal_text.rsplit("\n", 1)[-1])
-    assert emitted_manifest[0]["source"] == str((root / "notes.txt").resolve())
-    assert emitted_manifest[0]["destination"] == str((root / "documents" / "notes.txt").resolve())
+    assert "Planned 2 move(s) in documents: 1 to documents, 1 to images." in terminal_text
+    assert "- documents: notes.txt" in terminal_text
+    assert "- images: photo.jpg" in terminal_text
+    assert '"source"' not in terminal_text
+    # The result object still carries the full manifest the worker applies.
+    assert result.output["manifest"][0]["source"].endswith("notes.txt") or result.output["manifest"][1]["source"].endswith("notes.txt")
 
 
 @pytest.mark.asyncio
@@ -385,3 +390,241 @@ def test_verify_apply_manifest_returns_none_when_the_output_has_no_manifest() ->
     result = ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output={})
 
     assert _verify_apply_manifest(request, result) is None
+
+
+# ---- read_file on files that are not plain text -------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_read_file_gives_the_text_of_a_word_file_not_its_bytes(tmp_path) -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "e2e"))
+    import gap_fixtures
+
+    docx = tmp_path / "brief.docx"
+    gap_fixtures.write_docx(docx, ["Project brief", f"Reference marker: {gap_fixtures.DOCX_MARKER}."])
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(docx)))
+
+    assert result.status.value == "succeeded"
+    assert gap_fixtures.DOCX_MARKER in result.output["text"] and not result.output["text"].startswith("PK")
+
+
+@pytest.mark.asyncio
+async def test_read_file_on_a_binary_file_says_there_is_nothing_to_read(tmp_path) -> None:
+    blob = tmp_path / "photo.png"
+    blob.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256)))
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(blob)))
+
+    assert result.status.value == "succeeded"
+    assert result.output["text"] == "" and "No readable text" in result.output["summary"]
+
+
+
+# ---- search accepts the glob patterns a model writes -----------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("query", [
+    "budget-2026.csv", "**/budget-2026.csv", "**/budget*.csv", "**/*.csv", "*.CSV", "finance/archive/*.csv",
+    "finance\\archive\\budget*.csv",
+])
+async def test_a_search_pattern_with_a_folder_prefix_finds_the_file(tmp_path, query) -> None:
+    nested = tmp_path / "finance" / "archive"
+    nested.mkdir(parents=True)
+    (nested / "budget-2026.csv").write_text("month,income\n", encoding="utf-8")
+    (tmp_path / "notes.txt").write_text("not a csv", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query=query))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["budget-2026.csv"]
+
+
+@pytest.mark.asyncio
+async def test_a_pattern_that_matches_nothing_still_finds_nothing(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_text("x", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="**/*.csv"))
+
+    assert result.output["entries"] == []
+
+
+# ---- a word that no file name contains is looked for in the files' text ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_search_by_word_looks_in_file_text_when_no_name_matches(tmp_path) -> None:
+    (tmp_path / "alpha").mkdir()
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "alpha" / "plan.txt").write_text("Alpha: ship the parser.\n", encoding="utf-8")
+    (tmp_path / "beta" / "kitchen-plan.txt").write_text("Beta: repaint the kitchen, tangerine walls.\n", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["kitchen-plan.txt"]
+    assert "found in the text" in result.output["summary"] and "tangerine" in result.output["entries"][0]["content_preview"]
+
+
+@pytest.mark.asyncio
+async def test_a_name_match_does_not_trigger_the_text_search(tmp_path) -> None:
+    (tmp_path / "tangerine-notes.txt").write_text("nothing about fruit", encoding="utf-8")
+    (tmp_path / "other.txt").write_text("a tangerine here", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert [Path(entry["path"]).name for entry in result.output["entries"]] == ["tangerine-notes.txt"]
+    assert "found in the text" not in result.output["summary"]
+
+
+@pytest.mark.asyncio
+async def test_a_large_file_is_not_read_by_the_text_search(tmp_path) -> None:
+    (tmp_path / "huge.txt").write_text("tangerine " + "x" * 1_100_000, encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "search", query="tangerine"))
+
+    assert result.output["entries"] == []
+
+
+
+# ---- modified times, shown only when the request is about which file is newest or oldest -----------------------------
+
+
+@pytest.mark.asyncio
+async def test_a_listing_shows_modified_times_only_when_asked(tmp_path) -> None:
+    import os
+
+    old, new = tmp_path / "old.md", tmp_path / "latest.md"
+    old.write_text("a", encoding="utf-8")
+    new.write_text("b", encoding="utf-8")
+    os.utime(old, (1_577_836_800, 1_577_836_800))  # 2020-01-01
+    os.utime(new, (1_767_225_600, 1_767_225_600))  # 2026-01-01
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    plain = await adapter.execute(_request(tmp_path, "inspect_folder"))
+    dated = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=True))
+
+    plain_text = plain.output["terminal_output"][0]["content"]
+    dated_text = dated.output["terminal_output"][0]["content"]
+    assert ", modified " not in plain_text and "- [file] latest.md (1 bytes)" in plain_text  # the text every recording was made from
+    assert "- [file] old.md (1 bytes, modified 2020-01-01 00:00 UTC)" in dated_text
+    assert "- [file] latest.md (1 bytes, modified 2026-01-01 00:00 UTC)" in dated_text
+
+
+def test_only_a_recency_request_turns_the_dates_on() -> None:
+    from agent_control.orchestration.worker import _filesystem_listing_input_with_dates_intent as enrich
+    from agent_control.schemas import TaskRecord
+
+    listing = {"operation": "inspect_folder", "root": "C:/x"}
+    for text in ("Which file in the folder was modified most recently?", "What is the newest file in Downloads?",
+                 "when was budget.csv last modified"):
+        task = TaskRecord(objective=text, metadata={"original_message_text": text})
+        assert enrich(task, "filesystem.manage", listing) == {**listing, "with_dates": True}, text
+    for text in ("List the files in the folder", "Read notes.txt and tell me what it says"):
+        task = TaskRecord(objective=text, metadata={"original_message_text": text})
+        assert enrich(task, "filesystem.manage", listing) == listing, text
+    other = {"operation": "read_file", "path": "C:/x/a.txt"}
+    task = TaskRecord(objective="the newest file", metadata={})
+    assert enrich(task, "filesystem.manage", other) == other
+    assert enrich(task, "browser.open", listing) == listing
+
+
+
+# ---- a manifest destination that is a folder ------------------------------------------------------------------------
+# Live: asked to "delete everything" in a folder, the model sent apply_manifest with destination "." and the three files were
+# renamed trash_2, trash_3, trash_4 outside the folder, then reported as removed.
+
+
+@pytest.mark.asyncio
+async def test_moving_files_onto_their_own_folder_changes_nothing(tmp_path) -> None:
+    trash = tmp_path / "trash"
+    trash.mkdir()
+    for number in range(1, 4):
+        (trash / f"scrap-{number}.txt").write_text(f"scrap {number}", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    manifest = [{"source": f"scrap-{n}.txt", "destination": "."} for n in range(1, 4)]
+
+    result = await adapter.execute(_request(trash, "apply_manifest", manifest=manifest))
+
+    assert result.status.value == "failed" and "same file" in result.error_message
+    assert sorted(path.name for path in trash.iterdir()) == ["scrap-1.txt", "scrap-2.txt", "scrap-3.txt"]
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["trash"]  # nothing renamed out beside it
+
+
+@pytest.mark.asyncio
+async def test_a_folder_destination_means_into_that_folder(tmp_path) -> None:
+    root = tmp_path / "photos"
+    (root / "pics").mkdir(parents=True)
+    (root / "img-1.jpg").write_bytes(b"jpg")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(root, "apply_manifest", manifest=[{"source": "img-1.jpg", "destination": "pics"}]))
+
+    assert result.status.value == "succeeded"
+    assert (root / "pics" / "img-1.jpg").read_bytes() == b"jpg" and not (root / "img-1.jpg").exists()
+    assert not (root / "pics_2").exists()
+
+
+@pytest.mark.asyncio
+async def test_a_file_destination_that_exists_is_still_renamed_around(tmp_path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    (root / "a.txt").write_text("new", encoding="utf-8")
+    (root / "b.txt").write_text("old", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(root, "apply_manifest", manifest=[{"source": "a.txt", "destination": "b.txt"}]))
+
+    assert result.status.value == "succeeded"
+    assert (root / "b.txt").read_text(encoding="utf-8") == "old" and (root / "b_2.txt").read_text(encoding="utf-8") == "new"
+
+
+
+@pytest.mark.asyncio
+async def test_writing_over_an_existing_file_says_it_was_not_changed_and_how_to_replace_it(tmp_path) -> None:
+    # Live: asked to change greeting.txt, the model wrote greeting_2.txt, read greeting.txt (still "hello"), and repeated the
+    # same call until the task was blocked, because nothing said what to do differently.
+    (tmp_path / "greeting.txt").write_text("hello", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    kept = await adapter.execute(_request(tmp_path, "write_text_file", path=str(tmp_path / "greeting.txt"), content="goodbye"))
+    replaced = await adapter.execute(
+        _request(tmp_path, "write_text_file", path=str(tmp_path / "greeting.txt"), content="goodbye", overwrite=True)
+    )
+
+    assert (tmp_path / "greeting_2.txt").read_text(encoding="utf-8") == "goodbye"
+    assert "greeting.txt itself was NOT changed" in kept.output["summary"] and "overwrite set to true" in kept.output["summary"]
+    assert (tmp_path / "greeting.txt").read_text(encoding="utf-8") == "goodbye"  # the second call replaced it
+    assert "NOT changed" not in replaced.output["summary"]
+
+
+# ---- read_file keeps the lines of the file ---------------------------------------------------------------------------
+# Live: a CSV came back as "name,score Ana,71 Ben,88 Cleo,93 ..." on one line, the scripts the model wrote could not parse it, and
+# the task ran out of steps asking the user to paste the file.
+
+
+@pytest.mark.asyncio
+async def test_read_file_keeps_each_line_of_a_csv_on_its_own_line(tmp_path) -> None:
+    (tmp_path / "scores.csv").write_bytes(b"name,score\r\nAna,71\r\nBen,88\r\n\r\n\r\n\r\nCleo,93\r\n")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "scores.csv")))
+
+    assert result.output["text"] == "name,score\nAna,71\nBen,88\n\nCleo,93"
+    assert "Content:\nname,score\nAna,71\nBen,88" in result.output["terminal_output"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_read_file_still_tidies_runs_of_spaces_and_tabs(tmp_path) -> None:
+    (tmp_path / "notes.txt").write_bytes(b"a   b\t\tc \n   indented line\n")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "notes.txt")))
+
+    assert result.output["text"] == "a b c\nindented line"

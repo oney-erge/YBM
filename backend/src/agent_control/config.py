@@ -258,6 +258,9 @@ class LimitsConfig(StrictBaseModel):
     # task is forcibly transitioned to FAILED so the queue keeps moving.
     # Individual tasks can override via metadata["task_budget_seconds"].
     task_budget_seconds: int = Field(default=600, ge=30)
+    # A task that stopped (blocked) or asked a question nobody answered is closed quietly after this many hours, so it stops
+    # cluttering the dashboard and being quoted back by "any update?". 0 keeps them forever.
+    auto_close_blocked_hours: int = Field(default=24, ge=0)
 
 
 class OperatorConfig(StrictBaseModel):
@@ -290,6 +293,15 @@ class OperatorConfig(StrictBaseModel):
     # A task that goes badly gets the full list back. Off by default: on 72 recorded steps with Qwen3.5-9B it did not
     # change accuracy (46% against 49%, within noise), so it is here to try, not because it was shown to help.
     scope_tools: bool = False
+    # A number in the final answer to a request that asks for a calculation must appear in a tool result; otherwise the
+    # model is sent back once to calculate it with code (orchestration/number_check.py).
+    verify_numbers: bool = True
+    # Hold the Operator's reply to one JSON schema in which every tool call is a real tool, a real operation and its real
+    # arguments (tools/call_schema.py), enforced by the local server while the model writes. Local servers only: a hosted
+    # profile keeps the plain schema, and a server that refuses the schema gets the plain one for that call. On by default
+    # because it was measured: on the local Qwen3.5-9B over the 60-case held-out suite, calls the tool refused fell from 52 of
+    # 266 steps to 5 of 150 and made-up tool names from 30 to 0.
+    constrain_calls: bool = True
 
 
 class VSCodeAdapterConfig(StrictBaseModel):
@@ -595,6 +607,10 @@ class SkillsAdapterConfig(StrictBaseModel):
     # future tasks, so writing one unattended changes tomorrow's behavior
     # with nobody having agreed to it. See skill_learning.py.
     learning_enabled: bool = False
+    # Keep the Python script that settled a task as a reusable helper skill (skill_learning.save_helper). Unlike a learned
+    # procedure this needs no model call and no review: it is the script that already ran and produced the answer, filed under
+    # a plain name, and the Operator's prompt only gains one line for it. Off by default.
+    helpers_enabled: bool = False
     max_skills_listed: int = Field(default=50, ge=1, le=500)
 
 

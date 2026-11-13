@@ -573,3 +573,72 @@ def test_expected_postconditions_declared_list_is_checked_the_same_way_as_inferr
     )
 
     assert validate_fulfillment(task).ok
+
+
+# ---- a declared postcondition the request's words cannot support ----------------------------------------------------
+# Live: the local 9B declared file_organization for "find the file and tell me its header line" and for "rewrite this file",
+# and the task was then pushed toward organize_plan, which moves files, before it could finish.
+
+
+def test_a_declared_file_organization_is_dropped_when_the_request_never_asks_for_it() -> None:
+    task = TaskRecord(
+        objective="Somewhere under the heldout folder there is a file called budget-2026.csv. Find it and tell me its header line.",
+        metadata={"expected_postconditions": ["file_organization"]},
+    )
+
+    assert PostconditionType.FILE_ORGANIZATION not in [item.type for item in expected_postconditions(task)]
+
+
+def test_a_declared_file_organization_is_kept_when_the_request_asks_for_it() -> None:
+    task = TaskRecord(
+        objective="Move the .jpg files in the photos folder into a subfolder called pics.",
+        metadata={"expected_postconditions": ["file_organization"]},
+    )
+
+    assert [item.type for item in expected_postconditions(task)] == [PostconditionType.FILE_ORGANIZATION]
+
+
+def test_a_declared_type_the_keyword_rules_cannot_judge_is_kept_as_declared() -> None:
+    task = TaskRecord(objective="make me a slide deck about ferrets", metadata={"expected_postconditions": ["presentation_file"]})
+
+    assert [item.type for item in expected_postconditions(task)] == [PostconditionType.PRESENTATION_FILE]
+
+
+def test_the_keyword_expectation_replaces_a_declaration_that_was_all_dropped() -> None:
+    task = TaskRecord(
+        objective="Send me the report file.",
+        metadata={"expected_postconditions": ["file_organization"]},
+    )
+
+    assert PostconditionType.ARTIFACT_DELIVERED in [item.type for item in expected_postconditions(task)]
+
+
+# Live (11/12): "Organize my Downloads folder by type" listed the folder, searched it once per
+# file type until the step budget ran out, and ended "completed" with nothing moved, because a
+# listing's ``entries`` counted as organized files.
+def _organize_task(history: list[dict], last_output: dict) -> TaskRecord:
+    return TaskRecord(
+        objective="Organize my Downloads folder by type",
+        metadata={"operator_history": history, "last_tool_result": {"output": last_output}},
+    )
+
+
+def _step(operation: str, status: str = "succeeded") -> dict:
+    return {"tool_name": "filesystem.manage", "input": {"operation": operation}, "status": status}
+
+
+def test_looking_at_a_folder_does_not_count_as_organizing_it() -> None:
+    listing = {"entries": [{"path": "Downloads/q3-report.pdf"}], "changed_paths": []}
+    task = _organize_task([_step("inspect_folder"), _step("search")], listing)
+    assert not _postcondition_satisfied(task, PostconditionType.FILE_ORGANIZATION)
+    plan_only = _organize_task([_step("organize_plan")], {"manifest": [{"from": "a", "to": "b"}]})
+    assert not _postcondition_satisfied(plan_only, PostconditionType.FILE_ORGANIZATION)
+
+
+def test_applied_moves_count_even_when_a_listing_came_after() -> None:
+    moved = _organize_task([_step("organize_plan"), _step("apply_manifest"), _step("inspect_folder")], {"entries": []})
+    assert _postcondition_satisfied(moved, PostconditionType.FILE_ORGANIZATION)
+    failed = _organize_task([_step("apply_manifest", status="failed")], {"entries": []})
+    assert not _postcondition_satisfied(failed, PostconditionType.FILE_ORGANIZATION)
+    changed = _organize_task([], {"changed_paths": ["Downloads/Documents/q3-report.pdf"]})
+    assert _postcondition_satisfied(changed, PostconditionType.FILE_ORGANIZATION)

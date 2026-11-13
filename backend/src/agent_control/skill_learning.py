@@ -20,11 +20,13 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 import json
+import re
+import textwrap
 from pathlib import Path
 from typing import Any
 
 from agent_control.config import SkillsAdapterConfig
-from agent_control.schemas import TaskRecord, new_id, utc_now
+from agent_control.schemas import TaskRecord, TaskStatus, new_id, utc_now
 from agent_control.tools.skills import _load_skills, write_skill_file
 
 
@@ -177,3 +179,67 @@ async def propose_from_task(provider: Any, config: SkillsAdapterConfig, task: Ta
     if not (name and description and body):
         return None
     return SkillSuggestionStore.load(config).add(name, description, body, task)
+
+
+# --- helpers: the script that worked, kept -----------------------------------------------------------------------------------------------------------------
+
+HELPER_PREFIX = "helper-"
+MAX_HELPERS = 30
+_NOT_WORDS = frozenset({
+    "the", "a", "an", "of", "in", "on", "to", "for", "and", "or", "my", "me", "i", "is", "are", "was", "all", "how", "many", "what", "which",
+    "where", "that", "this", "it", "with", "from", "under", "inside", "please", "can", "you", "do", "does", "there", "total", "each", "every",
+    "any", "be", "by", "at", "as", "if", "so", "than", "then", "tell", "find", "show", "give", "get",
+})
+
+
+def helper_script(task: TaskRecord) -> str | None:
+    """The Python the task's last successful script step ran, if a script is what produced its answer."""
+    history = task.metadata.get("operator_history")
+    if not isinstance(history, list):
+        return None
+    for step in reversed(history):
+        if not isinstance(step, dict) or step.get("tool_name") != "code.interpreter" or step.get("status") != "succeeded":
+            continue
+        tool_input = step.get("input") if isinstance(step.get("input"), dict) else {}
+        code = str(tool_input.get("code") or "").strip()
+        if tool_input.get("operation") == "run_python" and code and str(step.get("output_summary") or "").strip():
+            return code
+    return None
+
+
+def helper_name(request: str) -> str:
+    """A plain, stable name from the request's own words: the same kind of request lands on the same helper."""
+    words = [w for w in re.findall(r"[a-z0-9]+", request.casefold()) if w not in _NOT_WORDS and len(w) > 1]
+    return HELPER_PREFIX + "-".join(words[:5] or ["script"])
+
+
+def save_helper(config: SkillsAdapterConfig, task: TaskRecord) -> dict[str, Any] | None:
+    """File the script that settled a finished task as a helper skill, unless one by that name is already there.
+
+    The first script that worked is kept, not the latest: a later run of the same request that took a worse route should not
+    overwrite it. The Operator's prompt lists skills by name and description, and tells it to read one that matches the objective
+    before improvising, so the next request of this kind starts from a script that ran.
+    """
+    if not config.enabled or not config.helpers_enabled or task.status != TaskStatus.COMPLETED:
+        return None
+    code = helper_script(task)
+    if code is None:
+        return None
+    request = str(task.metadata.get("original_message_text") or task.objective or "").strip()
+    if not request:
+        return None
+    existing = _load_skills(config.root_dir)
+    name = helper_name(request)
+    if any(skill["name"] == name for skill in existing):
+        return None
+    if sum(1 for skill in existing if str(skill["name"]).startswith(HELPER_PREFIX)) >= MAX_HELPERS:
+        return None
+    body = (
+        f"A Python script that worked for a request like: {request[:240]}\n\n"
+        "Change the values at the top (folders, names, words) to fit the new request, then run it with code.interpreter "
+        "(operation run_python, the program in `code`) and answer from what it prints.\n\n"
+        f"```python\n{code}\n```"
+    )
+    return write_skill_file(
+        config.root_dir, name, f"Python script for: {textwrap.shorten(request, width=110, placeholder='...')}", body, tools=["code.interpreter"],
+    )

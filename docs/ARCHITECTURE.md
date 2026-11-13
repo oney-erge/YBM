@@ -139,6 +139,27 @@ a file request sees the file, document, delivery and code tools). Every register
 and a task with two failed or rejected steps gets the full catalog back. It is off because it did not help when
 measured: on 72 recorded steps Qwen3.5-9B scored 46% with it and 49% without (inside the noise).
 
+`operator.constrain_calls` (on by default; `false` turns it off) holds the Operator's reply to one JSON schema in which every tool call is a real tool, a real
+operation and that operation's own arguments (`tools/call_schema.py`, built from the tool definitions so it cannot drift from
+what `ToolDefinition.validate_input` checks). The local server enforces it while the model writes, so a call such as
+`schedule.manage` with `task_name` where `objective` is required, a tool called `filesystem`, or an operation left out cannot
+be produced; on the local Qwen3.5-9B about half the failed requests since 10/25 had such a call. It applies to local servers
+only: a hosted profile keeps the plain schema, and a server that refuses the strict one (an older LocalDeploy counts the schema as
+prompt text) gets the plain one for that call. The reply is still validated as an OperatorDecision and every tool still
+validates its own input.
+
+**When a task is stuck or out of steps.** A call that returns the same result three times, a read the model keeps repeating, and the
+step budget running out with nothing left to repair each end the same way: once, a check entry tells the model to answer with what it
+has or ask one question (with `operator.constrain_calls` its next reply can only finish, ask or stop), and a tool call after that is
+not run. What it answers goes through the usual audit and fulfillment checks; a model that refuses the offer ends the task as before
+(blocked, or finished with the result it already read).
+
+**Answers are checked against what the task read.** Before a `done` reaches the user (`operator.verify_numbers`, on by default; one
+send-back per task, `orchestration/number_check.py`): an email address or web link that the request, the tool results and the
+remembered facts never held is flagged ("do not make up values"), and for a request that asks for a calculation a result-sized number
+that no tool produced is sent back to be calculated with `code.interpreter`. The local model once answered a lookup with an email
+address that was not in the file.
+
 ## Task states
 
 ```mermaid
@@ -268,6 +289,22 @@ tab's session storage (never `localStorage`), and exchanges it (`POST /admin/api
 `HttpOnly`, `SameSite=Strict` cookie that holds an HMAC of the token rather than the token itself. That
 cookie is what keeps a later visit, a bookmark, or the tray icon signed in. `ybm admin-url` prints a
 fresh signed-in link at any time, and the same-origin check on state-changing requests still applies.
+
+## Folder-triggered workflows
+
+The existing scheduler also polls saved workflows configured with `folder_trigger` metadata. The admin
+API validates the chosen folder against filesystem roots and read policy, then records the current
+files as a baseline. Each poll rechecks access, observes bounded top-level file metadata, and waits for
+the configured stability period before hashing a pending input. Registered artifact outputs are
+excluded so generated files do not feed other watchers.
+
+`folder_watch_files` persists the latest observed signature, stability time, and last delivered
+signature/hash per path. A SQLite transaction acknowledges one input version, inserts its replay
+task, and records the schedule's last task together. A failed insertion rolls back acknowledgement;
+duplicate pollers cannot consume the same observation twice. Pending paths continue to be observed
+while the previous task is active, but only one run per watcher is created at a time. File paths and
+the observed fingerprint are recorded in task metadata; subsequent file contents remain live until
+the normal tool execution reads them. No filesystem event daemon or new execution engine is involved.
 
 ## Key components
 
