@@ -924,6 +924,8 @@ class TaskWorker:
                         "so please double-check it.)"
                     )
                 else:
+                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                        return self._offer_claude_code(latest, history)
                     metadata = {
                         **latest.metadata,
                         "operator_history": history,
@@ -2267,6 +2269,8 @@ class TaskWorker:
         still calls tools and gets the same result, the task stops as before.
         """
         if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history if isinstance(entry, dict)):
+            if task.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                return self._offer_claude_code(task, history)
             return self._transition_operator(
                 task,
                 {**task.metadata, "operator_history": history, "last_worker_error": blocked_message},

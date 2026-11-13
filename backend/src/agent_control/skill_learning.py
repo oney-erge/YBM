@@ -21,6 +21,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 import json
 import re
+import textwrap
 from pathlib import Path
 from typing import Any
 
@@ -239,4 +240,6 @@ def save_helper(config: SkillsAdapterConfig, task: TaskRecord) -> dict[str, Any]
         "(operation run_python, the program in `code`) and answer from what it prints.\n\n"
         f"```python\n{code}\n```"
     )
-    return write_skill_file(config.root_dir, name, f"Python script for: {request[:110]}", body, tools=["code.interpreter"])
+    return write_skill_file(
+        config.root_dir, name, f"Python script for: {textwrap.shorten(request, width=110, placeholder='...')}", body, tools=["code.interpreter"],
+    )

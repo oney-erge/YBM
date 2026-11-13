@@ -185,3 +185,10 @@ def test_the_number_of_helpers_is_capped(tmp_path):
     for number in range(MAX_HELPERS):
         assert save_helper(config, _script_task(request=f"Task number{number} alpha")) is not None
     assert save_helper(config, _script_task(request="One more unique request")) is None
+
+
+def test_a_long_request_is_shortened_at_a_word_boundary_in_the_helper_description(tmp_path):
+    config = SkillsAdapterConfig(root_dir=str(tmp_path), helpers_enabled=True)
+    request = "How many lines of Python code are there in total in all the .py files under the folder called orchestration please"
+    saved = save_helper(config, _script_task(request=request))
+    assert saved["description"].endswith("...") and "orchestra..." not in saved["description"] and len(saved["description"]) <= 135
