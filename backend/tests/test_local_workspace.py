@@ -372,3 +372,54 @@ def test_verify_local_workspace_returns_none_without_any_file_list() -> None:
     result = ToolCallResult(request_id="toolres_ws", status=ToolResultStatus.SUCCEEDED, output={})
 
     assert _verify_local_workspace(request, result) is None
+
+
+# --- a page written to a workspace-style path is the page that is served -----------------------------------------------------------------
+
+
+from agent_control.tools.local_workspace import _inside_workspace, _pages_not_served  # noqa: E402
+
+
+@pytest.mark.parametrize("given, expected", [
+    ("index.html", "index.html"),
+    ("src/app.py", "src/app.py"),
+    (".agent_control/workspaces/bill_calculator/index.html", "index.html"),
+    (r".agent_control\workspaces\bill_calculator\css\style.css", "css/style.css"),
+    (".agent_control/workspaces/a/.agent_control/workspaces/b/index.html", "index.html"),
+    (".AGENT_CONTROL/Workspaces/App/index.html", "index.html"),
+    ("my.agent_control/notes.txt", "my.agent_control/notes.txt"),
+])
+def test_a_workspace_style_prefix_in_a_page_path_is_dropped(tmp_path, given, expected):
+    assert _inside_workspace(tmp_path, given) == expected
+
+
+def test_an_absolute_path_into_the_workspace_becomes_relative_and_one_outside_is_left_for_the_escape_check(tmp_path):
+    inside = str(tmp_path / ".agent_control" / "workspaces" / "calc" / "index.html")
+    assert _inside_workspace(tmp_path, inside) == "index.html"
+    assert _inside_workspace(tmp_path, str(tmp_path / "docs" / "a.md")) == "docs/a.md"
+    outside = str(tmp_path.parent / "elsewhere.txt")
+    assert _inside_workspace(tmp_path, outside) == outside
+
+
+@pytest.mark.asyncio
+async def test_writing_a_page_with_a_workspace_style_path_puts_it_where_the_server_looks(tmp_path) -> None:
+    adapter = LocalWorkspaceAdapter(WorkspaceAdapterConfig(root_dir=str(tmp_path / "workspaces"), web_port_start=8890, open_browser=False))
+    page = "<html><head><title>Tip</title></head><body><input id='bill'><button>Total</button></body></html>"
+    written = await adapter.execute(ToolCallRequest(
+        task_id="task_prefix", tool_name="workspace.manage", capability=Capability.FILESYSTEM_WRITE,
+        input={"operation": "write_files", "files": [{"path": ".agent_control/workspaces/tip_calculator/index.html", "content": page}]},
+        timeout_seconds=30,
+    ))
+    workspace = tmp_path / "workspaces" / "task_prefix"
+    assert written.status == ToolResultStatus.SUCCEEDED
+    assert (workspace / "index.html").read_text(encoding="utf-8") == page
+    assert not (workspace / ".agent_control").exists()
+
+
+def test_a_page_somewhere_the_server_will_not_serve_is_found(tmp_path) -> None:
+    (tmp_path / "index.html").write_text("placeholder")
+    (tmp_path / "bill" / "app").mkdir(parents=True)
+    (tmp_path / "bill" / "app" / "index.html").write_text("the real page")
+    (tmp_path / "node_modules" / "x").mkdir(parents=True)
+    (tmp_path / "node_modules" / "x" / "doc.html").write_text("ignored")
+    assert _pages_not_served(tmp_path) == ["bill/app/index.html"]

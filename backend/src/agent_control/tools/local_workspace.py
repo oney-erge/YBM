@@ -90,7 +90,7 @@ class LocalWorkspaceAdapter:
             content = str(item.get("content") or "")
             if not relative_path:
                 continue
-            target = _safe_child_path(workspace_dir, relative_path)
+            target = _safe_child_path(workspace_dir, _inside_workspace(workspace_dir, relative_path))
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
             files.append(str(target))
@@ -129,6 +129,13 @@ class LocalWorkspaceAdapter:
             page = inspect_html(html)
             launched["page_controls"] = page.as_dict()
             launched["page_check"] = describe(page, unmet_items(objective, page))
+            if not page.controls and not page.buttons:
+                elsewhere = _pages_not_served(workspace_dir)
+                if elsewhere:
+                    launched["page_check"] += (
+                        f" The workspace has a page at {elsewhere[0]}, but the server only serves index.html in the top folder of the "
+                        "workspace, so that is not what is shown. Write the page again with the path index.html and no folder in it."
+                    )
         return launched
 
     def _materialize_static_app(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -296,6 +303,36 @@ def _filename_before_fence(prefix: str) -> str | None:
 
 def _looks_like_filename(value: str) -> bool:
     return bool(re.fullmatch(r"[A-Za-z0-9_.\-/ ]+\.(?:html|css|js|mjs|json|md|txt)", value.strip()))
+
+
+_WORKSPACE_PREFIX = re.compile(r"^(?:\.agent_control/workspaces/[^/]+/)+", re.IGNORECASE)
+
+
+def _inside_workspace(workspace_dir: Path, value: str) -> str:
+    """A page path as the workspace means it: relative to the workspace, without a workspace-style folder in front of it.
+
+    The tool's description says workspaces live under ".agent_control/workspaces", so the local model wrote
+    ".agent_control/workspaces/bill_calculator/index.html" for a file in its workspace. That became a folder inside the workspace, the
+    server went on showing the placeholder page, and seven rewrites later the task was blocked.
+    """
+    text = value.replace("\\", "/").strip()
+    try:
+        candidate = Path(value)
+        if candidate.is_absolute():
+            text = candidate.resolve().relative_to(workspace_dir.resolve()).as_posix()
+    except ValueError:
+        return value
+    return _WORKSPACE_PREFIX.sub("", text) or value
+
+
+def _pages_not_served(workspace_dir: Path) -> list[str]:
+    """HTML pages written somewhere below the workspace that the static server will not serve as the page."""
+    found: list[str] = []
+    for page in sorted(workspace_dir.rglob("*.html"))[:50]:
+        relative = page.relative_to(workspace_dir).as_posix()
+        if relative != "index.html" and "node_modules" not in page.parts:
+            found.append(relative)
+    return found
 
 
 def _safe_relative_file(value: str) -> str | None:

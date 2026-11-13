@@ -595,3 +595,21 @@ async def test_a_part_that_quotes_a_title_no_tool_returned_looks_again_inside_th
     entry = [e for e in result.metadata["operator_history"] if e.get("tool_name") == "delegate"][-1]
     assert entry["status"] == "succeeded" and entry["output_summary"] == "I could not read the title."
     assert operator.calls == 3
+
+
+@pytest.mark.asyncio
+async def test_a_final_answer_that_writes_out_a_wrong_total_is_sent_back_once_with_the_right_one(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "How many lines in all the txt files?", [])
+    wrong = OperatorDecision(
+        action=OperatorAction.DONE, final_answer="5 lines in total (4 lines in a.txt + 5 lines in b.txt + 6 lines in c.txt).",
+    )
+    right = OperatorDecision(action=OperatorAction.DONE, final_answer="15 lines in total (4 + 5 + 6).")
+    operator = _Seen([wrong, right])
+    worker = _worker(repos, audit, operator)
+    first = await worker.process_task(task.id)
+    assert first.status == TaskStatus.RUNNING
+    last = first.metadata["operator_history"][-1]
+    assert last["tool_name"] == "_number_check" and last["hint_id"] == "sum" and "which is 15" in last["error"]
+    second = await worker.process_task(first.id)
+    assert second.status == TaskStatus.COMPLETED and second.metadata["synthesized_answer"].startswith("15 lines")

@@ -787,3 +787,77 @@ def test_a_short_failure_and_a_success_are_unchanged() -> None:
 
     assert _summary(1, "", "ZeroDivisionError: division by zero", []) == "Python failed with exit code 1. ZeroDivisionError: division by zero"
     assert _summary(0, "42\n", "", ["out.txt"]) == "Python completed successfully and created 1 file(s). 42"
+
+
+# --- a script may not delete files: YBM has no delete operation, and a script is the other way to do it --------------------------------
+
+
+from agent_control.tools.code_interpreter import script_deletes_files  # noqa: E402
+
+
+@pytest.mark.parametrize("code, expected", [
+    ("import os\nos.remove('a')", ["remove"]),
+    ("import os\nos.unlink('a')", ["unlink"]),
+    ("import shutil\nshutil.rmtree('d')", ["rmtree"]),
+    ("from pathlib import Path\nPath('a').unlink()", ["unlink"]),
+    ("from pathlib import Path\nPath('d').rmdir()", ["rmdir"]),
+    ("from os import remove\nremove('a')", ["remove"]),
+    ("import subprocess\nsubprocess.run(['rm', '-rf', 'x'])", ["a shell delete command"]),
+    ("import os\nos.system('powershell Remove-Item a')", ["a shell delete command"]),
+    ("import os\nos.system('del /q a.txt')", ["a shell delete command"]),
+    ("x = [1, 2]\nx.remove(1)\nprint(x)", []),
+    ("import os\nprint(os.listdir('.'))", []),
+    ("import os\nos.rename('a', 'b')", []),
+    ("import subprocess\nsubprocess.run(['dir'])", []),
+    ("print('rm is a word here')", []),
+    ("def (", []),
+])
+def test_what_counts_as_a_script_deleting_files(code, expected):
+    assert script_deletes_files(code) == expected
+
+
+@pytest.mark.asyncio
+async def test_a_script_that_deletes_is_refused_even_with_every_import_open_and_no_approval_asked(tmp_path) -> None:
+    victim = tmp_path / "keep-me.txt"
+    victim.write_text("precious", encoding="utf-8")
+    config = CodeInterpreterAdapterConfig(
+        workspace_root=str(tmp_path / "code"), blocked_imports=[], require_approval_for_untrusted_run_python=False,
+    )
+    result = await CodeInterpreterAdapter(config).execute(
+        _request(tmp_path, "run_python", code=f"import os\nos.remove({str(victim)!r})\nprint('deleted')\n")
+    )
+    assert result.status.value == "failed"
+    assert "does not delete files" in (result.error_message or "") and "move the files into a folder" in (result.error_message or "")
+    assert victim.read_text(encoding="utf-8") == "precious"
+
+
+@pytest.mark.asyncio
+async def test_with_deletion_switched_on_a_script_may_delete_and_a_plain_script_is_unaffected(tmp_path) -> None:
+    victim = tmp_path / "temp-file.txt"
+    victim.write_text("x", encoding="utf-8")
+    config = CodeInterpreterAdapterConfig(
+        workspace_root=str(tmp_path / "code"), blocked_imports=[], allow_file_deletion=True,
+    )
+    adapter = CodeInterpreterAdapter(config)
+    deleted = await adapter.execute(_request(tmp_path, "run_python", code=f"import os\nos.remove({str(victim)!r})\nprint('gone')\n"))
+    assert deleted.status.value == "succeeded" and not victim.exists()
+    plain = await CodeInterpreterAdapter(CodeInterpreterAdapterConfig(workspace_root=str(tmp_path / "code"))).execute(
+        _request(tmp_path, "run_python", code="print('just words')\n")
+    )
+    assert plain.status.value == "succeeded"
+
+
+def test_a_deleting_script_is_critical_risk_only_when_deletion_is_allowed_at_all(tmp_path) -> None:
+    deleting = {"operation": "run_python", "code": "import os\nos.remove('a')"}
+    plain = {"operation": "run_python", "code": "print(1)"}
+
+    def definition(allow):
+        settings = _settings(tmp_path)
+        settings.adapters.code_interpreter.allow_file_deletion = allow
+        return next(d for d in build_tool_registry(settings, backend_base_url="http://127.0.0.1:8765", provider=FakeScriptProvider()).definitions
+                    if d.name == "code.interpreter")
+
+    assert definition(False).required_risk(deleting) == RiskLevel.HIGH
+    assert definition(True).required_risk(deleting) == RiskLevel.CRITICAL
+    assert definition(True).required_risk(plain) == RiskLevel.HIGH
+    assert definition(True).required_risk({"operation": "health"}) == RiskLevel.LOW

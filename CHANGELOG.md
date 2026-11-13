@@ -114,6 +114,17 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A request to remember or change a setting (the `configuration` route) may not read a file whose path appears only in an earlier turn of
   the conversation: the call is refused once with the reason. A live run answered "Remember these about me ..." by reading a file named
   three requests earlier.
+- A script that deletes files is refused (`adapters.code_interpreter.allow_file_deletion`, off by default). YBM has no delete operation and a
+  request to delete is refused with an offer to move, but a script is the other way to delete, and with scripts allowed to run
+  freely a live run answered "Delete all the files in this folder" by running `os.remove` on all three. The check reads the script
+  (`os.remove`, `shutil.rmtree`, `Path.unlink`, `rmdir`, a shell `rm` or `del` or `Remove-Item`) whether the model wrote it or the tool
+  generated it, and holds however the approval and import settings are set. Turned on, a deleting script is critical risk.
+- A page written to a workspace-style path (".agent_control/workspaces/tip_calculator/index.html", which is what the tool's own
+  description suggests) goes to the workspace's index.html, where the server looks. It used to become a folder inside the workspace,
+  the server went on showing the placeholder, and a live build was blocked after seven rewrites. When a launched page has no controls
+  and another page exists in the workspace, the page check says where it is and what path to write.
+- An answer that writes out an addition and gets the total wrong ("5 lines in total (4 + 5 + 6)") is sent back once with the true
+  total. The number check had passed it because 5 is in a tool result.
 - A fourth frozen suite, `--suite vision` (16 cases, `e2e/vision_cases.json`), holds the examples the owner named as what YBM must do,
   in fresh wording: how many Steam games, where is a file in a hidden folder, what is a document about, a missing file, a count that
   needs a script, which of two files has more words, a request that splits into parts, the exact titles of three public sites, a

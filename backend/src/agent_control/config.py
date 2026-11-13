@@ -501,6 +501,10 @@ class CodeInterpreterAdapterConfig(StrictBaseModel):
     max_files_listed: int = Field(default=200, ge=1, le=5000)
     python_executable: str | None = None
     allowed_imports: list[str] = Field(default_factory=list)
+    # YBM has no delete operation: a request to delete files is refused and a move is offered instead. A script is the other way to
+    # delete (os.remove, shutil.rmtree, Path.unlink, a shell `rm`), so a script that does is refused too, however the approval and
+    # import settings are set. Turn this on only to let scripts delete; they are then judged critical risk and need approval.
+    allow_file_deletion: bool = False
     blocked_imports: list[str] = Field(
         default_factory=lambda: [
             "ctypes",

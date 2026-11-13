@@ -182,3 +182,40 @@ async def test_the_worker_sends_the_model_back_once_for_an_invented_email(tmp_pa
     assert len(sent_back) == 1 and "grace.hopper@navy.example" in sent_back[0]["error"] and "Do not make up values" in sent_back[0]["error"]
     assert result.status == TaskStatus.COMPLETED
     assert result.metadata["synthesized_answer"] == "There is no email for Grace Hopper in the file."
+
+
+# --- an answer that shows its sum and gets it wrong -----------------------------------------------------------------------------------------
+
+from agent_control.orchestration.number_check import inconsistent_sum  # noqa: E402
+
+
+def test_the_suite_answer_that_listed_4_5_and_6_and_said_5_is_caught_with_the_true_total():
+    answer = "5 lines are there in total in all the .txt files (4 lines in a.txt + 5 lines in b.txt + 6 lines in c.txt)."
+    assert inconsistent_sum(answer) == (["4", "5", "6"], "15")
+
+
+@pytest.mark.parametrize("answer", [
+    "15 lines in total (4 in a.txt + 5 in b.txt + 6 in c.txt).",
+    "4 + 5 + 6 = 15",
+    "The total is 15: 4 + 5 + 6.",
+    "That comes to 1,500 (1,000 + 500).",
+    "12.5 + 7.5 is 20",
+    "There are 15 lines in total.",
+    "Nothing to add here",
+    "Use C++ and 3 threads",
+    "",
+    None,
+])
+def test_a_sum_that_is_stated_correctly_or_no_sum_at_all_is_left_alone(answer):
+    assert inconsistent_sum(answer) is None
+
+
+def test_only_a_written_out_addition_counts_not_numbers_that_are_merely_near_a_plus():
+    assert inconsistent_sum("Version 3 + 4 new files were added, see the notes.") == (["3", "4"], "7")
+    assert inconsistent_sum("a=3\nb=+4") is None
+    assert inconsistent_sum("3 apples, 4 pears and a long sentence between them + then 9 plums") is None
+
+
+def test_decimals_and_thousands_separators_are_added_exactly():
+    assert inconsistent_sum("It is 20 (0.1 + 0.2 + 12.5).") == (["0.1", "0.2", "12.5"], "12.8")
+    assert inconsistent_sum("It is 3 (1,000 + 2,500)") == (["1000", "2500"], "3500")
