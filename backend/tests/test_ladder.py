@@ -535,3 +535,63 @@ async def test_a_file_request_is_never_second_guessed_about_its_paths(tmp_path):
                             tool_input={"operation": "inspect_folder", "root": RESUME.rsplit("\\", 1)[0]}, risk_level=RiskLevel.LOW)
     first = await _worker(repos, audit, _Seen([read])).process_task(task.id)
     assert first.metadata["operator_history"][-1]["status"] != "denied"
+
+
+# --- a quoted value no tool returned ---------------------------------------------------------------------------------------------------------------
+
+from agent_control.orchestration.ladder import UNGROUNDED_QUOTES_TEXT, ungrounded_quotes  # noqa: E402
+
+PAGE = [{"tool_name": "http.request", "input": {"url": "https://www.mozilla.org"}, "status": "succeeded",
+         "output_summary": 'HTTP GET returned 200. The page title is exactly: "Internet for people, not profit - Mozilla Global".'}]
+
+
+def test_a_quoted_title_that_is_in_a_tool_result_is_fine_whatever_its_case_or_spacing():
+    assert ungrounded_quotes('The title is "Internet for people, not profit - Mozilla Global".', "title?", PAGE) == []
+    assert ungrounded_quotes('It is "internet for  people, not profit - mozilla global"', "title?", PAGE) == []
+    assert ungrounded_quotes("The title is Mozilla Firefox (no quotation marks)", "title?", PAGE) == []
+
+
+def test_a_quoted_title_no_tool_returned_is_caught_once_per_distinct_quote():
+    assert ungrounded_quotes('The title is "Mozilla Firefox" and again "mozilla firefox".', "title?", PAGE) == ["Mozilla Firefox"]
+
+
+def test_a_quote_from_the_request_or_a_remembered_fact_is_grounded_and_a_tiny_quote_is_ignored():
+    assert ungrounded_quotes('Wrote "hello world" into it.', 'Write "hello world" into a.txt', []) == []
+    assert ungrounded_quotes('Your nickname is "Captain Oney".', "what is my nickname", [], "Remembered facts:\n- [note] nickname: Captain Oney") == []
+    assert ungrounded_quotes('Just "ok" then.', "hi", []) == []
+    assert ungrounded_quotes(None, "hi", []) == [] and ungrounded_quotes("", "hi", []) == []
+
+
+def test_curly_quotation_marks_count_too():
+    assert ungrounded_quotes("The title is \u201cMozilla Firefox\u201d", "title?", PAGE) == ["Mozilla Firefox"]
+
+
+@pytest.mark.asyncio
+async def test_a_final_answer_quoting_a_title_no_tool_returned_is_sent_back_once_then_allowed(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "What is the page title of mozilla.org?", PAGE)
+    wrong = OperatorDecision(action=OperatorAction.DONE, final_answer='The title is "Mozilla Firefox".')
+    worker = _worker(repos, audit, _Seen([wrong, wrong]))
+    first = await worker.process_task(task.id)
+    assert first.status == TaskStatus.RUNNING
+    last = first.metadata["operator_history"][-1]
+    assert last["hint_id"] == "quotes" and last["error"] == UNGROUNDED_QUOTES_TEXT.format(quotes='"Mozilla Firefox"')
+    second = await worker.process_task(first.id)
+    assert second.status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_a_part_that_quotes_a_title_no_tool_returned_looks_again_inside_the_part(tmp_path):
+    from agent_control.orchestration.planner import Part  # noqa: F401  (the parts run through delegate, which is what is checked)
+
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "Titles please", [])
+    delegate = OperatorDecision(action=OperatorAction.DELEGATE, delegate_objective="Get the title of https://www.mozilla.org")
+    # The part's first answer quotes a title nothing returned; the second is what it was told to say.
+    sub_wrong = OperatorDecision(action=OperatorAction.DONE, final_answer='"Mozilla Firefox"')
+    sub_honest = OperatorDecision(action=OperatorAction.DONE, final_answer="I could not read the title.")
+    operator = _Seen([delegate, sub_wrong, sub_honest])
+    result = await _worker(repos, audit, operator).process_task(task.id)
+    entry = [e for e in result.metadata["operator_history"] if e.get("tool_name") == "delegate"][-1]
+    assert entry["status"] == "succeeded" and entry["output_summary"] == "I could not read the title."
+    assert operator.calls == 3

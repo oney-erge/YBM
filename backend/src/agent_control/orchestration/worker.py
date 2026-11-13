@@ -935,6 +935,13 @@ class TaskWorker:
                     {**latest.metadata, "operator_history": history, "operator_number_gap_count": 1},
                     TaskStatus.RUNNING,
                 )
+            invented_quotes = ladder.ungrounded_quotes(final_answer, request_text, real_steps, str(latest.metadata.get("memory_context") or ""))
+            if invented_quotes and not any(isinstance(e, dict) and e.get("hint_id") == "quotes" for e in history):
+                history.append({
+                    "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "quotes", "step_id": step_id,
+                    "error": ladder.UNGROUNDED_QUOTES_TEXT.format(quotes=", ".join(f'"{q}"' for q in invented_quotes[:3])),
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)
             receipt_gap = (
                 ladder.write_receipt_gap(request_text, [str(path) for path in latest.metadata.get("changed_paths") or []])
                 or ladder.move_scope_gap(request_text, latest.metadata.get("undo_moves"))
@@ -1843,6 +1850,12 @@ class TaskWorker:
                 "\n\nFor this delegated sub-task, you may ONLY use these tools: "
                 f"{', '.join(sorted(allowed_tools))}. Any other tool_name will be refused."
             )
+        # What a part returns is quoted by the parent, so it must be what the tools said: a title shortened to "Python.org" from
+        # "Welcome to Python.org" became the answer to a request for the exact title.
+        extra_context += (
+            "\n\nWhen your answer includes a title, name, number or other value that a tool returned, copy it exactly as the tool "
+            "gave it. Do not shorten, reword or tidy it."
+        )
         summary_input = {"objective": objective, "delegate_tools": decision.delegate_tools}
         sub_history: list[dict[str, Any]] = []
 
@@ -1872,6 +1885,15 @@ class TaskWorker:
             self._record_llm_call(task.id, "subagent", len(sub_history), self.operator, step_id=sub_step_id)
 
             if sub_decision.action == OperatorAction.DONE:
+                invented = ladder.ungrounded_quotes(sub_decision.final_answer, objective, sub_history)
+                if invented and not any(isinstance(e, dict) and e.get("hint_id") == "quotes" for e in sub_history):
+                    # One more look, inside the part: a title or name in quotation marks has to be what a tool returned.
+                    sub_history.append({
+                        "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "quotes",
+                        "error": ladder.UNGROUNDED_QUOTES_TEXT.format(quotes=", ".join(f'"{q}"' for q in invented[:3])),
+                        "step_id": sub_step_id,
+                    })
+                    continue
                 return task, {
                     "tool_name": "delegate", "input": summary_input, "status": "succeeded",
                     "output_summary": (sub_decision.final_answer or "")[:2000], "error": None,
@@ -5006,6 +5028,11 @@ def _tool_output_text(result: ToolCallResult) -> str:
         if output.get("json") is not None:
             return json.dumps(output["json"], ensure_ascii=False, indent=2, default=str)
         if output.get("text"):
+            if output.get("page_title") or "The page text starts:" in str(output.get("summary") or ""):
+                # An HTML page: what a person would read (the exact title, the visible text) comes first. The model sees only
+                # the first couple of thousand characters of a result, and those were scripts and meta tags, so it could not
+                # find the title it was asked for and gave up after six steps.
+                return f"{output['summary']}\n\n--- page source ---\n{output['text']}"
             return str(output["text"])
     terminal_output = output.get("terminal_output")
     if isinstance(terminal_output, list):

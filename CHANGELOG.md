@@ -97,8 +97,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   short model call (`operator.voice_pass`, `orchestration/voice.py`). The rewrite is thrown away if it contains any number the answer and
   the request did not, and a sentence is never touched.
 - `http.request` can read any public web page with `adapters.http_request.allow_public_reads: true` (off by default): GET and HEAD only, a
-  name that resolves to this computer or its network (loopback, private, link-local, reserved) is refused, redirects are not followed,
-  and every other method still needs the allowlist. This is what a request like "get the headline from each of these five sites" needs.
+  name that resolves to this computer or its network (loopback, private, link-local, reserved) is refused, a GET or HEAD follows
+  up to five redirects (most sites redirect "www.site.org" to a language or https page) with every hop checked the same way, so a
+  public page cannot send it to this computer, and every other method still needs the allowlist. This is what a request like "get the headline from each of these five sites" needs.
+- A quoted title, name or phrase in an answer must be in something the task saw: the request, a remembered fact, or a tool result. If
+  not, the model is sent back once (inside the part, for a part of a plan). The local model had answered "Mozilla Firefox" for a page
+  titled "Internet for people, not profit - Mozilla Global".
+- The model is shown an HTML page's readable text, with its exact title first, before the page source. It saw only the first two
+  thousand characters of a result, which were scripts and meta tags, so it could not find the title it was asked for and gave up.
 - `http.request` reads an HTML page's exact `<title>` and the start of its visible text with code, and puts both in the result (`page_title`,
   and the summary the model sees). Asked for "the title of each of these five sites", the local model had returned a shortened title
   ("Python.org" for "Welcome to Python.org") for two of them, because it was reading the title out of raw markup.

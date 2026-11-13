@@ -290,3 +290,78 @@ async def test_an_html_response_carries_its_exact_title_in_the_summary_and_a_jso
         task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": "https://site.example/api", "method": "GET"},
     ))
     assert data.output["page_title"] is None and "page title" not in data.output["summary"]
+
+
+def test_the_model_is_shown_the_readable_part_of_an_html_page_before_its_source():
+    from agent_control.orchestration.worker import _tool_output_text
+    from agent_control.schemas import ToolCallResult
+
+    head = "<script>" + "x" * 5000 + "</script>"
+    markup = f"<html><head>{head}<title>Welcome to Python.org</title></head><body><h1>Python</h1></body></html>"
+    title, readable = http_module.html_digest(markup)
+    output = {
+        "operation": "request", "status_code": 200, "json": None, "text": markup, "page_title": title,
+        "summary": f'HTTP GET https://x/ returned 200. The page title is exactly: "{title}". The page text starts: {readable}',
+    }
+    shown = _tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=output))
+    assert shown.startswith('HTTP GET https://x/ returned 200. The page title is exactly: "Welcome to Python.org"')
+    assert shown.index("--- page source ---") < shown.index("<script>") and shown.endswith(markup)
+    plain = {"operation": "request", "status_code": 200, "json": None, "text": "plain words", "page_title": None, "summary": "HTTP GET x returned 200."}
+    assert _tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=plain)) == "plain words"
+
+
+# --- reads follow redirects, one checked hop at a time ----------------------------------------------------------------------------------------
+
+
+def _adapter(handler, **config):
+    return HttpRequestAdapter(HttpRequestAdapterConfig(**config), SecretVaultConfig(), transport=httpx.MockTransport(handler))
+
+
+def _get(url, method="GET"):
+    return ToolCallRequest(task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": url, "method": method})
+
+
+@pytest.mark.asyncio
+async def test_a_read_follows_a_redirect_to_the_page_it_points_at(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/":
+            return httpx.Response(301, headers={"location": "/en-US/"})
+        return httpx.Response(200, text="<html><head><title>Home</title></head><body>Hi</body></html>", headers={"content-type": "text/html"})
+
+    result = await _adapter(handler, allow_public_reads=True).execute(_get("https://www.site.org/"))
+    assert result.output["status_code"] == 200 and result.output["page_title"] == "Home"
+
+
+@pytest.mark.asyncio
+async def test_a_redirect_to_this_computer_is_not_followed(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))])
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"location": "http://127.0.0.1:8765/admin"})
+
+    result = await _adapter(handler, allow_public_reads=True).execute(_get("https://www.site.org/"))
+    assert result.status.value == "failed" and "not a public website" in (result.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_redirects_stop_after_five_hops_and_other_methods_never_follow(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("93.184.216.34", 0))])
+    calls = []
+
+    def loop(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return httpx.Response(302, headers={"location": "/again"})
+
+    result = await _adapter(loop, allow_public_reads=True).execute(_get("https://www.site.org/"))
+    assert result.output["status_code"] == 302 and len(calls) == 6
+
+    posted = []
+
+    def post_handler(request: httpx.Request) -> httpx.Response:
+        posted.append(request.method)
+        return httpx.Response(302, headers={"location": "/elsewhere"})
+
+    await _adapter(post_handler, allowed_hosts=["www.site.org"]).execute(_get("https://www.site.org/", method="POST"))
+    assert posted == ["POST"]

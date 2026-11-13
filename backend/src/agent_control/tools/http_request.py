@@ -7,7 +7,7 @@ import json
 import socket
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import httpx
 
@@ -94,6 +94,17 @@ class HttpRequestAdapter:
                 json=json_body if json_body is not None else None,
                 content=str(body).encode("utf-8") if body is not None else None,
             )
+            # A read follows a redirect (most public sites redirect "www.site.org" to a language or https page), one hop at a time,
+            # and every hop passes the same host check as the first request, so a public page cannot send it to this computer.
+            hops = 0
+            while method in {"GET", "HEAD"} and response.status_code in _REDIRECTS and hops < _MAX_REDIRECTS:
+                location = response.headers.get("location")
+                if not location:
+                    break
+                url = urljoin(str(response.url), location)
+                _require_allowed_url(url, self.config, method=method)
+                response = await client.request(method, url, headers=headers)
+                hops += 1
         elapsed_ms = int((time.perf_counter() - start) * 1000)
         text = response.text
         truncated = len(text) > max_response_chars
@@ -162,6 +173,8 @@ class HttpRequestAdapter:
 
 
 _READABLE_EXCERPT_CHARS = 1500
+_REDIRECTS = frozenset({301, 302, 303, 307, 308})
+_MAX_REDIRECTS = 5
 _SKIPPED_TAGS = frozenset({"script", "style", "noscript", "template", "svg", "head"})
 
 
@@ -225,6 +238,10 @@ def _is_public_address(address: str) -> bool:
 
 def _resolves_only_to_public_addresses(host: str, *, resolver=None) -> bool:
     """Every address the name resolves to must be public: one private answer is enough to refuse (DNS rebinding, internal names)."""
+    try:
+        return _is_public_address(str(ipaddress.ip_address(host.strip("[]"))))  # a literal address needs no lookup
+    except ValueError:
+        pass
     try:
         infos = (resolver or socket.getaddrinfo)(host, None)
     except OSError:

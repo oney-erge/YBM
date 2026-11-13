@@ -294,8 +294,8 @@ adapters:
     enabled: true
     root_dir: ".agent_control/adapters"
   http_request:
-    # Read any public web page, GET and HEAD only (a name that resolves to this computer or its network is refused, redirects are
-    # not followed). Needed for requests like "get the headline from each of these five sites". Off by default.
+    # Read any public web page, GET and HEAD only (a name that resolves to this computer or its network is refused, also after a
+    # redirect, which is followed up to five hops). Needed for requests like "get the headline from each of these five sites". Off by default.
     # allow_public_reads: true
     enabled: true
     allowed_hosts: []

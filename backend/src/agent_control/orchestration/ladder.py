@@ -337,3 +337,40 @@ UNGROUNDED_TEXT = (
     "remembered. It only appears in earlier conversation. Act on what the user asked just now. If the request really does refer "
     "back to that, say which file you mean and call again."
 )
+
+
+# --- a quoted value no tool returned -----------------------------------------------------------------------------------------------------------
+
+_QUOTED = re.compile(r"[\"\u201c]([^\"\u201c\u201d\n]{4,120})[\"\u201d]")
+
+
+def ungrounded_quotes(answer: str | None, request: str, steps: list[dict[str, Any]], memory_context: str | None = None) -> list[str]:
+    """Quoted strings in an answer that appear in nothing the task saw: not the request, not a remembered fact, not any tool result.
+
+    Asked for "the exact page title" of four sites, the local model answered with "Mozilla Firefox" for a page whose title is
+    "Internet for people, not profit - Mozilla Global", and "Python.org" for "Welcome to Python.org". A string put in quotation marks
+    is presented as what something said, so it has to be what a tool returned.
+    """
+    quoted = [" ".join(match.group(1).split()) for match in _QUOTED.finditer(str(answer or ""))]
+    if not quoted:
+        return []
+    parts = [request, facts_block(memory_context)]
+    for step in steps:
+        if isinstance(step, dict):
+            parts += [str(step.get("output_summary") or ""), str(step.get("error") or ""), str(step.get("input") or "")]
+    corpus = " ".join(" ".join(parts).split()).casefold()
+    seen: set[str] = set()
+    missing = []
+    for item in quoted:
+        key = item.casefold()
+        if key not in corpus and key not in seen:
+            seen.add(key)
+            missing.append(item)
+    return missing
+
+
+UNGROUNDED_QUOTES_TEXT = (
+    "Declared done, but {quotes} is in quotation marks in your answer and no tool result contains it. A quoted title, name or "
+    "phrase must be copied exactly from a tool result. Look again at what the tool returned and quote that, or say plainly that "
+    "you could not find it."
+)
