@@ -116,12 +116,22 @@ class ConversationMemoryService:
         max_summary_chars: int = 2400,
         max_recent_turns: int = 10,
         summarization_timeout_seconds: int = 20,
+        summarize_in_background: bool = False,
+        summarize_delay_seconds: float = 15.0,
     ) -> None:
         self.repositories = repositories
         self.provider = provider
         self.max_summary_chars = max_summary_chars
         self.max_recent_turns = max_recent_turns
         self.summarization_timeout_seconds = summarization_timeout_seconds
+        # The rolling summary is a model call, and the model serves one request at a time. Written inside the message handler it
+        # came before the classifier and the reply (3 to 20 seconds on every message). With this on, the handler stores the
+        # heuristic summary and the recent turns at once and the model summarizes later, once, when nothing is using it.
+        self.summarize_in_background = summarize_in_background
+        self.summarize_delay_seconds = summarize_delay_seconds
+        self._summarizing: set[str] = set()
+        self._summarize_again: set[str] = set()
+        self._background: set[asyncio.Future[None]] = set()
 
     async def update_from_user_message(self, conversation_id: str, text: str) -> dict[str, Any]:
         return await self.update_from_turn(conversation_id, "user", text)
@@ -143,7 +153,10 @@ class ConversationMemoryService:
         state["strategy"] = "rolling_summary_with_recent_turns"
 
         existing_summary = str((existing or {}).get("summary") or DEFAULT_SUMMARY)
-        if self._task_in_flight(conversation_id):
+        if self.summarize_in_background and self.provider is not None:
+            summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
+            self._summarize_later(conversation_id)
+        elif self._task_in_flight(conversation_id):
             # The model serves one request at a time. Summarizing now would queue behind the running task's own calls
             # (and push out its cached prompt), so a message sent mid-task waited tens of seconds for a summary nobody
             # needed yet. The recent turns are kept; the next message after the task re-summarizes with the model.
@@ -152,6 +165,42 @@ class ConversationMemoryService:
             summary = await self._summarize(existing_summary, turns)
         state["summary"] = summary
         return self.repositories.conversation_memory.upsert(conversation_id, summary, state)
+
+    def _summarize_later(self, conversation_id: str) -> None:
+        """Summarize this conversation after the reply, at most one run at a time per conversation."""
+        if conversation_id in self._summarizing:
+            self._summarize_again.add(conversation_id)  # the run in progress is told to go once more with the newer turns
+            return
+        self._summarizing.add(conversation_id)
+        future = asyncio.ensure_future(self._summarize_in_background(conversation_id))
+        self._background.add(future)
+        future.add_done_callback(self._background.discard)
+
+    async def _summarize_in_background(self, conversation_id: str) -> None:
+        try:
+            await asyncio.sleep(self.summarize_delay_seconds)
+            while True:
+                self._summarize_again.discard(conversation_id)
+                record = self.repositories.conversation_memory.get(conversation_id)
+                if record is None or self._task_in_flight(conversation_id):
+                    return  # a task is using the model now: the heuristic summary stays, as it does for a message sent mid-task
+                turns = _recent_turns(dict(record.get("facts") or {}))
+                summary = await self._summarize(str(record.get("summary") or DEFAULT_SUMMARY), turns)
+                # Read again after the model call: turns that arrived meanwhile are kept, only the summary is replaced.
+                latest = self.repositories.conversation_memory.get(conversation_id) or record
+                self.repositories.conversation_memory.upsert(conversation_id, summary, dict(latest.get("facts") or {}))
+                if conversation_id not in self._summarize_again:
+                    return
+        except Exception:  # noqa: BLE001 - a summary is never worth a failed message or an unhandled task
+            logger.warning("background conversation summary failed", exc_info=True)
+        finally:
+            self._summarizing.discard(conversation_id)
+            self._summarize_again.discard(conversation_id)
+
+    async def wait_for_background(self) -> None:
+        """Wait for the summaries scheduled so far (tests, and a clean shutdown)."""
+        while self._background:
+            await asyncio.gather(*list(self._background), return_exceptions=True)
 
     _IN_FLIGHT = (TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.RETRYING)
 

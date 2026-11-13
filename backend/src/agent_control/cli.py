@@ -236,7 +236,9 @@ def _concierge_parts(
             is not None,
         )
     responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
-    return classifier, responder, ConversationMemoryService(repositories, provider=concierge_provider)
+    return classifier, responder, ConversationMemoryService(
+        repositories, provider=concierge_provider, summarize_in_background=True,
+    )
 
 
 def _intake_parts(repositories: Repositories) -> tuple[AppSettings, Any, Any, Any]:
