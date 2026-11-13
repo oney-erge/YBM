@@ -100,7 +100,8 @@ jobs:
   backend-tests:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+    # The Windows run takes about 15 minutes of pytest alone (2,350 tests); a 15 minute limit cancelled it at 91% with no failing test.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

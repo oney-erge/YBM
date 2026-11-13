@@ -182,6 +182,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A script that only printed its answer no longer gets "Workspace: task_task_..." added to the message. The code interpreter
+  lists its own `script.py` among the files it created, so the message named the scratch folder as if it held a result (the
+  frozen vision suite caught it: two cases failed on the leaked `task_`). The folder is named only when the run made something
+  else, and `Created files:` no longer lists `script.py`.
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
@@ -278,6 +282,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `operator.constrain_calls` holds the Operator's reply to a JSON schema built from the tool definitions, so a
   tool call with a wrong argument name, an unknown tool or no operation cannot be written. It needs a local server that enforces
   a response schema (llama.cpp, Ollama) and LocalDeploy with its response-schema fix; otherwise the plain schema is used.
+
+### Security
+
+- Updated opentelemetry-api 1.45.1 to 1.45.2 (CVE-2026-126360, fixed in 1.45.2). The `backend-quality` audit failed on every branch until then.
+  `pip-audit` is clean on the updated lock; nothing else in the lock changed.
 
 ## [0.1.5] - 2026-10-22
 
