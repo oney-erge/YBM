@@ -83,6 +83,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   Claude Code that the user agreed to counts as a requested coding agent.
   "Remember these about me: my favorite fruit is lychee, my parrot is called Kiwi ..." (and "remember the following: ...") is now taken by the
   remember command like "remember that ...", before any model sees it, instead of reaching a small model that filed the facts in the persona.
+- A script that only printed its answer is answered with what it printed. The reply used to end with "Workspace: task_task_...", the folder the
+  script ran in; the workspace is named when the script created files.
 - A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
