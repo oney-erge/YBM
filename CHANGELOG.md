@@ -182,6 +182,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A task that asked a question and got its answer runs its next tool call. Answering put the task back to `received`, the worker
+  only moved a task to `running` the first time it started, and a call is admitted only for a `running` task (since the lifecycle
+  controls), so the first call after an answer was never run and the worker asked the model again on every poll: a live run made
+  281 model calls on one task and ran no tool. A task is now moved to `running` whenever the loop picks it up.
 - A script that only printed its answer no longer gets "Workspace: task_task_..." added to the message. The code interpreter
   lists its own `script.py` among the files it created, so the message named the scratch folder as if it held a result (the
   frozen vision suite caught it: two cases failed on the leaked `task_`). The folder is named only when the run made something

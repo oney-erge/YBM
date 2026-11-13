@@ -670,7 +670,12 @@ class TaskWorker:
             return latest
 
         history: list[dict[str, Any]] = list(latest.metadata.get("operator_history") or [])
-        if not latest.metadata.get("operator_loop"):
+        # A task is RUNNING while this loop works on it. It is not yet when the loop starts, and it is not again after a question was
+        # answered (clarification.resume_clarifying_task puts it back to RECEIVED, with the loop flag still set): a call is only
+        # admitted for a RUNNING task, so the first call after an answer was never run and the model was asked again, every poll.
+        if not latest.metadata.get("operator_loop") or latest.status in {
+            TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED,
+        }:
             latest = self.repositories.tasks.update_metadata(
                 latest.id, {**latest.metadata, "operator_loop": True}, TaskStatus.RUNNING
             )
