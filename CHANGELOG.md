@@ -5,6 +5,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.6] - 2026-11-13
+
 ### Added
 
 - The offer to hand a task to Claude Code (made when the local model has failed repeatedly and Claude Code is set up) comes with
@@ -155,6 +157,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   `final_kind`, `kind_agrees`) and decides nothing. The console's decision stats gain `kind_stats`: how often they agree and whether it has earned
   the right to take over (at least 95% agreement on at least 100 real messages). It would replace a model call that queues behind the running task
   with a forward pass on the CPU; until the numbers say so, the concierge keeps deciding. The question is only sent while a task runs.
+- `operator.constrain_calls` holds the Operator's reply to a JSON schema built from the tool definitions, so a
+  tool call with a wrong argument name, an unknown tool or no operation cannot be written. It needs a local server that enforces
+  a response schema (llama.cpp, Ollama) and LocalDeploy with its response-schema fix; otherwise the plain schema is used.
 
 ### Changed
 
@@ -210,6 +215,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (default 24, 0 keeps them) with no change, a blocked or unanswered task is cancelled the ordinary way (so its cleanup runs) and marked
   `auto_closed` with the reason, which the dashboard can show as "Closed automatically". Nothing is sent to the person: they were told when
   it stopped, and a message about housekeeping is noise. Asking again starts fresh. The worker checks at most every ten minutes.
+- `operator.constrain_calls` is on by default. Measured over the 60-case held-out suite on the local Qwen3.5-9B: calls a tool refused
+  fell from 52 of 266 steps (19.5%) to 5 of 150 (3.3%), made-up tool names from 30 to 0, and the held-out pass rate went from 43 to 54 of
+  60 together with the other fixes in this release. It applies to local servers only and falls back to the plain schema when a server
+  refuses it; set `operator.constrain_calls: false` to turn it off.
 
 ### Fixed
 
@@ -304,19 +313,6 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   (open the page first, use the labels as shown); a fill that matched only some fields succeeds and names the ones it missed.
 - A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
   result; otherwise the model is sent back once to calculate it with code.
-
-### Changed
-
-- `operator.constrain_calls` is on by default. Measured over the 60-case held-out suite on the local Qwen3.5-9B: calls a tool refused
-  fell from 52 of 266 steps (19.5%) to 5 of 150 (3.3%), made-up tool names from 30 to 0, and the held-out pass rate went from 43 to 54 of
-  60 together with the other fixes in this release. It applies to local servers only and falls back to the plain schema when a server
-  refuses it; set `operator.constrain_calls: false` to turn it off.
-
-### Added
-
-- `operator.constrain_calls` holds the Operator's reply to a JSON schema built from the tool definitions, so a
-  tool call with a wrong argument name, an unknown tool or no operation cannot be written. It needs a local server that enforces
-  a response schema (llama.cpp, Ollama) and LocalDeploy with its response-schema fix; otherwise the plain schema is used.
 
 ### Security
 

@@ -10,7 +10,7 @@ resolution-markers = [
 
 [[package]]
 name = "agent-control-backend"
-version = "0.1.5"
+version = "0.1.6"
 source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
