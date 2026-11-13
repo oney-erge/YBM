@@ -607,6 +607,10 @@ class SkillsAdapterConfig(StrictBaseModel):
     # future tasks, so writing one unattended changes tomorrow's behavior
     # with nobody having agreed to it. See skill_learning.py.
     learning_enabled: bool = False
+    # Keep the Python script that settled a task as a reusable helper skill (skill_learning.save_helper). Unlike a learned
+    # procedure this needs no model call and no review: it is the script that already ran and produced the answer, filed under
+    # a plain name, and the Operator's prompt only gains one line for it. Off by default.
+    helpers_enabled: bool = False
     max_skills_listed: int = Field(default=50, ge=1, le=500)
 
 

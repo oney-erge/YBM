@@ -25,6 +25,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+from collections import deque
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -57,7 +60,18 @@ _STEAM_NOT_GAMES = {228980}
 _STEAM_NOT_GAMES_NAMES = re.compile(r"^(Steamworks Common Redistributables|Steam Linux Runtime|Proton )", re.IGNORECASE)
 
 _DOCUMENT_EXTENSIONS = {".docx", ".doc", ".pdf", ".xlsx", ".xls", ".pptx", ".ppt", ".txt", ".md", ".rtf", ".odt", ".csv"}
-_MAX_WALKED = 200_000
+#: How long each pass of the folder walk may take. The first pass skips hidden and system folders and is what finds almost
+#: everything; the second goes through those too, and is what lets "it is not there" be said with a straight face.
+#: The words a finished, empty search ends with. orchestration/ladder.py looks for them to know the answer is settled.
+NOT_ANYWHERE_MARK = "so it is not in any folder I can read"
+_WALK_FIRST_PASS_SECONDS = 25.0
+_WALK_DEEP_PASS_SECONDS = 50.0
+#: Once a file has matched, the walk keeps going this long for copies elsewhere (a person wants the best of a few, not a full tour).
+_WALK_GRACE_SECONDS = 3.0
+#: Folders nothing a person keeps lives in (and a walk would spend its time budget on).
+_JUNK_DIRS = frozenset({"node_modules", "__pycache__", "$recycle.bin", "system volume information", ".git", ".venv", "venv"})
+#: Folders the first pass leaves for the deep pass.
+_SYSTEM_DIRS = frozenset({"windows", "program files", "program files (x86)", "programdata", "appdata"})
 _INDEX_TIMEOUT_SECONDS = 25
 
 _INDEX_SCRIPT = r"""
@@ -234,32 +248,118 @@ def search_index(words: list[str], extensions: list[str], match: str, cap: int) 
     return [{"path": r["path"], "size_bytes": r.get("size"), "modified": r.get("modified") or None} for r in rows if r.get("path")]
 
 
-def walk_search(roots: list[Path], words: list[str], extensions: list[str], cap: int) -> list[dict[str, Any]]:
-    """The fallback where there is no index: a bounded walk of the allowed folders, by file name."""
+@dataclass
+class WalkReport:
+    """What a folder walk covered, so that "nothing found" can say how hard it looked."""
+
+    folders: int = 0
+    files: int = 0
+    denied: int = 0
+    denied_examples: list[str] = field(default_factory=list)
+    #: False when the time budget or the result cap ended the walk early: the unvisited part is unknown.
+    complete: bool = True
+    seconds: float = 0.0
+    include_hidden: bool = False
+
+
+def walk_search(
+    roots: list[Path],
+    words: list[str],
+    extensions: list[str],
+    cap: int,
+    *,
+    include_hidden: bool = False,
+    budget_seconds: float = _WALK_FIRST_PASS_SECONDS,
+    report: WalkReport | None = None,
+    clock: Callable[[], float] = time.monotonic,
+) -> list[dict[str, Any]]:
+    """The fallback where there is no index: a time-boxed walk of the allowed folders, by file name.
+
+    Shallow folders first, and every root in turn: a file people keep is near the top of its drive far more often than ten levels
+    down inside one huge folder, and a walk that dives into the first root's biggest folder never reaches the other drives before
+    its time is up. A folder it may not open is counted and skipped, never a reason to stop. ``include_hidden`` also goes
+    through hidden and system folders. ``report``, when given, is filled in with what was covered.
+    """
+    report = report if report is not None else WalkReport()
+    report.include_hidden = include_hidden
+    started = clock()
+    first_match_at: float | None = None
     found: list[dict[str, Any]] = []
-    visited = 0
     wanted = [w.casefold() for w in words]
-    for root in roots:
-        for folder, dirs, files in os.walk(root):
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in {"node_modules", "__pycache__", "AppData"}]
-            for name in files:
-                visited += 1
-                if visited > _MAX_WALKED:
-                    return found
-                lowered = name.casefold()
-                if all(w in lowered for w in wanted) and (not extensions or Path(name).suffix.casefold() in extensions):
-                    path = Path(folder) / name
+    skip = _JUNK_DIRS if include_hidden else _JUNK_DIRS | _SYSTEM_DIRS
+    queues: list[deque[str]] = [deque([str(root)]) for root in roots]
+
+    def wanted_dir(name: str) -> bool:
+        return name.casefold() not in skip and (include_hidden or not name.startswith("."))
+
+    def note_denied(folder: str) -> None:
+        report.denied += 1
+        if len(report.denied_examples) < 8:
+            report.denied_examples.append(folder)
+
+    while any(queues):
+        for queue in queues:
+            if not queue:
+                continue
+            if clock() - started > budget_seconds:
+                report.complete = False
+                report.seconds = round(clock() - started, 1)
+                return found
+            if first_match_at is not None and clock() - first_match_at > _WALK_GRACE_SECONDS:
+                report.complete = False
+                report.seconds = round(clock() - started, 1)
+                return found
+            folder = queue.popleft()
+            try:
+                with os.scandir(folder) as scan:
+                    # In name order on every platform (ext4 hashes names), so a walk that ends early ends the same way everywhere.
+                    entries = sorted(scan, key=lambda entry: (entry.name.casefold(), entry.name))
+            except OSError:
+                note_denied(folder)
+                continue
+            report.folders += 1
+            for entry in entries:
+                try:
+                    is_folder = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_folder:
+                    if wanted_dir(entry.name):
+                        queue.append(entry.path)
+                    continue
+                report.files += 1
+                lowered = entry.name.casefold()
+                if all(w in lowered for w in wanted) and (not extensions or Path(entry.name).suffix.casefold() in extensions):
                     try:
-                        info = path.stat()
+                        info = entry.stat()
                     except OSError:
                         continue
                     found.append({
-                        "path": str(path), "size_bytes": info.st_size,
+                        "path": entry.path, "size_bytes": info.st_size,
                         "modified": datetime.fromtimestamp(info.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
                     })
+                    if first_match_at is None:
+                        first_match_at = clock()
                     if len(found) >= cap:
+                        report.complete = False
+                        report.seconds = round(clock() - started, 1)
                         return found
+    report.seconds = round(clock() - started, 1)
     return found
+
+
+def _coverage_sentence(searched: dict[str, Any] | None) -> str:
+    """What the walk looked through, in the words that go to the user next to a "not found"."""
+    if not searched:
+        return ""
+    roots = ", ".join(searched["roots"])
+    locked = f", skipping {searched['locked_folders']} folder(s) Windows would not let me open" if searched["locked_folders"] else ""
+    hidden = " including hidden and system folders" if searched["including_hidden_and_system_folders"] else ""
+    if searched["complete"]:
+        return (f" I looked through all {searched['folders']:,} folders under {roots}{hidden}{locked}, {NOT_ANYWHERE_MARK} "
+                "(it may be on another drive, or named differently).")
+    return (f" I only had time to look through {searched['folders']:,} folders under {roots}{hidden}{locked}, so this does not prove it is "
+            "not there.")
 
 
 def _inside(path: str, roots: list[Path]) -> bool:
@@ -416,11 +516,26 @@ class SystemInventoryAdapter:
         cap = max(limit * 12, 100)
         rows = search_index(words, extensions, match, cap=cap)
         source = "the Windows Search index"
+        searched: dict[str, Any] | None = None
         readable = [r for r in rows or [] if _inside(r["path"], self.allowed_roots)]
         if not readable and match == "name":
             # No index, or an index that does not cover where the file is (a hidden or just-created folder is not indexed
             # yet): a bounded walk of the folders YBM may read finds it by name.
-            walked = walk_search(self.allowed_roots, words, extensions, cap=cap)
+            covered = WalkReport()
+            walked = walk_search(self.allowed_roots, words, extensions, cap=cap, report=covered)
+            if not walked:
+                # Nothing in the places people keep things: go through the hidden and system folders too, which is also what
+                # makes a "not there" answer a complete one.
+                covered = WalkReport()
+                walked = walk_search(
+                    self.allowed_roots, words, extensions, cap=cap, include_hidden=True,
+                    budget_seconds=_WALK_DEEP_PASS_SECONDS, report=covered,
+                )
+            searched = {
+                "roots": [str(r) for r in self.allowed_roots], "folders": covered.folders, "files": covered.files,
+                "locked_folders": covered.denied, "complete": covered.complete, "seconds": covered.seconds,
+                "including_hidden_and_system_folders": covered.include_hidden,
+            }
             if walked:
                 rows, readable, source = walked, [r for r in walked if _inside(r["path"], self.allowed_roots)], "a search of the folders I can read"
             elif rows is None:
@@ -435,7 +550,10 @@ class SystemInventoryAdapter:
             item["name"] = Path(item["path"]).name
         if not items:
             note = f" ({skipped} matches are in folders I am not allowed to read)" if skipped else ""
-            return {"count": 0, "items": [], "source": source, "summary": f"No file matching '{query}' was found{note}."}
+            return {
+                "count": 0, "items": [], "source": source, "searched": searched,
+                "summary": f"No file matching '{query}' was found{note}." + _coverage_sentence(searched),
+            }
         lines: list[str] = []
         for number, item in enumerate(items):
             item["online_only"] = is_online_only(item["path"])

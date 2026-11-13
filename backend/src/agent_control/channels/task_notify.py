@@ -291,7 +291,8 @@ def _code_interpreter_answer(output: dict) -> str:
         lines.append("")
         lines.append("Created files:")
         lines.extend(f"- {item}" for item in files[:40])
-    if workspace:
+    if workspace and files:
+        # Where the files are matters; the folder a script that only printed an answer ran in is an internal detail.
         lines.append(f"Workspace: {workspace}")
     if stderr:
         lines.append("")

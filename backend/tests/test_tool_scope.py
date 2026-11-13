@@ -7,7 +7,7 @@ import re
 import pytest
 
 from agent_control.orchestration import TaskWorker
-from agent_control.orchestration.tool_scope import ROUTE_TOOLS, scope_catalog_text, scope_for_task, tools_for_route
+from agent_control.orchestration.tool_scope import ALWAYS, ROUTE_TOOLS, scope_catalog_text, scope_for_task, tools_for_route
 from helpers import make_repos
 
 CATALOG = """Available worker tools:
@@ -44,7 +44,7 @@ def test_the_adapter_route_keeps_mcp_server_tools() -> None:
     assert "- server=" in scoped
 
 
-@pytest.mark.parametrize("route", ["conversation", "status", "configuration", "unknown", None, "something.new"])
+@pytest.mark.parametrize("route", ["conversation", "status", "unknown", None, "something.new"])
 def test_other_routes_get_the_full_catalog(route) -> None:
     assert tools_for_route(route) is None
     assert scope_catalog_text(CATALOG, tools_for_route(route), route) == CATALOG
@@ -52,7 +52,9 @@ def test_other_routes_get_the_full_catalog(route) -> None:
 
 def test_every_route_keeps_the_tool_it_is_named_after() -> None:
     for route, tools in ROUTE_TOOLS.items():
-        if route == "desktop.observe":
+        if route == "configuration":
+            assert tools == frozenset()  # "remember that ..." needs only the always-on memory and persona tools
+        elif route == "desktop.observe":
             assert "computer.use" in tools  # a route name that is not a tool: screenshots go through computer.use
         else:
             assert route in tools, route
@@ -86,3 +88,9 @@ def test_scoping_is_off_unless_asked_for(tmp_path) -> None:
     worker = TaskWorker(repos, audit, executor=None, operator=None, config_context=CATALOG)
 
     assert _names(worker._planner_context(metadata={"orchestration_intent": {"route": "schedule.manage"}})) == _names(CATALOG)
+
+
+def test_a_remember_request_is_shown_only_the_always_on_tools_not_the_whole_catalog() -> None:
+    """With every tool in front of it the local model answered "remember my dog is Biscuit" by reading a file from an earlier turn."""
+    allowed = tools_for_route("configuration")
+    assert allowed == ALWAYS and "memory.manage" in allowed and "filesystem.manage" not in allowed

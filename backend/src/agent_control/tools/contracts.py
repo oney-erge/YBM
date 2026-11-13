@@ -1007,6 +1007,8 @@ class SystemInventoryOutput(ToolOutputModel):
     count: int = 0
     items: list[dict[str, Any]] = Field(default_factory=list)
     source: str | None = None
+    #: find_files with nothing found: what the folder walk covered, and whether it finished (see system_inventory.WalkReport).
+    searched: dict[str, Any] | None = None
 
 
 class TaskStatusOutput(ToolOutputModel):

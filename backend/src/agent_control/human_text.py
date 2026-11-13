@@ -99,8 +99,9 @@ def friendly_path(path: str) -> str:
     if not raw:
         return raw
     parts = [p for p in re.split(r"[\\/]+", raw) if p]
+    drive = ""
     if parts and re.fullmatch(r"[A-Za-z]:", parts[0]):
-        parts = parts[1:]
+        drive, parts = parts[0].upper(), parts[1:]
     if not parts:
         return raw
     # Anything under YBM's own scratch space is "the project folder made for this task".
@@ -129,6 +130,9 @@ def friendly_path(path: str) -> str:
     elif lowered and lowered[0] in {"program files", "program files (x86)"}:
         where = parts[0]
         inner = parts[1:]
+    elif drive and drive != _home().drive.upper():
+        # A file on another drive is not found by its folders alone: "D:" is part of where it is.
+        where, inner = f"drive {drive}", parts
     else:
         where = f"the {parts[0]} folder" if len(parts) > 1 else ""
         inner = parts[1:] if len(parts) > 1 else parts
