@@ -179,6 +179,13 @@ capabilities:
     scopes: []
     requires_approval: true
     max_risk_level: "high"
+  # Read-only questions about this computer (Steam games, installed apps, disk space, finding a file
+  # anywhere). Nothing here changes anything; set enabled: true to turn it on.
+  system.inventory:
+    enabled: false
+    scopes: []
+    requires_approval: false
+    max_risk_level: "low"
   memory.manage:
     enabled: false
     scopes: []
@@ -349,6 +356,11 @@ adapters:
     max_output_chars: 12000
     max_files_listed: 200
     python_executable: null
+    # Running on your own computer with a local model, where a script may use os, shutil and the like and may run without asking
+    # first? Set these two. The defaults are the cautious ones: YBM asks before it runs any script, and some modules are blocked.
+    #   blocked_imports: []
+    #   require_approval_for_untrusted_run_python: false
+    # A script that searches several drives needs a longer limit than the 60 seconds above, for example timeout_seconds: 300.
     default_backend: "local_subprocess"
     backends:
       - "local_subprocess"
@@ -462,6 +474,9 @@ adapters:
     enabled: true
     root_dir: ".agent_control/skills"
     max_skills_listed: 50
+    # Keep the Python script that settled a task as a reusable helper skill (no model call, nothing to review), so the next
+    # request of that kind starts from a script that ran. At most 30 helpers are kept.
+    helpers_enabled: false
   persona:
     # One global identity/preference document, injected into every Operator
     # prompt - distinct from the per-conversation memory above. Edit the

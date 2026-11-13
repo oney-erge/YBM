@@ -13,7 +13,7 @@ import pytest
 
 from agent_control.config import AppSettings, CapabilityPolicy
 from agent_control.orchestration import StaticToolAdapter, TaskWorker, ToolExecutor
-from agent_control.orchestration.auditor import AuditResult
+from agent_control.orchestration.auditor import RAW_OUTPUT_CHARS, AuditResult
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.orchestration.worker import (
     CHECK_ENTRY_FULFILLMENT,
@@ -27,6 +27,7 @@ from agent_control.orchestration.worker import (
     _filesystem_search_input_with_content_intent,
     _ground_operator_final_answer,
     _clarification_recovery_reason,
+    _apply_manifest_from_plan,
     _next_replay_decision,
     _operator_audit_evidence,
     _ordered_artifact_delivery_call,
@@ -1436,6 +1437,35 @@ def test_multi_tool_audit_evidence_includes_every_observed_outcome() -> None:
     assert "Delivered report.md to Telegram chat 123" in evidence
 
 
+def test_a_long_input_does_not_hide_a_later_step_from_the_auditor() -> None:
+    """Live (11/12): an apply_manifest input of 24 moves with absolute paths filled the auditor's view,
+    so it never saw "Moved 24 file(s)" and sent a finished task back as only planned."""
+    folder = "D:/Users/someone/Downloads/"
+    manifest = [
+        {"operation": "move", "source": f"{folder}file-{n:02d}.pdf", "destination": f"{folder}documents/file-{n:02d}.pdf",
+         "reason": "Group by by_type: documents"}
+        for n in range(24)
+    ]
+    applied = {
+        "tool_name": "filesystem.manage",
+        "status": "succeeded",
+        "input": {"operation": "apply_manifest", "root": folder, "manifest": manifest},
+        "output_summary": "Moved 24 file(s); changed 24 path(s).",
+    }
+    evidence = _operator_audit_evidence(
+        [
+            {"tool_name": "filesystem.manage", "status": "succeeded",
+             "input": {"operation": "organize_plan", "root": "downloads"},
+             "output_summary": "Planned 24 move(s) in " + folder + ": 24 to documents."},
+            applied,
+        ],
+        applied,
+        "Moved 24 file(s); changed 24 path(s).",
+    )
+    assert "Moved 24 file(s)" in evidence[:RAW_OUTPUT_CHARS]
+    assert len(evidence) <= RAW_OUTPUT_CHARS + 200
+
+
 @pytest.mark.asyncio
 async def test_multi_step_task_sends_a_progress_notification_per_step(tmp_path) -> None:
     """Regression guard (docs/archive/HISTORY.md §3.3): the RUNNING dedupe key used to be
@@ -1888,6 +1918,107 @@ def test_honest_report_of_a_failed_write_is_not_treated_as_a_claim() -> None:
         "I was unable to write the README file.",
     ):
         assert _unsupported_write_claim(honest, history, {}) is None, honest
+
+
+def _planned(history: list[dict], manifest: list[dict]) -> TaskRecord:
+    return TaskRecord(
+        objective="Organize my Downloads folder by type",
+        metadata={"operator_history": history, "file_manifest": manifest},
+    )
+
+
+_PLAN = [
+    {"operation": "move", "source": "/home/u/Downloads/q3-report.pdf", "destination": "/home/u/Downloads/documents/q3-report.pdf"},
+    {"operation": "move", "source": "/home/u/Downloads/IMG_2041.jpg", "destination": "/home/u/Downloads/images/IMG_2041.jpg"},
+]
+_PLANNED = {
+    "tool_name": "filesystem.manage",
+    "status": "succeeded",
+    "input": {"operation": "organize_plan", "root": "downloads", "strategy": "by_type"},
+    "output_root": "/home/u/Downloads",
+}
+
+
+def test_apply_without_a_manifest_applies_the_plan_just_made() -> None:
+    """Live (11/12): told to pass a 24-move plan on, the 9B copied 4 moves and planned again."""
+    history = [_PLANNED]
+    task = _planned(history, _PLAN)
+
+    filled = _apply_manifest_from_plan(task, "filesystem.manage", {"operation": "apply_manifest"}, history)
+    assert filled == {"operation": "apply_manifest", "root": "/home/u/Downloads", "manifest": _PLAN}
+
+    named_root = {"operation": "apply_manifest", "root": "downloads", "manifest": []}
+    assert _apply_manifest_from_plan(task, "filesystem.manage", named_root, history)["root"] == "downloads"
+    assert _apply_manifest_from_plan(task, "filesystem.manage", named_root, history)["manifest"] == _PLAN
+
+
+def test_a_manifest_the_model_made_up_is_replaced_by_the_plan() -> None:
+    """Live (11/12): the next run wrote 26 moves itself, most for files that do not exist."""
+    history = [_PLANNED]
+    task = _planned(history, _PLAN)
+    invented = {
+        "operation": "apply_manifest",
+        "root": "downloads",
+        "manifest": [
+            _PLAN[0],
+            {"operation": "move", "source": "/home/u/Downloads/photo.jpg", "destination": "/home/u/Downloads/images/photo.jpg"},
+        ],
+    }
+    assert _apply_manifest_from_plan(task, "filesystem.manage", invented, history)["manifest"] == _PLAN
+    elsewhere = {"operation": "apply_manifest", "root": "downloads",
+                 "manifest": [{**_PLAN[0], "destination": "/home/u/Downloads/misc/q3-report.pdf"}]}
+    assert _apply_manifest_from_plan(task, "filesystem.manage", elsewhere, history)["manifest"] == _PLAN
+
+
+def test_an_exact_part_of_the_plan_or_a_spent_plan_is_left_alone() -> None:
+    history = [_PLANNED]
+    task = _planned(history, _PLAN)
+    one_move = {"operation": "apply_manifest", "root": "downloads", "manifest": _PLAN[:1]}
+    assert _apply_manifest_from_plan(task, "filesystem.manage", one_move, history) == one_move
+
+    applied = [*history, {"tool_name": "filesystem.manage", "status": "succeeded",
+                          "input": {"operation": "apply_manifest", "manifest": _PLAN}}]
+    bare = {"operation": "apply_manifest"}
+    assert _apply_manifest_from_plan(_planned(applied, _PLAN), "filesystem.manage", bare, applied) == bare
+    # No plan in this task: the call goes on as written and the tool says what is missing.
+    assert _apply_manifest_from_plan(_planned([], []), "filesystem.manage", bare, []) == bare
+    failed_plan = [{**_PLANNED, "status": "failed"}]
+    assert _apply_manifest_from_plan(_planned(failed_plan, _PLAN), "filesystem.manage", bare, failed_plan) == bare
+
+
+def test_claim_that_a_folder_was_organized_needs_a_real_move() -> None:
+    """Live (11/12): the operator listed and searched a Downloads folder until its steps ran out, then
+    answered that the folder had been organized by type, and the task completed with nothing moved."""
+    looked = [
+        {"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "inspect_folder"}},
+        {"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "organize_plan"}},
+    ]
+    for claim in (
+        "The Downloads folder has been organized by type: documents, images and installers.",
+        "I organized your Downloads folder into Documents, Images and Archives.",
+        "Moved the PDFs into a Documents folder.",
+    ):
+        assert _unsupported_write_claim(claim, looked, {}) == "expected_file_organization_missing", claim
+
+    moved = [*looked, {"tool_name": "filesystem.manage", "status": "succeeded",
+                       "input": {"operation": "apply_manifest", "manifest": []}}]
+    assert _unsupported_write_claim("The Downloads folder has been organized by type.", moved, {}) is None
+    assert _unsupported_write_claim("I organized the files.", [], {"moved_files": ["a.pdf"]}) is None
+    dry = [{"tool_name": "filesystem.manage", "status": "succeeded",
+            "input": {"operation": "apply_manifest", "dry_run": True}}]
+    assert _unsupported_write_claim("The files have been moved.", dry, {}) is not None
+
+
+def test_a_plan_or_a_state_is_not_a_move_claim() -> None:
+    looked = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "organize_plan"}}]
+    for answer in (
+        "24 files will be moved into folders by type once you approve.",
+        "Your Downloads folder is already organized.",
+        "I could not organize the Downloads folder: the root is not allowed.",
+        "Here is a plan: the files would be grouped into Documents, Images and Archives.",
+        "The folder contains 24 files; the newest is q3-report.pdf.",
+    ):
+        assert _unsupported_write_claim(answer, looked, {}) is None, answer
 
 
 def test_answer_that_claims_no_write_is_ignored() -> None:
@@ -2970,8 +3101,8 @@ async def test_a_model_that_keeps_repeating_a_done_side_effect_is_stopped(tmp_pa
 
     assert len(adapter.requests) == 1
     assert result.status == TaskStatus.BLOCKED
-    assert "had already succeeded" in result.metadata["last_worker_error"]
-    assert "Nothing was done twice" in result.metadata["last_worker_error"]
+    assert "had already worked" in result.metadata["last_worker_error"]
+    assert "nothing was done twice" in result.metadata["last_worker_error"]
 
 
 @pytest.mark.asyncio
@@ -3560,3 +3691,21 @@ def test_the_overwrite_rule_does_not_act_on_words_the_model_added(tmp_path) -> N
     assert enrich(asked, "filesystem.manage", write) == write
     changed = TaskRecord(objective="x", metadata={"original_message_text": "Change greeting.txt to say hi."})
     assert enrich(changed, "filesystem.manage", write)["overwrite"] is True
+
+
+def test_a_finished_replay_shows_what_the_last_step_found() -> None:
+    """"Run steam count" answered "Replayed 1/1 step(s) successfully" and nothing about the count."""
+    history = [{
+        "tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "move", "path": "b"},
+        "output_summary": "13 games are installed through Steam (about 170 GB in all).",
+    }]
+    plan = _replay_plan()[:1]
+    decision, _metadata = _next_replay_decision(plan, history, {}, _tool_defs(_WRITE_TOOL))
+    assert decision.action == OperatorAction.DONE
+    assert decision.final_answer == "Replayed 1/1 step(s) successfully.\n\n13 games are installed through Steam (about 170 GB in all)."
+
+
+def test_a_finished_replay_with_no_output_keeps_the_short_answer() -> None:
+    history = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "move", "path": "a"}}]
+    decision, _metadata = _next_replay_decision(_replay_plan()[:1], history, {}, _tool_defs(_WRITE_TOOL))
+    assert decision.final_answer == "Replayed 1/1 step(s) successfully."

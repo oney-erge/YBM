@@ -222,6 +222,17 @@ class ToolExecutor:
             return False
         return scope_contains(normalize_scope_target(request.scope_target), grant.scope)
 
+    def normalized_request(self, request: ToolCallRequest) -> ToolCallRequest:
+        """The request as `execute` will actually evaluate it: input validated, schema defaults filled in.
+
+        A person's approval is bound to the exact call (`PolicyEngine._approval_binding`), and the call that
+        runs is this one, not the model's raw input. Anything that creates an approval ahead of `execute`
+        (a batch) must bind this form, or the approved call is refused as a mismatch when it is replayed.
+        An invalid request is returned unchanged; `execute` reports why.
+        """
+        normalized, error = self._validated_request(request)
+        return request if error else normalized
+
     def _validated_request(self, request: ToolCallRequest) -> tuple[ToolCallRequest, str | None]:
         definition = self.tool_definitions.get(request.tool_name)
         if definition is None:

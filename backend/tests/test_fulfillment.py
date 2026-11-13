@@ -611,3 +611,34 @@ def test_the_keyword_expectation_replaces_a_declaration_that_was_all_dropped() -
     )
 
     assert PostconditionType.ARTIFACT_DELIVERED in [item.type for item in expected_postconditions(task)]
+
+
+# Live (11/12): "Organize my Downloads folder by type" listed the folder, searched it once per
+# file type until the step budget ran out, and ended "completed" with nothing moved, because a
+# listing's ``entries`` counted as organized files.
+def _organize_task(history: list[dict], last_output: dict) -> TaskRecord:
+    return TaskRecord(
+        objective="Organize my Downloads folder by type",
+        metadata={"operator_history": history, "last_tool_result": {"output": last_output}},
+    )
+
+
+def _step(operation: str, status: str = "succeeded") -> dict:
+    return {"tool_name": "filesystem.manage", "input": {"operation": operation}, "status": status}
+
+
+def test_looking_at_a_folder_does_not_count_as_organizing_it() -> None:
+    listing = {"entries": [{"path": "Downloads/q3-report.pdf"}], "changed_paths": []}
+    task = _organize_task([_step("inspect_folder"), _step("search")], listing)
+    assert not _postcondition_satisfied(task, PostconditionType.FILE_ORGANIZATION)
+    plan_only = _organize_task([_step("organize_plan")], {"manifest": [{"from": "a", "to": "b"}]})
+    assert not _postcondition_satisfied(plan_only, PostconditionType.FILE_ORGANIZATION)
+
+
+def test_applied_moves_count_even_when_a_listing_came_after() -> None:
+    moved = _organize_task([_step("organize_plan"), _step("apply_manifest"), _step("inspect_folder")], {"entries": []})
+    assert _postcondition_satisfied(moved, PostconditionType.FILE_ORGANIZATION)
+    failed = _organize_task([_step("apply_manifest", status="failed")], {"entries": []})
+    assert not _postcondition_satisfied(failed, PostconditionType.FILE_ORGANIZATION)
+    changed = _organize_task([], {"changed_paths": ["Downloads/Documents/q3-report.pdf"]})
+    assert _postcondition_satisfied(changed, PostconditionType.FILE_ORGANIZATION)

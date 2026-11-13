@@ -453,13 +453,24 @@ class BrowserExtractPageStateInput(ToolInputModel):
 
 class BrowserFillFormStepInput(ToolInputModel):
     operation: Literal["fill_form_step"] = "fill_form_step"
-    fields: dict[str, str] = Field(default_factory=dict)
+    # Required, like fill_form's: a step with nothing to fill cannot succeed, and it used to fail inside the adapter
+    # AFTER the person had approved it (a live run spent eleven approvals on empty steps).
+    fields: dict[str, str] = Field(..., min_length=1)
     submit: bool = False
     submit_selector: str | None = None
     tab_id: str | None = None
     url_contains: str | None = None
     title_contains: str | None = None
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _one_field_as_a_pair(cls, data: Any) -> Any:
+        """A model often fills one field per step as `field` and `value`; that is a one-entry `fields`."""
+        if isinstance(data, dict) and not data.get("fields") and data.get("field") is not None:
+            rest = {key: value for key, value in data.items() if key not in {"field", "value"}}
+            return {**rest, "fields": {str(data["field"]): str(data.get("value", ""))}}
+        return data
 
 
 class ComputerObserveInput(ToolInputModel):
@@ -553,6 +564,8 @@ class FilesystemWriteTextFileInput(ToolInputModel):
     path: str = Field(min_length=1)
     content: str = ""
     overwrite: bool = False
+    # Add `content` to the end of a file that exists (on a new line) instead of replacing it or saving a copy.
+    append: bool = False
 
     @model_validator(mode="before")
     @classmethod
@@ -954,6 +967,48 @@ class MemoryManageOutput(ToolOutputModel):
     fact_id: str | None = None
     facts: list[dict[str, Any]] = Field(default_factory=list)
     summary: str | None = None
+
+
+class SystemInventoryInput(ToolInputModel):
+    operation: Literal["steam_games", "installed_apps", "disk_space", "find_files"] = "find_files"
+    query: str | None = None
+    extensions: list[str] = Field(default_factory=list, max_length=12)
+    match: Literal["name", "content"] = "name"
+    limit: int = Field(default=8, ge=1, le=100)
+
+    @model_validator(mode="after")
+    def _require_inputs_per_operation(self) -> "SystemInventoryInput":
+        if self.operation == "find_files" and not (self.query or "").strip():
+            raise ValueError("system.inventory find_files requires 'query'")
+        return self
+
+
+class SystemFindFilesInput(ToolInputModel):
+    operation: Literal["find_files"] = "find_files"
+    query: str = Field(min_length=1, max_length=200)
+    extensions: list[str] = Field(default_factory=list, max_length=12)
+    match: Literal["name", "content"] = "name"
+    limit: int = Field(default=8, ge=1, le=50)
+
+
+class SystemInstalledAppsInput(ToolInputModel):
+    operation: Literal["installed_apps"] = "installed_apps"
+    query: str | None = None
+    limit: int = Field(default=40, ge=1, le=200)
+
+
+class SystemSimpleInput(ToolInputModel):
+    operation: Literal["steam_games", "disk_space"] = "steam_games"
+
+
+class SystemInventoryOutput(ToolOutputModel):
+    operation: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    count: int = 0
+    items: list[dict[str, Any]] = Field(default_factory=list)
+    source: str | None = None
+    #: find_files with nothing found: what the folder walk covered, and whether it finished (see system_inventory.WalkReport).
+    searched: dict[str, Any] | None = None
 
 
 class TaskStatusOutput(ToolOutputModel):

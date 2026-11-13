@@ -7,7 +7,9 @@ from typing import Any
 import httpx
 
 from agent_control.channels.base import (
+    ACKNOWLEDGMENT_TEXT,
     ChannelUpdateResult,
+    answer_status_question,
     approve_latest_pending,
     classify_and_spawn_task,
     resume_clarifying_reply,
@@ -17,6 +19,11 @@ from agent_control.config import AppSettings, TelegramConfig
 from agent_control.config_sync import read_env_value
 from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
+from agent_control.approval_actions import decide_with_children, grant_for_task
+from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
+from agent_control.channels.undo_command import undo_command_reply
+from agent_control.channels.chat_commands import chat_command_reply
+from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.schemas import (
@@ -103,6 +110,19 @@ class TelegramBotApi:
         data = await self._post("sendMessage", payload)
         self._log_sent(chat_id, kind="text", text=text, response=data)
         return data
+
+    async def edit_message_text(self, chat_id: str | int, message_id: int | str, text: str) -> dict[str, Any]:
+        """Change the text of a message this bot sent, so a long job updates one bubble."""
+        data = await self._post("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text})
+        self._log_sent(chat_id, kind="edit", text=text, response=data)
+        return data
+
+    async def delete_message(self, chat_id: str | int, message_id: int | str) -> dict[str, Any]:
+        return await self._post("deleteMessage", {"chat_id": chat_id, "message_id": message_id})
+
+    async def send_chat_action(self, chat_id: str | int, action: str = "typing") -> dict[str, Any]:
+        """Show "typing…" in the chat: the quiet way to say "I am on it" without sending a message."""
+        return await self._post("sendChatAction", {"chat_id": chat_id, "action": action})
 
     async def send_photo_file(self, chat_id: str | int, path: str, caption: str | None = None) -> dict[str, Any]:
         payload = {"chat_id": str(chat_id)}
@@ -500,8 +520,19 @@ class TelegramIntakeService:
                     )
             if not self.repositories.messages.try_create(inbound, conversation_id):
                 return ChannelUpdateResult(authorized=True, inbound_message=inbound)
+            if result.command is None and inbound.text:
+                # First, before the memory update below (a model call that can queue behind the running task for
+                # tens of seconds) and before the clarifying check: "how's it going?" is answered at once from the
+                # task's record, and must not be swallowed as the answer to a question.
+                status_answer = answer_status_question(self.repositories, inbound, conversation_id)
+                if status_answer is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
             if inbound.text:
                 await self._update_conversation_memory(conversation_id, inbound.text)
+            try:
+                learn_sender_name(self.repositories, inbound.raw)
+            except Exception:  # noqa: BLE001 - knowing the name is a convenience, never a reason to drop a message
+                logger.warning("could not remember the sender's name", exc_info=True)
 
             if result.command is None:
                 plain_response = self._plain_text_command_response(inbound)
@@ -511,6 +542,15 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=plain_response,
                     )
+                undo_reply = undo_command_reply(self.repositories, self.audit, inbound, conversation_id)
+                if undo_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=undo_reply)
+                workflow_reply = workflow_command_reply(self.repositories, self.audit, inbound, conversation_id)
+                if workflow_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=workflow_reply)
+                command_reply = chat_command_reply(self.repositories, inbound, conversation_id)
+                if command_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=command_reply)
                 clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
                 if clarify_response is not None:
                     return ChannelUpdateResult(
@@ -602,17 +642,27 @@ class TelegramIntakeService:
         )
         return inbound.model_copy(update={"text": text, "attachments": updated_attachments})
 
-    async def _send_progress(self, chat_id: str, text: str) -> None:
+    async def _send_progress(self, chat_id: str, text: str) -> str | None:
+        """Say "I am on it". The first acknowledgment is the typing indicator, not a message: it
+        disappears by itself. "On it" is a real message and its id is returned, because every later
+        progress update edits that one bubble."""
         if self.bot_api is None:
-            return
+            return None
         try:
-            await self.bot_api.send_message(chat_id, text)
+            if text == ACKNOWLEDGMENT_TEXT:
+                await self.bot_api.send_chat_action(chat_id, "typing")
+                return None
+            sent = await self.bot_api.send_message(chat_id, text)
+            result = sent.get("result") if isinstance(sent, dict) else None
+            message_id = result.get("message_id") if isinstance(result, dict) else None
+            return str(message_id) if message_id is not None else None
         except Exception as exc:
             self.audit.append(
                 AuditEventType.ERROR,
                 actor="telegram_progress",
                 payload={"error": "progress_send_failed", "reason": str(exc), "chat_id": chat_id},
             )
+        return None
 
     def _apply_command(self, command: CommandEnvelope) -> TaskSignal | None:
         payload = command.payload
@@ -692,6 +742,10 @@ class TelegramIntakeService:
         content = detect_remember_request(inbound.text or "")
         if content is None:
             return None
+        pairs = profile_pairs(content)
+        if pairs:
+            store_profile_facts(self.repositories, pairs)
+            return self._out(inbound.chat_id, f"Got it, I'll remember {describe_pairs(pairs)}.")
         self.repositories.memory_facts.create(
             MemoryFact(category="user_note", content=content, source=MemorySource.USER_STATED)
         )
@@ -792,10 +846,13 @@ class TelegramIntakeService:
             approval = self.repositories.approvals.get(approval_id) if approval_id else None
             decision = payload.get("decision")
             decided = False
-            if decision == "approve":
-                decided = self.repositories.approvals.decide_pending(approval_id, ApprovalStatus.APPROVED)
-            elif decision == "reject":
-                decided = self.repositories.approvals.decide_pending(approval_id, ApprovalStatus.REJECTED)
+            if approval is not None and decision in {"approve", "approve_task"}:
+                decided = decide_with_children(self.repositories, approval, ApprovalStatus.APPROVED)
+            elif approval is not None and decision == "reject":
+                decided = decide_with_children(self.repositories, approval, ApprovalStatus.REJECTED)
+            if decided and decision == "approve_task" and approval is not None:
+                ttl = self.settings.limits.task_budget_seconds if self.settings is not None else 3600
+                grant_for_task(self.repositories, self.audit, approval, ttl_seconds=ttl, actor=actor)
             if decided:
                 if approval is not None:
                     requeue_after_approval_decision(self.repositories, approval.task_id)
@@ -805,7 +862,10 @@ class TelegramIntakeService:
                     task_id=approval.task_id if approval is not None else None,
                     payload={"approval_id": approval_id, "decision": decision},
                 )
-                self._callback_ack = "Approved - continuing." if decision == "approve" else "Rejected."
+                self._callback_ack = {
+                    "approve": "Approved - continuing.",
+                    "approve_task": "Allowed for this task - I won't ask again for this kind of step.",
+                }.get(str(decision), "Rejected.")
             else:
                 # Every non-decision used to be silent. decide_pending() returns
                 # False for an approval that is already decided, expired, or

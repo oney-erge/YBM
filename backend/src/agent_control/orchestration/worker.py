@@ -2,21 +2,25 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 import logging
+import time
 import os
 from pathlib import Path
 import re
+import shutil
 from typing import Any, Protocol
 from uuid import uuid4
 
+from agent_control.human_text import progress_phrase
 from agent_control.channels.memory import ConversationMemoryService
 from agent_control.error_text import describe_exception
 from agent_control.llm.call_log import cap_messages, merge_token_usage
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, hosted_allowed, is_yes
 from agent_control.logging_setup import bind_task_context
-from agent_control.orchestration.auditor import AuditorService
+from agent_control.orchestration.auditor import AuditorService, RAW_OUTPUT_CHARS
+from agent_control.orchestration import ladder
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -27,7 +31,8 @@ from agent_control.orchestration.fulfillment import (
 from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
-from agent_control.orchestration.signals import sweep_expired_approvals
+from agent_control.channels.undo_command import merge_undo_moves, undo_moves_from_output
+from agent_control.orchestration.signals import STALE_SWEEP_INTERVAL_SECONDS, sweep_expired_approvals, sweep_stale_blocked
 from agent_control.policy.access_hints import blocked_access_hint
 from agent_control.recovery import RetryPolicy
 from agent_control.recovery.usage_limits import describe_wait, next_attempt_at
@@ -105,8 +110,12 @@ CHECK_ENTRY_CLARIFICATION = "_clarification_check"
 CHECK_ENTRY_STUCK = "_stuck_check"
 # A calculated number in the answer that no tool result produced (orchestration/number_check.py).
 CHECK_ENTRY_NUMBER = "_number_check"
+# What the task's own evidence says to do next (orchestration/ladder.py): a search that is settled, a script to write, a result
+# that is not where the request said.
+CHECK_ENTRY_STRATEGY = "_strategy_check"
 CHECK_ENTRY_NAMES = frozenset(
-    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER}
+    {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER,
+     CHECK_ENTRY_STRATEGY}
 )
 
 def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
@@ -251,6 +260,7 @@ class TaskWorker:
         task_budget_seconds: float | None = None,
         operator: OperatorLoopService | None = None,
         operator_max_steps: int = 12,
+        auto_close_blocked_hours: int = 0,
         auditor: AuditorService | None = None,
         persist_llm_calls: bool = True,
         llm_call_max_chars: int = 8000,
@@ -279,6 +289,8 @@ class TaskWorker:
         # execution path. See orchestration/operator.py.
         self.operator = operator
         self.operator_max_steps = operator_max_steps
+        self.auto_close_blocked_hours = auto_close_blocked_hours
+        self._last_stale_sweep: float | None = None  # the first poll sweeps (monotonic time can be small on a fresh boot)
         # The Auditor (docs/archive/HISTORY.md P3 §2.1) - grounds a `done` decision
         # against raw tool output before letting it complete. Optional: a
         # worker with no auditor configured skips straight to the
@@ -457,8 +469,23 @@ class TaskWorker:
             # only). Every tick, not just when a task was actually claimed,
             # since the tasks it sweeps are never claimable by process_next.
             sweep_expired_approvals(self.repositories)
+            self._close_stale_tasks()
             if processed is None:
                 await asyncio.sleep(poll_interval_seconds)
+
+    def _close_stale_tasks(self) -> list[str]:
+        """Close blocked or unanswered tasks that stopped long ago (signals.sweep_stale_blocked), at most every ten minutes."""
+        if self.auto_close_blocked_hours <= 0:
+            return []
+        now = time.monotonic()
+        if self._last_stale_sweep is not None and now - self._last_stale_sweep < STALE_SWEEP_INTERVAL_SECONDS:
+            return []
+        self._last_stale_sweep = now
+        try:
+            return sweep_stale_blocked(self.repositories, self.audit, max_age=timedelta(hours=self.auto_close_blocked_hours))
+        except Exception:  # noqa: BLE001 - housekeeping must never stop the worker
+            logger.warning("closing stale tasks failed", exc_info=True)
+            return []
 
     async def process_task(self, task_id: str) -> TaskRecord:
         # Rebind (not merge) so every log line for this tick is greppable by
@@ -636,6 +663,8 @@ class TaskWorker:
                 return self.repositories.tasks.update_metadata(
                     latest.id, metadata, TaskStatus.RUNNING
                 )
+            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                return self._offer_claude_code(latest, history)
             return self._transition_operator(
                 latest, {**latest.metadata, "operator_history": history},
                 TaskStatus.BLOCKED, "operator_step_budget_exhausted",
@@ -681,7 +710,15 @@ class TaskWorker:
         # tool_name/tool_input.
         step_id = new_id("step")
         replay_plan = latest.metadata.get("replay_plan")
-        if isinstance(replay_plan, list) and replay_plan:
+        forced_decision: OperatorDecision | None = None
+        if not (isinstance(replay_plan, list) and replay_plan) and self.operator is not None:
+            steered = self._ladder_step(latest, history, step_id)
+            if isinstance(steered, TaskRecord):
+                return steered
+            forced_decision = steered
+        if forced_decision is not None:
+            decision = forced_decision
+        elif isinstance(replay_plan, list) and replay_plan:
             # docs/ROADMAP.md "reusable verified workflows": walk a recorded
             # plan instead of asking an LLM what to do next. Everything past
             # this point - approval, retry, verification, fulfillment - is
@@ -767,8 +804,13 @@ class TaskWorker:
             # operator.audit_min_tool_calls (1 restores auditing everything),
             # because it is a real trade - see that setting's comment. An answer
             # copied line by line from the results has nothing synthesized to audit.
+            real_steps = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
+            request_text = _users_own_words(latest)
+            # Something the request named that the history proves is not there: "it does not exist" is the whole answer, and a
+            # model asked whether that answer is "sufficient" has no content to judge it by.
+            absence = ladder.proven_absent(request_text, real_steps)
             worth_auditing = (
-                _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results
+                _tool_call_count(history) >= self.audit_min_tool_calls and not answer_copied_from_results and absence is None
             )
             unseen_addresses, unseen = self._values_no_tool_produced(latest, history, final_answer, answer_copied_from_results)
             if unseen_addresses or unseen:
@@ -796,6 +838,19 @@ class TaskWorker:
                     {**latest.metadata, "operator_history": history, "operator_number_gap_count": 1},
                     TaskStatus.RUNNING,
                 )
+            receipt_gap = (
+                ladder.write_receipt_gap(request_text, [str(path) for path in latest.metadata.get("changed_paths") or []])
+                or ladder.move_scope_gap(request_text, latest.metadata.get("undo_moves"))
+            )
+            receipt_rounds = sum(
+                1 for e in history if isinstance(e, dict) and str(e.get("hint_id") or "").startswith("receipt")
+            )
+            if receipt_gap and receipt_rounds < 2:
+                history.append({
+                    "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": f"receipt{receipt_rounds + 1}",
+                    "error": f"Declared done, but {receipt_gap}", "step_id": step_id,
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)
             evidence_offset = _post_clarification_history_offset(latest, history)
             content_entry = (
                 _last_content_tool_history_entry(history[evidence_offset:])
@@ -869,6 +924,8 @@ class TaskWorker:
                         "so please double-check it.)"
                     )
                 else:
+                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                        return self._offer_claude_code(latest, history)
                     metadata = {
                         **latest.metadata,
                         "operator_history": history,
@@ -884,6 +941,11 @@ class TaskWorker:
                         "operator_audit_gap_exhausted",
                     )
 
+            if (
+                absence and "looked through" not in final_answer and absence.casefold() not in final_answer.casefold()
+                and not re.search(r"\d[\d,]{3,}", final_answer)  # an answer that already quotes how many folders needs no receipt
+            ):
+                final_answer = f"{final_answer}\n\n{absence}"
             metadata = {
                 **latest.metadata, "operator_history": history, "synthesized_answer": final_answer,
                 **({"operator_audit_unconfirmed": True} if audit_unconfirmed else {}),
@@ -945,6 +1007,16 @@ class TaskWorker:
             return self._transition_operator(latest, metadata, TaskStatus.COMPLETED, "operator_done")
 
         if decision.action == OperatorAction.ASK_USER:
+            intent = latest.metadata.get("orchestration_intent")
+            if isinstance(intent, dict) and ladder.needs_feasibility_check(
+                {str(e.get("hint_id")) for e in history if isinstance(e, dict) and e.get("tool_name") == CHECK_ENTRY_STRATEGY},
+                route=intent.get("route"), questions_asked=int(latest.metadata.get("clarify_count", 0)),
+            ):
+                history.append({
+                    "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "feasibility",
+                    "error": ladder.FEASIBILITY_TEXT, "step_id": step_id,
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)
             candidate = latest.model_copy(
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
@@ -1062,6 +1134,8 @@ class TaskWorker:
             return self._refuse_unrequested_coding_agent(latest, history, tool_input, step_id)
         if _is_simulated_delete(latest, tool_name, tool_input):
             return self._refuse_simulated_delete(latest, history, tool_name, tool_input, step_id)
+        if _is_blind_persona_replace(tool_name, tool_input, history):
+            return self._refuse_blind_persona_replace(latest, history, tool_input, step_id)
         tool_name, tool_input = _ordered_artifact_delivery_call(
             latest,
             tool_name,
@@ -1072,7 +1146,9 @@ class TaskWorker:
         tool_input = _filesystem_search_input_with_content_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_listing_input_with_dates_intent(latest, tool_name, tool_input)
         tool_input = _filesystem_path_relative_to_a_listed_root(tool_name, tool_input, history)
+        tool_input = _filesystem_append_when_asked(latest, tool_name, tool_input)
         tool_input = _filesystem_overwrite_when_asked_to_change(latest, tool_name, tool_input)
+        tool_input = _apply_manifest_from_plan(latest, tool_name, tool_input, history)
         tool_name, tool_input = _document_summary_call(latest, tool_name, tool_input, self.executor.tool_definitions)
         tool_input = _schedule_id_from_this_task(tool_name, tool_input, history)
         tool_input = _schedule_objective_with_request_urls(latest, tool_name, tool_input)
@@ -1104,7 +1180,12 @@ class TaskWorker:
                 "tool_name": tool_name,
                 "input": tool_input,
                 "status": ALREADY_DONE_STATUS,
-                "output_summary": _already_done_summary(*earlier, read=read_again),
+                # A repeated write is also told what is still missing, so a model that has not finished (a form
+                # filled and never submitted) has something else to do.
+                "output_summary": (
+                    _already_done_summary(*earlier, read=True) if read_again
+                    else _with_what_is_missing(latest, history, _already_done_summary(*earlier))
+                ),
                 "step_id": step_id,
                 **normalization,
             })
@@ -1127,10 +1208,7 @@ class TaskWorker:
                 return self._offer_finish_or_block(
                     latest, history,
                     called=f"{tool_name}:{tool_input.get('operation') or ''}".rstrip(":"),
-                    blocked_message=(
-                        f"Stopped: {tool_name}:{tool_input.get('operation') or ''} had already succeeded and the "
-                        "model kept asking to repeat it. Nothing was done twice."
-                    ),
+                    blocked_message=_repeat_stop_message(latest, history, tool_name, tool_input),
                 )
             return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
         tool_def = self.executor.tool_definitions.get(tool_name)
@@ -1225,10 +1303,7 @@ class TaskWorker:
                 recorded.model_copy(update={"metadata": {**recorded.metadata, "operator_history": history}}),
                 history,
                 called=called,
-                blocked_message=(
-                    f"Blocked after repeated {called} calls returned the same result; "
-                    "stopped to avoid a no-progress loop. A different capability or user input is required."
-                ),
+                blocked_message=_repeat_block_message(history, called),
             )
         return self.repositories.tasks.update_metadata(recorded.id, {**recorded.metadata, "operator_history": history})
 
@@ -1275,14 +1350,13 @@ class TaskWorker:
             if tool_def is None:
                 built.append((call, None))
                 continue
-            built.append((
-                call,
-                ToolCallRequest(
-                    task_id=task_id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
-                    risk_level=_effective_operator_risk(tool_def, tool_input, call.risk_level),
-                    input=tool_input, parent_step_id=step_id,
-                ),
-            ))
+            request = ToolCallRequest(
+                task_id=task_id, tool_name=tool_name, capability=tool_def.capability_for(tool_input),
+                risk_level=_effective_operator_risk(tool_def, tool_input, call.risk_level),
+                input=tool_input, parent_step_id=step_id,
+            )
+            # Bind the call as it will run (schema defaults filled in), not the model's raw input.
+            built.append((call, self.executor.normalized_request(request)))
         return built
 
     def _request_batch_approval(
@@ -1468,8 +1542,9 @@ class TaskWorker:
             )
             # On a resumed batch each call carries the approval minted for it,
             # keyed by exactly what was shown to the human.
+            # Keyed by the call as it was bound when the person approved it (see _batch_requests).
             approval_id = (approvals_by_call or {}).get(
-                (tool_name, json.dumps(tool_input, sort_keys=True))
+                (tool_name, json.dumps(self.executor.normalized_request(request).input, sort_keys=True))
             )
             result = await self.executor.execute(request, approval_id=approval_id)
             if result.status == ToolResultStatus.NEEDS_APPROVAL:
@@ -2122,8 +2197,10 @@ class TaskWorker:
         if task.status != TaskStatus.COMPLETED:
             return
         try:
-            from agent_control.skill_learning import propose_from_task
+            from agent_control.skill_learning import propose_from_task, save_helper
 
+            # The script that produced the answer is kept as is: no model call, nothing to review.
+            save_helper(self.skills_config, task)
             await propose_from_task(getattr(self.operator, "provider", None), self.skills_config, task)
         except Exception:  # noqa: BLE001 - never surface as a task failure
             logger.warning("skill learning pass failed", exc_info=True)
@@ -2194,6 +2271,8 @@ class TaskWorker:
         still calls tools and gets the same result, the task stops as before.
         """
         if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history if isinstance(entry, dict)):
+            if task.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                return self._offer_claude_code(task, history)
             return self._transition_operator(
                 task,
                 {**task.metadata, "operator_history": history, "last_worker_error": blocked_message},
@@ -2225,6 +2304,23 @@ class TaskWorker:
                 "Not run: this request is to delete files, YBM has no delete operation, and moving or renaming files to look "
                 "like a deletion changes them without deleting them. Tell the user plainly that you cannot delete files, and "
                 "offer to move them into a folder they name instead (action done, or action ask_user for that folder)."
+            ),
+            "step_id": step_id,
+        })
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
+    def _refuse_blind_persona_replace(
+        self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
+    ) -> TaskRecord:
+        """Not run: persona.manage update replaces the whole document, and this task has not read what is in it."""
+        history.append({
+            "tool_name": "persona.manage", "input": tool_input, "status": ToolResultStatus.DENIED.value,
+            "error": (
+                "Not run: persona.manage update replaces the whole persona document, and you have not read it in this task. "
+                "To note a fact about the user (a name, a pet, a number, something they like), use memory.manage with operation "
+                "remember: that adds to the facts YBM keeps and shows when the user asks what it knows. The persona is only for how "
+                "YBM should talk and behave; to change it, read it first (persona.manage get) and send back the whole text with "
+                "your change."
             ),
             "step_id": step_id,
         })
@@ -2270,6 +2366,82 @@ class TaskWorker:
             return None
         metadata = {**task.metadata, "operator_history": history, "synthesized_answer": answer}
         return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "operator_redundant_read_finished")
+
+    def _claude_code_ready(self) -> bool:
+        """Claude Code can be offered: its tool is on and the command is installed on this computer."""
+        if self.executor is None:
+            return False
+        definition = self.executor.tool_definitions.get("coding.agent")
+        return bool(definition is not None and definition.enabled and shutil.which("claude"))
+
+    def _ladder_step(self, task: TaskRecord, history: list[dict[str, Any]], step_id: str) -> TaskRecord | OperatorDecision | None:
+        """Before each model decision, act on what the task's own history proves (orchestration/ladder.py).
+
+        Appends at most one check entry to `history`, which the caller persists with the decision's own entry. Returns a task
+        when this tick is spent on something else (asking the user, or taking their answer), a decision when the user has said
+        yes to handing the task to Claude Code, and None otherwise.
+        """
+        offer = task.metadata.get("claude_code_offer")
+        if isinstance(offer, dict):
+            if offer.get("state") == "pending" and task.metadata.get("answered_clarifying_question") == offer.get("question"):
+                accepted = is_yes(task.metadata.get("clarification_answer"))
+                task = self.repositories.tasks.update_metadata(
+                    task.id, {**task.metadata, "claude_code_offer": {**offer, "state": "accepted" if accepted else "declined"}}
+                )
+                self.audit.append(
+                    AuditEventType.TASK_STATE_CHANGED, actor="user", task_id=task.id,
+                    payload={"reason": "claude_code_handoff_accepted" if accepted else "claude_code_handoff_declined"},
+                )
+                if not accepted:
+                    history.append({
+                        "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "declined", "step_id": step_id,
+                        "error": (
+                            "The user did not agree to hand this to Claude Code, so do not offer it again. Answer now with what "
+                            "you have (action done): what you found, and plainly what you could not do."
+                        ),
+                    })
+                    return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history}, TaskStatus.RUNNING)
+            offer = task.metadata.get("claude_code_offer")
+            if isinstance(offer, dict) and offer.get("state") == "accepted" and not any(
+                isinstance(e, dict) and e.get("tool_name") == "coding.agent" for e in history
+            ):
+                return _claude_code_decision(task, history)
+            if offer.get("state") != "pending":
+                return None
+        steps = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
+        if offer is None and ladder.exhausted(steps) and self._claude_code_ready():
+            return self._offer_claude_code(task, history)
+        given = {
+            str(e.get("hint_id")) for e in history
+            if isinstance(e, dict) and e.get("tool_name") == CHECK_ENTRY_STRATEGY and e.get("hint_id")
+        }
+        code = self.executor.tool_definitions.get(ladder.CODE_TOOL) if self.executor is not None else None
+        inventory = self.executor.tool_definitions.get(ladder.INVENTORY_TOOL) if self.executor is not None else None
+        hint = ladder.next_hint(
+            _users_own_words(task), steps, given,
+            code_enabled=bool(code is not None and code.enabled), inventory_enabled=bool(inventory is not None and inventory.enabled),
+        )
+        if hint is not None:
+            history.append({
+                "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": hint.id,
+                "error": hint.text, "step_id": step_id,
+            })
+        return None
+
+    def _offer_claude_code(self, task: TaskRecord, history: list[dict[str, Any]]) -> TaskRecord:
+        """The local model has run out of ways: ask the user whether to hand the task to Claude Code. Nothing is sent without a yes."""
+        question = (
+            "I tried several ways to do this on my own and could not finish it. Do you want me to hand it to Claude Code on this "
+            "computer? It would see your request and what I tried, and it uses your Claude account. Reply yes to hand it over, "
+            "or no and I will tell you what I found."
+        )
+        updated = self.repositories.tasks.update_metadata(
+            task.id, {**task.metadata, "operator_history": history, "claude_code_offer": {"question": question, "state": "pending"}}
+        )
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor="worker", task_id=task.id, payload={"reason": "claude_code_handoff_offered"},
+        )
+        return self._operator_ask_user(updated, question)
 
     def _ask_hosted_permission(self, task: TaskRecord, history: list[dict[str, Any]], exc: CloudFallbackNeeded) -> TaskRecord:
         """The local model did not answer and the only fallback is a hosted one: nothing is sent, the user is asked."""
@@ -2568,6 +2740,19 @@ class TaskWorker:
             metadata["preview_url"] = output["preview_url"]
         elif tool_name == "workspace.manage" and output.get("url"):
             metadata["preview_url"] = output["url"]
+        if tool_name == "filesystem.manage" and output.get("operation") == "apply_manifest":
+            # Where every moved file came from, so "undo that" can put them back (channels/undo_command.py).
+            undo = undo_moves_from_output(output)
+            if undo is not None:
+                metadata["undo_moves"] = merge_undo_moves(latest.metadata.get("undo_moves"), undo)
+        if tool_name == "workspace.manage" and output.get("server_pid") and output.get("url"):
+            # So "what apps are running?" and "stop the recipe app" can find it again (channels/app_commands.py).
+            metadata["preview_server"] = {
+                "pid": int(output["server_pid"]), "url": str(output["url"]), "workspace_dir": str(output.get("workspace_dir") or ""),
+            }
+        if tool_name == "workspace.manage" and isinstance(output.get("page_controls"), dict):
+            # What the launched page actually offers, read back from the page (tools/page_check.py); a relaunch replaces it.
+            metadata["page_controls"] = output["page_controls"]
         if tool_name == "artifact.deliver":
             metadata["artifact_delivery"] = output
             if output.get("artifact_id"):
@@ -2764,6 +2949,9 @@ def _coding_agent_requested(task: TaskRecord, tool_input: dict[str, Any]) -> boo
     """Whether the user asked for an outside coding agent: a provider named, or a coding agent asked for."""
     if str(tool_input.get("operation") or "start") not in _CODING_AGENT_STARTING_OPERATIONS:
         return True
+    offer = task.metadata.get("claude_code_offer")
+    if isinstance(offer, dict) and offer.get("state") == "accepted" and tool_input.get("provider") == "claude_code":
+        return True  # the user said yes to handing this task to Claude Code (_offer_claude_code)
     request_text = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
     return bool(_named_coding_providers(task) or _CODING_AGENT_MENTION.search(request_text))
 
@@ -2833,6 +3021,39 @@ _RECENCY_INTENT = re.compile(
 _CHANGE_INTENT = re.compile(r"\b(?:change|update|edit|modify|replace|overwrite|rewrite|revise|correct)\b", re.IGNORECASE)
 
 
+_APPEND_INTENT = re.compile(
+    r"\bappend\b|\b(?:on|in|as|onto)\s+(?:a\s+|the\s+)?(?:new|next|separate|second|another)\s+line\b"
+    r"|\b(?:at|to)\s+the\s+(?:end|bottom|back)\b|\badd\s+(?:one\s+more|another|a\s+new|a)\s+(?:line|entry|item|row)\b|\bunderneath\b",
+    re.IGNORECASE,
+)
+
+
+def _filesystem_append_when_asked(
+    task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]
+) -> dict[str, Any]:
+    """Add to the end of a file that exists when the request says to add to it.
+
+    "Add the word pears on a new line" wrote list_2.txt: write_text_file saves a copy when the path exists, and there was no
+    way to add to a file. Only a request that says to append (or to add on a new line, at the end, underneath) and only a path
+    that exists turns `append` on. A model that sends the whole file again (the old text plus the new line) meant to replace it,
+    so that is written over instead of doubling the old lines."""
+    if tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file":
+        return tool_input
+    if tool_input.get("append") or tool_input.get("overwrite"):
+        return tool_input
+    path = str(tool_input.get("path") or "").strip()
+    if not path or not Path(path).is_file() or not _APPEND_INTENT.search(_users_own_words(task)):
+        return tool_input
+    try:
+        existing = Path(path).read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return tool_input
+    content = str(tool_input.get("content") or "")
+    if existing and content.strip().startswith(existing):
+        return {**tool_input, "overwrite": True}
+    return {**tool_input, "append": True}
+
+
 def _filesystem_overwrite_when_asked_to_change(
     task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]
 ) -> dict[str, Any]:
@@ -2843,7 +3064,10 @@ def _filesystem_overwrite_when_asked_to_change(
     original (still "hello") and repeated the same call until the task was blocked. Only a request that names a change, and only
     a path that exists, turns overwrite on.
     """
-    if tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file" or tool_input.get("overwrite"):
+    if (
+        tool_name != "filesystem.manage" or tool_input.get("operation") != "write_text_file"
+        or tool_input.get("overwrite") or tool_input.get("append")
+    ):
         return tool_input
     path = str(tool_input.get("path") or "").strip()
     if not path or not Path(path).is_file():
@@ -3070,6 +3294,62 @@ def _document_summary_call(
 
 
 _SCHEDULE_ID = re.compile(r"\bschedule_[0-9a-f]{32}\b")
+
+
+_PLAN_OPERATIONS = frozenset({"organize_plan", "rename_plan"})
+
+
+def _apply_manifest_from_plan(
+    latest: TaskRecord,
+    tool_name: str | None,
+    tool_input: dict[str, Any],
+    history: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Apply the plan this task just made, which the model never saw in full.
+
+    The operator sees a plan's one-line summary, not its moves (one per file, each with two
+    absolute paths). Told to pass the manifest on, a 9B model copied 4 of 24 moves and planned
+    again in one live run, and in the next wrote 26 moves of its own, most for files that do not
+    exist. So an apply_manifest that follows an unused organize_plan or rename_plan of this task
+    gets that plan's manifest: when it leaves the manifest out (what the catalog and the plan's
+    summary tell it to do), and when what it wrote is not an exact part of the plan. An exact part
+    (moves the plan has, with the same destinations) is kept: that is a deliberate selection. An
+    apply that ran after the plan spends it (its own output replaces the stored manifest). The
+    folder is the plan's when the call names none. The user approves whatever runs.
+    """
+    if tool_name != "filesystem.manage" or tool_input.get("operation") != "apply_manifest":
+        return tool_input
+    plan_entry = None
+    for entry in reversed(history):
+        if not isinstance(entry, dict) or entry.get("tool_name") != "filesystem.manage":
+            continue
+        entry_input = entry.get("input") if isinstance(entry.get("input"), dict) else {}
+        operation = entry_input.get("operation")
+        if operation == "apply_manifest" and entry.get("status") == ToolResultStatus.SUCCEEDED.value:
+            return tool_input
+        if operation in _PLAN_OPERATIONS and entry.get("status") == ToolResultStatus.SUCCEEDED.value:
+            plan_entry = entry
+            break
+    plan = latest.metadata.get("file_manifest") if isinstance(latest.metadata, dict) else None
+    if plan_entry is None or not isinstance(plan, list) or not plan:
+        return tool_input
+    written = tool_input.get("manifest")
+    if isinstance(written, list) and written and _moves(written) <= _moves(plan):
+        return tool_input
+    plan_input = plan_entry.get("input") if isinstance(plan_entry.get("input"), dict) else {}
+    root = tool_input.get("root") or plan_entry.get("output_root") or plan_input.get("root")
+    return {**tool_input, "root": root, "manifest": plan}
+
+
+def _moves(manifest: list[Any]) -> set[tuple[str, str]]:
+    """A manifest's (source, destination) pairs, compared the way the file system would."""
+    pairs = set()
+    for item in manifest:
+        if isinstance(item, dict):
+            pairs.add(tuple(os.path.normcase(os.path.normpath(str(item.get(key) or ""))) for key in ("source", "destination")))
+        else:
+            pairs.add(("", repr(item)))
+    return pairs
 
 
 def _schedule_id_from_this_task(
@@ -3344,6 +3624,17 @@ _MOVE_INTENT = re.compile(r"\b(?:move|organi[sz]e|rename|sort|tidy|clean ?up|arc
 _FILE_REARRANGING_OPERATIONS = frozenset({"organize_plan", "rename_plan", "apply_manifest"})
 
 
+def _is_blind_persona_replace(tool_name: str | None, tool_input: dict[str, Any], history: list[dict[str, Any]]) -> bool:
+    """A persona update (a replacement of the whole document) in a task that has not read it first."""
+    if tool_name != "persona.manage" or str(tool_input.get("operation") or "") != "update":
+        return False
+    return not any(
+        isinstance(entry, dict) and entry.get("tool_name") == "persona.manage"
+        and isinstance(entry.get("input"), dict) and entry["input"].get("operation") == "get" and entry.get("status") == "succeeded"
+        for entry in history
+    )
+
+
 def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]) -> bool:
     """A move or rename planned for a request that only asks to delete.
 
@@ -3357,11 +3648,7 @@ def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: di
     return bool(_DELETE_INTENT.search(request)) and not _MOVE_INTENT.search(request)
 
 
-_NOT_FOUND_ERROR = re.compile(
-    r"does not exist|doesn't exist|not found|no such file|could not find|couldn't find|cannot find|can't find|unable to find|"
-    r"no deliverable artifact or file path was found",
-    re.IGNORECASE,
-)
+_NOT_FOUND_ERROR = ladder.NOT_FOUND_ERROR
 
 
 def _named_target_not_found(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
@@ -3550,7 +3837,7 @@ def _operator_audit_evidence(
     real_entries = [entry for entry in history if entry.get("tool_name") not in CHECK_ENTRY_NAMES]
     if len(real_entries) <= 1:
         return last_raw_output
-    parts: list[str] = []
+    steps: list[tuple[str, str, str]] = []
     for index, entry in enumerate(real_entries, 1):
         tool_name = str(entry.get("tool_name") or "unknown")
         status = str(entry.get("status") or "unknown")
@@ -3559,13 +3846,24 @@ def _operator_audit_evidence(
         else:
             evidence = str(entry.get("output_summary") or entry.get("error") or "")
         tool_input = entry.get("input")
-        input_text = json.dumps(tool_input, ensure_ascii=False, default=str)[:8000] if tool_input else ""
+        input_text = json.dumps(tool_input, ensure_ascii=False, default=str) if tool_input else ""
+        steps.append((f"{index}. {tool_name} ({status})", evidence, input_text))
+    # The auditor sees the first RAW_OUTPUT_CHARS of this. What each step returned is what grounds an
+    # answer, so outputs come first and inputs share the room left over (they still carry what a write
+    # wrote). Laid out input-first with 8,000 characters per input, an apply_manifest's 24-move input
+    # pushed its own "Moved 24 file(s)" out of view, and the auditor reported that nothing had moved.
+    inputs = sum(1 for _, _, input_text in steps if input_text)
+    used = sum(len(head) + len(evidence) + 20 for head, evidence, _ in steps)
+    room = min(8000, max(400, (RAW_OUTPUT_CHARS - used) // max(1, inputs)))
+    parts: list[str] = []
+    for head, evidence, input_text in steps:
         details = []
-        if input_text:
-            details.append(f"Input: {input_text}")
         if evidence:
             details.append(f"Output: {evidence}")
-        parts.append(f"{index}. {tool_name} ({status})\n" + "\n".join(details))
+        if input_text:
+            shown = input_text if len(input_text) <= room else f"{input_text[:room]}...[{len(input_text) - room} more characters]"
+            details.append(f"Input: {shown}")
+        parts.append(head + "\n" + "\n".join(details))
     return "\n\n".join(parts)
 
 
@@ -3705,13 +4003,13 @@ def _next_replay_decision(
         }
 
     if completed >= len(replay_plan):
-        return (
-            OperatorDecision(
-                action=OperatorAction.DONE,
-                final_answer=f"Replayed {len(replay_plan)}/{len(replay_plan)} step(s) successfully.",
-            ),
-            metadata,
-        )
+        # What the last step found is the point of running it again ("how many Steam games" -> the count); saying only that
+        # the steps ran sent a person who asked for a saved workflow to the dashboard to see the result.
+        found = str((last or {}).get("output_summary") or "").strip()
+        answer = f"Replayed {len(replay_plan)}/{len(replay_plan)} step(s) successfully."
+        if found:
+            answer += f"\n\n{found[:1500]}"
+        return OperatorDecision(action=OperatorAction.DONE, final_answer=answer), metadata
 
     step = replay_plan[completed]
     decision = _replay_call_decision(step, completed + 1, len(replay_plan))
@@ -3760,6 +4058,27 @@ def _replay_call_decision(step: dict[str, Any], step_number: int, total: int) ->
 
 
 _TOOL_RUNNING_ACTIONS = frozenset({OperatorAction.CALL_TOOL, OperatorAction.CALL_TOOLS_PARALLEL, OperatorAction.DELEGATE})
+
+
+def _claude_code_decision(task: TaskRecord, history: list[dict[str, Any]]) -> OperatorDecision:
+    """The call the user said yes to: Claude Code gets the request and a plain account of what was already tried."""
+    tried = []
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("tool_name") in CHECK_ENTRY_NAMES:
+            continue
+        operation = (entry.get("input") or {}).get("operation") if isinstance(entry.get("input"), dict) else None
+        outcome = str(entry.get("error") or entry.get("output_summary") or entry.get("status") or "")[:140].replace("\n", " ")
+        tried.append(f"{entry.get('tool_name')}{':' + str(operation) if operation else ''}: {outcome}")
+    account = "\n".join(f"- {line}" for line in tried[-10:]) or "- nothing yet"
+    objective = (
+        f"{_users_own_words(task)}\n\nA smaller local assistant already tried this on the user's computer and could not finish "
+        f"it. What it tried:\n{account}\nDo the task yourself on this computer and report plainly what you did and found."
+    )
+    return OperatorDecision(
+        action=OperatorAction.CALL_TOOL, tool_name="coding.agent",
+        tool_input={"operation": "run_goal", "provider": "claude_code", "objective": objective},
+        risk_level=RiskLevel.HIGH, reasoning="The user agreed to hand this task to Claude Code.",
+    )
 
 
 def _finish_offer_pending(history: list[dict[str, Any]]) -> bool:
@@ -3811,6 +4130,49 @@ def _succeeded_side_effect(
         ):
             return index, entry
     return None
+
+
+def _what_is_missing(task: TaskRecord, history: list[dict[str, Any]]) -> PostconditionType | None:
+    """What the request still needs, as an instruction for the next step.
+
+    Only for gaps the step history alone can prove (today: a form filled in and never submitted). The other
+    checks read what the tools reported into the task's metadata, which is not yet updated mid-step, so using
+    them here would call a finished task unfinished.
+    """
+    probe = task.model_copy(update={"metadata": {**task.metadata, "operator_history": history}})
+    try:
+        missing = validate_fulfillment(probe).missing
+    except Exception:  # noqa: BLE001 - a hint must never break the loop
+        return None
+    if PostconditionType.FORM_SUBMITTED in missing:
+        return PostconditionType.FORM_SUBMITTED
+    return None
+
+
+def _with_what_is_missing(task: TaskRecord, history: list[dict[str, Any]], summary: str) -> str:
+    """A repeated step the model should not run again, plus what it should do instead.
+
+    Told only "this already succeeded", a model that has not finished (a form filled but never submitted) repeats the
+    step; told what is still missing, it can do that.
+    """
+    missing = _what_is_missing(task, history)
+    if missing is None:
+        return summary
+    return f"{summary} Still missing for the request: {fulfillment_guidance(f'expected_{missing.value}_missing')}"
+
+
+#: What a person is told when the request is not finished (the instruction above is for the model, not for them).
+_UNFINISHED_IN_WORDS = {PostconditionType.FORM_SUBMITTED: "The form was filled in but never submitted, so the sign-up is not done."}
+
+
+def _repeat_stop_message(task: TaskRecord, history: list[dict[str, Any]], tool_name: str, tool_input: dict[str, Any]) -> str:
+    """Why the task stopped, in words: a step that had worked was asked for again and again."""
+    step = progress_phrase(tool_name, str(tool_input.get("operation") or ""), tool_input)
+    missing = _what_is_missing(task, history)
+    return (
+        f"I got stuck repeating a step that had already worked ({step}), so I stopped; nothing was done twice."
+        + (f" {_UNFINISHED_IN_WORDS[missing]}" if missing in _UNFINISHED_IN_WORDS else "")
+    )
 
 
 def _already_done_summary(step_number: int, entry: dict[str, Any], *, read: bool = False) -> str:
@@ -3873,6 +4235,42 @@ def _redundant_read(
     return found
 
 
+#: Refusals that come from a rule, not from a hiccup: the same call can never succeed.
+_POLICY_REFUSALS = ("risk_exceeds_capability_policy", "capability_disabled", "scope_not_allowed", "pattern_denied")
+
+
+def _policy_refusal(history: list[dict[str, Any]]) -> tuple[str, str] | None:
+    """The tool and operation when policy has refused the same tool twice in a row.
+
+    A live run asked to fill in a form was refused for exceeding the browser's risk ceiling, tried
+    the same step six more times and then said "something went wrong on my side". One refusal is
+    information the model can act on (use another way); the second is a wall, so stop and say so.
+    """
+    real = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES][-2:]
+    if len(real) < 2 or real[0].get("tool_name") != real[1].get("tool_name"):
+        return None
+    for entry in real:
+        error = str(entry.get("error") or "")
+        if str(entry.get("status") or "") != ToolResultStatus.DENIED.value or not any(c in error for c in _POLICY_REFUSALS):
+            return None
+    tool_input = real[1].get("input") if isinstance(real[1].get("input"), dict) else {}
+    return str(real[1].get("tool_name") or ""), str(tool_input.get("operation") or "")
+
+
+def _repeat_block_message(history: list[dict[str, Any]], called: str) -> str:
+    refused = _policy_refusal(history)
+    if refused is not None:
+        what = progress_phrase(*refused)
+        return (
+            f"I can't go on with {what}: your safety settings do not allow that action, so I stopped "
+            "instead of trying it again. You can allow it in the YBM settings, or do that one step yourself."
+        )
+    return (
+        f"Blocked after repeated {called} calls returned the same result; "
+        "stopped to avoid a no-progress loop. A different capability or user input is required."
+    )
+
+
 def _repeated_no_progress_call(
     history: list[dict[str, Any]],
     *,
@@ -3887,6 +4285,9 @@ def _repeated_no_progress_call(
     also catches a model retrying the same missing path despite receiving the
     same explicit error; writes with changing output do not match this guard.
     """
+    refused = _policy_refusal(history)
+    if refused is not None:
+        return refused
     real_entries = [
         entry
         for entry in history
@@ -3957,6 +4358,59 @@ _NEGATED_CLAIM = re.compile(
 )
 
 
+# "The Downloads folder has been organized by type", "moved the PDFs into a Documents folder". A
+# claim that files were rearranged, which the write claim above does not cover: a live run spent
+# its steps listing and searching a folder, then answered that it had organized it, and completed.
+_MOVE_CLAIM = re.compile(
+    r"(?i)\b(?:folders?|files|downloads|desktop|documents)\b[^.!?\n]{0,60}?"
+    r"\b(?:has been|have been|was|were|is now|are now)\s+(?:organi[sz]ed|rearranged|sorted|moved|grouped|tidied)\b"
+    r"|\b(?:organi[sz]ed|rearranged|tidied up)\b[^.!?\n]{0,60}?\b(?:folders?|files|downloads|desktop|documents)\b"
+    r"|\b(?:moved|sorted|grouped|relocated)\b[^.!?\n]{0,90}?\binto\b[^.!?\n]{0,60}?"
+    r"\b(?:folders?|subfolders?|director(?:y|ies))\b"
+)
+
+# Words that make a move a plan, an offer or a state rather than something done: "24 files will be
+# moved into folders once you approve", "the folder is already organized".
+_UNDONE_MOVE = re.compile(
+    r"(?i)\b(?:will|would|can|could|should|may|might|shall|already|plan(?:ned)?|propos(?:e|ed|al)|"
+    r"approve|approval|once|if|ready to|to be)\b"
+)
+
+# Where a real move shows up: the tool layer's changed-path keys, or a succeeded apply_manifest that
+# was not a dry run.
+_MOVE_EVIDENCE_KEYS = ("organized_paths", "moved_files", "changed_paths", "changed_files")
+
+
+def _unsupported_move_claim(answer: str, history: list[dict[str, Any]], metadata: dict[str, Any] | None) -> bool:
+    """Whether the answer says files were moved or organized and nothing moved any."""
+    claims = [
+        match
+        for match in _MOVE_CLAIM.finditer(answer)
+        if not _claim_is_negated(answer, match.start()) and not _UNDONE_MOVE.search(_clause_before(answer, match.end()))
+    ]
+    if not claims:
+        return False
+    if isinstance(metadata, dict) and any(metadata.get(key) for key in _MOVE_EVIDENCE_KEYS):
+        return False
+    for entry in history:
+        if not isinstance(entry, dict) or entry.get("status") != ToolResultStatus.SUCCEEDED.value:
+            continue
+        tool_input = entry.get("input")
+        if (
+            isinstance(tool_input, dict)
+            and tool_input.get("operation") == "apply_manifest"
+            and not tool_input.get("dry_run")
+        ):
+            return False
+    return True
+
+
+def _clause_before(answer: str, end: int) -> str:
+    """The clause a claim ends in, up to the claim's end."""
+    clause_start = max(answer.rfind(".", 0, end), answer.rfind("\n", 0, end), answer.rfind(";", 0, end))
+    return answer[clause_start + 1:end]
+
+
 def _claim_is_negated(answer: str, start: int) -> bool:
     """Whether a write claim sits inside a denial of that same write.
 
@@ -3998,6 +4452,9 @@ def _unsupported_write_claim(
     """
     if not answer:
         return None
+    if _unsupported_move_claim(answer, history, metadata):
+        # Its own code, so the replan names the operations that actually move files.
+        return "expected_file_organization_missing"
     claims = [match for match in _WRITE_CLAIM.finditer(answer) if not _claim_is_negated(answer, match.start())]
     if not claims:
         return None

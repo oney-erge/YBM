@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timedelta
 
 from agent_control.config import AppSettings
-from agent_control.schemas import ApprovalStatus, AuditEventType, TaskSignal, TaskStatus
+from agent_control.schemas import ApprovalStatus, AuditEventType, TaskSignal, TaskStatus, utc_now
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
 
@@ -210,3 +211,45 @@ def _resume_target(current_status: TaskStatus, paused_from_status: str | None) -
         if target not in TERMINAL_STATUSES and target != TaskStatus.PAUSED:
             return target
     return TaskStatus.RECEIVED
+
+
+#: How often the worker looks for stale tasks (it polls every second; this does not need to).
+STALE_SWEEP_INTERVAL_SECONDS = 600
+_STALE_STATUSES = (TaskStatus.BLOCKED, TaskStatus.CLARIFYING)
+
+
+def sweep_stale_blocked(
+    repositories: Repositories, audit: AuditLogger, *, max_age: timedelta, now: datetime | None = None, limit: int = 500
+) -> list[str]:
+    """Quietly close tasks that stopped on something and were never answered.
+
+    A blocked task is an honest "I could not do that", already reported. Left open it clutters the dashboard, and a later
+    "any update?" used to dig one up and quote it back (a live run answered with an old form sign-up). A question the person
+    never answered stays a live question forever too, and a reply days later would be taken as the answer to it.
+
+    After `max_age` with no change they are closed with the ordinary cancel (so everything a cancelled task leaves behind is
+    cleaned up the usual way), and marked `auto_closed` with the reason so the dashboard can say "closed automatically". Nothing is
+    sent to the person: they were told when it stopped, and a message about housekeeping is noise. Asking again starts fresh.
+    """
+    cutoff = (now or utc_now()) - max_age
+    closed: list[str] = []
+    for task in repositories.tasks.list_by_statuses(list(_STALE_STATUSES), limit=limit):
+        if task.updated_at > cutoff:
+            continue
+        hours = int(max_age.total_seconds() // 3600)
+        # The marker goes in first: once a task is cancelled the repository refuses further writes to it (cancellation
+        # stays authoritative), and the cancel below carries this metadata forward.
+        repositories.tasks.update_metadata(task.id, {
+            **task.metadata,
+            "auto_closed": True,
+            "auto_closed_reason": f"Closed automatically: it stayed {task.status.value} for {hours} hours with no reply.",
+        })
+        try:
+            apply_task_signal(
+                repositories, audit, task.id, "cancel", "system:auto-close",
+                {"reason": "no change for " + str(max_age), "was": task.status.value},
+            )
+        except (KeyError, ValueError):
+            continue
+        closed.append(task.id)
+    return closed

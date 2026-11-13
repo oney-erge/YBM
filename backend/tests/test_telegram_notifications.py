@@ -113,9 +113,9 @@ def test_task_message_reports_gap_and_retry_on_blocked_task() -> None:
     message = format_task_message(task)
 
     assert "I could not complete this request." in message
-    assert "Gap: expected_preview_url_missing" in message
-    assert "Retries: 2" in message
-    assert "Error: assistant output did not include materializable static app files" in message
+    assert "What was missing: expected preview url missing." in message
+    assert "Retries" not in message and "Gap:" not in message and "Error:" not in message
+    assert "assistant output did not include materializable static app files" in message
 
 
 def test_task_message_keeps_photo_path_out_of_text(tmp_path) -> None:
@@ -225,7 +225,8 @@ async def test_notifier_sends_approve_reject_keyboard_when_approval_pending() ->
             [
                 {"text": "Approve", "callback_data": f"approval:{approval.id}:approve"},
                 {"text": "Reject", "callback_data": f"approval:{approval.id}:reject"},
-            ]
+            ],
+            [{"text": "Allow for this task", "callback_data": f"approval:{approval.id}:approve_task"}],
         ]
     }
 
@@ -354,7 +355,7 @@ def test_user_facing_message_retrying_status_explains_retry() -> None:
     task = TaskRecord(objective="Do something", status=TaskStatus.RETRYING)
     message = format_task_message(task)
     lower = message.lower()
-    assert "different" in lower or "trying" in lower or "approach" in lower or "retry" in lower
+    assert "did not work" in lower and "another way" in lower
 
 
 def test_user_facing_message_awaiting_approval_shows_preview_and_real_resume_path() -> None:
@@ -405,8 +406,9 @@ def test_running_progress_message_names_the_last_real_step() -> None:
 
     message = format_task_message(task)
 
-    assert "document.manage" in message
-    assert "PDF is password protected" in message
+    # A person reads what the step was, in words; the tool name stays in the trace.
+    assert message.startswith("Working on it: that last step did not work")
+    assert "document.manage" not in message
 
 
 def test_progress_message_skips_check_pseudo_entries() -> None:
@@ -426,7 +428,8 @@ def test_progress_message_skips_check_pseudo_entries() -> None:
 
     message = format_task_message(task)
 
-    assert "code.interpreter" in message
+    assert "that last step did not work" in message
+    assert "code.interpreter" not in message
     assert "_fulfillment_check" not in message
 
 
@@ -443,5 +446,5 @@ def test_failed_task_message_includes_the_last_real_step() -> None:
 
     message = format_task_message(task)
 
-    assert "document.manage" in message
-    assert "PDF is password protected" in message
+    assert "The last thing I tried was reading a document, and it did not work: PDF is password protected." in message
+    assert "document.manage" not in message

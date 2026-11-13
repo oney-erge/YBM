@@ -46,6 +46,7 @@ from agent_control.llm.decision import (
     decides_alone,
     route_of_classification,
     summarize_decisions,
+    summarize_kinds,
 )
 from agent_control.tools.stt import build_stt_adapter
 from agent_control.channels import catalog as channel_catalog
@@ -2522,6 +2523,8 @@ def create_admin_router(
             "routes": {route.value: description for route, description in ROUTE_DESCRIPTIONS.items()},
             "concierge_only_routes": sorted(route.value for route in CONCIERGE_ONLY_ROUTES),
             "stats": summarize_decisions([event.payload for event in events]),
+            # The mid-task kind question, asked in shadow while a task runs: has it earned the right to take over?
+            "kind_stats": summarize_kinds([event.payload for event in events]),
         }
 
     @router.post("/api/config/decision")

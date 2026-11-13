@@ -1241,3 +1241,31 @@ async def test_telegram_bot_api_error_does_not_expose_token_url(monkeypatch) -> 
     message = str(error.value)
     assert message == "Telegram Bot API request failed: sendMessage (HTTP 400)"
     assert "super-secret" not in message
+
+
+
+def _say(tmp_path, text):
+    service, repos = _service(tmp_path, TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100]))
+    result = service.handle_update({"message": {"message_id": 31, "from": {"id": 42}, "chat": {"id": 100}, "text": text}})
+    return result, repos
+
+
+def test_remember_these_about_me_is_taken_by_the_remember_command_not_left_to_the_model(tmp_path) -> None:
+    """"Remember these about me: ..." did not match "remember that ...", so a small model got it and filed the facts in the persona."""
+    result, repos = _say(
+        tmp_path, "Remember these about me: my favorite fruit is lychee, my parrot is called Kiwi, and my gym locker number is 8841.",
+    )
+    stored = " | ".join(fact.content for fact in repos.memory_facts.list_all())
+    assert "lychee" in stored and "8841" in stored and "Kiwi" in stored
+    assert result.outbound_message.text.startswith("Got it, I'll remember")
+    assert "lychee" in result.outbound_message.text and "8841" in result.outbound_message.text
+
+
+def test_a_remember_message_the_profile_parser_does_not_know_stays_one_note(tmp_path) -> None:
+    result, repos = _say(tmp_path, "Remember the following things: the wifi password is on the fridge, and Dana is my accountant.")
+    assert [fact.content for fact in repos.memory_facts.list_all()] == ["the wifi password is on the fridge, and Dana is my accountant."]
+
+
+def test_remember_to_do_something_is_still_not_a_memory(tmp_path) -> None:
+    result, repos = _say(tmp_path, "Remember to call the plumber")
+    assert repos.memory_facts.list_all() == []
