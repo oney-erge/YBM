@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import html.parser
 import ipaddress
 import json
 import socket
@@ -104,6 +105,14 @@ class HttpRequestAdapter:
                 parsed_json = response.json()
             except ValueError:
                 parsed_json = None
+        page_title, readable = (None, "")
+        if parsed_json is None and _looks_like_html(response.headers.get("content-type", ""), text):
+            page_title, readable = html_digest(text)
+        summary = f"HTTP {method} {url} returned {response.status_code}."
+        if page_title:
+            summary += f' The page title is exactly: "{page_title}".'
+        if readable:
+            summary += f" The page text starts: {readable}"
         output = {
             "url": url,
             "method": method,
@@ -114,7 +123,8 @@ class HttpRequestAdapter:
             "text": text,
             "truncated": truncated,
             "elapsed_ms": elapsed_ms,
-            "summary": f"HTTP {method} {url} returned {response.status_code}.",
+            "page_title": page_title,
+            "summary": summary,
         }
         return redact_payload(output, _SENSITIVE_PATTERNS, injected_values)
 
@@ -149,6 +159,56 @@ class HttpRequestAdapter:
         secret = self.secrets.get_ref(ref)
         template = str(spec.get("template") or "{secret}")
         return secret, template.replace("{secret}", secret)
+
+
+_READABLE_EXCERPT_CHARS = 1500
+_SKIPPED_TAGS = frozenset({"script", "style", "noscript", "template", "svg", "head"})
+
+
+class _Digest(html.parser.HTMLParser):
+    """The <title> and the visible text of a page, without scripts, styles and markup."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.title_parts: list[str] = []
+        self.text_parts: list[str] = []
+        self._in_title = False
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag == "title":
+            self._in_title = True
+        elif tag in _SKIPPED_TAGS and tag != "head":
+            self._skip_depth += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "title":
+            self._in_title = False
+        elif tag in _SKIPPED_TAGS and tag != "head" and self._skip_depth:
+            self._skip_depth -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._in_title:
+            self.title_parts.append(data)
+        elif not self._skip_depth and data.strip():
+            self.text_parts.append(data)
+
+
+def html_digest(markup: str) -> tuple[str | None, str]:
+    """The exact <title> of a page and the start of its visible text. Both empty when the markup cannot be read."""
+    digest = _Digest()
+    try:
+        digest.feed(markup)
+        digest.close()
+    except Exception:  # noqa: BLE001 - a page that will not parse is still returned whole in `text`
+        return None, ""
+    title = " ".join("".join(digest.title_parts).split()) or None
+    excerpt = " ".join(" ".join(digest.text_parts).split())[:_READABLE_EXCERPT_CHARS]
+    return title, excerpt
+
+
+def _looks_like_html(content_type: str, text: str) -> bool:
+    return "html" in content_type.lower() or text.lstrip()[:15].lower().startswith(("<!doctype html", "<html"))
 
 
 def _is_public_address(address: str) -> bool:

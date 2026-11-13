@@ -99,6 +99,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `http.request` can read any public web page with `adapters.http_request.allow_public_reads: true` (off by default): GET and HEAD only, a
   name that resolves to this computer or its network (loopback, private, link-local, reserved) is refused, redirects are not followed,
   and every other method still needs the allowlist. This is what a request like "get the headline from each of these five sites" needs.
+- `http.request` reads an HTML page's exact `<title>` and the start of its visible text with code, and puts both in the result (`page_title`,
+  and the summary the model sees). Asked for "the title of each of these five sites", the local model had returned a shortened title
+  ("Python.org" for "Welcome to Python.org") for two of them, because it was reading the title out of raw markup.
 - When a message arrives, a one-token request wakes a local model that was unloaded while idle (`llm.warm_on_message`, `llm/warmup.py`), so
   the model loads while the message is routed instead of on the first real call. At most one every four minutes, and never to a hosted
   model.

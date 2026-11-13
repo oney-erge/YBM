@@ -248,3 +248,45 @@ def test_the_tool_is_on_with_public_reads_even_with_no_allowlist_and_says_so():
         adapters={"http_request": {"enabled": True}},
     )
     assert build_tool_registry(off, "http://127.0.0.1:8765").definition_index["http.request"].enabled is False
+
+
+# --- the exact title of a page, read by code ---------------------------------------------------------------------------------------
+
+
+def test_the_title_and_visible_text_of_a_page_are_read_without_scripts_and_markup():
+    page = (
+        "<!doctype html><html><head><title>\n  Welcome to  Python.org </title><style>p{color:red}</style></head>"
+        "<body><script>var x = 'not text';</script><h1>Hello</h1><p>First <b>bold</b> paragraph.</p><noscript>no js</noscript></body></html>"
+    )
+    title, text = http_module.html_digest(page)
+    assert title == "Welcome to Python.org"
+    assert text == "Hello First bold paragraph."
+
+
+def test_a_page_with_no_title_gives_none_and_text_is_capped():
+    title, text = http_module.html_digest("<html><body>" + "word " * 1000 + "</body></html>")
+    assert title is None and len(text) == 1500
+
+
+@pytest.mark.asyncio
+async def test_an_html_response_carries_its_exact_title_in_the_summary_and_a_json_one_does_not():
+    html = "<html><head><title>Mozilla - Internet for people</title></head><body>Hello world</body></html>"
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api":
+            return httpx.Response(200, json={"a": 1})
+        return httpx.Response(200, text=html, headers={"content-type": "text/html; charset=utf-8"})
+
+    adapter = HttpRequestAdapter(
+        HttpRequestAdapterConfig(allowed_hosts=["site.example"]), SecretVaultConfig(), transport=httpx.MockTransport(handler),
+    )
+    page = await adapter.execute(ToolCallRequest(
+        task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": "https://site.example/", "method": "GET"},
+    ))
+    assert page.output["page_title"] == "Mozilla - Internet for people"
+    assert 'The page title is exactly: "Mozilla - Internet for people".' in page.output["summary"]
+    assert "The page text starts: Hello world" in page.output["summary"]
+    data = await adapter.execute(ToolCallRequest(
+        task_id="t", tool_name="http.request", capability=Capability.NETWORK_HTTP, input={"url": "https://site.example/api", "method": "GET"},
+    ))
+    assert data.output["page_title"] is None and "page title" not in data.output["summary"]

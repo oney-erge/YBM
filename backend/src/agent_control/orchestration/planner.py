@@ -101,7 +101,7 @@ def plan_summary(parts: list[dict[str, Any]]) -> str:
 
 
 PARTS_DONE_TEXT = (
-    "Every part has run. Write the final answer for the user from what the parts returned: one short section or line per part, "
-    "then the comparison or conclusion the request asked for (action done). Use only what the parts returned, and say plainly "
-    "which part failed and why."
+    "Every part has run. Work out the comparison or conclusion the request asked for first (count and compare carefully), then "
+    "write the final answer once (action done): one short line per part, then the conclusion. Use only what the parts returned, "
+    "and say plainly which part failed and why. The answer must not contain second thoughts or corrections."
 )
