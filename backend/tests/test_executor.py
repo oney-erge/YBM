@@ -251,6 +251,69 @@ async def test_executor_approval_is_exact_and_one_shot(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("approved_value", "different_value"),
+    [(True, 1), (False, 0), (1, 1.0), (-0.0, 0.0), ([True], [1]), ({"nested": True}, {"nested": 1})],
+)
+async def test_approval_does_not_conflate_distinct_json_value_types(
+    tmp_path, approved_value, different_value
+) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("synthetic approval")
+    settings = _settings_with(Capability.LLM_GENERATE, requires_approval=True)
+    adapter = StaticToolAdapter()
+    executor = ToolExecutor(PolicyEngine(settings, audit), repos, audit, adapters={"llm": adapter})
+    original = _request(task.id).model_copy(update={"input": {"value": approved_value}})
+    pending = await executor.execute(original)
+    approval_id = pending.output["approval_id"]
+    assert repos.approvals.decide_pending(approval_id, ApprovalStatus.APPROVED)
+
+    changed = _request(task.id).model_copy(update={"input": {"value": different_value}})
+    denied = await executor.execute(changed, approval_id=approval_id)
+    assert denied.status == ToolResultStatus.DENIED
+    assert denied.error_message == "approval_invalid_or_mismatched"
+    assert adapter.requests == []
+
+    reconstructed = _request(task.id).model_copy(update={"input": {"value": approved_value}})
+    allowed = await executor.execute(reconstructed, approval_id=approval_id)
+    assert allowed.status == ToolResultStatus.SUCCEEDED
+    assert len(adapter.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_approval_matches_reordered_objects_and_shared_values(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("synthetic approval")
+    settings = _settings_with(Capability.LLM_GENERATE, requires_approval=True)
+    adapter = StaticToolAdapter()
+    executor = ToolExecutor(PolicyEngine(settings, audit), repos, audit, adapters={"llm": adapter})
+    shared = {"list": [True, 2, "value"]}
+    original = _request(task.id).model_copy(update={"input": {"first": shared, "second": shared}})
+    pending = await executor.execute(original)
+    approval_id = pending.output["approval_id"]
+    assert repos.approvals.decide_pending(approval_id, ApprovalStatus.APPROVED)
+    reordered = _request(task.id).model_copy(update={
+        "input": {"second": {"list": [True, 2, "value"]}, "first": {"list": [True, 2, "value"]}}
+    })
+    result = await executor.execute(reordered, approval_id=approval_id)
+    assert result.status == ToolResultStatus.SUCCEEDED
+    assert len(adapter.requests) == 1
+
+
+@pytest.mark.parametrize("invalid", [float("nan"), float("inf"), {1: "non-string key"}, (1, 2)])
+def test_approval_binding_rejects_non_json_values(invalid) -> None:
+    request = _request("synthetic-task").model_copy(update={"input": {"value": invalid}})
+    assert PolicyEngine._canonical_approval_binding(request) is None
+
+
+def test_approval_binding_rejects_cycles_without_hanging() -> None:
+    value: dict[str, Any] = {}
+    value["self"] = value
+    request = _request("synthetic-task").model_copy(update={"input": {"value": value}})
+    assert PolicyEngine._canonical_approval_binding(request) is None
+
+
+@pytest.mark.asyncio
 async def test_executor_rejects_model_risk_understatement(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     task = repos.tasks.create("t")
