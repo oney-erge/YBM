@@ -148,6 +148,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- "Undo that" takes away the folders the move made, once the files are back and the folders are empty: moving the .png files
+  into `pictures` and then undoing it no longer leaves an empty `pictures` behind. `apply_manifest` reports the folders it created
+  (`created_folders`), the task's undo record keeps them, and the undo removes only those, only inside the folder the move was made
+  in, and only if empty (a folder that holds anything now stays). The answer says which folder was removed.
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 - A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
   single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a

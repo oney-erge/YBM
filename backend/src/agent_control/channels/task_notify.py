@@ -119,6 +119,10 @@ def _with_result_links(task: TaskRecord, message: str) -> str:
         text = str(value or "").strip()
         if text and text not in message:
             extras.append(f"{label}: {text}")
+    removed = task.metadata.get("removed_empty_folders")
+    if isinstance(removed, list) and removed:
+        names = ", ".join(Path(str(folder)).name for folder in removed[:5])
+        extras.append(f"I also removed the empty folder{'s' if len(removed) > 1 else ''} the move had made: {names}")
     if not extras:
         return _trim(message, 3900)
     return _trim(message + "\n" + "\n".join(extras), 3900)

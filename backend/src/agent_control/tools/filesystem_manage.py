@@ -492,6 +492,7 @@ class FilesystemManageAdapter:
         dry_run = bool(request.input.get("dry_run", False))
         overwrite = bool(request.input.get("overwrite", False))
         changed_paths = []
+        created_folders: list[str] = []
         normalized_manifest = []
         for item in manifest:
             # A manifest is scoped by `root`, so its relative paths must be
@@ -517,7 +518,13 @@ class FilesystemManageAdapter:
                 destination = destination / source.name
             if destination.resolve() == source.resolve():
                 raise ValueError(f"source and destination are the same file, nothing to move: {source}")
+            missing = []
+            folder = destination.parent
+            while not folder.exists() and folder != folder.parent:
+                missing.append(str(folder))
+                folder = folder.parent
             destination.parent.mkdir(parents=True, exist_ok=True)
+            created_folders.extend(path for path in reversed(missing) if path not in created_folders)
             if destination.exists() and not overwrite:
                 destination = _dedupe_destination(destination)
             if operation == "copy":
@@ -547,6 +554,8 @@ class FilesystemManageAdapter:
                 for item in rename_items
             ],
             "changed_paths": changed_paths,
+            # Folders this call made (shallowest first), so that undoing the moves can take them away again.
+            "created_folders": created_folders,
             "dry_run": dry_run,
             "summary": (
                 f"Would change {len(normalized_manifest)} file organization action(s)."
