@@ -170,3 +170,81 @@ def test_require_allowed_url_rejects_prefix_lookalikes(url: str) -> None:
 def test_require_allowed_url_accepts_genuine_prefix_match() -> None:
     config = HttpRequestAdapterConfig(allowed_url_prefixes=["https://api.example.com"])
     _require_allowed_url("https://api.example.com/v1/users", config)  # must not raise
+
+
+# --- reading any public web page, read only ------------------------------------------------------------------------------------------
+
+
+from agent_control.tools import http_request as http_module  # noqa: E402
+
+
+@pytest.mark.parametrize("address, public", [
+    ("93.184.216.34", True), ("8.8.8.8", True), ("2606:4700:4700::1111", True),
+    ("127.0.0.1", False), ("10.1.2.3", False), ("192.168.0.5", False), ("172.16.0.1", False), ("169.254.169.254", False),
+    ("0.0.0.0", False), ("::1", False), ("fe80::1", False), ("fd00::1", False), ("224.0.0.1", False), ("not-an-address", False),
+])
+def test_only_public_addresses_count_as_public(address, public):
+    assert http_module._is_public_address(address) is public
+
+
+def _resolver(*addresses):
+    return lambda host, port: [(2, 1, 6, "", (address, 0)) for address in addresses]
+
+
+def test_a_name_that_resolves_to_a_private_address_is_not_a_public_site_even_if_another_answer_is_public():
+    assert http_module._resolves_only_to_public_addresses("x.example", resolver=_resolver("93.184.216.34")) is True
+    assert http_module._resolves_only_to_public_addresses("x.example", resolver=_resolver("93.184.216.34", "10.0.0.7")) is False
+
+    def broken(host, port):
+        raise OSError("no such host")
+
+    assert http_module._resolves_only_to_public_addresses("nope.invalid", resolver=broken) is False
+
+
+def test_public_reads_are_off_by_default_and_a_get_to_a_public_host_is_then_refused():
+    config = HttpRequestAdapterConfig(allowed_hosts=["api.example.com"])
+    with pytest.raises(ValueError, match="not allowlisted"):
+        _require_allowed_url("https://news.example.org/", config, method="GET")
+
+
+def test_with_public_reads_on_a_get_or_head_to_a_public_host_is_allowed_and_anything_else_is_not(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", _resolver("93.184.216.34"))
+    config = HttpRequestAdapterConfig(allow_public_reads=True)
+    _require_allowed_url("https://news.example.org/front", config, method="GET")
+    _require_allowed_url("https://news.example.org/front", config, method="head")
+    for method in ("POST", "PUT", "DELETE"):
+        with pytest.raises(ValueError, match="not allowlisted"):
+            _require_allowed_url("https://news.example.org/front", config, method=method)
+
+
+@pytest.mark.parametrize("url", [
+    "http://127.0.0.1:8765/admin", "http://localhost:8000/", "http://192.168.1.1/", "http://169.254.169.254/latest/meta-data/",
+])
+def test_public_reads_never_reach_this_computer_or_its_network(url):
+    with pytest.raises(ValueError, match="not a public website"):
+        _require_allowed_url(url, HttpRequestAdapterConfig(allow_public_reads=True), method="GET")
+
+
+def test_public_reads_still_honour_the_block_list_and_the_userinfo_rule(monkeypatch):
+    monkeypatch.setattr(http_module.socket, "getaddrinfo", _resolver("93.184.216.34"))
+    config = HttpRequestAdapterConfig(allow_public_reads=True, blocked_hosts=["bad.example.org"])
+    with pytest.raises(ValueError, match="blocked"):
+        _require_allowed_url("https://bad.example.org/", config, method="GET")
+    with pytest.raises(ValueError, match="userinfo"):
+        _require_allowed_url("https://user:pw@news.example.org/", config, method="GET")
+
+
+def test_the_tool_is_on_with_public_reads_even_with_no_allowlist_and_says_so():
+    settings = AppSettings(
+        _env_file=None,
+        capabilities={Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+        adapters={"http_request": {"enabled": True, "allow_public_reads": True}},
+    )
+    definition = build_tool_registry(settings, "http://127.0.0.1:8765").definition_index["http.request"]
+    assert definition.enabled is True and "any public website" in definition.description
+    off = AppSettings(
+        _env_file=None,
+        capabilities={Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+        adapters={"http_request": {"enabled": True}},
+    )
+    assert build_tool_registry(off, "http://127.0.0.1:8765").definition_index["http.request"].enabled is False

@@ -85,6 +85,26 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   remember command like "remember that ...", before any model sees it, instead of reaching a small model that filed the facts in the persona.
 - A script that only printed its answer is answered with what it printed. The reply used to end with "Workspace: task_task_...", the folder the
   script ran in; the workspace is named when the script created files.
+- A big request is split into parts (`operator.plan_parts`, on by default). A request that is long, names two or more places, or runs over
+  several lines is first put to the model once (`orchestration/planner.py`): "does this have separate pieces of work?" The answer is
+  JSON, never a word list, and a short single-line request is never sent. With two or more parts, each part runs through the existing
+  delegate path (its own sub-loop, history and step budget), one after another, and the Operator then writes the final answer from what
+  every part returned and says which part failed. The task gets the time its parts need, and the progress line says "Working on part 2
+  of 5: ...".
+- While one step runs long (a search of every drive, a script, a slow model call) the progress line is sent again every 25 seconds with
+  how long the step has taken (`operator.heartbeat_seconds`); it used to stay unchanged for the whole step.
+- A bare final answer ("13655") or a tool's own wording ("Wrote text file ...", "Found 3 result(s) ...") is said as a sentence or two by one
+  short model call (`operator.voice_pass`, `orchestration/voice.py`). The rewrite is thrown away if it contains any number the answer and
+  the request did not, and a sentence is never touched.
+- `http.request` can read any public web page with `adapters.http_request.allow_public_reads: true` (off by default): GET and HEAD only, a
+  name that resolves to this computer or its network (loopback, private, link-local, reserved) is refused, redirects are not followed,
+  and every other method still needs the allowlist. This is what a request like "get the headline from each of these five sites" needs.
+- When a message arrives, a one-token request wakes a local model that was unloaded while idle (`llm.warm_on_message`, `llm/warmup.py`), so
+  the model loads while the message is routed instead of on the first real call. At most one every four minutes, and never to a hosted
+  model.
+- A request to remember or change a setting (the `configuration` route) may not read a file whose path appears only in an earlier turn of
+  the conversation: the call is refused once with the reason. A live run answered "Remember these about me ..." by reading a file named
+  three requests earlier.
 - A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day

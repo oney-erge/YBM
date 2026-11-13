@@ -474,3 +474,64 @@ def test_a_hand_off_the_user_agreed_to_is_a_requested_coding_agent():
     assert _coding_agent_requested(accepted, call) is True
     pending = TaskRecord(objective="x", metadata={"claude_code_offer": {"state": "pending", "question": "q"}})
     assert _coding_agent_requested(pending, call) is False
+
+
+# --- a path that came from an earlier turn ----------------------------------------------------------------------------------------------------
+
+from agent_control.orchestration.ladder import UNGROUNDED_TEXT, facts_block, ungrounded_paths  # noqa: E402
+
+STALE = r"D:\old\no-file-here.txt"
+RESUME = r"C:\Users\o\Downloads\resume.docx"
+MEMORY = (
+    "Remembered facts:\n- [profile] Name: Oney\n- [note] my resume is " + RESUME + "\n"
+    "User Oney. Earlier: read " + STALE + "\nRecent turns:\n- user: read " + STALE
+)
+
+
+def test_the_facts_block_is_only_the_remembered_facts_not_the_conversation_summary():
+    block = facts_block(MEMORY)
+    assert "resume.docx" in block and "no-file-here" not in block and "Recent turns" not in block
+    assert facts_block(None) == "" and facts_block("just a summary") == ""
+
+
+def test_a_path_from_an_earlier_turn_is_not_grounded_but_the_request_a_result_or_a_remembered_fact_is():
+    stale = {"operation": "read_file", "path": STALE}
+    assert ungrounded_paths("Remember that my cat is Miso", stale, [], MEMORY) == [STALE]
+    assert ungrounded_paths("Read " + STALE, stale, [], MEMORY) == []
+    found = [{"tool_name": "system.inventory", "output_summary": "Found: " + STALE, "input": {}}]
+    assert ungrounded_paths("find my notes", stale, found, MEMORY) == []
+    assert ungrounded_paths("open my resume", {"operation": "read_file", "path": RESUME}, [], MEMORY) == []
+
+
+def test_a_folder_the_request_names_grounds_a_file_inside_it_and_an_alias_is_never_checked():
+    assert ungrounded_paths(r"Tidy C:\work\reports", {"operation": "read_file", "path": r"C:\work\reports\q1.txt"}, [], "") == []
+    assert ungrounded_paths(r"Tidy C:\work\reports\q1", {"operation": "inspect_folder", "path": r"C:\work\reports"}, [], "") == []
+    assert ungrounded_paths("find my resume", {"operation": "search", "root": "desktop", "query": "resume"}, [], MEMORY) == []
+    manifest = {"operation": "apply_manifest", "manifest": [{"source": r"E:\a\b.txt", "destination": r"E:\a\c"}]}
+    assert ungrounded_paths("tidy it", manifest, [], "") != []
+
+
+@pytest.mark.asyncio
+async def test_a_call_on_a_path_from_an_earlier_turn_is_refused_once_then_allowed_if_the_model_insists(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "Remember that my cat is Miso", [], memory_context=MEMORY,
+                              orchestration_intent={"route": "configuration", "reasoning": "x"})
+    read = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
+                            tool_input={"operation": "read_file", "path": STALE}, risk_level=RiskLevel.LOW)
+    worker = _worker(repos, audit, _Seen([read, read]))
+    first = await worker.process_task(task.id)
+    last = first.metadata["operator_history"][-1]
+    assert last["status"] == "denied" and last["error"] == UNGROUNDED_TEXT.format(paths=STALE)
+    second = await worker.process_task(first.id)
+    assert second.metadata["operator_history"][-1]["status"] != "denied"
+
+
+@pytest.mark.asyncio
+async def test_a_file_request_is_never_second_guessed_about_its_paths(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "Organize my Downloads", [], memory_context=MEMORY,
+                              orchestration_intent={"route": "filesystem.manage", "reasoning": "x"})
+    read = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
+                            tool_input={"operation": "inspect_folder", "root": RESUME.rsplit("\\", 1)[0]}, risk_level=RiskLevel.LOW)
+    first = await _worker(repos, audit, _Seen([read])).process_task(task.id)
+    assert first.metadata["operator_history"][-1]["status"] != "denied"

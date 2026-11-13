@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import copy
+import ipaddress
 import json
+import socket
 import time
 from typing import Any
 from urllib.parse import urlparse
@@ -58,8 +60,8 @@ class HttpRequestAdapter:
 
     async def _request(self, request: ToolCallRequest) -> dict[str, Any]:
         url = str(request.input["url"]).strip()
-        _require_allowed_url(url, self.config)
         method = str(request.input.get("method") or "GET").upper()
+        _require_allowed_url(url, self.config, method=method)
         headers = {str(key): str(value) for key, value in dict(request.input.get("headers") or {}).items()}
         headers.setdefault("User-Agent", self.config.user_agent)
         query = dict(request.input.get("query") or {})
@@ -149,7 +151,29 @@ class HttpRequestAdapter:
         return secret, template.replace("{secret}", secret)
 
 
-def _require_allowed_url(url: str, config: HttpRequestAdapterConfig) -> None:
+def _is_public_address(address: str) -> bool:
+    """Whether an address is somewhere on the public internet (not this computer, not its network)."""
+    try:
+        ip = ipaddress.ip_address(address.split("%", 1)[0])
+    except ValueError:
+        return False
+    return not (
+        ip.is_loopback or ip.is_private or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+        or getattr(ip, "is_site_local", False)
+    )
+
+
+def _resolves_only_to_public_addresses(host: str, *, resolver=None) -> bool:
+    """Every address the name resolves to must be public: one private answer is enough to refuse (DNS rebinding, internal names)."""
+    try:
+        infos = (resolver or socket.getaddrinfo)(host, None)
+    except OSError:
+        return False
+    addresses = {str(info[4][0]) for info in infos}
+    return bool(addresses) and all(_is_public_address(address) for address in addresses)
+
+
+def _require_allowed_url(url: str, config: HttpRequestAdapterConfig, *, method: str = "GET") -> None:
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("http.request only supports absolute http:// or https:// URLs")
@@ -167,13 +191,17 @@ def _require_allowed_url(url: str, config: HttpRequestAdapterConfig) -> None:
     blocked = {item.lower() for item in config.blocked_hosts}
     if host in blocked or netloc in blocked:
         raise ValueError(f"HTTP host is blocked: {host}")
-    if not config.allowed_hosts and not config.allowed_url_prefixes:
+    if not config.allowed_hosts and not config.allowed_url_prefixes and not config.allow_public_reads:
         raise ValueError("no HTTP allowlist is configured")
     normalized_url = url.lower()
     if any(_prefix_matches(normalized_url, host, prefix) for prefix in config.allowed_url_prefixes):
         return
     if any(_host_matches(host, netloc, allowed) for allowed in config.allowed_hosts):
         return
+    if config.allow_public_reads and method.upper() in {"GET", "HEAD"}:
+        if _resolves_only_to_public_addresses(host):
+            return
+        raise ValueError(f"HTTP host is not a public website (it is this computer or its network, or it could not be found): {host}")
     raise ValueError(f"HTTP host is not allowlisted: {host}")
 
 
@@ -276,10 +304,11 @@ def _terminal_output(output: dict[str, Any]) -> dict[str, Any]:
 def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -> None:
     settings = deps.settings
     allowlist = [*settings.adapters.http_request.allowed_hosts, *settings.adapters.http_request.allowed_url_prefixes]
+    public_reads = settings.adapters.http_request.allow_public_reads
     enabled = (
         capability_enabled(settings, Capability.NETWORK_HTTP)
         and settings.adapters.http_request.enabled
-        and bool(allowlist)
+        and (bool(allowlist) or public_reads)
     )
     definitions.append(
         ToolDefinition(
@@ -288,7 +317,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             description=(
                 "call allowlisted HTTP/REST APIs with optional secret injection; "
-                f"allowed targets: {', '.join(allowlist) or '<none configured>'}"
+                + ("any public website for GET and HEAD; " if public_reads else "")
+                + f"allowed targets: {', '.join(allowlist) or ('any public website (read only)' if public_reads else '<none configured>')}"
             ),
             operations=("request",),
             input_schema=HttpRequestInput,

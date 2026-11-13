@@ -20,7 +20,7 @@ from agent_control.llm.call_log import cap_messages, merge_token_usage
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, hosted_allowed, is_yes
 from agent_control.logging_setup import bind_task_context
 from agent_control.orchestration.auditor import AuditorService, RAW_OUTPUT_CHARS
-from agent_control.orchestration import ladder
+from agent_control.orchestration import ladder, planner, voice
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -307,6 +307,9 @@ class TaskWorker:
         audit_min_tool_calls: int = 2,
         scope_tools: bool = False,
         verify_numbers: bool = True,
+        plan_parts: bool = False,
+        voice_pass: bool = False,
+        heartbeat_seconds: float = 0.0,
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
@@ -340,6 +343,9 @@ class TaskWorker:
         self.audit_min_tool_calls = max(1, int(audit_min_tool_calls))
         self.scope_tools = scope_tools
         self.verify_numbers = verify_numbers
+        self.plan_parts = plan_parts
+        self.voice_pass = voice_pass
+        self.heartbeat_seconds = float(heartbeat_seconds)
         # None disables the persona learning pass entirely (tests, and any
         # embedder that never configured a persona file).
         self.persona_config = persona_config
@@ -550,7 +556,35 @@ class TaskWorker:
         task = self.repositories.tasks.get(task_id)
         if task is None:
             raise KeyError(f"task not found: {task_id}")
-        return await self._process_operator_loop(task)
+        beat = (
+            asyncio.create_task(self._heartbeat(task_id))
+            if self.heartbeat_seconds > 0 and self.notification_sink is not None else None
+        )
+        try:
+            return await self._process_operator_loop(task)
+        finally:
+            if beat is not None:
+                beat.cancel()
+
+    async def _heartbeat(self, task_id: str) -> None:
+        """While one tick runs long (a search of every drive, a script, a slow model call) say so now and then.
+
+        The progress line is only rewritten when something changes, so a single step that takes a minute left the person looking
+        at the same words for that minute. This re-sends the line with how long it has been.
+        """
+        started = time.monotonic()
+        while True:
+            await asyncio.sleep(self.heartbeat_seconds)
+            try:
+                task = self.repositories.tasks.get(task_id)
+                if task is None or task.status not in {TaskStatus.RUNNING, TaskStatus.RETRYING} or self.notification_sink is None:
+                    return
+                waited = {**task.metadata, "progress_waiting_seconds": int(time.monotonic() - started)}
+                await self.notification_sink.notify(task.model_copy(update={"metadata": waited}))
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 - a missed heartbeat must never fail a task
+                logger.debug("heartbeat notify failed", exc_info=True)
 
     async def _process_operator_loop(self, task: TaskRecord) -> TaskRecord:
         """One observe/decide/act tick - the sole execution path (P3 §2.2).
@@ -768,6 +802,11 @@ class TaskWorker:
             if isinstance(steered, TaskRecord):
                 return steered
             forced_decision = steered
+        if forced_decision is None and self.plan_parts and not (isinstance(replay_plan, list) and replay_plan) and self.operator is not None:
+            planned = await self._plan_step(latest, history, step_id)
+            if isinstance(planned, TaskRecord):
+                return planned
+            forced_decision = planned
         if forced_decision is not None:
             decision = forced_decision
         elif isinstance(replay_plan, list) and replay_plan:
@@ -999,6 +1038,11 @@ class TaskWorker:
                         "operator_audit_gap_exhausted",
                     )
 
+            if self.voice_pass and not audit_unconfirmed and voice.needs_voice(final_answer):
+                # A bare value or a tool's own phrasing, said the way a person would; any number it adds is refused.
+                spoken = await voice.speak(getattr(self.operator, "provider", None), request_text, final_answer)
+                if spoken:
+                    final_answer = spoken
             if (
                 absence and "looked through" not in final_answer and absence.casefold() not in final_answer.casefold()
                 and not re.search(r"\d[\d,]{3,}", final_answer)  # an answer that already quotes how many folders needs no receipt
@@ -1210,6 +1254,19 @@ class TaskWorker:
         # CALL_TOOL
         requested_tool_name = decision.tool_name
         requested_tool_input = decision.tool_input
+        intent = latest.metadata.get("orchestration_intent")
+        if requested_tool_name in _PATH_GROUNDED_TOOLS and isinstance(intent, dict) and intent.get("route") == "configuration":
+            # Only for a request to remember or change a setting: it has no business reading files, and a path it names is from
+            # an earlier turn. A file request names its own paths, or finds them, or uses a folder it was configured with.
+            already_refused = {str(seen).casefold() for seen in latest.metadata.get("ungrounded_paths_seen") or []}
+            ungrounded = [
+                path for path in ladder.ungrounded_paths(
+                    _users_own_words(latest), requested_tool_input, history, str(latest.metadata.get("memory_context") or ""),
+                )
+                if path.casefold() not in already_refused
+            ]
+            if ungrounded:
+                return self._refuse_ungrounded_path(latest, history, requested_tool_name, requested_tool_input, ungrounded, step_id)
         tool_name, tool_input = _canonical_operator_tool_call(
             requested_tool_name,
             requested_tool_input,
@@ -2550,6 +2607,20 @@ class TaskWorker:
         })
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
 
+    def _refuse_ungrounded_path(
+        self, task: TaskRecord, history: list[dict[str, Any]], tool_name: str | None, tool_input: dict[str, Any],
+        paths: list[str], step_id: str,
+    ) -> TaskRecord:
+        """Not run, once per path: it came from an earlier turn, not from this request or anything this task found."""
+        history.append({
+            "tool_name": tool_name, "input": tool_input, "status": ToolResultStatus.DENIED.value,
+            "error": ladder.UNGROUNDED_TEXT.format(paths=", ".join(paths[:2])), "step_id": step_id,
+        })
+        seen = [*(task.metadata.get("ungrounded_paths_seen") or []), *paths]
+        return self.repositories.tasks.update_metadata(
+            task.id, {**task.metadata, "operator_history": history, "ungrounded_paths_seen": seen},
+        )
+
     def _refuse_blind_persona_replace(
         self, task: TaskRecord, history: list[dict[str, Any]], tool_input: dict[str, Any], step_id: str
     ) -> TaskRecord:
@@ -2607,6 +2678,50 @@ class TaskWorker:
             return None
         metadata = {**task.metadata, "operator_history": history, "synthesized_answer": answer}
         return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "operator_redundant_read_finished")
+
+    async def _plan_step(self, task: TaskRecord, history: list[dict[str, Any]], step_id: str) -> TaskRecord | OperatorDecision | None:
+        """Split a big request into parts once, at the start, then hand each part to a sub-loop in turn (orchestration/planner.py).
+
+        Each part goes through the ordinary delegate path (an isolated history, a fixed step budget, a summary back into the
+        parent's history), so a part that fails costs that part and not the whole request, and the final answer is written, as
+        always, by the Operator and checked like any other. Returns a delegate decision while a part is waiting, a task when the
+        plan was just made and its record updated, and None when there is no plan or every part has run.
+        """
+        parts = task.metadata.get("plan_parts")
+        if parts is None:
+            found: list[Any] = []
+            if not history and not task.metadata.get("clarify_count"):
+                found = await planner.plan_parts(getattr(self.operator, "provider", None), _users_own_words(task))
+            stored = [part.as_dict() for part in found]
+            metadata = {**task.metadata, "plan_parts": stored, "plan_index": 0}
+            if stored:
+                # A part is a sub-loop of its own, so the whole task gets the time of its parts, not one request's worth.
+                metadata["task_budget_seconds"] = max(
+                    float(task.metadata.get("task_budget_seconds") or self.task_budget_seconds), 240.0 * len(stored),
+                )
+            task = self.repositories.tasks.update_metadata(task.id, metadata)
+            if stored:
+                self.audit.append(
+                    AuditEventType.PLAN_CREATED, actor="worker", task_id=task.id,
+                    payload={"parts": [part["title"] for part in stored], "step_id": step_id},
+                )
+            parts = stored
+        if not parts:
+            return None
+        index = int(task.metadata.get("plan_index") or 0)
+        if index < len(parts):
+            part = parts[index]
+            self.repositories.tasks.update_metadata(task.id, {**task.metadata, "plan_index": index + 1})
+            return OperatorDecision(
+                action=OperatorAction.DELEGATE, delegate_objective=str(part["objective"]),
+                reasoning=f"Part {index + 1} of {len(parts)}: {part['title']}",
+            )
+        if not any(isinstance(e, dict) and e.get("hint_id") == "parts_done" for e in history):
+            history.append({
+                "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "parts_done",
+                "error": planner.PARTS_DONE_TEXT, "step_id": step_id,
+            })
+        return None
 
     def _claude_code_ready(self) -> bool:
         """Claude Code can be offered: its tool is on and the command is installed on this computer."""
@@ -4299,6 +4414,8 @@ def _replay_call_decision(step: dict[str, Any], step_number: int, total: int) ->
 
 
 _TOOL_RUNNING_ACTIONS = frozenset({OperatorAction.CALL_TOOL, OperatorAction.CALL_TOOLS_PARALLEL, OperatorAction.DELEGATE})
+# Tools whose calls name files and folders by absolute path.
+_PATH_GROUNDED_TOOLS = frozenset({"filesystem.manage", "document.manage", "artifact.deliver"})
 
 
 def _claude_code_decision(task: TaskRecord, history: list[dict[str, Any]]) -> OperatorDecision:

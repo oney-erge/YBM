@@ -19,6 +19,7 @@ from agent_control.config import AppSettings, TelegramConfig
 from agent_control.config_sync import read_env_value
 from agent_control.channels.responder import ChatResponder
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
+from agent_control.llm.warmup import warm_up
 from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
 from agent_control.channels.undo_command import undo_command_reply
@@ -527,6 +528,9 @@ class TelegramIntakeService:
                 status_answer = answer_status_question(self.repositories, inbound, conversation_id)
                 if status_answer is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
+            if inbound.text and self.settings is not None and getattr(self.settings.llm, "warm_on_message", False):
+                # Fire and forget: loads an idle local model while the message is routed (llm/warmup.py).
+                self._warming = asyncio.ensure_future(warm_up(self.settings))
             if inbound.text:
                 await self._update_conversation_memory(conversation_id, inbound.text)
             try:
