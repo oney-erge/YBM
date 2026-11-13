@@ -125,6 +125,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   and another page exists in the workspace, the page check says where it is and what path to write.
 - An answer that writes out an addition and gets the total wrong ("5 lines in total (4 + 5 + 6)") is sent back once with the true
   total. The number check had passed it because 5 is in a tool result.
+- A fifth frozen suite, `--suite heldout4` (16 cases, `e2e/heldout4_cases.json`), was written and frozen before the round-5 work on how a
+  request is understood, checked and sped up, and is run once at its end on requests that work was not tuned against: counting by file
+  kind, the largest file, finding a file by what it says, which folder has more files, the newest log, a one-sentence summary, a total
+  over a table, a JSON field, renaming and copying, three files in one request, two ways of saying "delete" and an "ask me first"
+  instruction (to measure understanding rather than keyword matching), remembering a fact and then using it, two page titles, and an
+  honest "I can't".
 - A fourth frozen suite, `--suite vision` (16 cases, `e2e/vision_cases.json`), holds the examples the owner named as what YBM must do,
   in fresh wording: how many Steam games, where is a file in a hidden folder, what is a document about, a missing file, a count that
   needs a script, which of two files has more words, a request that splits into parts, the exact titles of three public sites, a
