@@ -59,7 +59,9 @@ _REPO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "config.yam
 # portable across machines/clone paths (the objective text embeds an
 # absolute path) - a real limitation, tracked in docs/archive/HISTORY.md P2, not one
 # to design around today.
-SCENARIO_SCRATCH_ROOT = Path(tempfile.gettempdir()) / "ybm_scenario_scratch"
+# The system temp folder may itself be a link (macOS keeps it under /var, which points at /private/var), so it is resolved once
+# here; what must not pass through a link is everything below it, which scenario_scratch_dir checks.
+SCENARIO_SCRATCH_ROOT = Path(tempfile.gettempdir()).resolve() / "ybm_scenario_scratch"
 
 
 def scenario_scratch_dir(name: str) -> Path:
