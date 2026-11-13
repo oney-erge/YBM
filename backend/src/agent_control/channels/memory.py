@@ -27,7 +27,8 @@ DEFAULT_SUMMARY = "No durable conversation memory yet."
 # become a task, not get silently swallowed into a memory fact just
 # because it starts with "remember".
 _REMEMBER_PATTERN = re.compile(
-    r"^(?:please\s+)?(?:remember|don'?t\s+forget)(?:\s+that|[:,])\s+(.+)$",
+    r"^(?:please\s+)?(?:remember|don'?t\s+forget)"
+    r"(?:\s+that|\s+(?:these|this|the\s+following)(?:\s+things)?(?:\s+about\s+(?:me|myself))?\s*[:,]|[:,])\s+(.+)$",
     re.IGNORECASE | re.DOTALL,
 )
 
