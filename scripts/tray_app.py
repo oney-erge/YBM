@@ -9,14 +9,21 @@ status, and shows the result as a notification balloon.
 Run directly: backend/.venv/Scripts/python.exe scripts/tray_app.py
 (the ``tray`` extra - see backend/pyproject.toml - must be installed;
 ``ybm setup`` already includes it).
+
+With ``--start`` the tray also runs ``ybm start`` once its icon is up, after ``--delay`` seconds. That is what ``ybm autostart
+enable`` puts in the Startup folder: YBM is running after login, a little late on purpose so sign-in is not slowed. ``ybm start``
+starts the services only and leaves the local model server to load a model on the first message, so nothing holds the GPU
+until it is asked for something.
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import subprocess
 import sys
 import threading
+import time
 import webbrowser
 from pathlib import Path
 from urllib.parse import quote
@@ -171,12 +178,26 @@ def build_menu() -> "pystray.Menu":
     )
 
 
-def main() -> None:
+def _start_when_up(icon: pystray.Icon, delay_seconds: float) -> None:
+    """Show the icon, wait, then start YBM (a no-op for each service that is already running)."""
+    icon.visible = True
+    time.sleep(max(0.0, delay_seconds))
+    _run_ybm_async(icon, "start", "start")
+
+
+def main(argv: list[str] | None = None) -> None:
+    parser = argparse.ArgumentParser(description="YBM tray icon")
+    parser.add_argument("--start", action="store_true", help="run 'ybm start' once the icon is up")
+    parser.add_argument("--delay", type=float, default=0.0, help="seconds to wait before --start (default 0)")
+    options = parser.parse_args(argv)
     if not YBM_PS1.exists():
         print(f"Could not find {YBM_PS1} - is this script still under a YBM checkout's scripts/ dir?", file=sys.stderr)
         raise SystemExit(1)
     icon = pystray.Icon(APP_NAME, _make_icon_image(), APP_NAME, menu=build_menu())
-    icon.run()
+    if options.start:
+        icon.run(setup=lambda running: _start_when_up(running, options.delay))
+    else:
+        icon.run()
 
 
 if __name__ == "__main__":
