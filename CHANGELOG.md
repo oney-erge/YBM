@@ -148,6 +148,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- The rolling conversation summary is written after the reply, not before it. It is a model call, and the model serves one request
+  at a time, so it used to run inside the message handler, ahead of the classifier and the reply, on every message that did not
+  arrive while a task was working. The handler now stores the new turn and the heuristic summary at once, and the model summarizes
+  15 seconds later, one run at a time per conversation (a message that arrives meanwhile earns one more run, not one each), and only
+  when no task of that conversation is using the model. The recent turns are in the context from the first moment, so what the
+  assistant knows does not lag. Only the Telegram and WhatsApp intake use it; the worker's own summaries are unchanged.
 - First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
 - A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
   single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a
