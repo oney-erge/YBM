@@ -65,6 +65,7 @@ HELDOUT_PATH = ROOT / "e2e" / "heldout_cases.json"
 HELDOUT2_PATH = ROOT / "e2e" / "heldout2_cases.json"
 HELDOUT3_PATH = ROOT / "e2e" / "heldout3_cases.json"
 VISION_PATH = ROOT / "e2e" / "vision_cases.json"
+HELDOUT4_PATH = ROOT / "e2e" / "heldout4_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -645,7 +646,7 @@ def expects_task_mode(value: object) -> bool | str:
 def load_cases() -> list[dict]:
     """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH):
+    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH):
         if path.exists():
             cases += json.loads(path.read_text(encoding="utf-8"))
     return cases
@@ -2011,7 +2012,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,vision,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",
