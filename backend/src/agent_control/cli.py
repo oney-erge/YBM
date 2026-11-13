@@ -56,10 +56,9 @@ from agent_control.tools.coding_agent import (
     mark_session_notified,
     run_coding_agent_session as run_coding_agent_session_once,
     scan_coding_sessions_once,
-    session_completion_message,
+    handle_session_completion,
     session_progress_due,
     session_progress_message,
-    terminal_session_result,
 )
 
 
@@ -100,7 +99,7 @@ def _run_npm_script(script: str) -> int:
     if shutil.which("npm") is None:
         print("npm was not found on PATH.")
         print()
-        print("The admin console is a React app, so building it needs Node.js 22.22 or newer:")
+        print("The admin console's locked dependencies declare Node 22.22.2+ on Node 22, 24.15.0+ on Node 24, or Node 26+:")
         print("  https://nodejs.org   (or: winget install OpenJS.NodeJS.LTS)")
         print()
         print("Open a NEW terminal after installing, then re-run this command.")
@@ -593,7 +592,9 @@ async def run_coding_session_watcher(poll_interval_seconds: float = 5.0) -> None
         try:
             sessions = await scan_coding_sessions_once(settings.adapters.coding_agent.session_root)
             for session in sessions:
-                error = await _handle_coding_session_completion(settings, repositories, session, telegram)
+                handled, error = await _handle_coding_session_completion(settings, repositories, session, telegram)
+                if not handled:
+                    continue
                 mark_session_notified(
                     settings.adapters.coding_agent.session_root,
                     str(session.get("session_id")),
@@ -631,6 +632,8 @@ async def _handle_coding_session_progress(repositories: Repositories, session: d
     expected_session_id = str(awaiting.get("session_id") or "") if isinstance(awaiting, dict) else ""
     if expected_session_id != str(session.get("session_id") or ""):
         return False
+    if (task.metadata.get("source_channel") or ChannelType.TELEGRAM.value) != ChannelType.TELEGRAM.value:
+        return False
     chat_id = task.metadata.get("source_chat_id")
     if not chat_id:
         return False
@@ -638,39 +641,10 @@ async def _handle_coding_session_progress(repositories: Repositories, session: d
     return True
 
 
-async def _handle_coding_session_completion(settings, repositories: Repositories, session: dict, telegram) -> str | None:
-    error: str | None = None
-    task_id = session.get("task_id")
-    task = repositories.tasks.get(str(task_id)) if task_id else None
-    if task is not None:
-        result = terminal_session_result(session)
-        awaiting = task.metadata.get("awaiting_external") if isinstance(task.metadata, dict) else None
-        metadata = {
-            **task.metadata,
-            "coding_agent_session": _coding_session_brief(session),
-        }
-        if task.status == TaskStatus.AWAITING_EXTERNAL and isinstance(awaiting, dict):
-            metadata["pending_tool_result"] = {
-                "step_id": awaiting.get("step_id"),
-                "tool_name": "coding.agent",
-                "result": result.model_dump(mode="json"),
-            }
-        status = TaskStatus.RUNNING if task.status == TaskStatus.AWAITING_EXTERNAL else task.status
-        repositories.tasks.update_metadata(task.id, metadata, status)
-    chat_id = task.metadata.get("source_chat_id") if task is not None else None
-    if telegram is not None and chat_id:
-        try:
-            await telegram.send_message(str(chat_id), session_completion_message(session))
-        except Exception as exc:
-            error = str(exc)
-    return error
-
-
-def _coding_session_brief(session: dict) -> dict:
-    return {
-        key: session.get(key)
-        for key in ("session_id", "provider", "status", "returncode", "changed_files", "summary", "ended_at")
-    }
+async def _handle_coding_session_completion(
+    settings, repositories: Repositories, session: dict, telegram
+) -> tuple[bool, str | None]:
+    return await handle_session_completion(repositories.tasks, session, telegram)
 
 
 def _telegram_notifier(

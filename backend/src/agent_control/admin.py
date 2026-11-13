@@ -88,6 +88,7 @@ from agent_control.schemas import (
     TaskStatus,
     TaskType,
     TaskWorkflow,
+    task_control_actions,
     utc_now,
 )
 from agent_control.storage.audit import AuditLogger
@@ -440,13 +441,17 @@ def _redact_admin_output(value: Any, settings: AppSettings) -> Any:
     )
 
 
+def _task_snapshot(task: TaskRecord) -> dict[str, Any]:
+    return {**task.model_dump(mode="json"), "allowed_actions": task_control_actions(task.status)}
+
+
 def _task_with_artifacts(task: TaskRecord, repositories: Repositories, settings: AppSettings) -> dict[str, Any]:
     """A task dict plus its artifacts inline (docs/archive/UI_UX_AUDIT.md Phase 1's
     "artifact cards") - the trace endpoint already does this
     (repositories.artifacts.list_for_task); chat never had, so a file a task
     produced was invisible unless you opened its trace.
     """
-    dumped = _redact_admin_output(task.model_dump(mode="json"), settings)
+    dumped = _redact_admin_output(_task_snapshot(task), settings)
     dumped["artifacts"] = [
         _redact_admin_output(artifact.model_dump(mode="json"), settings)
         for artifact in repositories.artifacts.list_for_task(task.id)
@@ -840,7 +845,7 @@ def create_admin_router(
         return {
             "status": "ok",
             "config": loaded.safe_summary(),
-            "tasks": [_redact_admin_output(task.model_dump(mode="json"), loaded) for task in tasks],
+            "tasks": [_redact_admin_output(_task_snapshot(task), loaded) for task in tasks],
             "task_pagination": {
                 "limit": task_limit,
                 "offset": 0,
@@ -967,7 +972,7 @@ def create_admin_router(
         total = repositories.tasks.count()
         tasks = repositories.tasks.list_recent(limit, offset=offset)
         return {
-            "tasks": [_redact_admin_output(task.model_dump(mode="json"), loaded) for task in tasks],
+            "tasks": [_redact_admin_output(_task_snapshot(task), loaded) for task in tasks],
             "pagination": {
                 "limit": limit,
                 "offset": offset,
@@ -1510,7 +1515,7 @@ def create_admin_router(
             raise HTTPException(status_code=404, detail="task not found")
         return {
             "signal": signal.model_dump(mode="json"),
-            "task": _redact_admin_output(updated.model_dump(mode="json"), loaded),
+            "task": _redact_admin_output(_task_snapshot(updated), loaded),
         }
 
     @router.post("/api/tasks/{task_id}/replay")
@@ -3390,7 +3395,7 @@ def build_task_trace(repositories: Repositories, task_id: str) -> dict[str, Any]
     # execution record now.
     trace_context = _trace_context(task.model_dump(mode="json"), raw_audit)
     return {
-        "task": task.model_dump(mode="json"),
+        "task": _task_snapshot(task),
         "context": trace_context,
         "operator_history": _enrich_operator_history(task.metadata.get("operator_history") or [], tool_invocations),
         "timeline": _trace_timeline(formatted_audit, tool_invocations),
@@ -3400,6 +3405,7 @@ def build_task_trace(repositories: Repositories, task_id: str) -> dict[str, Any]
         "approvals": [approval.model_dump(mode="json") for approval in repositories.approvals.list_for_task(task_id)],
         "artifacts": [artifact.model_dump(mode="json") for artifact in repositories.artifacts.list_for_task(task_id)],
         "signals": [signal.model_dump(mode="json") for signal in repositories.task_signals.list_for_task(task_id)],
+        "coding_session_notifications": repositories.tasks.list_coding_session_notifications([task_id]).get(task_id, []),
         "audit": formatted_audit,
         "raw_audit": raw_audit,
     }
@@ -3986,7 +3992,7 @@ _ADMIN_HTML = """
 <body>
   <h1>YBM</h1>
   <p>No admin console build was found yet.</p>
-  <p><b>1. Install Node.js 22.22 or newer</b> if you don't have it -
+  <p><b>1. Install Node.js 22.22.2+ on Node 22, 24.15.0+ on Node 24, or Node 26+</b> if you don't have it -
      <a href="https://nodejs.org">nodejs.org</a>, or <code>winget install OpenJS.NodeJS.LTS</code>.
      The console is a React app, so it cannot be built without it. Open a new terminal afterwards.</p>
   <p><b>2. Build it:</b> <code>.\\scripts\\ybm.ps1 ui-build</code>

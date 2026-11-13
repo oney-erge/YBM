@@ -246,6 +246,30 @@ async def test_mcp_call_tool_truncates_large_output(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_mcp_grouped_failure_exposes_cause_type_without_nested_secret(tmp_path, monkeypatch) -> None:
+    import agent_control.tools.mcp_client as mcp_module
+
+    async def fail_discovery(_name, _server):
+        raise ExceptionGroup("server discovery failed API_KEY=outer-secret", [TimeoutError("API_KEY=do-not-expose")])
+
+    monkeypatch.setattr(mcp_module, "_list_server_tools", fail_discovery)
+    config = MCPConfig(enabled=True, catalog_path=str(tmp_path / "catalog.json"), servers={
+        "broken": MCPServerConfig(command=sys.executable, args=[]),
+    })
+    result = await MCPClientAdapter(config).execute(ToolCallRequest(
+        task_id="task_mcp", tool_name="mcp.client", capability=Capability.TERMINAL_RUN,
+        input={"operation": "list_tools"},
+    ))
+
+    assert result.output["healthy"] is False
+    error = result.output["servers"][0]["error"]
+    assert "TimeoutError" in error
+    assert "do-not-expose" not in error
+    assert "outer-secret" not in error
+    assert load_mcp_catalog(config)["servers"][0]["error"] == error
+
+
+@pytest.mark.asyncio
 async def test_mcp_health_reports_unreachable_server_and_writes_catalog(tmp_path) -> None:
     config = MCPConfig(
         enabled=True,

@@ -38,6 +38,7 @@ REQUIRED_MODULES = [
 DESKTOP_MODULES = ["mss", "pyautogui", "pygetwindow", "pywinauto"]
 STATUS_SYMBOL = {"ok": "[OK]  ", "warn": "[WARN]", "fail": "[FAIL]"}
 MIN_NODE_VERSION = (22, 22, 0)
+CONSOLE_NODE_REQUIREMENT = "22.22.2+ on Node 22, 24.15.0+ on Node 24, or Node 26+"
 
 
 @dataclass
@@ -404,20 +405,30 @@ def _check_node(settings: AppSettings | None = None, *, assume_needed: bool = Tr
     node = shutil.which("node")
     if node:
         version = _node_version(node)
-        if version is not None and version < MIN_NODE_VERSION:
+        console_needs_build = assume_needed or not (Path("backend/src/agent_control/static/admin") / "index.html").exists()
+        if version is not None and (version < MIN_NODE_VERSION or (console_needs_build and not _console_node_supported(version))):
             actual = ".".join(str(part) for part in version)
+            detail = (f"the console's locked dependencies declare Node.js {CONSOLE_NODE_REQUIREMENT}"
+                      if console_needs_build else "this installation expects Node.js 22.22.0 or newer")
             return Check(
                 "Node.js",
                 "warn",
-                f"{node} is v{actual}; the admin console requires Node.js 22.22+",
+                f"{node} is v{actual}; {detail}",
             )
         detail = f"{node} (v{'.'.join(str(part) for part in version)})" if version else node
         return Check("Node.js", "ok", detail)
     return Check(
         "Node.js", "warn",
         "not found on PATH - only needed for the WhatsApp channel and building the admin "
-        "console; install Node.js 22.22+ (https://nodejs.org) if you need either",
+        f"console; for the console use Node.js {CONSOLE_NODE_REQUIREMENT} (https://nodejs.org)",
     )
+
+
+def _console_node_supported(version: tuple[int, int, int]) -> bool:
+    """Match the frontend lock's declared runtime ranges, including major gaps."""
+    return ((version[0] == 22 and version >= (22, 22, 2))
+            or (version[0] == 24 and version >= (24, 15, 0))
+            or version[0] >= 26)
 
 
 def _node_version(node: str) -> tuple[int, int, int] | None:
@@ -453,7 +464,7 @@ def _check_admin_console() -> Check:
         return Check(
             "Admin console", "warn",
             "NOT BUILT and npm is missing, so /admin has no console at all - install "
-            "Node.js 22.22+ then run `ybm ui-build` (the JSON API at /admin/api/* still works)",
+            f"Node.js {CONSOLE_NODE_REQUIREMENT}, then run `ybm ui-build` (the JSON API at /admin/api/* still works)",
         )
     return Check("Admin console", "warn", "not built yet - run `ybm ui-build`")
 
@@ -726,7 +737,7 @@ def _build_admin_console(*, quiet: bool = False) -> None:
     print("\n-- Building the admin console --")
     npm = shutil.which("npm")
     if npm is None:
-        print("WARN: npm not found - skipping the admin console build. Install Node.js 22.22+ "
+        print(f"WARN: npm not found - skipping the admin console build. Install Node.js {CONSOLE_NODE_REQUIREMENT} "
               "(https://nodejs.org), then run `ybm ui-build`. Until then, /admin shows a "
               "build-instructions page instead of the real console.")
         return
@@ -737,9 +748,14 @@ def _build_admin_console(*, quiet: bool = False) -> None:
         actual = ".".join(str(part) for part in node_version)
         print(
             f"WARN: Node.js v{actual} is too old to build the admin console; install "
-            "Node.js 22.22+ (https://nodejs.org), then run `ybm ui-build`."
+            f"Node.js {CONSOLE_NODE_REQUIREMENT} (https://nodejs.org), then run `ybm ui-build`."
         )
         return
+
+    if node_version is not None and not _console_node_supported(node_version):
+        actual = ".".join(str(part) for part in node_version)
+        print(f"WARN: Node.js v{actual} is outside the console lock's declared ranges "
+              f"({CONSOLE_NODE_REQUIREMENT}); attempting the build anyway.")
 
     use_shell = sys.platform == "win32"
     if not (frontend_dir / "node_modules").exists():

@@ -40,6 +40,7 @@ from agent_control.schemas import (
     ApprovalRequest,
     ApprovalStatus,
     AuditEventType,
+    Capability,
     ErrorClass,
     LLMCallRecord,
     OperatorAction,
@@ -57,7 +58,9 @@ from agent_control.schemas import (
 )
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.redaction import redact_payload
-from agent_control.storage.repositories import Repositories
+from agent_control.storage.repositories import (
+    WORKER_CLAIMABLE_STATUSES, Repositories, WorkerClaimLost, worker_claim_context,
+)
 from agent_control.tools.contracts import SCHEDULE_ID_OPERATIONS
 from agent_control.tools.effects import classify_effect
 from agent_control.tools.mcp_client import mcp_output_text
@@ -68,13 +71,7 @@ class TaskNotificationSink(Protocol):
     async def notify(self, task: TaskRecord) -> None:
         ...
 
-WORKABLE_STATUSES = [
-    TaskStatus.RECEIVED,
-    TaskStatus.INTERPRETING,
-    TaskStatus.PLANNED,
-    TaskStatus.RUNNING,
-    TaskStatus.RETRYING,
-]
+WORKABLE_STATUSES = list(WORKER_CLAIMABLE_STATUSES)
 
 NOTIFIABLE_STATUSES = {
     TaskStatus.AWAITING_APPROVAL,
@@ -88,16 +85,9 @@ NOTIFIABLE_STATUSES = {
     TaskStatus.RUNNING,
 }
 
-# Statuses that only make sense while a specific worker process is actively
-# holding them. If a task is still RUNNING or INTERPRETING when a *new*
-# worker starts up, the process that was supposed to finish it is gone
-# (crashed, killed, restarted before its claim naturally expired via
-# claim_next()'s claim_expiry_seconds). Left alone, the task would either
-# sit stuck until that stale claim eventually times out, or get silently
-# re-claimed and re-run from a status that assumes in-flight state which no
-# longer exists - re-running from the top could duplicate side effects (a
-# second Telegram send, a second file write), and there's no checkpoint to
-# resume from mid-flight. See docs/archive/HISTORY.md P6.
+# Active statuses that need recovery after their claim expires or is absent.
+# Starting another worker does not prove the current owner stopped. An expired
+# lease is also not process fencing; consequential in-flight work needs review.
 ORPHANABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.INTERPRETING)
 
 # Pseudo-entries the fulfillment/audit gap paths append to operator_history so
@@ -123,16 +113,40 @@ def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
 
     A read that never returned can simply be run again. A write might have
     half-happened, and nobody can tell from here - not the worker, and not the
-    user unless they are told. Risk level is the signal the policy engine
-    already uses for "consequential", so it is the signal used here.
+    user unless they are told. Risk informs authorization, but a low-risk
+    mixed or outbound capability can still have consequential effects.
     """
-    if str(in_flight.get("risk_level") or "low") in {"high", "critical"}:
+    risk = in_flight.get("risk_level")
+    if not isinstance(risk, str) or risk not in {level.value for level in RiskLevel}:
         return True
-    capability = str(in_flight.get("capability") or "")
-    return any(
-        capability.startswith(prefix)
-        for prefix in ("filesystem.write", "terminal", "desktop", "browser.control", "vscode")
-    )
+    if risk in {RiskLevel.HIGH.value, RiskLevel.CRITICAL.value}:
+        return True
+    if "parallel_calls" in in_flight:
+        parallel_calls = in_flight["parallel_calls"]
+        if not isinstance(parallel_calls, list) or not parallel_calls or not all(
+            isinstance(call, dict) for call in parallel_calls
+        ):
+            return True
+        return any(_in_flight_is_ambiguous(call) for call in parallel_calls)
+    capability = in_flight.get("capability")
+    # Risk is an authorization classification, not proof of a read-only call.
+    # Mixed and outbound capabilities are uncertain even at low risk.
+    return not isinstance(capability, str) or capability not in {
+        Capability.TELEGRAM_RECEIVE.value, Capability.LLM_GENERATE.value,
+        Capability.STT_TRANSCRIBE.value, Capability.VSCODE_READ_STATE.value,
+        Capability.FILESYSTEM_READ.value, Capability.DESKTOP_SCREENSHOT.value,
+        Capability.GITHUB_READ.value,
+    }
+
+
+def _in_flight_record_incomplete(record: Any) -> bool:
+    """A persisted reservation must retain its operation identity and input."""
+    if not isinstance(record, dict) or not isinstance(record.get("tool_name"), str) or not record["tool_name"]:
+        return True
+    if "parallel_calls" in record:
+        calls = record["parallel_calls"]
+        return not isinstance(calls, list) or not calls or any(_in_flight_record_incomplete(call) for call in calls)
+    return not isinstance(record.get("input"), dict)
 
 
 # A clean rejection (the request never actually ran) versus an unknown
@@ -140,6 +154,14 @@ def _in_flight_is_ambiguous(in_flight: dict[str, Any]) -> bool:
 # was lost). Only the second kind is worth warning the model about before
 # it retries a write - a 429/quota response means nothing happened yet.
 _AMBIGUOUS_COMPLETION_ERRORS = {ErrorClass.TRANSIENT}
+
+
+def _uncertain_consequential_result(request: ToolCallRequest, result: ToolCallResult) -> bool:
+    return (
+        result.status != ToolResultStatus.SUCCEEDED
+        and (result.status == ToolResultStatus.TIMEOUT or result.error_class in _AMBIGUOUS_COMPLETION_ERRORS)
+        and _in_flight_is_ambiguous({"risk_level": request.risk_level.value, "capability": request.capability.value})
+    )
 
 
 def _retry_error_text(result: ToolCallResult, request: ToolCallRequest | None) -> str | None:
@@ -169,63 +191,79 @@ def _retry_error_text(result: ToolCallResult, request: ToolCallRequest | None) -
     return f"{base} - this may have already taken effect before the connection was lost; verify before repeating it."
 
 
-def reconcile_orphaned_tasks(repositories: Repositories, audit: AuditLogger) -> int:
-    """Recover tasks left RUNNING/INTERPRETING by a worker that never finished.
+def _interrupted_task_recovery(task: TaskRecord, *, force_review: bool = False) -> tuple[dict[str, Any], TaskStatus]:
+    has_in_flight = "operator_in_flight" in task.metadata
+    recorded = task.metadata.get("operator_in_flight")
+    in_flight = recorded if isinstance(recorded, dict) else {"unreadable_record": recorded}
+    if has_in_flight and (force_review or _in_flight_record_incomplete(recorded) or _in_flight_is_ambiguous(in_flight)):
+        tool_name = in_flight.get("tool_name") or "an unidentified operation"
+        question = (
+            f"I was interrupted part-way through `{tool_name}` "
+            f"and cannot tell whether it finished. First make sure the previous worker and its work have stopped; "
+            f"check whether it took effect, "
+            f"then tell me to continue or to redo that step."
+        )
+        return {
+            **{k: v for k, v in task.metadata.items() if k != "operator_in_flight"},
+            "clarifying_question": question,
+            "interrupted_step": in_flight,
+        }, TaskStatus.CLARIFYING
+    metadata = {k: v for k, v in task.metadata.items() if k not in {"operator_in_flight", "last_worker_error"}}
+    if has_in_flight:
+        metadata["resumed_after_interrupt"] = in_flight.get("tool_name")
+    return metadata, TaskStatus.RUNNING
 
-    This used to fail every one of them, because "re-running from the top could
-    duplicate side effects and there's no checkpoint to resume from mid-flight".
-    There is one now: operator_history records every completed call, and
-    operator_in_flight names the single call that was dispatched but had not
-    returned. That turns one unanswerable question into three answerable ones:
 
-      - nothing was in flight -> resume; the history says what is already done
-      - a read was in flight   -> resume; running it again is harmless
-      - a write was in flight  -> ask the user, because it may have half-run
+_MISSING_CLAIM_EXPIRY_QUESTION = (
+    "The previous worker's claim has no expiry, so I cannot tell whether its work has stopped. "
+    "First make sure the previous worker and its work have stopped; check what took effect, "
+    "then tell me how to continue."
+)
 
-    Only the third case interrupts anyone, and guessing there is worse than
-    asking: silently retrying can do a thing twice, silently skipping can leave
-    the job half done. Returns the number of tasks reconciled.
+
+def _missing_claim_expiry_recovery(task: TaskRecord) -> tuple[dict[str, Any], TaskStatus]:
+    metadata = dict(task.metadata)
+    if "operator_in_flight" in metadata:
+        recorded = metadata.pop("operator_in_flight")
+        metadata["interrupted_step"] = recorded if isinstance(recorded, dict) else {"unreadable_record": recorded}
+    metadata["claim_recovery"] = {"reason": "missing_expiry", "previous_status": task.status.value}
+    metadata["clarifying_question"] = _MISSING_CLAIM_EXPIRY_QUESTION
+    return metadata, TaskStatus.CLARIFYING
+
+
+def reconcile_orphaned_tasks(
+    repositories: Repositories, audit: AuditLogger, *, expired_claims_only: bool = False
+) -> int:
+    """Reconcile unclaimed or expired active tasks from their saved evidence.
+
+    Unexpired claims are left alone and eligibility is rechecked in the write
+    transaction. Expiry alone does not establish that the old owner stopped.
     """
+
     total = 0
-    seen: set[str] = set()
+    cursor = 0
     while True:
-        orphaned = [
-            task
-            for task in repositories.tasks.list_by_statuses(list(ORPHANABLE_STATUSES), limit=100)
-            if task.id not in seen
-        ]
-        if not orphaned:
+        candidates = repositories.tasks.recovery_candidates(
+            after_rowid=cursor, expired_only=expired_claims_only
+        )
+        if not candidates:
             break
-        for task in orphaned:
-            seen.add(task.id)
-            in_flight = task.metadata.get("operator_in_flight")
-            in_flight = in_flight if isinstance(in_flight, dict) else None
-
-            if in_flight is not None and _in_flight_is_ambiguous(in_flight):
-                question = (
-                    f"I was interrupted part-way through `{in_flight.get('tool_name')}` "
-                    f"and cannot tell whether it finished. Check whether it took effect, "
-                    f"then tell me to continue or to redo that step."
-                )
-                metadata = {
-                    **{k: v for k, v in task.metadata.items() if k != "operator_in_flight"},
-                    "clarifying_question": question,
-                    "interrupted_step": in_flight,
-                }
-                updated = repositories.tasks.update_metadata(task.id, metadata, TaskStatus.CLARIFYING)
-                reason = "interrupted mid-write; asking the user before continuing"
+        for cursor, task_id in candidates:
+            result = repositories.tasks.reconcile_claim(
+                task_id, _interrupted_task_recovery, expired_only=expired_claims_only,
+                decide_missing_expiry=_missing_claim_expiry_recovery,
+            )
+            if result is None:
+                continue
+            task, updated = result
+            if (updated.status == TaskStatus.CLARIFYING
+                    and updated.metadata.get("clarifying_question") == _MISSING_CLAIM_EXPIRY_QUESTION):
+                reason = "worker claim expiry missing; asking the user before continuing"
             else:
-                metadata = {
-                    k: v for k, v in task.metadata.items()
-                    if k not in {"operator_in_flight", "last_worker_error"}
-                }
-                if in_flight is not None:
-                    # Harmless to repeat, so the loop simply runs it again.
-                    metadata["resumed_after_interrupt"] = in_flight.get("tool_name")
-                updated = repositories.tasks.update_metadata(task.id, metadata, TaskStatus.RUNNING)
-                reason = "resumed after an interrupted run"
-
-            repositories.tasks.release_claim(updated.id)
+                reason = (
+                    "interrupted mid-write; asking the user before continuing"
+                    if updated.status == TaskStatus.CLARIFYING else "resumed after an interrupted run"
+                )
             audit.task_state_changed("worker", task.id, task.status, updated.status)
             audit.append(
                 AuditEventType.ERROR if updated.status == TaskStatus.CLARIFYING else AuditEventType.TASK_STATE_CHANGED,
@@ -351,6 +389,9 @@ class TaskWorker:
                 self.runtime_refresh(self)
             except Exception:  # noqa: BLE001 - a bad config edit must never stop the worker
                 logger.exception("worker_runtime_refresh_failed")
+        # A claim can expire after startup. Reconcile it before another worker
+        # can claim a running task with an uncertain in-flight operation.
+        reconcile_orphaned_tasks(self.repositories, self.audit, expired_claims_only=True)
         claim_expiry = int(self.task_budget_seconds) + 120
         task = self.repositories.tasks.claim_next(
             WORKABLE_STATUSES,
@@ -360,6 +401,21 @@ class TaskWorker:
         if task is None:
             return None
         budget = float(task.metadata.get("task_budget_seconds") or self.task_budget_seconds)
+        # Per-task overrides may exceed the default used for initial admission.
+        # Extend before processing, but do not revive an expired or stolen claim.
+        if not self.repositories.tasks.extend_claim(
+            task.id, worker_id=self.worker_id, claim_expiry_seconds=budget + 120
+        ):
+            logger.warning("worker_claim_lost_before_processing", extra={"task_id": task.id})
+            return None
+        with worker_claim_context(self.repositories.tasks.database, task.id, self.worker_id):
+            try:
+                return await self._process_claimed(task, budget)
+            except WorkerClaimLost:
+                logger.warning("worker_claim_lost_during_processing", extra={"task_id": task.id})
+                return self.repositories.tasks.get(task.id)
+
+    async def _process_claimed(self, task: TaskRecord, budget: float) -> TaskRecord:
         try:
             processed = await asyncio.wait_for(self.process_task(task.id), timeout=budget)
             await self._notify_if_needed(processed)
@@ -374,43 +430,39 @@ class TaskWorker:
                 TaskStatus.CANCELLED,
                 TaskStatus.AWAITING_EXTERNAL,
                 TaskStatus.AWAITING_APPROVAL,
+                TaskStatus.CLARIFYING,
             }:
-                self.repositories.tasks.release_claim(processed.id)
+                self.repositories.tasks.release_claim(processed.id, worker_id=self.worker_id)
             return processed
         except asyncio.TimeoutError:
-            # Wall-clock budget exceeded - fail the task so the worker can keep
-            # moving. This is the only way a stuck planner/tool call doesn't
-            # starve every queued task behind it.
-            latest = self.repositories.tasks.get(task.id) or task
-            reason = f"task budget {budget:.0f}s exceeded; forcibly failed by worker"
-            metadata = {**latest.metadata, "last_worker_error": reason}
-            failed = self.repositories.tasks.update_metadata(latest.id, metadata, TaskStatus.FAILED)
-            self.repositories.tasks.release_claim(failed.id)
-            self.audit.task_state_changed("worker", latest.id, latest.status, failed.status)
-            self.audit.append(
-                AuditEventType.ERROR,
-                actor="worker",
-                task_id=latest.id,
-                payload={"error": reason, "status": failed.status.value, "budget_seconds": budget},
-            )
-            await self._notify_if_needed(failed)
-            return failed
+            reason = f"task budget {budget:.0f}s exceeded"
+            return await self._record_claimed_failure(task.id, reason, budget_seconds=budget)
+        except WorkerClaimLost:
+            raise
         except Exception as exc:
-            latest = self.repositories.tasks.get(task.id)
-            if latest is None:
-                raise
-            metadata = {**latest.metadata, "last_worker_error": str(exc)}
-            failed = self.repositories.tasks.update_metadata(latest.id, metadata, TaskStatus.FAILED)
-            self.repositories.tasks.release_claim(failed.id)
+            return await self._record_claimed_failure(task.id, str(exc))
+
+    async def _record_claimed_failure(
+        self, task_id: str, reason: str, *, budget_seconds: float | None = None
+    ) -> TaskRecord:
+        latest = self.repositories.tasks.get(task_id)
+        if latest is None:
+            raise KeyError(f"task not found: {task_id}")
+        metadata, recovered_status = _interrupted_task_recovery(latest)
+        if recovered_status != TaskStatus.CLARIFYING:
+            metadata, recovered_status = dict(latest.metadata), TaskStatus.FAILED
+        metadata["last_worker_error"] = reason
+        failed = self.repositories.tasks.update_metadata(task_id, metadata, recovered_status)
+        try:
             self.audit.task_state_changed("worker", latest.id, latest.status, failed.status)
-            self.audit.append(
-                AuditEventType.ERROR,
-                actor="worker",
-                task_id=latest.id,
-                payload={"error": str(exc), "status": failed.status.value},
-            )
+            payload: dict[str, Any] = {"error": reason, "status": failed.status.value}
+            if budget_seconds is not None:
+                payload["budget_seconds"] = budget_seconds
+            self.audit.append(AuditEventType.ERROR, actor="worker", task_id=task_id, payload=payload)
             await self._notify_if_needed(failed)
-            return failed
+        finally:
+            self.repositories.tasks.release_claim(task_id, worker_id=self.worker_id)
+        return failed
 
     async def run_forever(self, poll_interval_seconds: float = 3.0) -> None:
         consecutive_poll_failures = 0
@@ -538,7 +590,7 @@ class TaskWorker:
             return self._transition_operator(task, task.metadata, TaskStatus.BLOCKED, "operator_loop_not_configured")
 
         latest = self.repositories.tasks.get(task.id) or task
-        if latest.status in {TaskStatus.PAUSED, TaskStatus.CANCELLED}:
+        if latest.status in {TaskStatus.PAUSED, TaskStatus.CANCELLED, TaskStatus.CLARIFYING}:
             return latest
 
         # This used to dispatch on `status == AWAITING_APPROVAL` alone, which
@@ -765,6 +817,12 @@ class TaskWorker:
                     latest, {**latest.metadata, "operator_history": history},
                     TaskStatus.FAILED, f"operator_decide_failed: {reason}"[:400],
                 )
+
+        # A pause or cancel can arrive while the model is deciding. Do not
+        # turn the returned decision into a new tool dispatch in that case.
+        latest = self.repositories.tasks.get(latest.id) or latest
+        if latest.status in {TaskStatus.PAUSED, TaskStatus.CANCELLED}:
+            return latest
 
         if budget_reached and offer_pending and decision.action in _TOOL_RUNNING_ACTIONS:
             history.append({
@@ -1099,6 +1157,11 @@ class TaskWorker:
             )
             if batch_approval is not None:
                 return batch_approval
+            admitted_task, admitted = self._mark_parallel_in_flight(
+                latest.id, decision.parallel_calls, step_id=step_id
+            )
+            if not admitted:
+                return admitted_task
             entries = await self._run_parallel_calls(latest.id, decision.parallel_calls, step_id=step_id)
             history.extend(entries)
             # Each call promotes its result into task metadata. Reload after
@@ -1106,15 +1169,43 @@ class TaskWorker:
             # snapshot here erased changed_paths/workspace evidence produced
             # by every successful parallel call.
             recorded = self.repositories.tasks.get(latest.id) or latest
+            uncertain = self._review_uncertain_batch(recorded, history, entries, step_id=step_id)
+            if uncertain is not None:
+                return uncertain
+            metadata = dict(recorded.metadata)
+            in_flight = metadata.get("operator_in_flight")
+            if isinstance(in_flight, dict) and in_flight.get("step_id") == step_id:
+                metadata.pop("operator_in_flight", None)
             return self.repositories.tasks.update_metadata(
                 recorded.id,
-                {**recorded.metadata, "operator_history": history},
+                {**metadata, "operator_history": history},
             )
 
         if decision.action == OperatorAction.DELEGATE:
-            latest, entry = await self._run_delegate(latest, decision, step_id=step_id)
+            admitted_task, admitted = self.repositories.tasks.admit_operator_call(latest.id, {
+                "tool_name": "delegate", "capability": Capability.AGENT_CORE.value,
+                "risk_level": RiskLevel.HIGH.value,
+                "input": {"objective": decision.delegate_objective, "delegate_tools": decision.delegate_tools},
+                "step_id": step_id, "dispatched_at": utc_now().isoformat(),
+            })
+            if not admitted:
+                return admitted_task
+            latest, entry = await self._run_delegate(admitted_task, decision, step_id=step_id)
             history.append(entry)
-            return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
+            recorded = self.repositories.tasks.get(latest.id) or latest
+            marker = recorded.metadata.get("operator_in_flight")
+            if not isinstance(marker, dict) or marker.get("step_id") != step_id:
+                return recorded
+            metadata = {k: v for k, v in recorded.metadata.items() if k != "operator_in_flight"}
+            metadata["operator_history"] = history
+            if entry.get("status") == "interrupted":
+                metadata["interrupted_step"] = marker
+                metadata["clarifying_question"] = (
+                    "Delegated work was interrupted and may have made changes. Make sure its work has stopped, "
+                    "check what took effect, then tell me to continue or redo the step."
+                )
+                return self.repositories.tasks.update_metadata(recorded.id, metadata, TaskStatus.CLARIFYING)
+            return self.repositories.tasks.update_metadata(recorded.id, metadata)
 
         # CALL_TOOL
         requested_tool_name = decision.tool_name
@@ -1236,9 +1327,10 @@ class TaskWorker:
         # Without it, a restarted worker cannot tell "the move finished" from
         # "the move was halfway through", and the only safe response to that
         # ambiguity was to fail the whole task.
-        self._mark_in_flight(latest.id, request, step_id=step_id)
+        admitted_task, admitted = self._mark_in_flight(latest.id, request, step_id=step_id)
+        if not admitted:
+            return admitted_task
         result = await self.executor.execute(request)
-        self._clear_in_flight(latest.id)
 
         if result.status == ToolResultStatus.NEEDS_APPROVAL:
             return self._await_operator_approval(
@@ -1250,6 +1342,17 @@ class TaskWorker:
             )
 
         recorded = self._record_tool_result(latest.id, tool_name, result)
+        uncertain = self._review_uncertain_result(recorded, history, request, result, step_id=step_id)
+        if uncertain is not None:
+            return uncertain
+        # Keep the durable marker until a result/history or pending-external
+        # transition is written. Removing it from this in-memory copy makes the
+        # eventual metadata update clear it atomically with that transition.
+        in_flight = recorded.metadata.get("operator_in_flight")
+        if isinstance(in_flight, dict) and in_flight.get("step_id") == step_id:
+            recorded = recorded.model_copy(update={
+                "metadata": {k: v for k, v in recorded.metadata.items() if k != "operator_in_flight"}
+            })
         if _is_background_external_tool_result(tool_name, result):
             return self._await_operator_external(recorded, decision, result, history, step_id=step_id)
         if result.status != ToolResultStatus.SUCCEEDED:
@@ -1307,30 +1410,41 @@ class TaskWorker:
             )
         return self.repositories.tasks.update_metadata(recorded.id, {**recorded.metadata, "operator_history": history})
 
-    def _mark_in_flight(self, task_id: str, request: ToolCallRequest, *, step_id: str) -> None:
-        """Record that this exact call was dispatched but has not returned."""
-        task = self.repositories.tasks.get(task_id)
-        if task is None:
-            return
-        self.repositories.tasks.update_metadata(task_id, {
-            **task.metadata,
-            "operator_in_flight": {
+    def _mark_in_flight(
+        self, task_id: str, request: ToolCallRequest, *, step_id: str, allow_awaiting_approval: bool = False
+    ) -> tuple[TaskRecord, bool]:
+        """Reserve this exact call unless a control or another call won first."""
+        return self.repositories.tasks.admit_operator_call(task_id, {
                 "tool_name": request.tool_name,
                 "capability": request.capability.value,
                 "risk_level": request.risk_level.value,
                 "input": request.input,
                 "step_id": step_id,
                 "dispatched_at": utc_now().isoformat(),
-            },
-        })
+        }, allow_awaiting_approval=allow_awaiting_approval)
 
-    def _clear_in_flight(self, task_id: str) -> None:
-        task = self.repositories.tasks.get(task_id)
-        if task is None or "operator_in_flight" not in task.metadata:
-            return
-        self.repositories.tasks.update_metadata(
-            task_id, {k: v for k, v in task.metadata.items() if k != "operator_in_flight"}
-        )
+    def _mark_parallel_in_flight(
+        self, task_id: str, calls: list[ParallelToolCall], *, step_id: str,
+        allow_awaiting_approval: bool = False,
+    ) -> tuple[TaskRecord, bool]:
+        """Reserve a batch and retain enough identity to review uncertain effects."""
+        assert self.executor is not None
+        children = []
+        for call in calls:
+            name, tool_input = _canonical_operator_tool_call(
+                call.tool_name, call.tool_input, self.executor.tool_definitions
+            )
+            definition = self.executor.tool_definitions.get(name)
+            children.append({
+                "tool_name": name, "input": tool_input,
+                "capability": definition.capability_for(tool_input).value if definition else "",
+                "risk_level": _effective_operator_risk(definition, tool_input, call.risk_level).value
+                if definition else call.risk_level.value,
+            })
+        return self.repositories.tasks.admit_operator_call(task_id, {
+            "tool_name": "call_tools_parallel", "risk_level": "low", "parallel_calls": children,
+            "step_id": step_id, "dispatched_at": utc_now().isoformat(),
+        }, allow_awaiting_approval=allow_awaiting_approval)
 
     def _batch_requests(
         self, task_id: str, calls: list[ParallelToolCall], step_id: str
@@ -1510,7 +1624,7 @@ class TaskWorker:
         task = self.repositories.tasks.get(task_id)
         prior_history = list((task.metadata.get("operator_history") or []) if task is not None else [])
 
-        async def _one(call: ParallelToolCall) -> dict[str, Any]:
+        async def _execute_one(call: ParallelToolCall) -> dict[str, Any]:
             tool_name, tool_input = _canonical_operator_tool_call(
                 call.tool_name,
                 call.tool_input,
@@ -1561,17 +1675,19 @@ class TaskWorker:
             if _is_background_external_tool_result(tool_name, result):
                 return {
                     "tool_name": tool_name, "input": tool_input,
-                    "status": "failed",
+                    "status": "running", "outcome_uncertain": True,
+                    "session_id": str(result.output.get("session_id") or ""),
                     "error": (
                         "this call started a background session, which call_tools_parallel does not "
-                        "support - reissue it alone via call_tool"
+                        "monitor - check the session and ensure it has stopped before repeating"
                     ),
                     "parallel": True, "origin": batch_origin, "step_id": step_id,
+                    "request_id": result.request_id,
                     **normalization,
                 }
             self._record_tool_result(task_id, tool_name, result)
             output_text = _tool_output_text(result) if result.status == ToolResultStatus.SUCCEEDED else None
-            return {
+            entry = {
                 "tool_name": tool_name, "input": tool_input,
                 "status": result.status.value,
                 "output_summary": output_text[:2000] if output_text else None,
@@ -1581,6 +1697,43 @@ class TaskWorker:
                 "step_id": step_id,
                 **normalization,
             }
+            if _uncertain_consequential_result(request, result):
+                entry["outcome_uncertain"] = True
+            return entry
+
+        in_batch: dict[tuple[str, str], asyncio.Task[dict[str, Any]]] = {}
+
+        async def _one(call: ParallelToolCall) -> dict[str, Any]:
+            name, tool_input = _canonical_operator_tool_call(
+                call.tool_name, call.tool_input, self.executor.tool_definitions
+            )
+            definition = self.executor.tool_definitions.get(name)
+            if definition is None:
+                return await _execute_one(call)
+            risk = _effective_operator_risk(definition, tool_input, call.risk_level)
+            capability = definition.capability_for(tool_input)
+            if not _in_flight_is_ambiguous({"risk_level": risk.value, "capability": capability.value}):
+                return await _execute_one(call)
+            # The executor validates inputs and fills schema defaults before
+            # dispatch. Compare that same effective input so two spellings of
+            # one consequential call do not run the effect twice.
+            request = ToolCallRequest(
+                task_id=task_id, tool_name=name, capability=capability,
+                risk_level=risk, input=tool_input, parent_step_id=step_id,
+            )
+            effective_input = self.executor.normalized_request(request).input
+            key = (name, json.dumps(effective_input, sort_keys=True, default=str))
+            pending = in_batch.get(key)
+            if pending is None:
+                pending = asyncio.create_task(_execute_one(call))
+                in_batch[key] = pending
+                return await pending
+            original = await asyncio.shield(pending)
+            duplicate = {**original, "duplicate_in_batch": True}
+            if original.get("status") == ToolResultStatus.SUCCEEDED.value:
+                duplicate["status"] = ALREADY_DONE_STATUS
+                duplicate["output_summary"] = "The identical call in this batch already succeeded; it was not dispatched again."
+            return duplicate
 
         return list(await asyncio.gather(*[_one(call) for call in calls]))
 
@@ -1635,6 +1788,13 @@ class TaskWorker:
             )
         summary_input = {"objective": objective, "delegate_tools": decision.delegate_tools}
         sub_history: list[dict[str, Any]] = []
+
+        def interrupted(current: TaskRecord) -> tuple[TaskRecord, dict[str, Any]]:
+            return current, {
+                "tool_name": "delegate", "input": summary_input, "status": "interrupted",
+                "error": "delegated work stopped before another call; review any completed work before repeating",
+                "origin": delegate_origin, "step_id": step_id,
+            }
 
         for _step in range(self.DELEGATE_MAX_STEPS):
             sub_step_id = new_id("step")
@@ -1697,11 +1857,20 @@ class TaskWorker:
                         "step_id": sub_step_id,
                     })
                     continue
-                sub_history.extend(
-                    await self._run_parallel_calls(
-                        task.id, calls, origin_prefix=f"{delegate_origin}/", step_id=sub_step_id
-                    )
+                current, permitted = self.repositories.tasks.confirm_reserved_dispatch(task.id, step_id)
+                if not permitted:
+                    return interrupted(current)
+                entries = await self._run_parallel_calls(
+                    task.id, calls, origin_prefix=f"{delegate_origin}/", step_id=sub_step_id
                 )
+                sub_history.extend(entries)
+                uncertain = [entry for entry in entries if entry.get("outcome_uncertain")]
+                if uncertain:
+                    current = self.repositories.tasks.get(task.id) or current
+                    current, report = interrupted(current)
+                    report["uncertain_calls"] = uncertain
+                    report["interrupted_batch_results"] = entries
+                    return current, report
                 continue
 
             # CALL_TOOL
@@ -1737,6 +1906,9 @@ class TaskWorker:
                 risk_level=_effective_operator_risk(tool_def, tool_input, sub_decision.risk_level),
                 input=tool_input, origin=delegate_origin, parent_step_id=sub_step_id,
             )
+            current, permitted = self.repositories.tasks.confirm_reserved_dispatch(task.id, step_id)
+            if not permitted:
+                return interrupted(current)
             result = await self.executor.execute(request)
             if result.status == ToolResultStatus.NEEDS_APPROVAL:
                 sub_history.append({
@@ -1747,14 +1919,22 @@ class TaskWorker:
                 })
                 continue
             if _is_background_external_tool_result(tool_name, result):
-                sub_history.append({
-                    "tool_name": tool_name, "input": tool_input, "status": "failed",
-                    "error": "this call started a background session, which delegation does not support",
-                    "step_id": sub_step_id,
+                current, report = interrupted(task)
+                report["uncertain_calls"] = [{
+                    "tool_name": tool_name, "input": tool_input, "status": "running",
+                    "session_id": str(result.output.get("session_id") or ""),
+                    "request_id": result.request_id, "step_id": sub_step_id,
                     **normalization,
-                })
-                continue
+                }]
+                return current, report
             task = self._record_tool_result(task.id, tool_name, result)
+            if _uncertain_consequential_result(request, result):
+                current, report = interrupted(task)
+                report["uncertain_calls"] = [{
+                    "tool_name": tool_name, "input": tool_input, "status": result.status.value,
+                    "request_id": result.request_id, "step_id": sub_step_id,
+                }]
+                return current, report
             output_text = _tool_output_text(result) if result.status == ToolResultStatus.SUCCEEDED else None
             sub_history.append({
                 "tool_name": tool_name, "input": tool_input,
@@ -1771,6 +1951,46 @@ class TaskWorker:
             "error": f"sub-task step budget ({self.DELEGATE_MAX_STEPS}) exhausted without finishing",
             "origin": delegate_origin, "step_id": step_id,
         }
+
+    def _review_uncertain_result(
+        self,
+        task: TaskRecord,
+        history: list[dict[str, Any]],
+        request: ToolCallRequest,
+        result: ToolCallResult,
+        *,
+        step_id: str,
+    ) -> TaskRecord | None:
+        """Do not let a model retry a consequential call with an unknown outcome."""
+        if not _uncertain_consequential_result(request, result):
+            return None
+        marker = task.metadata.get("operator_in_flight")
+        if not isinstance(marker, dict) or marker.get("step_id") != step_id:
+            return task
+        history.append({
+            "tool_name": request.tool_name, "input": request.input,
+            "status": result.status.value, "output_summary": None,
+            "error": _retry_error_text(result, request), "request_id": result.request_id, "step_id": step_id,
+        })
+        metadata = {**task.metadata, "operator_history": history}
+        metadata.pop("operator_pending_call", None)
+        metadata.pop("pending_approval_preview", None)
+        metadata, status = _interrupted_task_recovery(task.model_copy(update={"metadata": metadata}))
+        return self._transition_operator(task, metadata, status, "operator_uncertain_effect_review")
+
+    def _review_uncertain_batch(
+        self, task: TaskRecord, history: list[dict[str, Any]], entries: list[dict[str, Any]], *, step_id: str
+    ) -> TaskRecord | None:
+        if not any(entry.get("outcome_uncertain") for entry in entries):
+            return None
+        marker = task.metadata.get("operator_in_flight")
+        if not isinstance(marker, dict) or marker.get("step_id") != step_id:
+            return task
+        metadata = {**task.metadata, "operator_history": history}
+        metadata.pop("operator_pending_batch", None)
+        metadata.pop("pending_approval_preview", None)
+        metadata, status = _interrupted_task_recovery(task.model_copy(update={"metadata": metadata}), force_review=True)
+        return self._transition_operator(task, metadata, status, "operator_uncertain_batch_review")
 
     def _operator_retry_or_ask(
         self,
@@ -1853,11 +2073,9 @@ class TaskWorker:
         step_id: str,
     ) -> TaskRecord:
         """A tool (coding.agent today) reported a session still running in the
-        background rather than a finished result. cli.py's
-        _coding_session_completion_callback writes metadata["pending_tool_result"]
-        and flips AWAITING_EXTERNAL back to RUNNING once the session actually
-        finishes - it isn't plan-shaped (only checks task.status), so it works
-        for the operator loop unchanged. _resume_operator_pending_external
+        background rather than a finished result. The session completion
+        handler uses the task repository to bind a matching session and save
+        metadata["pending_tool_result"]. _resume_operator_pending_external
         below is the other half: picking that result back up.
         """
         output = result.output if isinstance(result.output, dict) else {}
@@ -1880,6 +2098,7 @@ class TaskWorker:
             "awaiting_external": {
                 "tool_name": decision.tool_name,
                 "session_id": str(output.get("session_id") or ""),
+                "step_id": step_id,
                 "provider": output.get("provider"),
                 "status": output.get("status"),
                 "request_id": result.request_id,
@@ -2079,13 +2298,24 @@ class TaskWorker:
             for entry in (approval.action_payload.get("batch") or [])
             if isinstance(entry, dict)
         }
-        step_id = str(pending.get("step_id") or "")
+        step_id = str(pending.get("step_id") or f"step_{uuid4().hex}")
+        admitted_task, admitted = self._mark_parallel_in_flight(
+            task.id, calls, step_id=step_id, allow_awaiting_approval=True
+        )
+        if not admitted:
+            return admitted_task
         entries = await self._run_parallel_calls(
             task.id, calls, step_id=step_id, approvals_by_call=approvals_by_call
         )
         history.extend(entries)
         recorded = self.repositories.tasks.get(task.id) or task
+        uncertain = self._review_uncertain_batch(recorded, history, entries, step_id=step_id)
+        if uncertain is not None:
+            return uncertain
         metadata = {k: v for k, v in recorded.metadata.items() if k not in {"operator_pending_batch", "pending_approval_preview"}}
+        in_flight = metadata.get("operator_in_flight")
+        if isinstance(in_flight, dict) and in_flight.get("step_id") == step_id:
+            metadata.pop("operator_in_flight", None)
         return self._transition_operator(
             recorded, {**metadata, "operator_history": history}, TaskStatus.RUNNING, "operator_batch_approved",
         )
@@ -2120,7 +2350,7 @@ class TaskWorker:
             )
         tool_name = str(pending_call["tool_name"])
         tool_input = pending_call.get("tool_input") or {}
-        step_id = pending_call.get("step_id")
+        step_id = str(pending_call.get("step_id") or f"step_{uuid4().hex}")
         if self.executor is None:
             raise RuntimeError("cannot resume an approved tool call without an executor")
         tool_def = self.executor.tool_definitions.get(tool_name)
@@ -2144,8 +2374,16 @@ class TaskWorker:
             input=tool_input,
             parent_step_id=step_id,
         )
+        admitted_task, admitted = self._mark_in_flight(
+            task.id, request, step_id=step_id, allow_awaiting_approval=True
+        )
+        if not admitted:
+            return admitted_task
         result = await self.executor.execute(request, approval_id=approval.id)
         recorded = self._record_tool_result(task.id, tool_name, result)
+        uncertain = self._review_uncertain_result(recorded, history, request, result, step_id=step_id)
+        if uncertain is not None:
+            return uncertain
         output_text = _tool_output_text(result) if result.status == ToolResultStatus.SUCCEEDED else None
         history.append({
             "tool_name": tool_name,
@@ -2159,6 +2397,9 @@ class TaskWorker:
         final_metadata = {**metadata, **recorded.metadata, "operator_history": history}
         final_metadata.pop("operator_pending_call", None)
         final_metadata.pop("pending_approval_preview", None)
+        in_flight = final_metadata.get("operator_in_flight")
+        if isinstance(in_flight, dict) and in_flight.get("step_id") == step_id:
+            final_metadata.pop("operator_in_flight", None)
         return self.repositories.tasks.update_metadata(task.id, final_metadata, TaskStatus.RUNNING)
 
     async def _maybe_learn_preference(self, task: TaskRecord) -> None:
@@ -2218,7 +2459,7 @@ class TaskWorker:
             metadata = {**metadata}
             metadata.setdefault("last_worker_error", _operator_transition_error_message(reason, self.operator_max_steps))
         updated = self.repositories.tasks.update_metadata(task.id, metadata, status)
-        self.audit.task_state_changed("worker", task.id, task.status, status)
+        self.audit.task_state_changed("worker", task.id, task.status, updated.status)
         if status in {TaskStatus.FAILED, TaskStatus.BLOCKED}:
             self.audit.append(
                 AuditEventType.ERROR, actor="worker", task_id=task.id,
@@ -4567,7 +4808,6 @@ def _ground_operator_final_answer(answer: str | None, history: list[dict[str, An
 
 
 _FILE_READ_OPERATIONS = frozenset({"read_file", "inspect_document", "extract_text", "summarize_pdf"})
-_ANSWER_PATH = re.compile(r"(?<![\w/\\])(?:[A-Za-z]:[\\/]|/)[^\s'\"<>|*?,;]+")
 
 
 def _answer_with_the_file_read(answer: str, history: list[dict[str, Any]]) -> str:
@@ -4591,6 +4831,17 @@ def _answer_with_the_file_read(answer: str, history: list[dict[str, Any]]) -> st
     )
     if source is None:
         return answer
+    if not source.is_absolute() or not source.suffix:
+        return answer
+
+    # Match only the known source directory, including spaces, rather than
+    # guessing where an arbitrary unquoted path ends in a prose sentence.
+    directory = r"[\\/]".join(re.escape(part) for part in re.split(r"[\\/]", str(source.parent)))
+    path_in_source_directory = re.compile(
+        r"(?<![\w/\\])" + directory + r"[\\/][^\\/\r\n'\"<>|*?,;]+?"
+        + re.escape(source.suffix) + r"(?=$|[\s.,;:!?\)\]\"'])",
+        re.IGNORECASE if os.name == "nt" else 0,
+    )
 
     def real_file(match: re.Match[str]) -> str:
         text = match.group(0).rstrip(".:)")
@@ -4604,7 +4855,7 @@ def _answer_with_the_file_read(answer: str, history: list[dict[str, Any]]) -> st
             return str(source) + match.group(0)[len(text):]
         return match.group(0)
 
-    return _ANSWER_PATH.sub(real_file, answer)
+    return path_in_source_directory.sub(real_file, answer)
 
 
 def _completed_coding_agent_answer(tool_name: str, result: ToolCallResult) -> str | None:

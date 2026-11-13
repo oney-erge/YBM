@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 from pydantic import BaseModel, Field
 
-from agent_control.config import AppSettings, CapabilityPolicy
+from agent_control.config import ApprovalPolicyConfig, AppSettings, CapabilityPolicy
 from agent_control.orchestration import TaskWorker, ToolExecutor
 from agent_control.policy import PolicyEngine
 from agent_control.schemas import (
@@ -68,3 +68,49 @@ async def test_an_approved_batch_runs_when_the_schema_adds_defaults(tmp_path) ->
     errors = [entry.get("error") for entry in resumed.metadata["operator_history"]]
     assert statuses == ["succeeded", "succeeded"], errors
     assert len(adapter.started_at) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("requires_approval", [False, True])
+async def test_batch_coalesces_equivalent_validated_effects(tmp_path, requires_approval) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("fill two distinct values")
+    settings = AppSettings(
+        _env_file=None,
+        approval_policy=ApprovalPolicyConfig(require_approval_at_or_above=RiskLevel.CRITICAL),
+        capabilities={
+            Capability.TERMINAL_RUN: CapabilityPolicy(
+                enabled=True, requires_approval=requires_approval, max_risk_level=RiskLevel.HIGH
+            )
+        },
+    )
+    adapter = RecordingAdapter("form", delay=0.0)
+    executor = ToolExecutor(
+        PolicyEngine(settings, audit), repos, audit, adapters={"form": adapter},
+        tool_definitions={"form": ToolDefinition(
+            name="form", capability=Capability.TERMINAL_RUN, enabled=True, description="test",
+            input_schema=FillStep,
+        )},
+    )
+    calls = [
+        ParallelToolCall(tool_name="form", tool_input={"field": "Name", "value": "A"}, risk_level=RiskLevel.HIGH),
+        ParallelToolCall(tool_name="form", tool_input={"field": "Name", "value": "A", "wait_seconds": 1.0}, risk_level=RiskLevel.HIGH),
+        ParallelToolCall(tool_name="form", tool_input={"field": "Name", "value": "B"}, risk_level=RiskLevel.HIGH),
+    ]
+    worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([
+        OperatorDecision(action=OperatorAction.CALL_TOOLS_PARALLEL, parallel_calls=calls),
+    ]))
+
+    result = await worker.process_task(task.id)
+    if requires_approval:
+        assert result.status == TaskStatus.AWAITING_APPROVAL
+        batch = repos.approvals.list_pending()[0]
+        for entry in batch.action_payload["batch"]:
+            repos.approvals.decide_pending(entry["approval_id"], ApprovalStatus.APPROVED)
+        repos.approvals.decide_pending(batch.id, ApprovalStatus.APPROVED)
+        result = await worker.process_task(task.id)
+
+    assert len(adapter.started_at) == 2
+    assert [entry["status"] for entry in result.metadata["operator_history"]] == [
+        "succeeded", "already_done", "succeeded",
+    ]

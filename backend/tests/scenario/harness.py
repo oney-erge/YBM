@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 import os
 import shutil
+import stat
 import sys
 import tempfile
 
@@ -58,13 +59,27 @@ _REPO_CONFIG_PATH = Path(__file__).resolve().parents[3] / "config" / "config.yam
 # portable across machines/clone paths (the objective text embeds an
 # absolute path) - a real limitation, tracked in docs/archive/HISTORY.md P2, not one
 # to design around today.
-SCENARIO_SCRATCH_ROOT = Path(tempfile.gettempdir()) / "ybm_scenario_scratch"
+# The system temp folder may itself be a link (macOS keeps it under /var, which points at /private/var), so it is resolved once
+# here; what must not pass through a link is everything below it, which scenario_scratch_dir checks.
+SCENARIO_SCRATCH_ROOT = Path(tempfile.gettempdir()).resolve() / "ybm_scenario_scratch"
 
 
 def scenario_scratch_dir(name: str) -> Path:
     """A stable, empty directory at the same absolute path every run."""
-    path = SCENARIO_SCRATCH_ROOT / name
+    if not name or name in {".", ".."} or Path(name).name != name:
+        raise ValueError("scenario scratch name must be one directory name")
+    root = SCENARIO_SCRATCH_ROOT.absolute()
+    if root.resolve() != root:
+        raise ValueError("scenario scratch root must not pass through a link")
+    path = root / name
     if path.exists():
+        if path.resolve().parent != root or path.is_symlink():
+            raise ValueError("refusing to clean a scenario path outside the scratch root")
+        for directory, directories, files in os.walk(path, followlinks=False):
+            for entry in directories + files:
+                info = (Path(directory) / entry).lstat()
+                if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                    raise ValueError("refusing to clean scenario scratch containing a link")
         shutil.rmtree(path)
     path.mkdir(parents=True)
     return path

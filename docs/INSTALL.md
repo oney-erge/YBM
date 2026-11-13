@@ -29,9 +29,11 @@ or `stop` for the same lifecycle operations on every platform. The default
 action is safe to rerun and opens the console only after readiness succeeds.
 If source-checkout setup fails, inspect `.setup/install.log` in the checkout.
 
-**A checkout needs Node.js 22.22 or newer.** The built console is not committed, so the launcher builds it
-from source, which the installers above do not need to do. With an older or missing Node the launcher
-says so and carries on with the JSON API only, with no web console; install Node from
+**For a checkout, use Node.js 22.22.2+ on Node 22, 24.15.0+ on Node 24, or Node 26+.**
+These are the ranges declared by the console's locked dependencies. The built console is not committed, so the launcher builds it
+from source, which the installers above do not need to do. With a missing Node or one below the
+existing 22.22.0 build minimum, the launcher carries on with the JSON API only. Other versions
+outside the locked dependencies' declared ranges produce a warning but still attempt a build; install a supported Node from
 <https://nodejs.org> and run the launcher again (or `ybm ui-build`). If you only want to use YBM, use an
 installer instead.
 

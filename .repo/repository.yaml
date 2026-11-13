@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "repository": {"id": "oney-erge/YBM", "owner": "oney-erge", "maintenance": "unclassified", "interfaces": ["browser-ui", "api", "cli"]},
+  "capabilities": ["async-jobs", "persistent-data", "external-effects"],
+  "components": [{"id": "backend", "root": "backend"}, {"id": "console", "root": "frontend"}],
+  "environment": {"python": ">=3.12", "source": "backend/pyproject.toml", "live_effects": "require explicit scope and existing policy"},
+  "checks": {
+    "tool-contracts": {"argv": ["python", "-m", "pytest", "tests/test_contracts.py", "-q"], "cwd": "backend", "timeout_seconds": 180, "lane": "fast", "effects": "local-test-files"},
+    "console-tests": {"argv": ["npm", "run", "test"], "cwd": "frontend", "timeout_seconds": 300, "lane": "journey", "effects": "local-test-files"}
+  },
+  "journeys": [{"id": "plan-approve-execute-receipt", "user_outcome": "Review a proposed task, approve an allowed action and inspect its receipt", "checks": ["tool-contracts", "console-tests"], "additional_evidence_needed": ["controlled end-to-end approval and receipt", "pause/cancel during execution", "uncertain effect reconciliation", "keyboard and focus review"]}],
+  "state": {"owner": "backend/src/agent_control", "policy": "Revalidate current state and approval at the existing effect boundary; do not assume retries are safe."},
+  "evidence": {"status": "not-collected-by-repoctl", "note": "Named checks are partial coverage and do not prove effect counts or the full user journey."},
+  "agent": {"instruction_entry": "AGENTS.md", "command_trust": "external-to-repository"}
+}
