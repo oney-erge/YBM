@@ -94,6 +94,22 @@ ABILITY_QUESTION: dict[str, Any] = {
 }
 ABILITY_THRESHOLD = 0.9
 
+#: What a message sent while a task is running is to that task. Asked in shadow mode only (the answer is recorded next to the
+#: concierge's and decides nothing) until it agrees with the concierge often enough, on enough real messages, to take over:
+#: it would replace a ~10 s model call, queued behind the task, with a forward pass on the CPU.
+MESSAGE_KINDS: dict[str, str] = {
+    "status": "asks how the running job is going, what it is doing, or how long it will take",
+    "steer": "changes or adds to the running job: a correction, an extra requirement, a different choice",
+    "stop": "tells the bot to stop, cancel or drop the running job",
+    "new": "a different, unrelated request that is not about the running job",
+    "chat": "small talk, thanks, or a general question",
+}
+KIND_QUESTION: dict[str, Any] = {
+    "type": "choice",
+    "instructions": "The bot is busy working on a job. What is this new message to that job?",
+    "criteria": dict(MESSAGE_KINDS),
+}
+
 
 @dataclass(frozen=True)
 class DecisionOpinion:
@@ -103,6 +119,9 @@ class DecisionOpinion:
     latency_ms: float
     #: Probability that the message only asks what the bot can do (ABILITY_QUESTION); None if not answered.
     ability: float | None = None
+    #: The mid-task kind (KIND_QUESTION) and how sure the model is of it; None when it was not asked (no task running).
+    kind: str | None = None
+    kind_confidence: float | None = None
 
 
 class DecisionModelError(RuntimeError):
@@ -120,6 +139,25 @@ def decides_alone(config: DecisionConfig, opinion: DecisionOpinion) -> bool:
     if config.mode == "decision":
         return opinion.route not in CONCIERGE_ONLY_ROUTES
     return False
+
+
+def summarize_kinds(payloads: list[dict[str, Any]], *, bar: float = 0.95, minimum: int = 100) -> dict[str, Any]:
+    """How the mid-task kind question compares with the concierge, and whether it has earned the right to take over.
+
+    It has when it agrees on at least `bar` of at least `minimum` real messages.
+    """
+    compared = [p for p in payloads if p.get("decision_kind") and p.get("final_kind")]
+    agreed = sum(1 for p in compared if p.get("kind_agrees"))
+    rate = agreed / len(compared) if compared else None
+    return {
+        "compared": len(compared), "agreed": agreed, "agreement": round(rate, 4) if rate is not None else None,
+        "ready": bool(compared) and len(compared) >= minimum and rate is not None and rate >= bar,
+        "needs_more_messages": max(0, minimum - len(compared)),
+        "disagreements": [
+            {"text": str(p.get("text") or "")[:200], "decision_kind": p.get("decision_kind"), "llm_kind": p.get("final_kind")}
+            for p in compared if not p.get("kind_agrees")
+        ][:10],
+    }
 
 
 def summarize_decisions(payloads: list[dict[str, Any]]) -> dict[str, Any]:
@@ -161,8 +199,11 @@ class DecisionModelClient:
         self.config = config
         self._transport = transport
 
-    async def route_of(self, text: str) -> DecisionOpinion:
-        body: dict[str, Any] = {"state": text, "questions": {"route": ROUTE_QUESTION, "ability": ABILITY_QUESTION}}
+    async def route_of(self, text: str, *, with_kind: bool = False) -> DecisionOpinion:
+        questions: dict[str, Any] = {"route": ROUTE_QUESTION, "ability": ABILITY_QUESTION}
+        if with_kind:
+            questions["kind"] = KIND_QUESTION
+        body: dict[str, Any] = {"state": text, "questions": questions}
         if self.config.profile:
             body["model"] = self.config.profile
         headers = {}
@@ -185,9 +226,39 @@ class DecisionModelClient:
             confidence = float(answer.get("confidence", probabilities.get(route.value, 0.0)))
         except (KeyError, TypeError, ValueError) as exc:
             raise DecisionModelError(f"decision model returned an unusable answer: {exc}") from exc
+        kind, kind_confidence = _kind_of(answers.get("kind")) if with_kind else (None, None)
         return DecisionOpinion(
-            route, confidence, probabilities, (time.monotonic() - started) * 1000, ability=_yes_probability(answers.get("ability"))
+            route, confidence, probabilities, (time.monotonic() - started) * 1000, ability=_yes_probability(answers.get("ability")),
+            kind=kind, kind_confidence=kind_confidence,
         )
+
+
+def _kind_of(answer: Any) -> tuple[str | None, float | None]:
+    """The mid-task kind from a /v1/systemone answer, or (None, None) when it is absent or not one of MESSAGE_KINDS."""
+    if not isinstance(answer, dict):
+        return None, None
+    choice = str(answer.get("choice") or "")
+    if choice not in MESSAGE_KINDS:
+        return None, None
+    probabilities = answer.get("probabilities") or {}
+    try:
+        return choice, float(answer.get("confidence", probabilities.get(choice, 0.0)))
+    except (TypeError, ValueError):
+        return choice, None
+
+
+def kind_of_classification(classification: MessageClassification) -> str:
+    """What the concierge decided a message sent mid-task is, in the same words as MESSAGE_KINDS."""
+    if classification.steers_active_task:
+        return "steer"
+    if classification.task_type == TaskType.STATUS_REQUEST:
+        return "status"
+    route = route_of_classification(classification)
+    if route == IntentRoute.STATUS:
+        return "status"
+    if route == IntentRoute.CONVERSATION or not classification.is_task:
+        return "chat"
+    return "new"
 
 
 def _yes_probability(answer: Any) -> float | None:
@@ -243,12 +314,12 @@ class DecisionModelClassifier:
         except TypeError:  # a classifier that predates the context argument
             return await self.fallback.classify(message)
 
-    async def _ask(self, text: str) -> tuple[DecisionOpinion | None, str | None]:
+    async def _ask(self, text: str, *, with_kind: bool = False) -> tuple[DecisionOpinion | None, str | None]:
         """The opinion, or why there is none. Never raises: this is an optional helper."""
         if time.monotonic() < self._down_until:
             return None, "skipped: the decision model failed recently"
         try:
-            return await self.client.route_of(text), None
+            return (await self.client.route_of(text, with_kind=True) if with_kind else await self.client.route_of(text)), None
         except DecisionModelError as exc:
             self._down_until = time.monotonic() + self.config.cooldown_seconds
             logger.warning("decision_model_unavailable", error=str(exc))
@@ -261,7 +332,7 @@ class DecisionModelClassifier:
     async def _shadow(
         self, message: InboundMessage, context: str | None, text: str, *, busy: bool = False
     ) -> MessageClassification:
-        asked = asyncio.ensure_future(self._ask(text))
+        asked = asyncio.ensure_future(self._ask(text, with_kind=busy))
         try:
             classification = await self._concierge(message, context)
         except BaseException:
@@ -317,6 +388,14 @@ class DecisionModelClassifier:
                 "decision_error": error,
                 "final_route": decided.value if decided else None,
                 "agrees": (opinion.route == decided) if opinion and decided else None,
+                # Only while a task runs (shadow): what the decision model thinks this message is to that task, and what the
+                # concierge decided. Recorded, never acted on.
+                "decision_kind": opinion.kind if opinion else None,
+                "decision_kind_confidence": (
+                    round(opinion.kind_confidence, 4) if opinion and opinion.kind_confidence is not None else None
+                ),
+                "final_kind": kind_of_classification(classification) if busy else None,
+                "kind_agrees": (opinion.kind == kind_of_classification(classification)) if busy and opinion and opinion.kind else None,
             },
         )
 

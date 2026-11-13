@@ -99,6 +99,7 @@ class Capability(StrEnum):
     GITHUB_PUSH = "github.push"
     DEPENDENCIES_INSTALL = "dependencies.install"
     MEMORY_MANAGE = "memory.manage"
+    SYSTEM_INVENTORY = "system.inventory"
 
 
 class TaskType(StrEnum):
@@ -192,6 +193,8 @@ class PostconditionType(StrEnum):
     TASK_STATUS = "task_status"
     GITHUB_PR = "github_pr"
     EXTERNAL_COMMAND = "external_command"
+    PAGE_MATCHES_REQUEST = "page_matches_request"
+    FORM_SUBMITTED = "form_submitted"
 
 
 class AuditEventType(StrEnum):
@@ -820,6 +823,24 @@ class TaskWorkflow(StrictBaseModel):
     # re-scan `plan` on every read.
     parameters: list[str] = Field(default_factory=list)
     created_at: datetime = Field(default_factory=utc_now)
+
+
+class ProjectRecord(StrictBaseModel):
+    """A durable work area a person can attach to multiple tasks.
+
+    Project instructions are explicitly authored by the local administrator.
+    Files inside ``root_paths`` remain ordinary, untrusted tool input: a
+    project only tells the worker where work belongs and what outcome the
+    person wants. It never widens filesystem policy or approval authority.
+    """
+
+    id: str = Field(default_factory=lambda: new_id("project"))
+    name: str = Field(min_length=1, max_length=120)
+    instructions: str = Field(default="", max_length=8000)
+    root_paths: list[str] = Field(default_factory=list, max_length=20)
+    criteria: list[str] = Field(default_factory=list, max_length=30)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
 
 
 class Artifact(StrictBaseModel):

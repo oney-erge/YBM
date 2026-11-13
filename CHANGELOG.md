@@ -5,11 +5,141 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Projects (Agent, Projects): a reusable set of folders, instructions and success criteria. Choosing one in chat copies that context
+  onto the task for the operator to read; adding a folder to a project never grants access to it.
+- A `system.inventory` tool answers questions about the computer from the places that know: how many Steam games are installed (every
+  library folder on every drive; the redistributables are not counted), which apps are installed, free disk space, and where a file is
+  (the Windows Search index, which answers in milliseconds, with a bounded folder walk where there is no index). Only files in folders
+  YBM may read are returned, documents first. Read-only; off in the example config like `memory.manage`, enable it with `capabilities: system.inventory: enabled: true`.
+  Files kept only in OneDrive (not downloaded) are marked `[online only]`, and reading one says so instead of "File is not a
+  zip file"; a live run had reported the user's own resume as corrupted.
+- Folder-triggered workflows: a saved workflow can run when a matching file lands in a watched folder. The scheduler polls the folder
+  (top level only, at most 500 entries and 10 MB per file), waits for the file to stop changing, hashes it, and creates one replay
+  task per input version; a failed task insert rolls the acknowledgement back, so a file is never skipped or run twice. Outputs
+  YBM registers as artifacts are excluded so they cannot trigger another watcher.
+- A third held-out suite of 16 open-ended requests (`--suite heldout3`, ids `h3_*`, frozen by a recorded hash like the second): the number of Steam
+  games and free disk space (computed on the machine at fixture time, never typed in), finding a file by name, what a document is about, comparing
+  files, adding a line to a file, moving files and then `undo that`, what YBM remembers about the person and forgetting it, saving and running a
+  workflow from the chat, honest "I can't" answers, and building a small web page. Written once and run once on the code as it stands.
+- The Telegram approval message has an "Allow for this task" button under Approve and Reject. A web sign-up asks three times (go to the page, fill
+  the form, click the button), which was three taps for one decision. The button grants the same kind of step for the rest of that task, with
+  the dashboard's existing limits: it never widens what policy allows (the risk ceiling, scope and patterns still run first), it ends with the
+  task, and it covers 200 calls at most. A batch approval now decides every call in it from the button too, where before only the batch itself
+  was decided and the calls were left pending.
+- Saved workflows from Telegram: `save that as a workflow called weekly report` keeps the last finished task's steps under a name, `my workflows` lists them, and `run weekly report` (or `run <name> with folder=Downloads` for one with parameters) runs it again through the same replay pipeline and approvals as the dashboard. They were only reachable from the web dashboard. A message is treated as a command only when it names a real workflow, so `run the tests` is unaffected.
+- `are my coding agents working?` (also `check codex`, `can you use codex?`) answers in a second without spending any quota: whether `codex` and
+  `claude` are installed, their versions, and the model Codex is configured to use, so a Codex config that names a model the plan cannot use is
+  visible before a task is queued on it (it cannot prove the plan allows the model; only a run can, and the reply says so).
+- Three things to say to the assistant about itself, instantly and without a model call: `what apps are running?` lists the apps YBM started that
+  still answer (by the name of the page and its address), `stop the recipe app` stops one (only after checking that the process with the recorded id
+  is still the static server it started, so a reused id is never killed), `what do you know about me?` shows the remembered profile and rules, and
+  `forget my t-shirt size` forgets the one fact that matches (several matches are listed and asked about; `forget everything` is declined as one
+  message). A message only counts when it names something that exists, so `stop the music` and `forget the meeting` are ordinary requests.
+- `document.manage` `compare_documents`: compares 2 to 12 PDF, text, Markdown, CSV, TSV or JSON files against 1 to 30 criteria and
+  writes an evidence workbook and a Markdown report. Matching is literal keyword overlap, not a semantic judgement; scanned or
+  password-protected PDFs fail visibly. Creating the files needs filesystem write access and the normal approval policy.
+- The workflows page lists saved workflows, runs one with filled-in parameter values, schedules it and deletes it; a task can be
+  saved as a workflow from its page.
+- `undo that` (or `put them back`) puts the files of the last move or rename back where they were. Each applied move now records where every file
+  came from, and the command turns that into a new task that moves them back through the ordinary replay pipeline, so it asks for approval like
+  the move did. It never overwrites: a file that is no longer where YBM left it is skipped (and the reply says how many), a name that is taken is
+  saved as a copy, and a move is undone once. Everything a task moved is undone, not only its last step: a file moved twice (sorted into a
+  folder by type, then moved again) goes back to where it started.
+- A search now says how hard it looked, and "it is not there" is only said when that is proven. `system.inventory find_files` walks the
+  folders YBM may read shallow folders first and every drive in turn (so a file kept near the top of D: is found before a walk has dived
+  into the biggest folder of C:), stops a few seconds after the first match, goes through hidden and system folders in a second pass when
+  nothing turned up, skips a folder Windows will not open instead of stopping, and ends an empty result with what it covered ("I looked
+  through all 250,804 folders under ..."), or says plainly that it ran out of time and proves nothing. `filesystem.manage search` is
+  time-boxed the same way (it used to walk a whole drive for as long as it took) and skips locked folders inside the folder it was
+  pointed at.
+- The Operator loop reads its own history and acts on facts (`orchestration/ladder.py`), shown to the model as a check entry, never as a
+  prompt change. A read of the very path the request names that failed because it does not exist, or a finished search for words the
+  request uses, is a proven absence: the model is told it is settled, the answer is accepted without asking the Auditor whether "it
+  does not exist" is sufficient (it was sent back until the task ended "Blocked"), and the coverage is added to the answer. Two empty
+  searches, or one that ran out of time, point at the next rung, once each: the everywhere search, then a short Python script run with
+  `code.interpreter` (the hint carries a script that looks at other drives first and stops itself after two minutes). A locked folder is
+  said to be skipped. Three failures in a row suggest a script.
+- When the local model has used those rungs (a script that failed twice, or eight steps that came to nothing, or the step budget ran out)
+  and Claude Code is installed, the task asks the user instead of ending "Blocked": "Do you want me to hand it to Claude Code on this
+  computer?" Only a plain yes hands it over, as a `coding.agent` call that carries the request and a short account of what was tried; nothing
+  is sent anywhere otherwise, and a no tells the model to answer with what it has.
+- The answer has to come from the receipt. If every file a task changed is outside every place the request names ("write it into
+  cat.txt in C:\work" ended with the file in the repository root and an answer naming C:\work), or a move touched files of a kind the
+  request did not name (".png files" moved the text file too, with the record of where it came from to put it back), the model is sent
+  back twice, then lets it report where things really are.
+- A script the local model wrote that produced an answer can be kept as a reusable helper skill (`adapters.skills.helpers_enabled`, off by
+  default; the first script that worked is kept, at most 30), so the next request of that kind starts from it.
+- Running on your own computer: `adapters.code_interpreter.require_approval_for_untrusted_run_python: false` now also removes the approval
+  prompt the tool definition carried (it was fixed in code), and `blocked_imports: []` allows `os`, `shutil` and the like. Both defaults
+  stay cautious. The example config says how to set them.
+- A "remember that ..." request (the `configuration` route) is shown only the always-on memory and persona tools, not the whole catalog. With
+  every tool in front of it, the local model answered "Remember these about me: my favorite fruit is mango ..." by reading a file that
+  an earlier turn of the conversation had named, and reported that the file does not exist.
+- `persona.manage update` replaces the whole persona document, and the local model used it to "remember" three facts about the user, which
+  overwrote the document and left the facts where "what do you know about me?" does not look. An update in a task that has not read the persona
+  first is refused, with the reason and a pointer to `memory.manage remember`, which is where the facts are kept and listed. A hand-off to
+  Claude Code that the user agreed to counts as a requested coding agent.
+  "Remember these about me: my favorite fruit is lychee, my parrot is called Kiwi ..." (and "remember the following: ...") is now taken by the
+  remember command like "remember that ...", before any model sees it, instead of reaching a small model that filed the facts in the persona.
+- A script that only printed its answer is answered with what it printed. The reply used to end with "Workspace: task_task_...", the folder the
+  script ran in; the workspace is named when the script created files.
+- A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
+- A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
+  replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
+  ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which
+  would be the wrong reading of a request to run it later. Parameters work as for a run (`run folder digest weekly with folder=Downloads`).
+- "How's it going?", "any update?" and "what are you doing right now?" are answered from the running task's own record, at once, with
+  no model call and no new task. Before, they went through intake: one got small talk and one started a second copy of the job.
+  The answer says what the task is, how long it has run, how many steps it took and what the latest one was, or that it is waiting
+  for an approval or an answer. With nothing running it says what the last task did if that was within half an hour.
+- What a message sent while a task runs *is* to that task (a status question, a change to the job, "stop", a new request, or chat) is now asked of
+  the local decision model too, in shadow: its answer is recorded next to the concierge's in the intake-decision event (`decision_kind`,
+  `final_kind`, `kind_agrees`) and decides nothing. The console's decision stats gain `kind_stats`: how often they agree and whether it has earned
+  the right to take over (at least 95% agreement on at least 100 real messages). It would replace a model call that queues behind the running task
+  with a forward pass on the CPU; until the numbers say so, the concierge keeps deciding. The question is only sent while a task runs.
+
+### Changed
+
+- First-task and installation guidance in the README and `docs/` is shorter and starts from the first task.
+- A message sent while a task runs no longer queues a model call behind it. Every message triggered a conversation-summary call on the same
+  single-request model the running task was using, so "how's it going?" mid-task waited tens of seconds for a summary nobody needed yet. While a
+  task of the conversation is running the summary is the heuristic one; the next message after the task re-summarizes with the model.
+- What YBM says in a chat now reads like a person wrote it. A new text pass (`human_text.py`) rewrites every task message before it
+  is sent: a path becomes the file name and a place ("resume.docx (in OneDrive)"), a task id becomes "an earlier task", a
+  `[file] name (123 bytes)` listing becomes a short list capped at eight names with "...and 22 more", and a reason code becomes a
+  sentence. It only rewrites what is already in the message; a path that does not exist on this computer is left as written.
+- Progress is one message that changes, not one new message per step. The "On it" message is the one that gets edited ("Working on it:
+  looking through your files... (3 min so far)"), the typing indicator replaces the "Got your message" text, and the answer arrives as
+  its own message while the progress message is removed. Tool names, outcome codes and the model's reasoning no longer appear.
+  Failures say what the last step was and how it ended, without "Gap:", "Retries:" or "Error:" labels.
+- The approval prompt lists what will happen as sentences ("Type \"Oney Erge\" into the \"Full name\" field", "Click \"Sign me up\"", "Control your computer: Open Steam") instead of tool names and JSON, and a value typed into a password, card or similar field is never shown.
+  Going to a page, reading it and a chain of page steps read the same way ("Go to http://...", "Read what is on the page") instead of "Use the web page".
+- A policy refusal ends the task after the second one for the same tool. A form fill refused for exceeding the browser's risk
+  ceiling was retried six more times and then reported as "something went wrong on my side"; it now stops and says the safety
+  settings do not allow that action.
+- What a person says about themselves is remembered one fact at a time. "Remember these about me: my GitHub username is oney-erge, my
+  favorite language is Python, and my t-shirt size is L" was stored as that one sentence under "preference", so a form asking for a
+  GitHub username had to find it inside a paragraph, and a later "my t-shirt size is XL" added a contradicting sentence. Each "my
+  <thing> is <value>" clause is now its own fact ("T-shirt size: L") in the `profile` category, saying it again updates it, and the
+  reply names what was kept ("your GitHub username (oney-erge), your favorite language (Python) and your t-shirt size (L)"). Rules such
+  as "remember that I prefer short answers" are unchanged.
+- YBM remembers who it is talking to: the first message from a Telegram sender stores `Name: <their Telegram name>` as a profile fact, so "my
+  resume" has an owner. A name they state later ("my name is Oney Erge") replaces it.
+- A task that stopped and was never answered is closed quietly after a day. A blocked task is an honest "I could not do that" that was already
+  reported; left open (there were 88) it cluttered the dashboard, and a later "any update?" dug one up and quoted it back. A question nobody
+  answered stayed a live question too, so a reply days later would have been taken as its answer. After `limits.auto_close_blocked_hours`
+  (default 24, 0 keeps them) with no change, a blocked or unanswered task is cancelled the ordinary way (so its cleanup runs) and marked
+  `auto_closed` with the reason, which the dashboard can show as "Closed automatically". Nothing is sent to the person: they were told when
+  it stopped, and a message about housekeeping is noise. Asking again starts fresh. The worker checks at most every ten minutes.
+
 ### Fixed
 
 - The delete refusal and the "change it" overwrite rule read the user's own message, not the question and answer a clarification round
   appends to the task. After "I cannot delete files; I can offer to move them", the objective held "move", the refusal read it as the
   user's, and the files were renamed anyway.
+- A browser click that matched nothing is a failure. It was reported as succeeded, so a run asked to sign someone up filled the form, "clicked" the button, saw the same page and spent its steps verifying a form it had never submitted. The step now fails with what to do (the button's visible words in `text`), and words in the `selector` slot ("Sign me up") are tried as the button's text when no element matches them as CSS.
 - A request that only asks to delete files is no longer carried out by moving and renaming them. There is no delete operation; "delete
   all the files in the junk folder" became folders named "other", "deleted" and "trash", three renamed files, and "Renamed 3 file(s)".
   The move is refused and the model is told to say plainly that it cannot delete, and to offer a move to a folder the user names. A
@@ -20,6 +150,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   request expected (which ended in "Blocked"). A request that says to ask first keeps its question.
 - The relative-path completion also handles a path with the folder alias first (`desktop/AgentControlE2E/a.pdf`), which the
   filesystem tool understands and the document tool does not: `summarize_pdf` looked for it under the program's own folder three times.
+- A batch of calls the person approved is no longer refused when it runs. The executor fills in a tool's schema defaults before it checks policy, but a batch approval bound the model's raw input, so for any tool whose schema adds a default (browser form steps do) every approved call came back `approval_invalid_or_mismatched` and the approvals were wasted. The batch now binds the call as it will run, and finds each call's approval by that same form.
 - An answer the Auditor turned down twice, but that holds no email address, link or calculated number that nothing read produced, is
   delivered with a note ("Not fully confirmed ... please double-check it") instead of ending the task "Blocked". A 9B Auditor rejected
   a correct summary of a 159-character document for being short. An answer with an unsupported value is still blocked.
@@ -34,8 +165,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   delivery check was skipped.
 - A file read by the path a listing showed (`resumes/notes.txt`, relative to the folder the search or listing looked in) is
   completed with that folder, instead of being looked for in the program's own folder and reported as not existing three times.
+- A finished workflow replay shows what its last step found. `run steam count` answered "Replayed 1/1 step(s) successfully" and nothing about the
+  count; the answer now carries the last step's result under that line.
 - Writing to a file that already exists saves a copy (`greeting_2.txt`) unless `overwrite` is set; the result now says the original
   was NOT changed and how to replace it. The model had repeated the same call until the task was blocked.
+- "Add the word pears on a new line" no longer makes `list_2.txt`. There was no way to add to a file: `write_text_file` saves a copy when the path
+  exists. It has an `append` option now (the text goes to the end on its own line, the rest untouched), turned on when the request says to append,
+  add on a new line, at the end or underneath and the file exists. A model that sends the whole file again (the old lines plus the new one) is
+  taken to mean a replacement, so the old lines are not doubled.
 - When the "answer now" offer (stuck or out of steps) is spent on a question the user already answered, the model gets one more
   chance to answer or say what blocks it, instead of the task ending "blocked".
 - `filesystem.manage apply_manifest` treated a folder as the destination of a move as a name collision and renamed around it: three
@@ -44,18 +181,42 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `schedule.manage list`, `memory.manage list` and the artifact list returned only a count to the model ("Found 35 schedule(s)."), so
   "what do I have scheduled?" was asked for again and again until the task was blocked. Each now lists its items in the text the model
   reads, and the schedule list leaves out deleted schedules, which it counted before.
+- A coding CLI that rejects the model in the user's own config no longer pastes its JSON error into the chat. Codex with `model = "gpt-6.1-sol"` on a ChatGPT account answered with a 400 and the whole `turn.failed` payload; the message now names the model, says where it is set (`~/.codex/config.toml`) and offers Claude Code instead.
 - An email address or web link in an answer that the request, the tool results and the remembered facts never held is sent back once
   with "do not make up values" (`operator.verify_numbers`). The local model answered a lookup with an address that was not in the file.
+- An app is not called done until the launched page offers what the person said they would enter. Asked for "a web app that scales a recipe: I
+  enter ingredient amounts and the number of servings", a live run launched a page with two servings fields and a fixed example recipe, and the
+  person had nowhere to type an ingredient. After a launch YBM now fetches the page and lists its fields and buttons in the launch result ("Page
+  check: 2 field(s) (Original Servings:, Target Servings) and 1 button(s). The request says the user enters ingredient amounts, but no field on
+  the page is named for it"), and a new `page_matches_request` completion check compares every thing the request says the user enters with
+  those labels, whatever the classifier declared. A page with a free-text area is never faulted, a request that states nothing to enter is not
+  judged, and an app built another way (no page record) is not blocked.
 - A model that keeps re-reading a file is offered the chance to answer in its own words before the raw result is given to the user:
   "what is the total on the receipt?" got the whole file back as its answer.
 - A call that returns the same result three times no longer ends the task as "Blocked" at once. The model is told to answer with
   what it has or ask one question (and, with `operator.constrain_calls`, its next reply can only do that); a second repeat stops
   the task as before.
+- `find_files` finds a file the Windows Search index does not cover. The index answers in milliseconds but only for what it has indexed; a hidden
+  or just-created folder (every E2E fixture lives under `.agent_control`) came back as "No file matching ... was found" even though the file was
+  there. When the index returns nothing readable, a bounded walk of the folders YBM may read looks for the name; a content search still needs the
+  index.
+- A request to submit a web form is not done until the form was submitted. "Sign me up" with the details you have on me ended with every
+  field typed, a page summary as the answer, and nobody signed up: a new `form_submitted` check expects a successful click (or a fill
+  that asked to submit) after the first fill when the request says submit, sign up, register or apply on a web page, and the model is told
+  to click the button by its visible words; a model that repeats the fill instead is told the form is still unsubmitted, and if the run stops anyway the message says so in words ("I got stuck repeating a step that had already worked (filling in a form)... the form was filled in but never submitted") instead of `Stopped: browser.control:fill_form had already succeeded`. Requests that only ask about a form, or say "submit my report", are unaffected.
 - A request that says to ask first ("Ask me before changing anything on disk") keeps its question: the guard that turns away
   optional questions judged "Rewrite this file" satisfied once the file was read and ended the task with a summary of the read.
+- A form step with nothing to fill is refused before anyone is asked to approve it. `fill_form_step` had `fields` optional, so a model that
+  sent an empty step (it sent eleven in one run) got an approval request for each, and the failure came from inside the browser adapter
+  after the person had tapped Approve. `fields` is now required, one `field`/`value` pair is read as a one-entry `fields`, and the failure
+  message no longer claims "Chrome is not running with remote debugging enabled" for every error that mentions the browser.
 - `read_file` on a Word, Excel, PowerPoint or zip file returns its text or file list, not the archive's bytes; a binary file says
   there is nothing to read.
 - A failed script shows the end of its traceback (the line that says why) and a missing package says what to do instead.
+- A form fill that typed nothing is a failure. Run against a blank tab (the model skipped opening the page) it matched no field, came back as
+  succeeded, and made the real attempt that followed look like a duplicate of it; the form was then submitted empty and the model reported
+  "signed up" on the page's thank-you message. It now fails with "None of the fields ... matched anything on a blank tab" and the step to take
+  (open the page first, use the labels as shown); a fill that matched only some fields succeeds and names the ones it missed.
 - A calculated number in the answer to a calculation request (`operator.verify_numbers`, on by default) must appear in a tool
   result; otherwise the model is sent back once to calculate it with code.
 

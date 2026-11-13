@@ -1389,12 +1389,18 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             # Execution may fall back to a local unsandboxed process. This
             # gate is runtime-owned and cannot be bypassed by Full Access or
             # by setting input.approved in model output.
+            # A person who runs this on their own computer with a local model can switch the prompt off with
+            # adapters.code_interpreter.require_approval_for_untrusted_run_python: false; the default keeps it.
             approval_required_operations=(
-                "run_python",
-                "generate_and_run",
-                "solve_once",
-                "build_temp_helper",
-                "repair_script",
+                (
+                    "run_python",
+                    "generate_and_run",
+                    "solve_once",
+                    "build_temp_helper",
+                    "repair_script",
+                )
+                if settings.adapters.code_interpreter.require_approval_for_untrusted_run_python
+                else ()
             ),
             approval_reasons={
                 "run_python": "runs the given Python code, possibly unsandboxed if Docker is unavailable",

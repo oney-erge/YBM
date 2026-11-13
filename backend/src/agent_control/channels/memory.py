@@ -7,7 +7,7 @@ from typing import Any
 
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import render_prompt
-from agent_control.schemas import MemoryFact, utc_now
+from agent_control.schemas import MemoryFact, TaskStatus, utc_now
 from agent_control.storage.repositories import Repositories
 
 
@@ -27,7 +27,8 @@ DEFAULT_SUMMARY = "No durable conversation memory yet."
 # become a task, not get silently swallowed into a memory fact just
 # because it starts with "remember".
 _REMEMBER_PATTERN = re.compile(
-    r"^(?:please\s+)?(?:remember|don'?t\s+forget)(?:\s+that|[:,])\s+(.+)$",
+    r"^(?:please\s+)?(?:remember|don'?t\s+forget)"
+    r"(?:\s+that|\s+(?:these|this|the\s+following)(?:\s+things)?(?:\s+about\s+(?:me|myself))?\s*[:,]|[:,])\s+(.+)$",
     re.IGNORECASE | re.DOTALL,
 )
 
@@ -142,9 +143,25 @@ class ConversationMemoryService:
         state["strategy"] = "rolling_summary_with_recent_turns"
 
         existing_summary = str((existing or {}).get("summary") or DEFAULT_SUMMARY)
-        summary = await self._summarize(existing_summary, turns)
+        if self._task_in_flight(conversation_id):
+            # The model serves one request at a time. Summarizing now would queue behind the running task's own calls
+            # (and push out its cached prompt), so a message sent mid-task waited tens of seconds for a summary nobody
+            # needed yet. The recent turns are kept; the next message after the task re-summarizes with the model.
+            summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
+        else:
+            summary = await self._summarize(existing_summary, turns)
         state["summary"] = summary
         return self.repositories.conversation_memory.upsert(conversation_id, summary, state)
+
+    _IN_FLIGHT = (TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.RETRYING)
+
+    def _task_in_flight(self, conversation_id: str) -> bool:
+        """Whether a task of this conversation is using the model right now."""
+        try:
+            running = self.repositories.tasks.list_by_statuses(list(self._IN_FLIGHT), limit=20)
+        except Exception:  # noqa: BLE001 - never let this check break a message
+            return False
+        return any(task.conversation_id == conversation_id for task in running)
 
     async def _summarize(self, existing_summary: str, recent_turns: list[dict[str, str]]) -> str:
         if self.provider is None:

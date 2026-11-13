@@ -468,6 +468,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
             else None
         ),
         "operator_max_steps": settings.operator.max_steps,
+        "auto_close_blocked_hours": settings.limits.auto_close_blocked_hours,
         "fulfillment_mode": settings.operator.fulfillment_mode,
         "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
         "scope_tools": settings.operator.scope_tools,
@@ -576,6 +577,7 @@ async def run_scheduler() -> None:
         poll_interval_seconds=settings.scheduler.poll_interval_seconds,
         max_consecutive_failures=settings.scheduler.max_consecutive_failures,
         retention_days=settings.storage.retention_days,
+        settings_loader=load_settings,
     )
 
 
