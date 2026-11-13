@@ -7,6 +7,7 @@ from pathlib import Path
 import os
 import re
 import shutil
+import time
 from typing import Any
 
 from agent_control.llm.providers import LLMProvider
@@ -44,6 +45,12 @@ logger = logging.getLogger(__name__)
 
 # A search for a word that no file name contains reads files up to this size to look for it in their text.
 _TEXT_SEARCH_MAX_BYTES = 1_000_000
+#: A search names a folder, and with whole drives readable that folder can hold millions of files. It looks for this long and then
+#: says so, instead of working for ten minutes with nothing sent to the user. The text pass (reading files for a word) gets less.
+_SEARCH_SECONDS = 20.0
+_TEXT_SEARCH_SECONDS = 15.0
+#: The words a search that ran out of time ends with. orchestration/ladder.py looks for them: such a search proves nothing.
+SEARCH_STOPPED_MARK = "I stopped looking after"
 
 
 class FilesystemManageAdapter:
@@ -118,28 +125,47 @@ class FilesystemManageAdapter:
         name_pattern = query.rsplit("/", 1)[-1] if wildcard_query else query
         include_content = bool(request.input.get("include_content", False))
         max_results = int(request.input.get("max_results") or 100)
-        results = self._search_pass(root, query, name_pattern, wildcard_query, include_content, max_results)
+        started = time.monotonic()
+        stats = {"visited": 0, "stopped": False}
+        results = self._search_pass(
+            root, query, name_pattern, wildcard_query, include_content, max_results, deadline=started + _SEARCH_SECONDS, stats=stats,
+        )
         in_text = False
-        if not results and not include_content and not wildcard_query:
+        if not results and not include_content and not wildcard_query and not stats["stopped"]:
             # "Which file mentions tangerine?" names no file. A search by word that matches no file name is looked for in
             # the text of the files instead of coming back empty, which the model then repeated until it was stopped.
-            results = self._search_pass(root, query, name_pattern, wildcard_query, True, max_results, text_only=True)
+            results = self._search_pass(
+                root, query, name_pattern, wildcard_query, True, max_results, text_only=True,
+                deadline=time.monotonic() + _TEXT_SEARCH_SECONDS, stats=stats,
+            )
             in_text = bool(results)
         where = " (no file name matched; found in the text of the file)" if in_text else ""
+        stopped = (
+            f" {SEARCH_STOPPED_MARK} {round(time.monotonic() - started)} seconds, after {stats['visited']:,} files and folders, so part of "
+            f"{root} was not looked at. For a whole drive or every folder, use system.inventory find_files (it covers every folder "
+            "it may read), or write a short script with code.interpreter."
+            if stats["stopped"] else ""
+        )
         return {
             "root": str(root),
             "entries": results,
-            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}{where}.",
+            "complete": not stats["stopped"],
+            "summary": f"Found {len(results)} result(s) for {request.input['query']!r} under {root}{where}.{stopped}",
         }
 
     def _search_pass(
         self, root: Path, query: str, name_pattern: str, wildcard_query: bool, include_content: bool, max_results: int,
-        *, text_only: bool = False,
+        *, text_only: bool = False, deadline: float | None = None, stats: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
+        stats = stats if stats is not None else {"visited": 0, "stopped": False}
         for path in _walk_limited(root, max_depth=20):
             if path == root:
                 continue
+            stats["visited"] += 1
+            if deadline is not None and stats["visited"] % 64 == 0 and time.monotonic() > deadline:
+                stats["stopped"] = True
+                break
             if text_only and not (path.is_file() and path.stat().st_size <= _TEXT_SEARCH_MAX_BYTES):
                 continue
             matched = False if text_only else (

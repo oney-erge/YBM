@@ -300,19 +300,37 @@ def test_a_folder_that_cannot_be_opened_is_counted_and_skipped_not_fatal(tmp_pat
     (tmp_path / "locked").mkdir()
     (tmp_path / "open").mkdir()
     (tmp_path / "open" / "needle.txt").write_text("x")
-    real_walk = os.walk
+    real_scandir = os.scandir
 
-    def walk(top, onerror=None, **kwargs):
-        for folder, dirs, files in real_walk(top, onerror=onerror, **kwargs):
-            if folder == str(tmp_path) and onerror is not None:
-                onerror(PermissionError(13, "Access is denied", str(tmp_path / "locked")))
-            yield folder, dirs, files
+    def scandir(path):
+        if str(path).endswith("locked"):
+            raise PermissionError(13, "Access is denied", str(path))
+        return real_scandir(path)
 
-    monkeypatch.setattr(system_inventory.os, "walk", walk)
+    monkeypatch.setattr(system_inventory.os, "scandir", scandir)
     report = system_inventory.WalkReport()
     found = system_inventory.walk_search([tmp_path], ["needle"], [], cap=10, report=report)
     assert [Path(item["path"]).name for item in found] == ["needle.txt"]
     assert report.denied == 1 and report.denied_examples == [str(tmp_path / "locked")] and report.complete is True
+
+
+def test_the_walk_looks_at_shallow_folders_first_and_gives_every_root_a_turn(tmp_path):
+    """A file kept near the top of a drive must be found before a walk has dived into the first root's biggest folder."""
+    first, second = tmp_path / "first", tmp_path / "second"
+    deep = first
+    for name in "abcdefgh":
+        deep = deep / name
+        deep.mkdir(parents=True, exist_ok=True)
+        (deep / "filler.txt").write_text("x")
+    (second / "projects").mkdir(parents=True)
+    (second / "projects" / "needle.txt").write_text("x")
+    ticks = iter(range(0, 1000, 10))
+    report = system_inventory.WalkReport()
+    found = system_inventory.walk_search(
+        [first, second], ["needle"], [], cap=10, budget_seconds=45, report=report, clock=lambda: next(ticks),
+    )
+    assert [Path(item["path"]).name for item in found] == ["needle.txt"]
+    assert report.complete is False  # the time ran out first; the point is that the file was reached before that
 
 
 def test_a_walk_that_runs_out_of_time_says_it_is_not_complete(tmp_path):
@@ -343,3 +361,14 @@ def test_an_incomplete_walk_does_not_claim_the_file_is_missing(tmp_path, monkeyp
     result = _run(SystemInventoryAdapter([str(tmp_path)]), operation="find_files", query="nothing-like-this")
     assert result.output["searched"]["complete"] is False
     assert "does not prove it is not there" in result.output["summary"]
+
+
+def test_the_walk_stops_a_few_seconds_after_the_first_match_instead_of_touring_everything(tmp_path):
+    (tmp_path / "a").mkdir()
+    (tmp_path / "a" / "needle.txt").write_text("x")
+    for n in range(40):
+        (tmp_path / f"later-{n}").mkdir()
+    ticks = iter(range(0, 1000, 2))
+    report = system_inventory.WalkReport()
+    found = system_inventory.walk_search([tmp_path], ["needle"], [], cap=100, budget_seconds=500, report=report, clock=lambda: next(ticks))
+    assert [Path(item["path"]).name for item in found] == ["needle.txt"] and report.folders < 10

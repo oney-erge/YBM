@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -65,6 +66,8 @@ _DOCUMENT_EXTENSIONS = {".docx", ".doc", ".pdf", ".xlsx", ".xls", ".pptx", ".ppt
 NOT_ANYWHERE_MARK = "so it is not in any folder I can read"
 _WALK_FIRST_PASS_SECONDS = 25.0
 _WALK_DEEP_PASS_SECONDS = 50.0
+#: Once a file has matched, the walk keeps going this long for copies elsewhere (a person wants the best of a few, not a full tour).
+_WALK_GRACE_SECONDS = 3.0
 #: Folders nothing a person keeps lives in (and a walk would spend its time budget on).
 _JUNK_DIRS = frozenset({"node_modules", "__pycache__", "$recycle.bin", "system volume information", ".git", ".venv", "venv"})
 #: Folders the first pass leaves for the deep pass.
@@ -272,54 +275,74 @@ def walk_search(
 ) -> list[dict[str, Any]]:
     """The fallback where there is no index: a time-boxed walk of the allowed folders, by file name.
 
-    A folder it may not open is counted and skipped, never a reason to stop. ``include_hidden`` also goes through hidden and
-    system folders. ``report``, when given, is filled in with what was covered.
+    Shallow folders first, and every root in turn: a file people keep is near the top of its drive far more often than ten levels
+    down inside one huge folder, and a walk that dives into the first root's biggest folder never reaches the other drives before
+    its time is up. A folder it may not open is counted and skipped, never a reason to stop. ``include_hidden`` also goes
+    through hidden and system folders. ``report``, when given, is filled in with what was covered.
     """
     report = report if report is not None else WalkReport()
     report.include_hidden = include_hidden
     started = clock()
+    first_match_at: float | None = None
     found: list[dict[str, Any]] = []
     wanted = [w.casefold() for w in words]
     skip = _JUNK_DIRS if include_hidden else _JUNK_DIRS | _SYSTEM_DIRS
-
-    def denied(error: OSError) -> None:
-        report.denied += 1
-        if len(report.denied_examples) < 8:
-            report.denied_examples.append(str(error.filename or ""))
+    queues: list[deque[str]] = [deque([str(root)]) for root in roots]
 
     def wanted_dir(name: str) -> bool:
         return name.casefold() not in skip and (include_hidden or not name.startswith("."))
 
-    stop = False
-    for root in roots:
-        for folder, dirs, files in os.walk(root, onerror=denied):
+    def note_denied(folder: str) -> None:
+        report.denied += 1
+        if len(report.denied_examples) < 8:
+            report.denied_examples.append(folder)
+
+    while any(queues):
+        for queue in queues:
+            if not queue:
+                continue
             if clock() - started > budget_seconds:
                 report.complete = False
-                stop = True
-                break
+                report.seconds = round(clock() - started, 1)
+                return found
+            if first_match_at is not None and clock() - first_match_at > _WALK_GRACE_SECONDS:
+                report.complete = False
+                report.seconds = round(clock() - started, 1)
+                return found
+            folder = queue.popleft()
+            try:
+                with os.scandir(folder) as scan:
+                    entries = list(scan)
+            except OSError:
+                note_denied(folder)
+                continue
             report.folders += 1
-            report.files += len(files)
-            dirs[:] = [d for d in dirs if wanted_dir(d)]
-            for name in files:
-                lowered = name.casefold()
-                if all(w in lowered for w in wanted) and (not extensions or Path(name).suffix.casefold() in extensions):
-                    path = Path(folder) / name
+            for entry in entries:
+                try:
+                    is_folder = entry.is_dir(follow_symlinks=False)
+                except OSError:
+                    continue
+                if is_folder:
+                    if wanted_dir(entry.name):
+                        queue.append(entry.path)
+                    continue
+                report.files += 1
+                lowered = entry.name.casefold()
+                if all(w in lowered for w in wanted) and (not extensions or Path(entry.name).suffix.casefold() in extensions):
                     try:
-                        info = path.stat()
+                        info = entry.stat()
                     except OSError:
                         continue
                     found.append({
-                        "path": str(path), "size_bytes": info.st_size,
+                        "path": entry.path, "size_bytes": info.st_size,
                         "modified": datetime.fromtimestamp(info.st_mtime, timezone.utc).strftime("%Y-%m-%dT%H:%M:%S"),
                     })
+                    if first_match_at is None:
+                        first_match_at = clock()
                     if len(found) >= cap:
                         report.complete = False
-                        stop = True
-                        break
-            if stop:
-                break
-        if stop:
-            break
+                        report.seconds = round(clock() - started, 1)
+                        return found
     report.seconds = round(clock() - started, 1)
     return found
 

@@ -8,8 +8,10 @@ from agent_control.config import AppSettings, CapabilityPolicy
 from agent_control.orchestration import StaticToolAdapter, TaskWorker, ToolExecutor
 from agent_control.orchestration.ladder import (
     CODE_SEARCH_TEXT,
+    FEASIBILITY_TEXT,
     exhausted,
     move_scope_gap,
+    needs_feasibility_check,
     next_hint,
     proven_absent,
     write_receipt_gap,
@@ -60,7 +62,7 @@ def test_a_read_that_failed_for_another_reason_proves_nothing():
 
 def test_a_finished_search_for_words_the_request_uses_proves_it_is_not_there():
     request = "Where is my annual budget spreadsheet?"
-    assert proven_absent(request, [_find(COMPLETE)]) == COMPLETE
+    assert proven_absent(request, [_find(COMPLETE)]) == COMPLETE[COMPLETE.index(" I looked through"):].strip()
 
 
 def test_a_search_that_ran_out_of_time_proves_nothing():
@@ -344,3 +346,95 @@ def test_the_hand_off_text_is_bounded_and_plain():
 def test_a_longer_folder_name_that_merely_starts_like_the_changed_ones_parent_is_not_a_match():
     assert write_receipt_gap(r"Save it in C:\a\bcd", [r"C:\a\b\x.txt"]) is not None
     assert write_receipt_gap(r"Save it in C:\a\b.", [r"C:\a\b\x.txt"]) is None
+
+
+def test_one_search_that_stopped_early_already_points_at_a_script():
+    from agent_control.tools.filesystem_manage import SEARCH_STOPPED_MARK
+
+    step = {"tool_name": "filesystem.manage", "input": {"operation": "search"}, "status": "succeeded",
+            "output_summary": f"Found 0 result(s) for 'x' under D:/. {SEARCH_STOPPED_MARK} 30 seconds, after 90,000 files and folders."}
+    hint = next_hint("find x", [step], set(), code_enabled=True)
+    assert hint.id == "code_search"
+
+
+def test_a_search_that_ran_out_of_time_inside_one_folder_first_points_at_the_everywhere_search_then_at_a_script():
+    from agent_control.tools.filesystem_manage import SEARCH_STOPPED_MARK
+
+    stopped = {"tool_name": "filesystem.manage", "input": {"operation": "search"}, "status": "succeeded",
+               "output_summary": f"Found 0 result(s) for 'x' under C:/. {SEARCH_STOPPED_MARK} 20 seconds, after 90,000 files and folders."}
+    first = next_hint("find x", [stopped], set(), code_enabled=True, inventory_enabled=True)
+    assert first.id == "find_files" and "system.inventory" in first.text
+    inventory_empty = _find("No file matching 'x' was found. I only had time to look through 40 folders under C:\\, so this does not prove it is not there.", "x")
+    second = next_hint("find x", [stopped, inventory_empty], {"find_files"}, code_enabled=True, inventory_enabled=True)
+    assert second.id == "code_search"
+    # With the inventory tool off, the script is the next rung straight away.
+    assert next_hint("find x", [stopped], set(), code_enabled=True, inventory_enabled=False).id == "code_search"
+
+
+def test_the_script_the_ladder_suggests_looks_at_other_drives_before_c_and_stops_itself():
+    assert "d != 'C:" in CODE_SEARCH_TEXT and "time.time() - start > 120" in CODE_SEARCH_TEXT and "looked through" in CODE_SEARCH_TEXT
+
+
+# --- a question that is really "I cannot do that" ---------------------------------------------------------------------------
+
+
+def test_the_first_question_on_a_request_no_tool_matches_is_checked_for_feasibility_once():
+    assert needs_feasibility_check(set(), route="unknown", questions_asked=0) is True
+    assert needs_feasibility_check({"feasibility"}, route="unknown", questions_asked=0) is False
+    assert needs_feasibility_check(set(), route="unknown", questions_asked=1) is False
+    assert needs_feasibility_check(set(), route="filesystem.manage", questions_asked=0) is False
+
+
+@pytest.mark.asyncio
+async def test_a_first_question_about_something_no_tool_can_do_sends_the_model_back_to_check_then_lets_it_say_so(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(
+        repos, "Order me a pizza from the place on the corner.", [],
+        orchestration_intent={"route": "unknown", "reasoning": "needs an external action"},
+    )
+    operator = _Seen([
+        OperatorDecision(action=OperatorAction.ASK_USER, question="Which restaurant on the corner?"),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot order food. I can look up a menu if you give me the web address."),
+    ])
+    worker = _worker(repos, audit, operator)
+    first = await worker.process_task(task.id)
+    assert first.status == TaskStatus.RUNNING and first.metadata["operator_history"][-1]["hint_id"] == "feasibility"
+    assert first.metadata["operator_history"][-1]["error"] == FEASIBILITY_TEXT
+    second = await worker.process_task(first.id)
+    assert second.status == TaskStatus.COMPLETED and "cannot order food" in second.metadata["synthesized_answer"]
+
+
+@pytest.mark.asyncio
+async def test_a_question_the_model_still_asks_after_the_check_goes_to_the_user(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(
+        repos, "Clean up that folder", [],
+        orchestration_intent={"route": "unknown", "reasoning": "x"},
+    )
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="Which folder do you mean?")
+    worker = _worker(repos, audit, _Seen([ask, ask]))
+    first = await worker.process_task(task.id)
+    second = await worker.process_task(first.id)
+    assert second.status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
+async def test_a_task_the_classifier_matched_to_a_tool_is_not_second_guessed(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(
+        repos, "Move my pdfs", [], orchestration_intent={"route": "filesystem.manage", "reasoning": "x"},
+    )
+    worker = _worker(repos, audit, _Seen([OperatorDecision(action=OperatorAction.ASK_USER, question="Which folder?")]))
+    assert (await worker.process_task(task.id)).status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
+async def test_a_question_asked_after_a_web_search_that_found_nothing_usable_is_checked_too(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    searched = [{"tool_name": "web.search", "input": {"operation": "search", "query": "pizza"}, "status": "succeeded",
+                 "output_summary": "Found 5 results."}]
+    task = _task_with_history(repos, "Order me a pizza from the place on the corner.", searched,
+                              orchestration_intent={"route": "unknown", "reasoning": "x"})
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="Which pizza place?")
+    first = await _worker(repos, audit, _Seen([ask])).process_task(task.id)
+    assert first.status == TaskStatus.RUNNING and first.metadata["operator_history"][-1]["hint_id"] == "feasibility"

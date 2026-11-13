@@ -47,6 +47,34 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   the move did. It never overwrites: a file that is no longer where YBM left it is skipped (and the reply says how many), a name that is taken is
   saved as a copy, and a move is undone once. Everything a task moved is undone, not only its last step: a file moved twice (sorted into a
   folder by type, then moved again) goes back to where it started.
+- A search now says how hard it looked, and "it is not there" is only said when that is proven. `system.inventory find_files` walks the
+  folders YBM may read shallow folders first and every drive in turn (so a file kept near the top of D: is found before a walk has dived
+  into the biggest folder of C:), stops a few seconds after the first match, goes through hidden and system folders in a second pass when
+  nothing turned up, skips a folder Windows will not open instead of stopping, and ends an empty result with what it covered ("I looked
+  through all 250,804 folders under ..."), or says plainly that it ran out of time and proves nothing. `filesystem.manage search` is
+  time-boxed the same way (it used to walk a whole drive for as long as it took) and skips locked folders inside the folder it was
+  pointed at.
+- The Operator loop reads its own history and acts on facts (`orchestration/ladder.py`), shown to the model as a check entry, never as a
+  prompt change. A read of the very path the request names that failed because it does not exist, or a finished search for words the
+  request uses, is a proven absence: the model is told it is settled, the answer is accepted without asking the Auditor whether "it
+  does not exist" is sufficient (it was sent back until the task ended "Blocked"), and the coverage is added to the answer. Two empty
+  searches, or one that ran out of time, point at the next rung, once each: the everywhere search, then a short Python script run with
+  `code.interpreter` (the hint carries a script that looks at other drives first and stops itself after two minutes). A locked folder is
+  said to be skipped. Three failures in a row suggest a script.
+- When the local model has used those rungs (a script that failed twice, or eight steps that came to nothing, or the step budget ran out)
+  and Claude Code is installed, the task asks the user instead of ending "Blocked": "Do you want me to hand it to Claude Code on this
+  computer?" Only a plain yes hands it over, as a `coding.agent` call that carries the request and a short account of what was tried; nothing
+  is sent anywhere otherwise, and a no tells the model to answer with what it has.
+- The answer has to come from the receipt. If every file a task changed is outside every place the request names ("write it into
+  cat.txt in C:\work" ended with the file in the repository root and an answer naming C:\work), or a move touched files of a kind the
+  request did not name (".png files" moved the text file too, with the record of where it came from to put it back), the model is sent
+  back twice, then lets it report where things really are.
+- A script the local model wrote that produced an answer can be kept as a reusable helper skill (`adapters.skills.helpers_enabled`, off by
+  default; the first script that worked is kept, at most 30), so the next request of that kind starts from it.
+- Running on your own computer: `adapters.code_interpreter.require_approval_for_untrusted_run_python: false` now also removes the approval
+  prompt the tool definition carried (it was fixed in code), and `blocked_imports: []` allows `os`, `shutil` and the like. Both defaults
+  stay cautious. The example config says how to set them.
+- A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
   ("every Monday at 9") is not supported by the scheduler yet; the reply says so and gives an example, and does not run the workflow now, which

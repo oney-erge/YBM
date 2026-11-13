@@ -163,3 +163,10 @@ def test_the_task_workspace_folder_and_its_label_read_as_a_sentence(home):
     assert humanize(f"It is running at http://127.0.0.1:8890/.\nWorkspace: {path}") == (
         "It is running at http://127.0.0.1:8890/.\nThe files are in the project folder I made for this task."
     )
+
+
+def test_friendly_path_keeps_the_drive_for_a_file_on_another_drive(home):
+    other = "Z:" if home.drive.upper() != "Z:" else "Y:"
+    assert friendly_path(rf"{other}\Papers\h65.pdf") == f"h65.pdf (in drive {other} > Papers)"
+    assert friendly_path(rf"{other}\a\b\c\d.txt") == f"d.txt (in drive {other} > … > b > c)"
+    assert friendly_path(rf"{other.lower()}\x.txt") == f"x.txt (in drive {other})"

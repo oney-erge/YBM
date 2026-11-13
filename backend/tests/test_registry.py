@@ -140,3 +140,13 @@ def test_build_registry_exposes_http_request_only_with_allowlist() -> None:
     assert definitions["http.request"].enabled is True
     assert "http.request" in registry.adapters
     assert "api.example.com" in registry.context()
+
+
+def test_the_code_interpreter_asks_for_approval_unless_the_owner_turned_that_off() -> None:
+    default = build_tool_registry(AppSettings(), "http://127.0.0.1:8765").definition_index["code.interpreter"]
+    assert "run_python" in default.approval_required_operations
+
+    own_machine = AppSettings()
+    own_machine.adapters.code_interpreter.require_approval_for_untrusted_run_python = False
+    local = build_tool_registry(own_machine, "http://127.0.0.1:8765").definition_index["code.interpreter"]
+    assert local.approval_required_operations == ()

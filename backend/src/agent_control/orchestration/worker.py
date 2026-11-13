@@ -939,7 +939,10 @@ class TaskWorker:
                         "operator_audit_gap_exhausted",
                     )
 
-            if absence and "looked through" not in final_answer and absence.casefold() not in final_answer.casefold():
+            if (
+                absence and "looked through" not in final_answer and absence.casefold() not in final_answer.casefold()
+                and not re.search(r"\d[\d,]{3,}", final_answer)  # an answer that already quotes how many folders needs no receipt
+            ):
                 final_answer = f"{final_answer}\n\n{absence}"
             metadata = {
                 **latest.metadata, "operator_history": history, "synthesized_answer": final_answer,
@@ -1002,6 +1005,16 @@ class TaskWorker:
             return self._transition_operator(latest, metadata, TaskStatus.COMPLETED, "operator_done")
 
         if decision.action == OperatorAction.ASK_USER:
+            intent = latest.metadata.get("orchestration_intent")
+            if isinstance(intent, dict) and ladder.needs_feasibility_check(
+                {str(e.get("hint_id")) for e in history if isinstance(e, dict) and e.get("tool_name") == CHECK_ENTRY_STRATEGY},
+                route=intent.get("route"), questions_asked=int(latest.metadata.get("clarify_count", 0)),
+            ):
+                history.append({
+                    "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "feasibility",
+                    "error": ladder.FEASIBILITY_TEXT, "step_id": step_id,
+                })
+                return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)
             candidate = latest.model_copy(
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
@@ -2180,8 +2193,10 @@ class TaskWorker:
         if task.status != TaskStatus.COMPLETED:
             return
         try:
-            from agent_control.skill_learning import propose_from_task
+            from agent_control.skill_learning import propose_from_task, save_helper
 
+            # The script that produced the answer is kept as is: no model call, nothing to review.
+            save_helper(self.skills_config, task)
             await propose_from_task(getattr(self.operator, "provider", None), self.skills_config, task)
         except Exception:  # noqa: BLE001 - never surface as a task failure
             logger.warning("skill learning pass failed", exc_info=True)
@@ -2378,7 +2393,11 @@ class TaskWorker:
             if isinstance(e, dict) and e.get("tool_name") == CHECK_ENTRY_STRATEGY and e.get("hint_id")
         }
         code = self.executor.tool_definitions.get(ladder.CODE_TOOL) if self.executor is not None else None
-        hint = ladder.next_hint(_users_own_words(task), steps, given, code_enabled=bool(code is not None and code.enabled))
+        inventory = self.executor.tool_definitions.get(ladder.INVENTORY_TOOL) if self.executor is not None else None
+        hint = ladder.next_hint(
+            _users_own_words(task), steps, given,
+            code_enabled=bool(code is not None and code.enabled), inventory_enabled=bool(inventory is not None and inventory.enabled),
+        )
         if hint is not None:
             history.append({
                 "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": hint.id,
