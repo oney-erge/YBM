@@ -1061,7 +1061,7 @@ def _diagnose_turn(
     # task-derived reply and what Telegram actually received.
     excluded = reply_terms("bot_reply_excludes_all")
     if excluded:
-        haystack = f"{_turn_reply_text(turn)}\n{turn.telegram_confirmed_text}".lower()
+        haystack = f"{_turn_text_the_user_gets(turn)}\n{turn.telegram_confirmed_text}".lower()
         leaked = [needle for needle in excluded if needle.lower() in haystack]
         if leaked:
             return False, f"reply leaked forbidden content: {leaked}"
@@ -1171,6 +1171,19 @@ def _count_changed_paths(metadata: dict[str, Any]) -> int:
         return len(reported)
     value = metadata.get("organized_paths")
     return len(value) if isinstance(value, list) else (1 if value else 0)
+
+
+def _turn_text_the_user_gets(turn: TurnResult) -> str:
+    """The reply the task produced, as opposed to everything it recorded on the way.
+
+    `_turn_reply_text` also holds the raw output of the last tool, which a positive assertion may legitimately read ("the file named X
+    was found") but which never reaches the user: the code interpreter's output starts with the path of its scratch folder, and that
+    folder is named after the task id, so "task_" would be found in every answer a script produced. A leak check reads what the user
+    can receive: the answer, what Telegram confirmed (added by the caller), and the error or gap the task ended with.
+    """
+    metadata = turn.metadata if isinstance(turn.metadata, dict) else {}
+    parts = [turn.bot_reply_text, turn.synth_answer, metadata.get("fulfillment_gap"), metadata.get("last_worker_error")]
+    return "\n".join(str(item) for item in parts if item)
 
 
 def _turn_reply_text(turn: TurnResult) -> str:
