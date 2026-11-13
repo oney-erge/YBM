@@ -16,9 +16,12 @@ from typing import Any
 # Tools that stay in every scoped catalog: cheap, general, and the way out of a bad guess.
 ALWAYS = frozenset({"skills.use", "knowledge.search", "task.status", "memory.manage", "persona.manage"})
 
-#: route -> the tools its requests use, besides ALWAYS. A route absent here (conversation, status, configuration,
-#: unknown) gets the full catalog.
+#: route -> the tools its requests use, besides ALWAYS. A route absent here (conversation, status, unknown) gets the full
+#: catalog. "configuration" is what "remember that my dog is called Biscuit" is classified as: its tools are all in ALWAYS
+#: (memory.manage, persona.manage), and with the whole catalog in front of it the local model answered such a request by
+#: reading a file named in an earlier turn of the conversation.
 ROUTE_TOOLS: dict[str, frozenset[str]] = {
+    "configuration": frozenset(),
     "filesystem.manage": frozenset({"filesystem.manage", "document.manage", "artifact.deliver", "code.interpreter"}),
     "document.manage": frozenset({"document.manage", "filesystem.manage", "artifact.deliver", "code.interpreter"}),
     "artifact.deliver": frozenset({"artifact.deliver", "filesystem.manage", "document.manage", "browser.open"}),

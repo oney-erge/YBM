@@ -74,6 +74,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Running on your own computer: `adapters.code_interpreter.require_approval_for_untrusted_run_python: false` now also removes the approval
   prompt the tool definition carried (it was fixed in code), and `blocked_imports: []` allows `os`, `shutil` and the like. Both defaults
   stay cautious. The example config says how to set them.
+- A "remember that ..." request (the `configuration` route) is shown only the always-on memory and persona tools, not the whole catalog. With
+  every tool in front of it, the local model answered "Remember these about me: my favorite fruit is mango ..." by reading a file that
+  an earlier turn of the conversation had named, and reported that the file does not exist.
 - A file on another drive is described with its drive ("quarterly-plan.docx (in drive D: > ...)") instead of only its folders.
 - A saved workflow can be scheduled from the chat: `run steam count every 2 days` (or `daily`, `weekly`, `every 3 hours`) creates a schedule that
   replays it through the same pipeline and approvals as the dashboard's Automate, and says when the first run is. A weekday or a time of day
