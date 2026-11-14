@@ -174,6 +174,11 @@ _EMBEDDED_PATH = re.compile(
 )
 
 
+#: The lines the Telegram intake adds when the user sends a file ("[The user sent a file: ...]", "[It is a PDF file, ...]"). The user's
+#: "sent" and "file" are not a request to send a file back; a task that read "sent" and "file" there delivered the user's own PDF to them.
+_ATTACHMENT_NOTE = re.compile(r"^\[(?:The user sent|It is a)[^\n]*\][ \t]*$", re.MULTILINE)
+
+
 def _strip_embedded_paths(text: str) -> str:
     """Objectives routinely embed a literal filesystem path ("look in the
     folder C:\\Users\\...\\search_results" or
@@ -235,7 +240,7 @@ _FORM_SUBMIT_INTENT = re.compile(r"\b(?:submit|sign me up|sign up|sign us up|reg
 
 
 def _postconditions_from_objective(objective: str) -> list[PlanPostcondition]:
-    lowered = _strip_embedded_paths(objective).lower()
+    lowered = _strip_embedded_paths(_ATTACHMENT_NOTE.sub(" ", objective)).lower()
     words = set(re.findall(r"[a-z0-9]+", lowered))
     # "Start a small app" ordinarily means begin/build the project, especially
     # when delegated to a coding agent. It does not promise a running local

@@ -77,6 +77,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A file the user sends in Telegram is no longer read as a request to send a file. The intake's note ("[The user sent a file: ...]") was
+  matched by the fulfillment check as "send" and "file", so a PDF the user sent for a summary was sent back to them, and a photo task blocked
+  on a delivery nobody asked for; the notes are now left out of that check and the no-caption text is "Here is a picture.". The note also
+  says what the file is (type, pixels for a picture, size), so "what is this and how big is it?" about a photo is answered from facts.
 - The Auditor's rewording of an answer no longer slips a wrong value past the checks. They ran on the Operator's answer, before the
   Auditor read it, so a total the model had corrected to 15 came out of the Auditor as "5 lines in total (4 + 5 + 6)". A rewording with a
   sum that does not add up, or an address or calculated number that no tool produced, that the original did not have is dropped and the
