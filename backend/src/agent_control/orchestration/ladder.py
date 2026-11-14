@@ -257,8 +257,10 @@ RENAME_TEXT = (
 MOVE_TEXT = (
     "The user named the folder and the files to move, so do not use organize_plan: it sorts every file in the folder into folders it names "
     "itself, by type. Call filesystem.manage with operation apply_manifest, the folder as root, and a manifest with one entry for each "
-    "file the request names and no other: {\"source\": <the file's name>, \"destination\": <the folder the user named>}. Files the "
-    "request does not name stay where they are."
+    "file the request names and no other: {\"source\": <the file's name>, \"destination\": \"<the folder the user named>/<the same file name>\", "
+    "\"operation\": \"move\"}. Write the file name after the folder: a destination that is only the name of a folder that does not exist "
+    "yet is taken as the new name of the file, so three files would come out called pictures, pictures_2 and pictures_3. The folder is "
+    "created when it is not there. Files the request does not name stay where they are."
 )
 
 
