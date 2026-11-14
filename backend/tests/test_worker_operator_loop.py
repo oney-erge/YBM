@@ -1560,7 +1560,8 @@ def test_known_written_file_rejects_delivery_clarification() -> None:
 
     assert reason is not None
     assert "C:/output/brief.md" in reason
-    assert "delivery tool" in reason
+    # the reason now writes out the call to make (it used to say "use the delivery tool", which a 9B model heard three times and did not act on)
+    assert '"tool_name": "artifact.deliver"' in reason and '"operation": "send_file"' in reason and "as written" in reason
 
 
 def test_explicit_delivery_before_schedule_reorders_the_tool_call() -> None:
