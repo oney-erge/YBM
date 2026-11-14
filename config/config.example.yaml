@@ -504,6 +504,9 @@ adapters:
     # Keep the Python script that settled a task as a reusable helper skill (no model call, nothing to review), so the next
     # request of that kind starts from a script that ran. At most 30 helpers are kept.
     helpers_enabled: false
+    # After a job that took several successful steps, propose it as a reusable skill. Nothing is installed: the proposal is
+    # shown in the chat with Keep and Not now buttons (and waits in the console's queue), and it becomes a skill only when you tap Keep.
+    learning_enabled: true
   persona:
     # One global identity/preference document, injected into every Operator
     # prompt - distinct from the per-conversation memory above. Edit the
@@ -512,6 +515,9 @@ adapters:
     enabled: true
     path: ".agent_control/persona.md"
     max_chars: 4000
+    # When a message states a lasting preference ("always keep answers short"), offer to remember it: Remember and No buttons in the
+    # chat. It goes into persona.md, with the date and your words, only when you tap Remember.
+    learning_enabled: true
   knowledge_base:
     # Local, personal document search (notes, reference material) by
     # keyword overlap, not embeddings - see docs/archive/HISTORY.md Part 4 T2.7 for

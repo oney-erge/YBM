@@ -140,11 +140,11 @@ class TelegramTaskNotifier:
         plan = self.plans.get(str(plan_id))
         return (card_text(plan), card_keyboard(plan)) if plan is not None else None
 
-    async def say(self, routing: dict[str, str], text: str) -> None:
-        """A line to the chat a plan belongs to, outside any task: "Step 2 of 5: ...", "The plan is finished"."""
+    async def say(self, routing: dict[str, str], text: str, reply_markup: dict[str, Any] | None = None) -> None:
+        """A line to the chat a plan belongs to, outside any task: "Step 2 of 5: ...", "The plan is finished". Optionally with buttons."""
         chat_id = routing.get("source_chat_id")
         if chat_id and routing.get("source_channel", ChannelType.TELEGRAM.value) == ChannelType.TELEGRAM.value:
-            await self.client.send_message(chat_id, text)
+            await self.client.send_message(chat_id, text, reply_markup=reply_markup)
 
     async def _edit_progress(self, chat_id: str, anchor: Any, task_id: str, text: str) -> None:
         now = self._clock()
