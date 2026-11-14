@@ -577,6 +577,10 @@ class FilesystemManageAdapter:
             candidate = root / candidate
         return self._safe_path(str(candidate))
 
+    def resolve_allowed(self, value: str) -> Path:
+        """A path as this tool would use it, or a ValueError when it is outside the folders it may touch (for tools that read what it may read)."""
+        return self._safe_path(value)
+
     def _safe_path(self, value: str) -> Path:
         if not self.allowed_roots:
             raise ValueError("no allowed filesystem roots are configured")

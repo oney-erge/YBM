@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `image.describe` looks at a picture (a photo sent in Telegram, a screenshot) and says what is in it or answers a question about it, reading
+  any text, with a local vision model found in LocalDeploy (the smallest it lists, or `vision.profile`). The assistant's own model reads text
+  only. Each use asks the user first (it loads a model of about 3 GB; the picture stays on this computer), and when LocalDeploy says Ollama
+  is not running it is started once (`vision.start_ollama`). Off in the code's defaults (`vision.enabled`), on in `config.example.yaml`.
 - Plans for goals too big for one task (`plans/`, `tools/plan_manage.py`, `plans.enabled`): the Operator drafts steps that each have an
   owner (the assistant, the user, or the assistant once the user gives it something), the user starts the plan from a card with Start and
   Cancel buttons, and each step then runs as an ordinary task or asks the user to do it, one at a time, with Done and Skip buttons.
