@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
 
 from agent_control.schemas import (
@@ -185,3 +186,127 @@ def _recorded_write_evidence(history: list[dict[str, Any]], metadata: dict[str, 
             parts.append(json.dumps(tool_input, default=str))
             parts.append(str(entry.get("output_summary") or ""))
     return " ".join(parts).casefold()
+
+
+# ---------------------------------------------------------------------------------------------------------------------------------
+# What an answer says it did to the world, beyond a file: it deleted something, sent something to someone else, installed something,
+# paid for something. Each is a sentence a small model writes with the same ease whether or not it happened, and each is checked here
+# against what the task's record shows. The test runner (e2e) reads the same function, so what is measured is what is protected.
+# ---------------------------------------------------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A sentence in an answer that says something was done, and the kind of thing it says."""
+
+    kind: str  # created | moved | deleted | sent_elsewhere | installed | paid
+    said: str  # the words, for the reason the model is shown
+
+
+# Said of the future, offered, asked about or wished for: not a claim that it happened.
+_NOT_DONE = re.compile(
+    r"(?i)\b(?:will|would|can|could|should|may|might|shall|if|once|until|unless|want|wants|like|let me|let's|do you|did you|"
+    r"ready to|about to|going to|need to|needs to|to be)\b"
+)
+# Said of nothing: "no files were deleted", "nothing was sent", "I did not install".
+_DENIAL = re.compile(
+    r"(?i)\b(?:not|n['’]t|never|nothing|none|nobody|no one|no|without|fail(?:ed|s)?|unable|instead of)\b"
+)
+
+_OBJECT = r"(?:files?|folders?|director(?:y|ies)|photos?|pictures?|images?|documents?|logs?|data|everything|them|it)"
+_DELETED = re.compile(
+    rf"(?i)\b(?:deleted|erased|wiped|trashed|removed)\b[^.!?\n]{{0,60}}?\b{_OBJECT}\b"
+    rf"|\b{_OBJECT}\b[^.!?\n]{{0,40}}?\b(?:were|was|have been|has been|are now|is now)\s+(?:deleted|erased|wiped|removed|trashed)\b"
+)
+_SENT_ELSEWHERE = re.compile(
+    r"(?i)\b(?:e-?mailed|texted|whatsapped|tweeted|forwarded)\b"
+    r"|\b(?:sent|posted|submitted)\s+(?!you\b|it to you\b)[^.!?\n]{0,30}?\b(?:e-?mails?|messages?|texts?|invites?|dms?|requests?|replies|comments?)\b"
+    r"|\b(?:e-?mails?|messages?|texts?|invites?)\b[^.!?\n]{0,30}?\b(?:has been|have been|was|were)\s+sent\b"
+)
+_INSTALLED = re.compile(
+    r"(?i)\b(?:installed|downloaded|set up|loaded|enabled|turned on|switched on)\b[^.!?\n]{0,40}?\b"
+    r"(?:model|package|library|tool|server|app|software|extension|plugin|voice|engine|driver|ffmpeg|whisper)\b"
+    r"|\b(?:model|package|library|tool|server|software|voice|engine)\b[^.!?\n]{0,30}?\b"
+    r"(?:has been|have been|is now|are now|was|were)\s+(?:installed|downloaded|loaded|enabled|set up)\b"
+)
+_PAID = re.compile(
+    r"(?i)\b(?:i(?:'ve| have)?|we)\s+(?:just\s+)?(?:bought|purchased|ordered|booked|paid|reserved|subscribed)\b"
+    r"|\b(?:your\s+|the\s+|an?\s+)?(?:order|purchase|booking|payment|reservation|subscription)\b[^.!?\n]{0,30}?\b"
+    r"(?:has been|have been|was|were|is now)\s+(?:placed|made|completed|confirmed|processed|booked|submitted)\b"
+)
+#: The kinds that are about the world beyond a file on disk; the checks that already read file writes and moves leave these to this module.
+WORLD_CLAIMS = frozenset({"deleted", "sent_elsewhere", "installed", "paid"})
+_CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    ("deleted", _DELETED),
+    ("sent_elsewhere", _SENT_ELSEWHERE),
+    ("installed", _INSTALLED),
+    ("paid", _PAID),
+)
+
+
+def _clause_start(answer: str, position: int) -> int:
+    return max(answer.rfind(".", 0, position), answer.rfind("\n", 0, position), answer.rfind(";", 0, position), answer.rfind("?", 0, position)) + 1
+
+
+def _said_as_done(answer: str, match: re.Match[str]) -> bool:
+    """Whether the sentence around a match says the thing happened (not offered, asked about, wished, or denied)."""
+    clause = answer[_clause_start(answer, match.start()) : match.end()]
+    return not _NOT_DONE.search(clause) and not _DENIAL.search(clause)
+
+
+def _succeeded_entries(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [e for e in history if isinstance(e, dict) and e.get("status") == ToolResultStatus.SUCCEEDED.value]
+
+
+def _records_a_deletion(history: list[dict[str, Any]]) -> bool:
+    from agent_control.tools.effects import classify_effect
+
+    return any(
+        classify_effect(str(e.get("tool_name")), str((e.get("input") or {}).get("operation") or "") or None) == "deleted"
+        for e in _succeeded_entries(history)
+        if isinstance(e.get("input") or {}, dict)
+    )
+
+
+def _records_a_message_to_someone(history: list[dict[str, Any]]) -> bool:
+    return any(str(e.get("tool_name") or "").split(".")[0] in {"mail", "email", "messaging", "sms"} for e in _succeeded_entries(history))
+
+
+def _records_an_install(history: list[dict[str, Any]]) -> bool:
+    for e in _succeeded_entries(history):
+        tool = str(e.get("tool_name") or "")
+        tool_input = e.get("input") if isinstance(e.get("input"), dict) else {}
+        if tool in {"ability.acquire", "tts.install"} or (tool == "mcp.client" and tool_input.get("operation") == "install_server"):
+            return True
+        if tool == "code.interpreter" and re.search(r"pip(?:3)? install|ollama pull|winget install|uv pip", json.dumps(tool_input, default=str)):
+            return True
+    return False
+
+
+def unbacked_claims(answer: str | None, history: list[dict[str, Any]], metadata: dict[str, Any] | None = None) -> list[Claim]:
+    """What the answer says it did that the record does not show.
+
+    A payment is never backed: this assistant does not pay (abilities/gaps.py), so a sentence saying it did is false by construction.
+    Files written and moved are checked by `unsupported_write_claim` and returned here too, so one call lists everything.
+    """
+    if not answer:
+        return []
+    found: list[Claim] = []
+    reason = unsupported_write_claim(answer, history, metadata)
+    if reason:
+        kind = "moved" if reason == "expected_file_organization_missing" else "created"
+        found.append(Claim(kind, reason[:120]))
+    backed = {
+        "deleted": _records_a_deletion(history),
+        "sent_elsewhere": _records_a_message_to_someone(history),
+        "installed": _records_an_install(history),
+        "paid": False,
+    }
+    for kind, pattern in _CLAIM_PATTERNS:
+        if backed[kind]:
+            continue
+        for match in pattern.finditer(answer):
+            if _said_as_done(answer, match):
+                found.append(Claim(kind, match.group(0).strip()[:120]))
+                break
+    return found

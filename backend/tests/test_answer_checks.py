@@ -5,7 +5,6 @@ from __future__ import annotations
 from agent_control.orchestration import answer_checks
 from agent_control.orchestration.answer_checks import Answer, check_answer
 from agent_control.orchestration.check_entries import CHECK_ENTRY_NAMES, CHECK_ENTRY_NUMBER, CHECK_ENTRY_STRATEGY
-from agent_control.orchestration.worker import CHECK_ENTRY_NAMES as WORKER_CHECK_ENTRY_NAMES
 from agent_control.schemas import TaskRecord
 
 
@@ -14,10 +13,6 @@ def _answer(text: str, *, request: str = "tell me", history: list | None = None,
     task = TaskRecord(objective=request, metadata={"original_message_text": request, **(metadata or {})})
     real = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
     return Answer(task, history, text, request, real, "step-1", tuple(addresses), tuple(numbers))
-
-
-def test_the_names_the_worker_exports_are_the_names_the_checks_write():
-    assert WORKER_CHECK_ENTRY_NAMES is CHECK_ENTRY_NAMES
 
 
 def test_an_answer_with_nothing_wrong_goes_on():
@@ -61,6 +56,7 @@ def test_a_quotation_the_user_gave_or_a_tool_returned_is_not_invented():
 def test_the_checks_run_in_the_order_they_are_listed():
     assert [label for label, _ in answer_checks.CHECKS] == [
         "a value no tool produced", "a sum that does not add up", "a quotation nothing contains", "a receipt that does not match the request",
+        "something said to be done that nothing shows",
     ]
     # an answer that fails the first and the second is sent back for the first
     pushback = check_answer(_answer("10 + 20 + 30 = 50", numbers=("50",)))

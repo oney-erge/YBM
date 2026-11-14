@@ -7,9 +7,10 @@ each sends the model back with a reason it can act on:
     2. a sum that does not add up to the total the answer states
     3. a quotation of something that nothing read contains
     4. a write or a move the request describes that the receipt shows did not happen as described
+    5. something the answer says was done to the world (deleted, sent to someone else, installed, paid for) that the record does not show
 
-The first is said once per task (the worker only asks for the values when it has not asked before), the second and third once, the fourth
-twice. That policy used to be four copies of "look in the history for my hint id, else append and return", inside the worker's DONE
+The first is said once per task (the worker only asks for the values when it has not asked before), the second, third and fifth once, the
+fourth twice. That policy used to be four copies of "look in the history for my hint id, else append and return", inside the worker's DONE
 branch. It is here once: `check_answer` returns the first check that fails as a `Pushback`, and the worker appends the entry and puts the
 task back to RUNNING. Nothing here touches storage or a model. What follows (the Auditor, then fulfillment) stays in the worker, which
 owns the repositories and the model calls.
@@ -21,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from agent_control.orchestration import ladder
+from agent_control.orchestration import claims, ladder
 from agent_control.orchestration.check_entries import CHECK_ENTRY_NUMBER, CHECK_ENTRY_STRATEGY
 from agent_control.orchestration.number_check import inconsistent_sum
 from agent_control.schemas import TaskRecord
@@ -117,12 +118,30 @@ def _receipt_that_does_not_match(answer: Answer) -> Pushback | None:
     })
 
 
+def _things_done_that_nothing_shows(answer: Answer) -> Pushback | None:
+    if _already_said(answer.history, "claim"):
+        return None
+    found = [c for c in claims.unbacked_claims(answer.text, answer.history, answer.task.metadata) if c.kind in claims.WORLD_CLAIMS]
+    if not found:
+        return None
+    said = "; ".join(f'"{c.said}"' for c in found[:3])
+    return Pushback({
+        "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "claim", "step_id": answer.step_id,
+        "error": (
+            f"Declared done, but your answer says something was done ({said}) and there is no record of it in this task. Say plainly what did "
+            "not happen and what the person can do instead, or do it with a tool first. Never say you paid for, ordered, deleted, installed or "
+            "sent something unless a tool result shows it."
+        ),
+    })
+
+
 #: The checks, in the order they run. The first that fails wins; the later ones are looked at on the next `done`.
 CHECKS: tuple[tuple[str, Callable[[Answer], Pushback | None]], ...] = (
     ("a value no tool produced", _values_no_tool_produced),
     ("a sum that does not add up", _sum_that_does_not_add_up),
     ("a quotation nothing contains", _quotes_nothing_contains),
     ("a receipt that does not match the request", _receipt_that_does_not_match),
+    ("something said to be done that nothing shows", _things_done_that_nothing_shows),
 )
 
 
