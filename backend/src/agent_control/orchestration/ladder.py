@@ -316,6 +316,20 @@ def form_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hin
     return None
 
 
+TALLY_TEXT = (
+    "You are adding up what several files hold, and a model that adds in its head gets it wrong (4 + 5 + 6 came out as 12). Do not add or "
+    "count by yourself. Run code.interpreter once: a short Python program that reads the files (os.walk covers every subfolder), works the "
+    "total out and prints it, and answer with the number it printed."
+)
+_CONTENT_READS = frozenset({"read_file", "extract_text", "inspect_document", "describe_file"})
+
+
+def tally_hint_due(request: str, steps: list[dict[str, Any]]) -> bool:
+    """A request to add up or average, and two or more files already read: the sum is arithmetic for code, not for the model."""
+    reads = sum(1 for step in steps if step.get("status") == "succeeded" and _operation(step) in _CONTENT_READS)
+    return reads >= 2 and RequestFacts.from_text(request).tallies
+
+
 def next_hint(
     request: str,
     steps: list[dict[str, Any]],
@@ -356,6 +370,8 @@ def next_hint(
             "rest. A Python program run with code.interpreter can skip folders it cannot open.",
         )
     used_code = any(step.get("tool_name") == CODE_TOOL for step in steps)
+    if code_enabled and not used_code and "tally" not in given and tally_hint_due(request, steps):
+        return Hint("tally", TALLY_TEXT)
     incomplete_walk = any(
         _found_nothing(step)
         and ("does not prove" in str(step.get("output_summary") or "") or SEARCH_STOPPED_MARK in str(step.get("output_summary") or ""))

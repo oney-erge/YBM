@@ -64,6 +64,8 @@ RENAME = re.compile(r"\brename\b|\bnew names?\b|\bnames? (?:should )?(?:start|be
 #: Move files into a folder the user names ("move the .png files into a subfolder called pictures").
 MOVE_VERB = re.compile(r"\bmove\b", re.IGNORECASE)
 NAMED_FOLDER = re.compile(r"\b(?:sub-?)?(?:folder|directory)\s+(?:called|named)\s+\S", re.IGNORECASE)
+#: Add up or average what several things hold ("how many lines in total", "the sum of", "the average of").
+TALLY = re.compile(r"\b(?:in\s+total|total|sum|add(?:ed)?\s+up|adding|average|mean|median|altogether)\b", re.IGNORECASE)
 #: Buy, order or book something that costs money ("order me a pizza", "book a flight", "buy a laptop").
 SPENDS_MONEY = re.compile(
     r"(?<!in )\b(?:order(?!\s+(?:to|of|by)\b)|buy|purchase|book|reserve|rent|subscribe\s+to)\b[^.?!\n]{0,40}\b(?:pizzas?|burgers?|food|meals?|dinner|lunch|breakfast|coffee|"
@@ -122,6 +124,10 @@ class RequestFacts:
     @property
     def asks_to_understand_a_document(self) -> bool:
         return bool(DOCUMENT_UNDERSTANDING.search(self.own))
+
+    @property
+    def tallies(self) -> bool:
+        return bool(TALLY.search(URL.sub(" ", self.own)))
 
     @property
     def moves_into_a_named_folder(self) -> bool:

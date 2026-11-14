@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A request to add up or average what several files hold ("how many lines in total", "the sum of") is told once, after the second file is
+  read, not to add in its head and to let a short program do it (`orchestration/ladder.py`, `tally_hint_due`; `RequestFacts.tallies`).
+  The model had answered 12 for 4 + 5 + 6 in a sentence no written-out-sum check could read; with the hint it runs the program and says 15.
 - A request to move some files into a folder it names ("move the .png files into a subfolder called pictures") is told once, as soon as
   the model has looked at files, not to use `organize_plan` (it sorts every file by type into folders of its own naming) but to apply a
   manifest with exactly the files named (`orchestration/ladder.py`, `move_hint`; `RequestFacts.moves_into_a_named_folder`). In the
