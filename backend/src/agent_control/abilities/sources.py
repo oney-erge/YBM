@@ -28,6 +28,10 @@ from agent_control.tools.spec import ToolDefinition, ToolRegistry
 
 logger = structlog.get_logger(__name__)
 
+#: How much of a skill's text an ability record keeps: enough to put the whole procedure in front of the Operator when it applies.
+SKILL_DETAIL_CHARS = 1800
+SKILL_CONFIRM_AT = 0.5
+
 _FIRST_CLAUSE = re.compile(r"^(.{20,140}?)(?:[;:]|\.\s|$)", re.DOTALL)
 
 #: Coding agents the work can be handed to, with what each is known for. The command-line tools are found on the machine, not assumed.
@@ -122,8 +126,10 @@ def skill_abilities(settings: AppSettings) -> list[Ability]:
                 name=name,
                 summary=str(skill["description"]),
                 group="skills",
-                detail=str(skill.get("body") or "")[:600],
+                detail=str(skill.get("body") or "")[:SKILL_DETAIL_CHARS],
                 call={"tool": "skills.use", "input": {"operation": "read", "name": name}},
+                confirm=str(skill.get("when") or ""),
+                confirm_at=SKILL_CONFIRM_AT,
                 source="skills folder",
             )
         )

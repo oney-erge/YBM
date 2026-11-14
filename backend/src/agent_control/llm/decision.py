@@ -254,8 +254,11 @@ class DecisionModelClient:
         """
         if not questions:
             return {}
-        answers = await self._ask(text, {name: {"type": "noul", "instructions": question} for name, question in questions.items()})
-        found = {name: _yes_probability(answers.get(name)) for name in questions}
+        # LocalDeploy accepts only letters, digits, _ . - in a question's name (an ability id such as "gap:commerce.order" is refused whole,
+        # which left every confirmation unanswered), so the questions go out under plain names and the answers come back under the caller's.
+        sent = {name: f"q{index}" for index, name in enumerate(questions)}
+        answers = await self._ask(text, {sent[name]: {"type": "noul", "instructions": question} for name, question in questions.items()})
+        found = {name: _yes_probability(answers.get(sent[name])) for name in questions}
         return {name: value for name, value in found.items() if value is not None}
 
     async def _ask(self, text: str, questions: dict[str, Any]) -> dict[str, Any]:
