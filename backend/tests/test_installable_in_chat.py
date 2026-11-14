@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from agent_control.abilities.context import asks_for_what_could_be_set_up
+from agent_control.abilities.context import asks_for_what_a_recipe_covers
 from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.base import classify_and_spawn_task
 from agent_control.config import AppSettings
@@ -31,18 +31,33 @@ def _settings(**abilities) -> AppSettings:
 async def test_a_request_for_what_could_be_set_up_is_found_and_confirmed() -> None:
     installable = recipe_abilities(_settings())
     yes = _Confirmer({"model:voice.kokoro": 0.9})
-    assert await asks_for_what_could_be_set_up(installable, "Now read that to me out loud.", confirm=yes) is True
+    assert await asks_for_what_a_recipe_covers(installable, "Now read that to me out loud.", confirm=yes) is True
     assert "model:voice.kokoro" in yes.asked[0][1]  # one shared word was enough to ask: the question decides
 
 
 @pytest.mark.asyncio
 async def test_a_no_nothing_shared_no_decision_model_or_a_broken_one_leave_it_as_chat() -> None:
     installable = recipe_abilities(_settings())
-    assert await asks_for_what_could_be_set_up(installable, "Now read that to me out loud.", confirm=_Confirmer({"model:voice.kokoro": 0.1})) is False
+    assert await asks_for_what_a_recipe_covers(installable, "Now read that to me out loud.", confirm=_Confirmer({"model:voice.kokoro": 0.1})) is False
     never_asked = _Confirmer({})
-    assert await asks_for_what_could_be_set_up(installable, "How are you today?", confirm=never_asked) is False and never_asked.asked == []
-    assert await asks_for_what_could_be_set_up(installable, "Read that out loud.", confirm=None) is False
-    assert await asks_for_what_could_be_set_up([], "Read that out loud.", confirm=_Confirmer({"x": 1.0})) is False
+    assert await asks_for_what_a_recipe_covers(installable, "How are you today?", confirm=never_asked) is False and never_asked.asked == []
+    assert await asks_for_what_a_recipe_covers(installable, "Read that out loud.", confirm=None) is False
+    assert await asks_for_what_a_recipe_covers([], "Read that out loud.", confirm=_Confirmer({"x": 1.0})) is False
+
+
+@pytest.mark.asyncio
+async def test_a_recipe_that_is_already_set_up_is_still_recognised_so_the_request_is_not_chat_again(tmp_path) -> None:
+    voice, model = tmp_path / "kokoro.onnx", tmp_path / "voices.bin"
+    voice.write_bytes(b"x"), model.write_bytes(b"x")
+    settings = AppSettings(
+        _env_file=None, abilities={"enabled": True, "acquire": True}, decision={"mode": "decision"},
+        adapters={"tts": {"enabled": True, "model_path": str(voice), "voices_path": str(model)}},
+    )
+    records = {ability.id: ability for ability in recipe_abilities(settings)}
+    assert records["model:voice.kokoro"].state.value == "ready" and "tts.synthesize" in records["model:voice.kokoro"].guidance
+    yes = _Confirmer({"model:voice.kokoro": 0.9})
+    assert await asks_for_what_a_recipe_covers(records.values(), "Now read that to me out loud.", confirm=yes) is True
+    assert await asks_for_what_a_recipe_covers(records.values(), "Now read that to me out loud.", confirm=_Confirmer({"model:voice.kokoro": 0.2})) is False
 
 
 def _message(text: str) -> InboundMessage:

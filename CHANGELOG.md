@@ -17,6 +17,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - The planner is told today's date and to work backwards from a dated goal, starting each step's title with when it is due, and not to invent computer
   chores. "I'm moving on December 20. Plan it." produced a plan about making folders and spreadsheets, with no dates. A plan card is not read as a claim that
   files were created.
+- A recipe that is already set up stays a record, saying how to use what it set up, and the chat check recognises it too
+  (`abilities/recipes.py recipe_abilities`, `asks_for_what_a_recipe_covers`). Live, right after the voice was installed, "read that out loud" was answered
+  "that needs a task, send it again": only recipes not yet set up were records, so once the voice was there nothing recognised the request and it fell
+  back to chat.
 - Gaming mode keeps the model off the GPU for the summary of the conversation too. Live, a message held in gaming mode still reloaded the model
   through the memory update (0.8 GB of video memory before, 6.2 GB after); while it is on, the summary is the recent turns and the next message after
   it ends re-summarizes.
