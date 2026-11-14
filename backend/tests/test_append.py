@@ -6,8 +6,8 @@ import asyncio
 
 import pytest
 
-from agent_control.orchestration.worker import _filesystem_append_when_asked as append_rule
-from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as overwrite_rule
+from agent_control.orchestration.call_rewrites import _filesystem_append_when_asked as append_rule
+from agent_control.orchestration.call_rewrites import _filesystem_overwrite_when_asked_to_change as overwrite_rule
 from agent_control.schemas import Capability, TaskRecord, ToolCallRequest
 from agent_control.tools.contracts import FilesystemWriteTextFileInput
 from agent_control.tools.filesystem_manage import FilesystemManageAdapter

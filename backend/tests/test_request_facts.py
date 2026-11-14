@@ -5,15 +5,8 @@ from __future__ import annotations
 import pytest
 
 from agent_control.orchestration.request_facts import RequestFacts, own_and_objective, own_words
-from agent_control.orchestration.worker import (
-    _filesystem_append_when_asked,
-    _filesystem_listing_input_with_dates_intent,
-    _filesystem_overwrite_when_asked_to_change,
-    _is_simulated_delete,
-    _named_coding_providers,
-    _user_asked_to_be_asked_first,
-    _users_own_words,
-)
+from agent_control.orchestration.call_rewrites import _filesystem_append_when_asked, _filesystem_listing_input_with_dates_intent, _filesystem_overwrite_when_asked_to_change, _is_simulated_delete, _named_coding_providers
+from agent_control.orchestration.asking import user_asked_to_be_asked_first, users_own_words
 from agent_control.schemas import TaskRecord
 
 
@@ -100,7 +93,7 @@ def test_a_delete_is_read_from_what_the_user_wrote_not_from_a_question_the_model
         metadata={"original_message_text": "Delete the files"},
     )
     assert RequestFacts.from_task(task).only_deletes is True
-    assert own_words(task) == _users_own_words(task) == "Delete the files"
+    assert own_words(task) == users_own_words(task) == "Delete the files"
 
 
 def test_recency_and_ask_first_may_be_stated_by_the_objective_the_concierge_made():
@@ -133,5 +126,5 @@ def test_the_worker_guards_still_decide_the_same_way(tmp_path):
     organize = {"operation": "organize_plan", "root": str(tmp_path)}
     assert _is_simulated_delete(_task("delete all the files"), "filesystem.manage", organize) is True
     assert _is_simulated_delete(_task("delete the junk and organize the rest"), "filesystem.manage", organize) is False
-    assert _user_asked_to_be_asked_first(_task("ask me before changing anything")) is True
+    assert user_asked_to_be_asked_first(_task("ask me before changing anything")) is True
     assert _named_coding_providers(_task("use claude code")) == ["claude_code"]

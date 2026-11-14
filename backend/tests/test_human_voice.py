@@ -11,7 +11,7 @@ import pytest
 from agent_control.channels.base import answer_status_question
 from agent_control.channels.task_notify import format_task_message, progress_text
 from agent_control.channels.telegram_notifications import TelegramTaskNotifier
-from agent_control.orchestration.worker import _policy_refusal, _repeat_block_message, _repeated_no_progress_call
+from agent_control.orchestration.repeats import policy_refusal, repeat_block_message, repeated_no_progress_call
 from agent_control.schemas import (
     ChannelType, InboundMessage, MessageKind, TaskRecord, TaskStatus, utc_now,
 )
@@ -209,26 +209,26 @@ def _denied(operation):
 
 
 def test_one_policy_refusal_is_information_not_a_stop():
-    assert _policy_refusal([_denied("fill_form")]) is None
+    assert policy_refusal([_denied("fill_form")]) is None
 
 
 def test_two_policy_refusals_in_a_row_are_a_wall():
-    assert _policy_refusal([_denied("fill_form"), _denied("fill_form_step")]) == ("browser.control", "fill_form_step")
-    assert _repeated_no_progress_call([_denied("fill_form"), _denied("fill_form_step")]) == ("browser.control", "fill_form_step")
+    assert policy_refusal([_denied("fill_form"), _denied("fill_form_step")]) == ("browser.control", "fill_form_step")
+    assert repeated_no_progress_call([_denied("fill_form"), _denied("fill_form_step")]) == ("browser.control", "fill_form_step")
 
 
 def test_a_different_tool_between_refusals_is_not_a_wall():
     history = [_denied("fill_form"), _step("computer.use", "observe"), _denied("fill_form")]
-    assert _policy_refusal(history) is None
+    assert policy_refusal(history) is None
 
 
 def test_an_ordinary_failure_is_not_treated_as_a_policy_wall():
     failed = _step("browser.control", "fill_form", "failed", error="element not found")
-    assert _policy_refusal([failed, failed]) is None
+    assert policy_refusal([failed, failed]) is None
 
 
 def test_the_wall_message_is_a_sentence_for_a_person():
-    message = _repeat_block_message([_denied("fill_form"), _denied("fill_form_step")], "browser.control:fill_form_step")
+    message = repeat_block_message([_denied("fill_form"), _denied("fill_form_step")], "browser.control:fill_form_step")
     assert message.startswith("I can't go on with filling in a form")
     assert "safety settings" in message
     assert "browser.control" not in message and "risk_exceeds" not in message

@@ -9,7 +9,7 @@ import pytest
 from agent_control.channels.task_notify import progress_text
 from agent_control.orchestration import StaticToolAdapter, TaskWorker, ToolExecutor
 from agent_control.orchestration.planner import PARTS_DONE_TEXT, Part, parse_parts, plan_parts, plan_summary, should_plan
-from agent_control.orchestration.worker import CHECK_ENTRY_STRATEGY
+from agent_control.orchestration.check_entries import CHECK_ENTRY_STRATEGY
 from agent_control.config import AppSettings, CapabilityPolicy
 from agent_control.policy import PolicyEngine
 from agent_control.schemas import Capability, OperatorAction, OperatorDecision, RiskLevel, TaskRecord, TaskStatus

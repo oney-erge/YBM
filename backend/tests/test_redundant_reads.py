@@ -6,7 +6,8 @@ import pytest
 from test_worker_operator_loop import QueueOperator, _executor_with_adapter, _settings
 
 from agent_control.orchestration import StaticToolAdapter, TaskWorker
-from agent_control.orchestration.worker import ALREADY_DONE_STATUS, _already_done_summary, _redundant_read
+from agent_control.orchestration.call_rewrites import ALREADY_DONE_STATUS
+from agent_control.orchestration.repeats import already_done_summary, redundant_read
 from agent_control.schemas import OperatorAction, OperatorDecision, RiskLevel, TaskStatus
 from helpers import make_repos
 
@@ -18,7 +19,7 @@ def _entry(tool: str = "filesystem.manage", tool_input: dict | None = None, stat
 
 
 def test_the_same_read_again_is_redundant() -> None:
-    found = _redundant_read([_entry()], "filesystem.manage", dict(READ))
+    found = redundant_read([_entry()], "filesystem.manage", dict(READ))
     assert found is not None and found[0] == 1
 
 
@@ -35,17 +36,17 @@ def test_the_same_read_again_is_redundant() -> None:
     ],
 )
 def test_other_calls_are_not_redundant(history, tool, tool_input) -> None:
-    assert _redundant_read(history, tool, tool_input) is None
+    assert redundant_read(history, tool, tool_input) is None
 
 
 def test_a_write_since_the_read_makes_a_new_read_worthwhile() -> None:
     written = _entry(tool_input={"operation": "write_text_file", "path": "C:/notes/a.txt", "content": "x"}, summary="wrote it")
-    assert _redundant_read([_entry(), written], "filesystem.manage", dict(READ)) is None
-    assert _redundant_read([_entry(), _entry(status="failed")], "filesystem.manage", dict(READ)) is not None  # a failed step changes nothing
+    assert redundant_read([_entry(), written], "filesystem.manage", dict(READ)) is None
+    assert redundant_read([_entry(), _entry(status="failed")], "filesystem.manage", dict(READ)) is not None  # a failed step changes nothing
 
 
 def test_the_nudge_says_to_finish_from_the_result() -> None:
-    text = _already_done_summary(2, _entry(summary="the notes say hello"), read=True)
+    text = already_done_summary(2, _entry(summary="the notes say hello"), read=True)
     assert "already succeeded at step 2" in text and "the notes say hello" in text and "finish with action done" in text
     assert "do it twice" not in text  # that wording is for writes
 
@@ -126,9 +127,9 @@ def _finish_as_tool(name: str = "done", **tool_input) -> OperatorDecision:
 
 @pytest.mark.parametrize("name", ["done", "Done", "final_answer", "finish"])
 def test_a_finish_named_as_a_tool_is_the_done_action(name) -> None:
-    from agent_control.orchestration.worker import _finish_named_as_a_tool
+    from agent_control.orchestration.finishing import finish_named_as_a_tool
 
-    repaired = _finish_named_as_a_tool(_finish_as_tool(name, final_answer="  The total is 611.  "))
+    repaired = finish_named_as_a_tool(_finish_as_tool(name, final_answer="  The total is 611.  "))
     assert repaired.action == OperatorAction.DONE and repaired.final_answer == "The total is 611."
     assert repaired.tool_name is None and repaired.tool_input == {}
 
@@ -143,9 +144,9 @@ def test_a_finish_named_as_a_tool_is_the_done_action(name) -> None:
     ],
 )
 def test_other_decisions_are_left_alone(decision) -> None:
-    from agent_control.orchestration.worker import _finish_named_as_a_tool
+    from agent_control.orchestration.finishing import finish_named_as_a_tool
 
-    assert _finish_named_as_a_tool(decision) == decision
+    assert finish_named_as_a_tool(decision) == decision
 
 
 @pytest.mark.asyncio

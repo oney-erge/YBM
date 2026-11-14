@@ -122,7 +122,7 @@ async def test_task_status_finds_stale_waiting_task_beyond_recency_limit(tmp_pat
 async def test_task_status_exposes_redacted_recovery_question_for_agents(tmp_path) -> None:
     import json
 
-    from agent_control.orchestration.worker import _tool_output_text
+    from agent_control.orchestration.task_record import tool_output_text
 
     database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
     database.initialize()
@@ -149,7 +149,7 @@ async def test_task_status_exposes_redacted_recovery_question_for_agents(tmp_pat
     terminal_text = result.output["terminal_output"][0]["content"]
     assert "Check whether it took effect" in terminal_text
     assert "do-not-expose" not in terminal_text
-    assert "Check whether it took effect" in _tool_output_text(result)
+    assert "Check whether it took effect" in tool_output_text(result)
     assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
 
 

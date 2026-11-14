@@ -518,7 +518,7 @@ async def test_a_listing_shows_modified_times_only_when_asked(tmp_path) -> None:
 
 
 def test_only_a_recency_request_turns_the_dates_on() -> None:
-    from agent_control.orchestration.worker import _filesystem_listing_input_with_dates_intent as enrich
+    from agent_control.orchestration.call_rewrites import _filesystem_listing_input_with_dates_intent as enrich
     from agent_control.schemas import TaskRecord
 
     listing = {"operation": "inspect_folder", "root": "C:/x"}
