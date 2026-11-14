@@ -307,3 +307,20 @@ def test_the_tool_is_off_and_unnamed_unless_plans_are_enabled():
 
     off = build_tool_registry(AppSettings(_env_file=None), "http://127.0.0.1:8765")
     assert "plan.manage" not in off.context()
+
+
+def test_retention_keeps_a_plan_that_has_not_ended_however_old_and_removes_one_that_has_with_its_steps(tmp_path):
+    from agent_control.db_tools import _clean_tables
+
+    repos, _ = make_repos(tmp_path)
+    ended, open_plan = repos.plans.create(_plan(_steps())), repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(ended.id, PlanStatus.DONE)
+    repos.plans.set_status(open_plan.id, PlanStatus.PAUSED)
+    with repos.plans.database.connect() as connection:
+        connection.execute("UPDATE plans SET updated_at = '2000-01-01T00:00:00+00:00'")
+        tables = {row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        _clean_tables(connection, tables, "2020-01-01T00:00:00+00:00")
+    assert repos.plans.get(ended.id) is None and repos.plans.get(open_plan.id) is not None
+    with repos.plans.database.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) AS n FROM plan_steps WHERE plan_id = ?", (ended.id,)).fetchone()["n"] == 0
+        assert connection.execute("SELECT COUNT(*) AS n FROM plan_steps WHERE plan_id = ?", (open_plan.id,)).fetchone()["n"] == 3
