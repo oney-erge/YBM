@@ -72,6 +72,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The Auditor's rewording of an answer no longer slips a wrong value past the checks. They ran on the Operator's answer, before the
+  Auditor read it, so a total the model had corrected to 15 came out of the Auditor as "5 lines in total (4 + 5 + 6)". A rewording with a
+  sum that does not add up, or an address or calculated number that no tool produced, that the original did not have is dropped and the
+  original goes on (`TaskWorker._audit_rewrite_adds_no_wrong_value`).
 - "Which task do you mean?" picked the older of two tasks made within one clock tick (about 15 ms on Windows): `max()` keeps the first of equals
   and the list is oldest first. It showed as a test that failed one run in six; the newest now wins a tie.
 - On a phone the console's bottom navigation had six items in a five-column grid, so Settings dropped onto a second row.
