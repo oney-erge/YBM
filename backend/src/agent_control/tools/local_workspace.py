@@ -679,6 +679,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="workspace.manage",
+            group="code",
+            provides=('workspace', 'project', 'folder', 'preview', 'scaffold', 'sandbox',),
             capability=Capability.FILESYSTEM_WRITE,
             enabled=enabled,
             description=f"manage task workspaces under {settings.adapters.workspace.root_dir}",

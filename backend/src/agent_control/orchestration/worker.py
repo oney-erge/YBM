@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timedelta
 import json
 import logging
@@ -343,7 +343,10 @@ class TaskWorker:
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
+        ability_notes: Callable[[str], Awaitable[str]] | None = None,
     ) -> None:
+        # What bears on a request that the Operator cannot already see (abilities/context.py), as prompt text; "" for most.
+        self.ability_notes = ability_notes
         self.repositories = repositories
         self.audit = audit
         self.executor = executor
@@ -862,11 +865,15 @@ class TaskWorker:
         elif self.operator is None:
             return self._transition_operator(latest, latest.metadata, TaskStatus.BLOCKED, "operator_loop_not_configured")
         else:
+            latest = await self._with_ability_notes(latest)
             try:
                 with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
                     decision = await self.operator.decide(
                         latest.objective,
-                        self._planner_context(self._project_planner_context(latest.metadata), metadata=latest.metadata),
+                        self._planner_context(
+                            self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or ""),
+                            metadata=latest.metadata,
+                        ),
                         history,
                         memory_context=memory_context, prefer_major=prefer_major,
                         # Only passed when it applies, so an Operator without the option is called exactly as before.
@@ -2860,6 +2867,21 @@ class TaskWorker:
             payload={"reason": "clarification_requested", "question": question, "clarify_count": ask_count + 1},
         )
         return updated
+
+    async def _with_ability_notes(self, task: TaskRecord) -> TaskRecord:
+        """Work out once, before the task's first step, what bears on the request that the Operator cannot see, and keep it with the task.
+
+        Once, so the prompt's prefix stays the same from step to step (the model server reuses what it has already read), and so a
+        request that matches nothing costs nothing after the first look. A failure leaves the notes empty: they are help, not a gate.
+        """
+        if self.ability_notes is None or "ability_notes" in task.metadata:
+            return task
+        try:
+            notes = await self.ability_notes(_users_own_words(task))
+        except Exception:  # noqa: BLE001 - see above
+            logger.warning("ability notes failed; the task goes on without them", exc_info=True)
+            notes = ""
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "ability_notes": notes})
 
     def _planner_context(self, extra: str = "", *, metadata: dict[str, Any] | None = None) -> str:
         """The tool catalog and advice for an Operator step, narrowed to the task's route when ``metadata`` is given."""

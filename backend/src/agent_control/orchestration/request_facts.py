@@ -66,13 +66,6 @@ MOVE_VERB = re.compile(r"\bmove\b", re.IGNORECASE)
 NAMED_FOLDER = re.compile(r"\b(?:sub-?)?(?:folder|directory)\s+(?:called|named)\s+\S", re.IGNORECASE)
 #: Add up or average what several things hold ("how many lines in total", "the sum of", "the average of").
 TALLY = re.compile(r"\b(?:in\s+total|total|sum|add(?:ed)?\s+up|adding|average|mean|median|altogether)\b", re.IGNORECASE)
-#: Buy, order or book something that costs money ("order me a pizza", "book a flight", "buy a laptop").
-SPENDS_MONEY = re.compile(
-    r"(?<!in )\b(?:order(?!\s+(?:to|of|by)\b)|buy|purchase|book|reserve|rent|subscribe\s+to)\b[^.?!\n]{0,40}\b(?:pizzas?|burgers?|food|meals?|dinner|lunch|breakfast|coffee|"
-    r"takeout|take-out|delivery|groceries|tickets?|flights?|hotels?|rooms?|tables?|taxi|cab|uber|lyft|ride|car|laptop|phone|gift|flowers|"
-    r"subscription|membership|plan)\b|\bpay\s+(?:for|my|the)\b",
-    re.IGNORECASE,
-)
 #: Log in to a website.
 LOG_IN = re.compile(r"\b(?:log\s*(?:me\s*)?in|sign\s*(?:me\s*)?in|login)\b", re.IGNORECASE)
 _PROVIDERS = (
@@ -137,10 +130,6 @@ class RequestFacts:
     @property
     def renames(self) -> bool:
         return bool(RENAME.search(URL.sub(" ", self.own)))
-
-    @property
-    def spends_money(self) -> bool:
-        return bool(SPENDS_MONEY.search(URL.sub(" ", self.own)))
 
     @property
     def wants_a_new_account(self) -> bool:

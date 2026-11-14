@@ -72,6 +72,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="persona.manage",
+            group="memory",
+            provides=('preference', 'style', 'tone', 'always', 'never', 'persona', 'talk',),
             capability=Capability.AGENT_CORE,
             enabled=enabled,
             description=(

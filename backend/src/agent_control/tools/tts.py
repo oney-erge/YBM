@@ -144,6 +144,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="tts.synthesize",
+            group="voice",
+            provides=('speak', 'voice', 'read', 'aloud', 'audio', 'speech', 'say', 'narrate',),
             capability=Capability.TTS_SYNTHESIZE,
             enabled=enabled,
             description="synthesize local speech audio with the configured Kokoro ONNX runtime",

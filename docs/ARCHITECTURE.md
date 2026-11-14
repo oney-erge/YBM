@@ -178,6 +178,28 @@ None of them touches storage, runs a tool or calls a model, so each is tested on
 scenarios, the same frozen end-to-end suites. To add a rule, add it to the list where it belongs, with a test, not a branch in the tick.
 What follows the checks (the Auditor's grounding pass, fulfillment, the voice pass) stays in the worker, which owns the model calls.
 
+### Abilities: one index of what it can do, could do, and cannot do
+
+Everything the assistant can use was listed by its own code in its own format: the tool catalog (`tools/spec.py`), the skills section
+(`tools/skills.py`), the MCP summary (`tools/mcp_client.py`), saved workflows (a table), kept scripts (skill files named `helper-...`).
+So "is there anything that can do this?" had no single answer, and a tool that was switched off, a model that could be loaded, or the plain
+fact that something cannot be done here was invisible to the model that needed to know. `abilities/` is that one answer.
+
+| Module | What it is |
+|---|---|
+| `abilities/model.py` | `Ability`: one record for a tool, MCP tool, skill, kept script, workflow, coding agent, local model or known gap. A name, what it is for, its group, its state (`ready`, `disabled`, `installable`, `needs_access`, `unavailable`), what it would take to make it ready, how to call it in the terms of the tools that already exist, and what to say if it cannot be used. It is data about a capability, never a second way to run one. |
+| `abilities/sources.py` | Reads each place a capability lives, as it is now, and builds the index. A tool says what it is for next to its own definition (`ToolDefinition.group` and `provides`); a skill, an MCP server or a workflow needs no code to appear. |
+| `abilities/gaps.py` | What this assistant cannot do (paying for an order, acting in the physical world) as `unavailable` records with the honest answer and the nearest thing that can be done. Adding one is adding a record, not a branch in the worker. |
+| `abilities/index.py` | Finds the records that fit a request by shared words (BM25 over name, what it provides, summary and detail), with no model call. |
+| `abilities/context.py` | What bears on a request and is not already in the Operator's prompt, shortlisted by words and confirmed by one yes/no question to the decision model (`DecisionModelClient.yes_no`). Rendered once before the task's first step; a request that matches nothing adds nothing. |
+| `tools/abilities.py` | `ability.search`: the Operator's way into the index when nothing in front of it fits (`search`, `describe`). It only reads: making something ready is done with the tools that already do it, each behind its own approval. |
+
+It is off in the code's defaults (`abilities.enabled: false`) so that a recorded scenario fixture, keyed on the exact text of the Operator's
+prompt, is not broken by a new tool line; `config.example.yaml` turns it on. The "cannot place orders" rule that used to live in the ladder
+(`money_hint`, `RequestFacts.spends_money`) is now the `gap:commerce.order` record: the same words said once, from data, found by the
+request instead of by a pattern. A rule that is a fact about the world belongs here as a record; one about a tool's contract belongs in the
+tool; one about checking an answer belongs in `answer_checks.py`; one about a procedure belongs in a skill.
+
 ### Logins, files and voice
 
 **Logins for websites** (`accounts.py`). A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`. The browser

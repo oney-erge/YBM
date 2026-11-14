@@ -85,6 +85,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="knowledge.search",
+            group="memory",
+            provides=('notes', 'knowledge', 'reference', 'personal', 'documents', 'wiki', 'look', 'up',),
             capability=Capability.AGENT_CORE,
             enabled=enabled,
             description=(

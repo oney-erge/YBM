@@ -1396,6 +1396,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="code.interpreter",
+            group="code",
+            provides=('script', 'python', 'calculate', 'compute', 'count', 'sum', 'total', 'average', 'parse', 'csv', 'json', 'data', 'convert', 'analyze', 'chart', 'generate', 'run', 'program',),
             capability=Capability.TERMINAL_RUN,
             enabled=enabled,
             description=(

@@ -208,6 +208,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="web.search",
+            group="web",
+            provides=('search', 'google', 'look', 'up', 'find', 'online', 'research', 'news', 'latest',),
             capability=Capability.NETWORK_HTTP,
             enabled=enabled,
             description=(

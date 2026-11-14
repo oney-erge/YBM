@@ -7,8 +7,10 @@ _REGISTRARS below. No other file needs to change (docs/archive/HISTORY.md P3).
 
 from __future__ import annotations
 
+from agent_control.abilities.catalog import AbilityCatalog
 from agent_control.config import AppSettings
 from agent_control.tools import (
+    abilities,
     adapter_factory,
     artifact_delivery,
     browser,
@@ -26,6 +28,7 @@ from agent_control.tools import (
     mcp_client,
     memory_manage,
     persona,
+    plan_manage,
     schedule_manage,
     skills,
     system_inventory,
@@ -33,6 +36,7 @@ from agent_control.tools import (
     tts,
     vscode_bridge,
 )
+from agent_control.tools.abilities import AbilitiesAdapter
 from agent_control.tools.adapter_factory import AdapterFactoryAdapter
 from agent_control.tools.spec import Adapters, Definitions, Registrar, RegistryDeps, ToolDefinition, ToolRegistry
 
@@ -58,9 +62,11 @@ _REGISTRARS: tuple[Registrar, ...] = (
     knowledge_base.register,
     persona.register,
     memory_manage.register,
+    plan_manage.register,
     schedule_manage.register,
     skills.register,
     task_status.register,
+    abilities.register,
     system_inventory.register,
     artifact_delivery.register,
     document_manage.register,
@@ -101,6 +107,12 @@ def build_tool_registry(
         definition_index={definition.name: definition for definition in definitions},
         mcp_summary_factory=lambda: mcp_client.mcp_catalog_summary(settings.mcp),
     )
+    if settings.abilities.enabled:
+        workflows = getattr(getattr(repositories, "workflows", None), "list_all", None)
+        registry.abilities = AbilityCatalog(registry, settings, workflows=workflows)
+        abilities_adapter = adapters.get("ability.search")
+        if isinstance(abilities_adapter, AbilitiesAdapter):
+            abilities_adapter.bind(registry.abilities)
     adapter_factory_adapter = adapters.get("adapter.factory")
     if isinstance(adapter_factory_adapter, AdapterFactoryAdapter):
         adapter_factory_adapter.set_promotion_callback(registry.register_dynamic_tool)

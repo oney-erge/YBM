@@ -734,6 +734,26 @@ def default_capability_policies() -> dict[Capability, CapabilityPolicy]:
     return policies
 
 
+class AbilitiesConfig(StrictBaseModel):
+    """The one index of what the assistant can do (abilities/), and the tool that lets the Operator ask it.
+
+    Off in the code's defaults so that a recorded scenario fixture, keyed on the exact text of the Operator's prompt, is not
+    broken by a new tool line in the catalog; the shipped config turns it on.
+    """
+
+    enabled: bool = False
+
+
+class PlansConfig(StrictBaseModel):
+    """Plans for goals too big for one task (plans/): the `plan.manage` tool and the runner that carries a started plan out.
+
+    Off in the code's defaults for the same reason as `abilities.enabled`: a new tool line changes the text of the Operator's prompt, which
+    the recorded scenario fixtures are keyed on. The shipped config turns it on.
+    """
+
+    enabled: bool = False
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENT_",
@@ -762,6 +782,8 @@ class AppSettings(BaseSettings):
     adapters: AdaptersConfig = Field(default_factory=AdaptersConfig)
     mcp: MCPConfig = Field(default_factory=MCPConfig)
     operator: OperatorConfig = Field(default_factory=OperatorConfig)
+    abilities: AbilitiesConfig = Field(default_factory=AbilitiesConfig)
+    plans: PlansConfig = Field(default_factory=PlansConfig)
 
     @classmethod
     def settings_customise_sources(

@@ -274,6 +274,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="skills.use",
+            group="memory",
+            provides=('skill', 'procedure', 'runbook', 'guide', 'steps', 'recipe',),
             capability=Capability.AGENT_CORE,
             enabled=enabled,
             description=(

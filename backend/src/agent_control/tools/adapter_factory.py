@@ -509,6 +509,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="adapter.factory",
+            group="build",
+            provides=('new', 'tool', 'integration', 'connector', 'adapter', 'build', 'extend', 'capability',),
             capability=Capability.FILESYSTEM_WRITE,
             enabled=enabled,
             description=(

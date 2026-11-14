@@ -101,6 +101,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="coding_assistant",
+            group="code",
+            provides=('coding', 'assistant', 'code', 'generate', 'command',),
             capability=Capability.TERMINAL_RUN,
             enabled=enabled,
             description="run the configured local coding assistant command template",

@@ -7,6 +7,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- One index of everything the assistant can do, could do with the user's help, or cannot do (`abilities/`): built-in tools, MCP tools,
+  skills, kept scripts, saved workflows, installed coding agents, and known gaps, as one kind of record with a state (`ready`, `disabled`,
+  `installable`, `needs_access`, `unavailable`) and what it would take to make it ready. Tools say what they are for next to their own
+  definition (`ToolDefinition.group`, `provides`). The Operator can search it with the new `ability.search` tool, and a request that matches
+  a record the prompt cannot already show (it cannot be done here, a saved workflow does it) is told so once, before its first step: words
+  shortlist, and one yes/no question to the decision model confirms (`DecisionModelClient.yes_no`). Off in the code's defaults
+  (`abilities.enabled`), on in `config.example.yaml`; see `docs/ARCHITECTURE.md`.
 - A request to add up or average what several files hold ("how many lines in total", "the sum of") is told once, after the second file is
   read, not to add in its head and to let a short program do it (`orchestration/ladder.py`, `tally_hint_due`; `RequestFacts.tallies`).
   The model had answered 12 for 4 + 5 + 6 in a sentence no written-out-sum check could read; with the hint it runs the program and says 15.
@@ -53,6 +60,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A request to buy, order or pay for something is no longer handled by a rule in the ladder that fired on its words once the model had
+  started browsing. It is the `gap:commerce.order` record: found from the request before the first step, confirmed by the decision model
+  ("pay my electricity bill" is a match, "remind me to pay the rent" and "total order value" are not), and carrying the same honest
+  answer plus what the assistant can do instead. `money_hint` and `RequestFacts.spends_money` are removed.
 - Writing the conversation summary after the reply is now an option that is off (`llm.summarize_memory_in_background`, default false). It was
   on since 0.1.6, and on the frozen vision suite it made "move my files, then undo" fail three times out of three (the operator reads the
   last turns when the summary is not ready yet, and planned a sort by extension); with the summary written before the reply, and nothing else

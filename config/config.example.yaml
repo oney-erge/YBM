@@ -264,6 +264,12 @@ limits:
   max_log_chars: 12000
   retry_backoff_seconds: 30
 
+# One index of everything the assistant can do, could do with your help, or cannot do (tools, MCP tools, skills, saved workflows,
+# coding agents, and what it cannot do such as paying for an order). On: the Operator can search it (the ability.search tool), and a
+# request that matches something it cannot see otherwise ("order me a pizza") is told so before its first step. See docs/ARCHITECTURE.md.
+abilities:
+  enabled: true
+
 # The Operator loop (observe -> decide -> act) is the sole execution path.
 operator:
   # Hard ceiling on REAL tool calls per task - the only backstop against a
