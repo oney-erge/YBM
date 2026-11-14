@@ -133,6 +133,30 @@ def test_disk_space_lists_the_drives(monkeypatch):
     assert "C:\\ 10.0 GB free of 20.0 GB" in result.output["summary"]
 
 
+def test_hardware_says_the_card_its_video_memory_and_the_ram(monkeypatch):
+    """The Operator asked the person for their GPU and VRAM before running a 70B model: the tool listed hardware and could not report any."""
+    from agent_control.llm.hardware import Hardware
+
+    monkeypatch.setattr(system_inventory, "probe_hardware", lambda: Hardware(detected=True, gpu_name="NVIDIA GeForce RTX 3080 Laptop GPU", vram_gb=8.0, ram_gb=32.0))
+    monkeypatch.setattr(system_inventory.os, "cpu_count", lambda: 16)
+    result = _run(SystemInventoryAdapter([]), operation="hardware")
+    assert result.output["summary"] == (
+        "Graphics card: NVIDIA GeForce RTX 3080 Laptop GPU with 8 GB of video memory.\nRAM: 32 GB.\nProcessor: 16 logical cores."
+    )
+    assert result.output["items"][0]["vram_gb"] == 8.0 and result.output["items"][0]["cpu_cores"] == 16
+
+
+def test_hardware_with_no_card_or_nothing_readable_says_so_instead_of_guessing(monkeypatch):
+    from agent_control.llm.hardware import Hardware
+
+    monkeypatch.setattr(system_inventory.os, "cpu_count", lambda: None)
+    monkeypatch.setattr(system_inventory, "probe_hardware", lambda: Hardware(detected=True, ram_gb=16.0, notes=["No NVIDIA GPU found - local models will run on the CPU and be slow."]))
+    cpu_only = _run(SystemInventoryAdapter([]), operation="hardware").output["summary"]
+    assert cpu_only.startswith("No dedicated graphics card was found.\nRAM: 16 GB.") and "slow" in cpu_only
+    monkeypatch.setattr(system_inventory, "probe_hardware", lambda: Hardware(detected=False, reason="Running in a container, so we cannot see this computer's graphics card."))
+    assert _run(SystemInventoryAdapter([]), operation="hardware").output["summary"] == "Running in a container, so we cannot see this computer's graphics card."
+
+
 def test_files_kept_near_the_top_of_a_folder_come_before_buried_copies(tmp_path, monkeypatch):
     monkeypatch.setattr(system_inventory, "search_index", lambda *a, **k: None)
     home = tmp_path / "home"

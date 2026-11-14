@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `system.inventory` reports the hardware (`operation: hardware`): the graphics card with its video memory, RAM and processor count, from the same reading that
+  decides which local model fits (`llm/hardware.py`). The tool already listed hardware, cpu, ram and gpu among what it covers and had no operation that reported any of
+  them: asked to "run a 70B parameter model on my laptop", the Operator asked the person for their GPU model and VRAM and was cancelled after two asks (challenge c2).
 - A schedule says when it first runs: the weekday, the date and the time in its own timezone (`tools/schedule_manage.py when_it_runs`, used by create, a repeated create
   and list). The tool said only that the schedule was created, and the model, asked to say when it first runs, wrote "Monday, December 23" for a run on
   November 16 (live; December 23, 2026 is a Wednesday). The list showed a UTC clock time the person had to convert.

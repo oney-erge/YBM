@@ -1032,7 +1032,7 @@ class MemoryManageOutput(ToolOutputModel):
 
 
 class SystemInventoryInput(ToolInputModel):
-    operation: Literal["steam_games", "installed_apps", "disk_space", "find_files"] = "find_files"
+    operation: Literal["steam_games", "installed_apps", "disk_space", "hardware", "find_files"] = "find_files"
     query: str | None = None
     extensions: list[str] = Field(default_factory=list, max_length=12)
     match: Literal["name", "content"] = "name"
@@ -1060,7 +1060,7 @@ class SystemInstalledAppsInput(ToolInputModel):
 
 
 class SystemSimpleInput(ToolInputModel):
-    operation: Literal["steam_games", "disk_space"] = "steam_games"
+    operation: Literal["steam_games", "disk_space", "hardware"] = "steam_games"
 
 
 class SystemInventoryOutput(ToolOutputModel):
