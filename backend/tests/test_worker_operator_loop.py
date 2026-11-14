@@ -3751,6 +3751,21 @@ def test_the_finished_answer_lists_what_changed_or_the_last_read() -> None:
     assert answer_from_results([read], "Which page?") == "Done:\n- Not Found\n\nNot settled: Which page?"
 
 
+def test_the_finished_answer_leaves_out_the_lines_a_tool_wrote_for_a_program() -> None:
+    """Live (challenge c1): "Done: - Code interpreter operation completed: run_python Workspace: task_task_eb3c... Backend: local_subprocess"."""
+    header = ("Code interpreter operation completed: run_python\nWorkspace: C:\\x\\.agent_control\\code_interpreter\\task_task_eb3c\n"
+              "Backend: local_subprocess (not sandboxed)\nScript: C:\\x\\script.py\nReturn code: 0")
+    ran = {"tool_name": "code.interpreter", "status": "succeeded", "input": {"operation": "run_python"},
+           "output_summary": header + "\n\nPython completed successfully. Found 970 matches."}
+    only_header = {**ran, "output_summary": header}
+
+    assert answer_from_results([ran], None) == "Done:\n- Python completed successfully. Found 970 matches."
+    assert answer_from_results([ran], "Which backup system?") == "Done:\n- Python completed successfully. Found 970 matches.\n\nNot settled: Which backup system?"
+    # nothing a person would read was done: the question alone, not "Done:" followed by a program's labels
+    assert answer_from_results([only_header], "Which backup system?") == "Which backup system?"
+    assert answer_from_results([only_header], None) == "Done:"
+
+
 def test_a_scheduled_job_keeps_the_url_the_user_gave() -> None:
     message = "Create a job that runs every day and checks http://127.0.0.1:52308/episode.html for a new episode."
     task = TaskRecord(objective=message, metadata={"original_message_text": message})

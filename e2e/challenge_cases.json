@@ -993,10 +993,12 @@
         "IMG_0105",
         "IMG_0106"
       ],
-      "bot_reply_excludes_all": [
+      "answer_excludes_all": [
         "IMG_0101",
         "IMG_0103",
-        "IMG_0104",
+        "IMG_0104"
+      ],
+      "bot_reply_excludes_all": [
         "task_",
         "tool_name",
         "operation:"

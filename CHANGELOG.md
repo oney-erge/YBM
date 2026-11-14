@@ -10,6 +10,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `system.inventory` reports the hardware (`operation: hardware`): the graphics card with its video memory, RAM and processor count, from the same reading that
   decides which local model fits (`llm/hardware.py`). The tool already listed hardware, cpu, ram and gpu among what it covers and had no operation that reported any of
   them: asked to "run a 70B parameter model on my laptop", the Operator asked the person for their GPU model and VRAM and was cancelled after two asks (challenge c2).
+- An answer no longer carries what a tool wrote for a program. The folder a script ran in (`.agent_control/code_interpreter/task_task_<hex>`) is told as "the project
+  folder I made for this task" like the other task folders, and `task_task_<hex>` is an id like `task_<hex>` (`human_text.py`). The finished-answer fallback leaves out
+  "Code interpreter operation completed", `Workspace:`, `Backend:`, `Script:` and `Return code:` lines, and when nothing a person would read is left it
+  is just the question (`orchestration/task_record.py`). The second challenge run found both: "Done: - Code interpreter operation completed: run_python Workspace:
+  task_task_eb3c... Backend: local_subprocess (not sandboxed)" for a question about a backup, and "Workspace: task_task_833b..." under a chart.
+- The challenge suite checks that the final answer leaves out terms (`answer_excludes_all`), apart from everything the user was sent on the way. c_d1_blurry failed on its
+  approval prompt, which names all six photos to ask permission to look at them, while the answer named exactly the three blurry ones.
 - A schedule says when it first runs: the weekday, the date and the time in its own timezone (`tools/schedule_manage.py when_it_runs`, used by create, a repeated create
   and list). The tool said only that the schedule was created, and the model, asked to say when it first runs, wrote "Monday, December 23" for a run on
   November 16 (live; December 23, 2026 is a Wednesday). The list showed a UTC clock time the person had to convert.

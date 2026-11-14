@@ -28,7 +28,8 @@ _WINDOWS_PATH = re.compile(r"(?<![A-Za-z0-9])[A-Za-z]:\\[^\r\n\"<>|*?`]*")
 # A POSIX path (macOS, Linux). Only rewritten when it exists on this computer, so "and/or", a URL or a stray
 # slash is never touched: the lookbehind refuses a slash that follows a word character, a colon or a dot.
 _POSIX_PATH = re.compile(r"(?<![\w:/.\-])(/(?=[^\s/])[^\r\n\"<>|*?`]*)")
-_TASK_ID = re.compile(r"\btask_[0-9a-f]{8,}\b")
+# "task_<hex>", and the "task_task_<hex>" a task's code folder is named: an id is a label for a program either way.
+_TASK_ID = re.compile(r"\b(?:task_)+[0-9a-f]{8,}\b")
 _LISTING_LINE = re.compile(r"^(\s*)- \[(?:file|folder|dir)\] (.+?)(?: \((\d+) bytes\))?\s*$")
 
 #: Folders a person names by their everyday word, matched case-insensitively against the first
@@ -108,7 +109,8 @@ def friendly_path(path: str) -> str:
     lowered = [p.lower() for p in parts]
     if ".agent_control" in lowered:
         tail = parts[lowered.index(".agent_control") + 1:]
-        if tail and tail[0].lower() == "workspaces":
+        # The folder a script ran in is named for its task ("task_task_<hex>"): a person is told it is the folder made for the task.
+        if tail and tail[0].lower() in ("workspaces", "code_interpreter"):
             if len(tail) > 2:
                 return f"{parts[-1]} (in the project folder I made for this task)"
             return "the project folder I made for this task"

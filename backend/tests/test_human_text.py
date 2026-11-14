@@ -172,6 +172,15 @@ def test_friendly_path_keeps_the_drive_for_a_file_on_another_drive(home):
     assert friendly_path(rf"{other.lower()}\x.txt") == f"x.txt (in drive {other})"
 
 
+def test_the_folder_a_script_ran_in_and_its_task_id_are_not_shown():
+    """Live (challenge d4, e2): "Workspace: task_task_833b... (in my working folder)" ended an answer about a chart."""
+    folder = r"Z:\ybm\.agent_control\code_interpreter\task_task_833b3383b28941d3bf39aa5cf175b372"  # no spaces, and not a folder on this machine
+    assert humanize(f"Workspace: {folder}") == "The files are in the project folder I made for this task."
+    assert humanize(rf"Saved {folder}\chart.png") == "Saved chart.png (in the project folder I made for this task)"
+    assert humanize("It was task_task_833b3383b28941d3bf39aa5cf175b372 that did it") == "It was an earlier task that did it"
+    assert humanize("It was task_833b3383b28941d3bf39aa5cf175b372 that did it") == "It was an earlier task that did it"
+
+
 def test_a_script_that_only_printed_an_answer_does_not_name_its_internal_folder():
     from agent_control.channels.task_notify import _code_interpreter_answer
 
