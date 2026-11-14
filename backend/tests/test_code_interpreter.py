@@ -772,6 +772,24 @@ def test_a_missing_package_is_named_with_the_way_round_it() -> None:
     assert "'openpyxl' is not installed here" in summary and "document.manage extract_text" in summary
 
 
+def test_a_missing_package_the_installer_may_install_is_told_to_be_installed_not_done_without() -> None:
+    """Live (challenge e2): the script failed for want of openpyxl, the installer was on, and the model gave up on adding the row."""
+    from agent_control.tools.code_interpreter import _summary
+
+    installable = frozenset({"openpyxl", "python-docx"})
+    plain = "Traceback (most recent call last):\n  File \"script.py\", line 1, in <module>\n    import openpyxl\nModuleNotFoundError: No module named 'openpyxl'\n"
+    summary = _summary(1, "", plain, [], installable)
+    assert "call dependencies.install" in summary and "packages ['openpyxl']" in summary and "Use the standard library" not in summary
+    # pandas words the same problem differently, and the import name is not always the package name
+    pandas_way = "ImportError: Missing optional dependency 'openpyxl'.  Use pip or conda to install openpyxl.\n"
+    assert "packages ['openpyxl']" in _summary(1, "", pandas_way, [], installable)
+    docx = "ModuleNotFoundError: No module named 'docx'\n"
+    assert "packages ['python-docx']" in _summary(1, "", docx, [], installable)
+    # a package that is not on the allowlist, or an installer that is off, keeps the old advice
+    assert "Use the standard library" in _summary(1, "", "ModuleNotFoundError: No module named 'requests'\n", [], installable)
+    assert "Use the standard library" in _summary(1, "", plain, [])
+
+
 def test_a_long_traceback_keeps_the_line_that_says_why() -> None:
     from agent_control.tools.code_interpreter import _summary
 

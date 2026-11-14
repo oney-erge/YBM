@@ -790,6 +790,26 @@ async def test_follow_up_can_resume_the_same_approval_task(monkeypatch) -> None:
     ]
 
 
+def test_a_task_the_previous_case_left_waiting_is_cancelled_before_the_next_case(monkeypatch) -> None:
+    """The rerun of challenge c2 and c6: a retried install asked its own question, and the next case's message was taken as the answer."""
+    runner = _runner_module()
+    cancelled: list[str] = []
+    monkeypatch.setattr(runner, "cancel_task", lambda task_id: cancelled.append(task_id) or True)
+    monkeypatch.setattr(runner, "admin_get", lambda _path: {"tasks": [
+        {"id": "task_waiting", "status": "clarifying"}, {"id": "task_done", "status": "completed"},
+        {"id": "task_approval", "status": "awaiting_approval"}, {"id": "task_failed", "status": "failed"},
+    ]})
+
+    assert runner.cancel_leftover_tasks() == 2
+    assert cancelled == ["task_waiting", "task_approval"]
+
+    def unreachable(_path):
+        raise OSError("admin api down")
+
+    monkeypatch.setattr(runner, "admin_get", unreachable)
+    assert runner.cancel_leftover_tasks() == 0  # a runner that cannot ask carries on, as before
+
+
 def test_settled_stage_cleanup_cancels_only_tasks_still_waiting(monkeypatch) -> None:
     runner = _runner_module()
     cancelled: list[str] = []

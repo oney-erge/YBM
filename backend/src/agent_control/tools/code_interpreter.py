@@ -322,9 +322,13 @@ class CodeInterpreterAdapter:
         config: CodeInterpreterAdapterConfig,
         provider: LLMProvider | None = None,
         artifacts: object | None = None,
+        installable: frozenset[str] = frozenset(),
     ) -> None:
         self.config = config
         self.provider = provider
+        # The packages `dependencies.install` may install (normalized names; empty when that tool is off): a script that fails for want
+        # of one of them is told to install it instead of to do without.
+        self.installable = installable
         # Optional artifact repository - when present, files produced by a script
         # are registered as task artifacts so later steps (e.g. artifact.deliver)
         # can find them by id without any path guessing.
@@ -632,7 +636,7 @@ class CodeInterpreterAdapter:
             if name in before_snapshot and before_snapshot[name] != metadata
         )
         deleted = sorted(set(before_snapshot) - set(after_snapshot))
-        summary = _summary(execution.returncode, stdout, stderr, created)
+        summary = _summary(execution.returncode, stdout, stderr, created, self.installable)
         if backend_fallback_warning:
             summary = f"{summary}\nWarning: {backend_fallback_warning}"
         artifact_ids = self._register_created_artifacts(request.task_id, workspace, created)
@@ -1241,33 +1245,49 @@ def _file_snapshot(workspace: Path, *, max_files: int) -> dict[str, tuple[int, i
     return snapshot
 
 
-def _summary(returncode: int, stdout: str, stderr: str, created: list[str]) -> str:
+def _summary(returncode: int, stdout: str, stderr: str, created: list[str], installable: frozenset[str] = frozenset()) -> str:
     if returncode == 0:
         prefix = f"Python completed successfully and created {len(created)} file(s)."
         text = stdout.strip()
         return f"{prefix} {text[:500]}" if text else prefix
     text = (stderr or stdout).strip()
-    return f"Python failed with exit code {returncode}." + (f" {_failure_text(text)}" if text else "")
+    return f"Python failed with exit code {returncode}." + (f" {_failure_text(text, installable)}" if text else "")
 
 
-_MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'")
+_MISSING_MODULE = re.compile(r"ModuleNotFoundError: No module named '([\w.]+)'|Missing optional dependency '([\w.-]+)'")
 _FAILURE_TEXT_CHARS = 500
+#: A module's import name where the package that provides it is named differently.
+_PACKAGE_FOR_MODULE = {"docx": "python-docx", "pptx": "python-pptx"}
 
 
-def _failure_text(text: str) -> str:
+def _normalized_package(name: str) -> str:
+    return name.lower().replace("_", "-")
+
+
+def _failure_text(text: str, installable: frozenset[str] = frozenset()) -> str:
     """What a failed script said, ending with the line that says why.
 
     A Python traceback puts the cause last. Cutting a long one to its first 500 characters kept the frames and lost the
     line (a missing package) the model needed, and it tried the same import again. A missing package also gets the way
-    round it, since the model cannot see which packages exist here.
+    round it, since the model cannot see which packages exist here: install it when `dependencies.install` may (the
+    package is on its allowlist), otherwise do without it.
     """
     shown = text if len(text) <= _FAILURE_TEXT_CHARS else "..." + text[-(_FAILURE_TEXT_CHARS - 3):]
     missing = _MISSING_MODULE.search(text)
     if missing:
-        shown += (
-            f" [The package {missing.group(1).split('.')[0]!r} is not installed here. Use the standard library. For text in "
-            "a Word, Excel or PowerPoint file call document.manage extract_text, then calculate from that text.]"
-        )
+        module = (missing.group(1) or missing.group(2)).split(".")[0]
+        package = _PACKAGE_FOR_MODULE.get(module, module)
+        if _normalized_package(package) in installable:
+            shown += (
+                f" [The package {package!r} is not installed here, but this assistant can install it: call dependencies.install "
+                f"with operation install and packages [{package!r}] (the user is asked first), then add the directory it reports to "
+                "sys.path at the top of the script and run it again.]"
+            )
+        else:
+            shown += (
+                f" [The package {module!r} is not installed here. Use the standard library. For text in "
+                "a Word, Excel or PowerPoint file call document.manage extract_text, then calculate from that text.]"
+            )
     return shown
 
 
@@ -1479,8 +1499,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
     )
     if settings.adapters.code_interpreter.enabled:
+        dependencies = settings.adapters.dependencies
+        installer_on = dependencies.enabled and capability_enabled(settings, Capability.DEPENDENCIES_INSTALL)
         adapters["code.interpreter"] = CodeInterpreterAdapter(
             settings.adapters.code_interpreter,
             provider=deps.provider,  # type: ignore[arg-type]
             artifacts=deps.artifact_repository,
+            installable=frozenset(_normalized_package(name) for name in dependencies.allowed_packages) if installer_on else frozenset(),
         )

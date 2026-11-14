@@ -7,6 +7,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A script that fails for want of a package `dependencies.install` may install is told to install it (`tools/code_interpreter.py`), not to do without: the hint names the package
+  (`python-docx` for `docx`, `python-pptx` for `pptx`), says the user is asked first, and to add the install folder to `sys.path`. It reads the pandas wording too ("Missing optional
+  dependency 'openpyxl'"). With the installer off or the package not on the allowlist the old advice stands. In the second challenge run the model gave up on adding a row to a
+  spreadsheet for want of openpyxl while the installer could have fetched it.
+- The self-knowledge skill says a question is not a request to change anything: nothing is installed or switched on in that task, and it ends with an offer instead of a question that
+  holds the task open. In the final rerun, "what do you need from me?" ended with ffmpeg installed on the machine.
+- The e2e runner cancels tasks the previous case left waiting before it starts the next (`cancel_leftover_tasks`). A request that installs something is retried as a new task that can ask its
+  own question after the case ended; the next case's first message was taken as the answer.
 - Two starter skills the Operator is shown, because a tool description was not enough: on the rerun the Operator did not pick `ability.search` overview for "what can't you do?" or
   `system.inventory` hardware for "run a 70B model on my laptop", and asked the user what to explain and which model instead. `skills/starter/know-yourself.md` (answer a question
   about the assistant from the overview, never from memory, never by asking what the user means) and `skills/starter/check-this-computer.md` (read the hardware first, say what fits and
