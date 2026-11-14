@@ -7,6 +7,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The Operator's prompt never loses the name of a tool, and the skills list stays short (`orchestration/operator.py _without_the_tail`, `tools/skills.py`). On 11/14 ten scripts the
+  assistant had kept from test tasks, listed one per line, pushed the tool catalog over its limit; the last-resort trim cut a slice out of the middle, `system.inventory` was gone, and "how many
+  Steam games do I have?" and "where is this file?" (11 of 11 passes before) went to the screen tool for minutes. Authored skills are listed with their description cut at a word, kept
+  scripts are one line that says how many; and when a context still does not fit, what follows the tools (the advice, then the skills, then the persona) is dropped from the end and a
+  tool line is never cut. Checked on the live model: the exact failing prompt (all 14 skills) now names every tool and the 9B picks `system.inventory` 3 of 3 on both cases.
+- `scripts/e2e_scorecard.py` prints each case's own history across runs (oldest first), what each suite is for, and which cases are flaky, so a score is only compared with itself.
+  The run summary has an "Answer at" column: when the answer reached the person (the last message that is not an edit of a progress line). A chat reply showed 67 s in the summaries
+  because the runner waits that long to see whether a task starts; the audit log says the answer went out 1 to 6 s after the message.
 - A script that fails for want of a package `dependencies.install` may install is told to install it (`tools/code_interpreter.py`), not to do without: the hint names the package
   (`python-docx` for `docx`, `python-pptx` for `pptx`), says the user is asked first, and to add the install folder to `sys.path`. It reads the pandas wording too ("Missing optional
   dependency 'openpyxl'"). With the installer off or the package not on the allowlist the old advice stands. In the second challenge run the model gave up on adding a row to a

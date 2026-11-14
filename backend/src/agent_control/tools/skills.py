@@ -104,7 +104,20 @@ def skills_context_section(root_dir: str, max_skills: int = 50) -> str:
         # every recorded scenario fixture (keyed on a hash of the rendered
         # prompt) breaks for a feature that has nothing to offer that install.
         return ""
-    lines = [f"- {skill['name']}: {skill['description']}" for skill in skills]
+    # A kept script (`helper-...`) is one of up to 30 files the assistant saves from its own tasks. Listed one per line they crowded the tool
+    # catalog out of the Operator's prompt: on 11/14 ten of them pushed it over its limit, the last-resort trim cut the name of
+    # `system.inventory` out of the middle, and "how many Steam games do I have?" went to the screen tool for minutes. Authored skills are
+    # listed in full (one line each, bounded); kept scripts are one line that says how many and how to see them.
+    from agent_control.skill_learning import HELPER_PREFIX
+
+    authored = [skill for skill in skills if not str(skill["name"]).startswith(HELPER_PREFIX)]
+    helpers = [skill for skill in skills if str(skill["name"]).startswith(HELPER_PREFIX)]
+    lines = [f"- {skill['name']}: {_one_line(str(skill['description']), _SKILL_LINE_CHARS)}" for skill in authored]
+    if helpers:
+        lines.append(
+            f"- {len(helpers)} script(s) kept from earlier tasks, named helper-...: see them with the `skills` tool, operation `list`, "
+            "and read one only when its name fits the job."
+        )
     return (
         "## Skills available\n"
         "Authored procedures for jobs like these. If one matches this objective, read it FIRST\n"
@@ -112,6 +125,17 @@ def skills_context_section(root_dir: str, max_skills: int = 50) -> str:
         "its steps instead of improvising an approach.\n"
         + "\n".join(lines)
     )
+
+
+#: One skill in the Operator's prompt: its description, cut at a word. The whole body is read on demand.
+_SKILL_LINE_CHARS = 170
+
+
+def _one_line(text: str, limit: int) -> str:
+    flat = " ".join(text.split())
+    if len(flat) <= limit:
+        return flat
+    return flat[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
 
 
 def _load_skills(root_dir: str) -> list[dict[str, Any]]:

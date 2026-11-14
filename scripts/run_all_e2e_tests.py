@@ -787,6 +787,7 @@ class TurnResult:
     clarification_sent: bool = False
     # Seconds from sending the message to the first thing the bot said back, and what the answer claims that the record does not show.
     first_sign_s: float | None = None
+    answer_s: float | None = None
     start_iso: str = ""
     unbacked_claims: list[str] = field(default_factory=list)
     approvals_seen: list[str] = field(default_factory=list)
@@ -1382,6 +1383,16 @@ def _capture_sent_messages(turn: TurnResult, turn_start_iso: str) -> None:
     sent_times = [moment for moment in sent_times if moment is not None]
     if started is not None and sent_times:
         turn.first_sign_s = round(max((min(sent_times) - started).total_seconds(), 0.0), 1)
+    # When the answer reached the person: the last message that is not an edit of a progress line. A chat reply showed 67 s in the summaries
+    # because the runner waits that long to see whether a task starts; the audit log says it went out 1 to 6 s after the message.
+    answer_times = [
+        _parse_timestamp(str(event.get("time")))
+        for event in turn.telegram_sent_events
+        if (event.get("payload") or {}).get("kind") in {"text", "photo", "document"}
+    ]
+    answer_times = [moment for moment in answer_times if moment is not None]
+    if started is not None and answer_times:
+        turn.answer_s = round(max((max(answer_times) - started).total_seconds(), 0.0), 1)
     turn.telegram_max_update_gap_seconds = _max_update_gap_seconds(
         turn_start_iso,
         datetime.now(timezone.utc).isoformat(),
@@ -2066,9 +2077,10 @@ def _write_summary(run_dir: Path, results: list[StageResult]) -> None:
             icon = "⏭" if r.skipped else ("✅" if r.passed else "❌")
             outcome = f"SKIPPED ({r.skipped[:70]})" if r.skipped else ("PASS" if r.passed else f"FAIL ({(r.failure_reason or '')[:80]})")
             final_statuses = ",".join(t.final_status or "-" for t in r.turns)
+            answers = ",".join(f"{t.answer_s:.0f}s" if t.answer_s is not None else "-" for t in r.turns)
             rows.append(
                 f"| {icon} | `{r.case_id}` | {r.size} | {final_statuses} | "
-                f"{r.total_duration_s:.1f}s | {sum(t.replan_count for t in r.turns)} | {outcome} |"
+                f"{r.total_duration_s:.1f}s | {answers} | {sum(t.replan_count for t in r.turns)} | {outcome} |"
             )
         md = [
             f"# YBM E2E Run - {run_dir.name}",
@@ -2079,8 +2091,8 @@ def _write_summary(run_dir: Path, results: list[StageResult]) -> None:
             f"Failed:  {sum(1 for r in results if not r.passed)}",
             f"Skipped: {sum(1 for r in results if r.skipped)}",
             "",
-            "| | Case | Size | Final statuses | Duration | Replans | Outcome |",
-            "|---|---|---|---|---|---|---|",
+            "| | Case | Size | Final statuses | Duration | Answer at | Replans | Outcome |",
+            "|---|---|---|---|---|---|---|---|",
             *rows,
             "",
             "Per-stage artifacts: `<index>_<case_id>/` (timeline.txt, audit.json, "
