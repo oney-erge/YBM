@@ -270,6 +270,28 @@ each use is an approval the user sees ("Load a vision model ... to look at invoi
 for the task. If LocalDeploy answers that Ollama is not running, `vision.start_ollama` starts it once as part of loading the model the user
 just approved. The path is held to the folders the file tool may touch, the inbox included.
 
+### Getting what is missing
+
+"Read that to me out loud" used to end in "I can't". Several of those are a small download away, so what is missing is a record, like what is
+impossible (`abilities/recipes.py`): a recipe says what a capability is, the words people use for it, where each file comes from and its SHA-256,
+how big it is, whether it installs a program on the computer, and what to switch on once it is there. The index shows each recipe whose capability
+is not ready as an `installable` record, found by the same search and confirmed by the same yes/no question as everything else, so the Operator
+is told "a voice is not set up; get it with `ability.acquire`" before its first step.
+
+`ability.acquire` (`tools/ability_acquire.py`, `abilities/acquire.py`) carries a recipe out: files first, into this assistant's own folder, each
+checked against its hash; then the command (winget, `ollama pull`); and the configuration last, so a download that fails or does not match leaves
+the capability off and the configuration as it was. Nothing in a request or a model's output names an address, a command or a path. Then the
+request that needed the capability is started again as a new task, because the worker chose its tools before the install: the person's "read
+that out loud" carries on by itself, once (a task that is itself such a retry does not start another).
+
+Whether to ask is the model's judgment, with floors it cannot lower: `ask_first` is the model saying the user should be asked, and a recipe of
+500 MB or more, or one that installs a program on the computer, is always put to the user. Both are the same approval card, worded with what is
+fetched, how big it is and where from. A small curated file is rated low risk so that the approval policy's own floor does not ask about it
+and the model's judgment is what decides. The recipes today are a local voice (Kokoro, 120 MB, switches on `tts.synthesize`), speech recognition
+for audio files (Whisper, switches on `audio.transcribe`), ffmpeg (winget) and a vision model (Qwen3-VL through Ollama). Installing an arbitrary
+Python package stays `dependencies.install`, with its allowlist and an approval on every call. It is off in the code's defaults
+(`abilities.acquire`) so a new tool line does not change recorded prompts.
+
 ### Learning, with the person in the loop
 
 The assistant proposes what it has learned: a procedure from a job that took several successful steps (`skill_learning.py`), a preference a

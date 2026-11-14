@@ -7,6 +7,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `ability.acquire` gets a capability the assistant does not have yet from a recipe (`abilities/recipes.py`, `abilities/acquire.py`): a local
+  voice (Kokoro, 120 MB), speech recognition for audio files, ffmpeg (winget) and a vision model (Qwen3-VL through Ollama). A recipe that is not
+  ready is an `installable` record the index finds, so the Operator is told what could be set up before its first step. Files come from the
+  address written in the recipe and are checked against its SHA-256 before anything is switched on; the configuration is written last. Whether
+  to ask the user is the model's judgment (`ask_first`), except that 500 MB or more, or a program installed on the computer, is always asked.
+  After an install the request that needed it is started again as a new task, once, so it carries on by itself. `abilities.acquire` is off in
+  the code's defaults and on in `config.example.yaml`.
+- `audio.transcribe` writes down what is said in an audio file (a voicemail, a meeting recording), with the Whisper model that already
+  transcribes Telegram voice notes (`adapters.stt`). A read: no approval.
 - A fact the words of a request matched (it deletes, moves, changes a file, asks what a document is about, adds things up) is believed only when the
   decision model agrees (`request_facts.FACT_QUESTIONS`, `planning._with_request_facts`). The patterns took "keep every file; do not delete
   anything" for a delete and "the latest price" for a request for the newest file; one yes/no question on the CPU, asked once before the first step

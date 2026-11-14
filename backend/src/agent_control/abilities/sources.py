@@ -14,6 +14,7 @@ import structlog
 
 from agent_control.abilities.gaps import KNOWN_GAPS
 from agent_control.abilities.index import AbilityIndex
+from agent_control.abilities.recipes import recipe_abilities
 from agent_control.abilities.model import (
     NEED_ENABLE,
     Ability,
@@ -205,5 +206,7 @@ def build_index(
     abilities.extend(agent_abilities(providers, bool(coding_definition and coding_definition.enabled)))
     abilities.extend(mcp_abilities(settings))
     abilities.extend(tool_abilities(registry.definitions))
+    if settings.abilities.acquire:
+        abilities.extend(recipe_abilities(settings))
     abilities.extend(KNOWN_GAPS)
     return AbilityIndex(abilities)
