@@ -17,11 +17,14 @@ from agent_control.storage.database import Database
 # task_signals/tool_invocations/artifacts/approvals/llm_calls reference tasks;
 # tasks/messages/conversation_memory reference conversations. audit_events and
 # schedules carry no FK. See backend/src/agent_control/storage/migrations.py.
-# "plans"/"subtasks" are kept in the lists below only so a pre-existing
-# database that still has those (now-schema-dropped, unused since P3) tables
-# gets them swept by `ybm db reset`/`db clean` too, not left behind forever.
+# "subtasks" is kept in the lists below only so a pre-existing database that still has that
+# (now-schema-dropped, unused since P3) table gets it swept by `ybm db reset`/`db clean` too, not
+# left behind forever. "plans" is a different table today (plans/model.py: goals too big for one
+# task) that does not reference tasks; an old database's unused plans table of that name is dropped
+# by nothing, so it is cleaned like the new one (children first: plan_steps).
 TABLES_CHILD_FIRST = (
-    "task_signals", "subtasks", "tool_invocations", "plans", "artifacts", "approvals", "llm_calls",
+    "task_signals", "subtasks", "tool_invocations", "artifacts", "approvals", "llm_calls",
+    "plan_steps", "plans",
     "tasks",
     "messages", "conversation_memory",
     "conversations",
@@ -87,11 +90,25 @@ def _clean_tables(connection: sqlite3.Connection, tables: set[str], cutoff: str)
         ]
         if old_task_ids:
             placeholders = ",".join("?" for _ in old_task_ids)
-            for table in ("task_signals", "subtasks", "tool_invocations", "plans", "artifacts", "approvals", "llm_calls", "audit_events"):
+            for table in ("task_signals", "subtasks", "tool_invocations", "artifacts", "approvals", "llm_calls", "audit_events"):
                 if table in tables:
                     connection.execute(f'DELETE FROM "{table}" WHERE task_id IN ({placeholders})', old_task_ids)
             connection.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", old_task_ids)
             deleted_tasks = len(old_task_ids)
+
+    # A plan outlives the tasks it starts, so it is not deleted with them: only a plan that has ended (done or cancelled) and has not
+    # changed since the cutoff goes, with its steps. One still running, paused or waiting for the person is kept however old.
+    if "plans" in tables and "plan_steps" in tables:
+        ended = [
+            row["id"]
+            for row in connection.execute(
+                "SELECT id FROM plans WHERE status IN ('done', 'cancelled') AND updated_at < ?", (cutoff,)
+            )
+        ]
+        if ended:
+            marks = ",".join("?" for _ in ended)
+            connection.execute(f"DELETE FROM plan_steps WHERE plan_id IN ({marks})", ended)
+            connection.execute(f"DELETE FROM plans WHERE id IN ({marks})", ended)
 
     # audit_events.task_id is nullable (config changes, Telegram access
     # decisions, and any message logged before a task existed carry no
