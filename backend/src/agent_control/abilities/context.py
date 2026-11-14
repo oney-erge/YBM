@@ -56,6 +56,12 @@ async def relevant(
         and (ability.kind not in _ALREADY_LISTED or (ability.kind in _PUSHED_WHEN_CONFIRMED and ability.confirm))
         and not (ability.kind == AbilityKind.AGENT and ability.state == AbilityState.READY)
     ]
+    # A skill that sends a request to the planner (route: plan) is asked about for every request, whatever words it shares. "I'm moving on
+    # December 20. Plan it." and "Build me a robot." share one common word with it, which the shortlist above drops, and the first challenge
+    # run showed what that cost: with no plan, the Operator asked a questionnaire for one and retried for ten minutes on the other. The yes/no
+    # question, not the words, decides, and it is asked in the same single call as every other question.
+    listed = {ability.id for ability, _ in candidates}
+    candidates += [(ability, 0.0) for ability in index.all() if ability.route and ability.confirm and ability.id not in listed]
     unclear = [ability for ability, score in candidates if ability.confirm and (score < CLEAR_SCORE or ability.kind in _PUSHED_WHEN_CONFIRMED)]
     answers: dict[str, float] = {}
     if unclear and confirm is not None:

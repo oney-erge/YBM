@@ -7,6 +7,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A big goal now reaches the planner. A skill that routes to the planner (`route: plan`) is asked about for every request, not only for those that
+  share words with it, and the shipped plan skill confirms at 0.55 instead of 0.8. On the deployed code the first challenge run sent "Build me a robot."
+  to the Operator, which asked a three-part questionnaire, and "I'm moving on December 20. Plan it.", which it retried for ten minutes and then offered
+  to hand to Claude Code: neither shares enough words with the skill to be asked about, and the question's 0.8 bar was cleared by four of ten project
+  requests. Measured on the running decision model: nine of ten project requests clear 0.55, and one of 178 ordinary messages does (a
+  request to read files and write a brief, which is a fair candidate).
 - A look at a picture gives the vision model the whole GPU and gives it back (`vision.swap_models`, on by default): LocalDeploy is asked to free the GPU
   first (it stops the main model) and to unload the vision model after, so the main model loads once into free memory at the next step. On an 8 GB
   GPU the two evicted each other: in the first challenge run a screen description took 9 minutes, a scanned invoice 11, and a photo sent meanwhile

@@ -2,7 +2,7 @@
 name: Plan a project
 description: turn a big goal (build a robot, set up a home server, plan a trip, launch a site) into a plan the user can start; ask what they want first when the goal is vague
 when: Is this a big goal or project that takes many separate steps or days (building or setting up something, planning a trip or an event) rather than one quick request?
-when_at: 0.8
+when_at: 0.55
 route: plan
 tools:
   - plan.manage
