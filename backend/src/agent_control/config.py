@@ -131,6 +131,10 @@ class LLMConfig(StrictBaseModel):
     # Send a one-token request to a model on this machine the moment a message arrives, so a model that was unloaded while idle
     # loads while the message is being routed (llm/warmup.py). Never sent to a hosted model.
     warm_on_message: bool = True
+    # Write the rolling conversation summary after the reply instead of before it (channels/memory.py). Off: measured on the frozen vision
+    # suite it made `v_move_then_undo` fail (the operator then reads the last turns instead of a summary of them, and planned a sort by
+    # extension three times); with the summary written first, same prompts otherwise, the case passes.
+    summarize_memory_in_background: bool = False
 
     @field_validator("profiles")
     @classmethod
