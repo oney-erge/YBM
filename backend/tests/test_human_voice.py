@@ -89,7 +89,7 @@ class _Client:
         self.calls.append(("send", chat_id, text))
         return {"result": {"message_id": 7}}
 
-    async def edit_message_text(self, chat_id, message_id, text):
+    async def edit_message_text(self, chat_id, message_id, text, reply_markup=None):
         self.calls.append(("edit", chat_id, message_id, text))
 
     async def delete_message(self, chat_id, message_id):

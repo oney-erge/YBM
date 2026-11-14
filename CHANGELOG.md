@@ -9,6 +9,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Telegram has buttons and a menu where they save typing. The progress line carries a **Stop** button (one tap cancels the task; every
+  edit sends the keyboard again, because Telegram removes it otherwise); the answer to a move or rename carries **Undo** (once, and not
+  under the answer to an undo); `/stop` stops the task that is working in the chat, with no task id to type; `/undo` and `/passwords`
+  are the same as saying "undo that" and "which accounts did you make"; and the "/" menu lists status, tasks, stop, undo, passwords and
+  screenshot (set when the poller starts).
 - Telegram takes photos and files: they are saved in `.agent_control/inbox/<day>/` (up to 20 MB each; `channels.telegram.inbox_dir`,
   `max_file_mb`) and the task is told where ("[The user sent a file: ...]" after the caption), so "summarize this", "put this in my
   documents" or "what does this say" work on what was sent. The file and document tools can read the inbox without it being added to

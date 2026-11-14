@@ -105,12 +105,19 @@ def undo_command_reply(
     source = _last_undoable(repositories, inbound, conversation_id)
     if source is None:
         return _reply(inbound, "I don't have a move to undo.")
+    return _reply(inbound, start_undo(repositories, audit, source, inbound=inbound, conversation_id=conversation_id))
+
+
+def start_undo(
+    repositories: Repositories, audit: AuditLogger, source: TaskRecord, *, inbound: InboundMessage, conversation_id: str | None
+) -> str:
+    """Start the task that puts a task's moved files back, and say in words what happens next. Used by "undo that" and by the Undo button."""
     record = source.metadata["undo_moves"]
     if source.metadata.get("undo_task_id"):
-        return _reply(inbound, "I already put those back.")
+        return "I already put those back."
     pairs = [m for m in record["moves"] if Path(m["from"]).is_file()]
     if not pairs:
-        return _reply(inbound, "Those files are not where I left them any more, so there is nothing to undo.")
+        return "Those files are not where I left them any more, so there is nothing to undo."
     manifest = [{"source": m["from"], "destination": m["to"], "operation": "move", "reason": "undo"} for m in pairs]
     plan = [{"tool_name": "filesystem.manage", "tool_input": {"operation": "apply_manifest", "root": record["root"], "manifest": manifest}}]
     task = repositories.tasks.create(
@@ -129,4 +136,4 @@ def undo_command_reply(
     )
     skipped = len(record["moves"]) - len(pairs)
     note = f" ({skipped} are not where I left them, so I'll leave those.)" if skipped else ""
-    return _reply(inbound, f"Putting {len(pairs)} file(s) back where they were{note} I'll ask you to approve the move, then tell you when it's done.")
+    return f"Putting {len(pairs)} file(s) back where they were{note} I'll ask you to approve the move, then tell you when it's done."

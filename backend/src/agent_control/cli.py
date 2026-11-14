@@ -18,6 +18,7 @@ from agent_control.onboarding import run_onboard
 from agent_control.db_tools import db_clean, db_inspect, db_reset
 from agent_control.logging_setup import configure_logging
 from agent_control.channels.telegram import (
+    BOT_COMMANDS,
     TelegramAdapter,
     TelegramBotApi,
     TelegramIntakeService,
@@ -318,6 +319,10 @@ async def poll_telegram() -> None:
         memory_service=memory_service,
     )
     runner = TelegramPollingRunner(client, service)
+    try:
+        await client.set_my_commands(BOT_COMMANDS)  # the "/" menu: status, tasks, stop, undo, passwords, screenshot
+    except Exception:  # noqa: BLE001 - a missing menu is not worth a poller that does not start
+        pass
     warm_stt = getattr(service.stt, "warm", None)
     if warm_stt is not None:
         asyncio.ensure_future(warm_stt())  # the speech model loads while the poller starts, not on the first voice note

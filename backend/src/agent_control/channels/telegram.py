@@ -25,7 +25,7 @@ from agent_control.llm.warmup import warm_up
 from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
 from agent_control.channels.account_commands import account_command_reply
-from agent_control.channels.undo_command import undo_command_reply
+from agent_control.channels.undo_command import start_undo, undo_command_reply
 from agent_control.channels.chat_commands import chat_command_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
@@ -119,9 +119,18 @@ class TelegramBotApi:
         self._log_sent(chat_id, kind="text", text=text, response=data)
         return data
 
-    async def edit_message_text(self, chat_id: str | int, message_id: int | str, text: str) -> dict[str, Any]:
-        """Change the text of a message this bot sent, so a long job updates one bubble."""
-        data = await self._post("editMessageText", {"chat_id": chat_id, "message_id": message_id, "text": text})
+    async def set_my_commands(self, commands: list[tuple[str, str]]) -> dict[str, Any]:
+        """The menu shown when the person types "/": (command, one-line description) pairs."""
+        return await self._post("setMyCommands", {"commands": [{"command": name, "description": text} for name, text in commands]})
+
+    async def edit_message_text(
+        self, chat_id: str | int, message_id: int | str, text: str, reply_markup: dict[str, Any] | None = None
+    ) -> dict[str, Any]:
+        """Change the text of a message this bot sent, so a long job updates one bubble. A keyboard must be sent again with each edit."""
+        payload: dict[str, Any] = {"chat_id": chat_id, "message_id": message_id, "text": text}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        data = await self._post("editMessageText", payload)
         self._log_sent(chat_id, kind="edit", text=text, response=data)
         return data
 
@@ -235,6 +244,20 @@ class TelegramBotApi:
         if not data.get("ok"):
             raise RuntimeError(f"Telegram Bot API call failed: {method}")
         return data
+
+
+#: Menu shortcuts that mean a sentence the chat already understands.
+_COMMANDS_THAT_ARE_SAYINGS = {"undo": "undo that", "passwords": "which accounts did you make", "logins": "which accounts did you make"}
+
+#: What the "/" menu offers (command, description). Shown by Telegram next to the text box.
+BOT_COMMANDS: list[tuple[str, str]] = [
+    ("status", "What I am working on"),
+    ("tasks", "Recent tasks"),
+    ("stop", "Stop what I am doing now"),
+    ("undo", "Put the last moved files back"),
+    ("passwords", "Logins I made for you"),
+    ("screenshot", "Show your screen"),
+]
 
 
 def _safe_telegram_http_error(method: str, exc: httpx.HTTPError) -> RuntimeError:
@@ -360,7 +383,12 @@ class TelegramAdapter:
             raw=raw_update,
         )
 
-        if text and text.startswith("/"):
+        spoken = _COMMANDS_THAT_ARE_SAYINGS.get(text.strip().split()[0].removeprefix("/").split("@", 1)[0].lower()) if text and text.startswith("/") and len(text.split()) == 1 else None
+        if spoken is not None:
+            # "/undo" and "/passwords" are menu shortcuts for sentences the chat already understands.
+            inbound = inbound.model_copy(update={"text": spoken})
+            text = spoken
+        elif text and text.startswith("/"):
             command = self._command_from_text(text, inbound)
             return ChannelUpdateResult(authorized=True, inbound_message=inbound, command=command)
 
@@ -445,6 +473,8 @@ class TelegramAdapter:
             return {"kind": "task", "task_id": parts[1], "action": parts[2]}
         if len(parts) == 3 and parts[0] == "answer" and parts[2] in {"yes", "no"}:
             return {"kind": "answer", "task_id": parts[1], "answer": parts[2]}
+        if len(parts) == 2 and parts[0] == "undo":
+            return {"kind": "undo", "task_id": parts[1]}
         return {"kind": "unknown", "data": data}
 
     def _audit_telegram_access(
@@ -839,6 +869,19 @@ class TelegramIntakeService:
                 text="Screenshot captured.",
                 artifact_ids=[artifact.id],
             )
+        if name == "stop":
+            # No task id to type: the task of this chat that is working now.
+            running = next(
+                (t for t in self.repositories.tasks.list_recent(20)
+                 if str(t.metadata.get("source_chat_id") or "") == chat_id
+                 and t.status in {TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.RETRYING,
+                                  TaskStatus.AWAITING_APPROVAL, TaskStatus.CLARIFYING}),
+                None,
+            )
+            if running is None:
+                return self._out(chat_id, "Nothing is running.")
+            self._create_task_signal(running.id, "cancel", f"telegram:{chat_id}", {})
+            return self._out(chat_id, f"Stopping: {running.objective[:100]}")
         if name in {"pause", "resume", "cancel"}:
             if signal:
                 return self._out(chat_id, f"{name} signal recorded for {signal.task_id}.")
@@ -985,10 +1028,29 @@ class TelegramIntakeService:
             return None
 
         if payload.get("kind") == "task" and payload.get("action") in {"pause", "resume", "cancel"}:
+            self._callback_ack = {"cancel": "Stopping.", "pause": "Paused.", "resume": "Carrying on."}[str(payload["action"])]
             return self._create_task_signal(payload["task_id"], payload["action"], actor, payload)
+        if payload.get("kind") == "undo":
+            self._start_undo_from_button(payload, actor)
+            return None
         if payload.get("kind") == "answer":
             self._answer_offer(payload, actor)
         return None
+
+    def _start_undo_from_button(self, payload: dict[str, Any], actor: str) -> None:
+        """The Undo button under the answer to a move: the same as saying "undo that" about that task."""
+        source = self.repositories.tasks.get(str(payload.get("task_id") or ""))
+        if source is None or not source.metadata.get("undo_moves"):
+            self._callback_ack = "There is nothing to undo there any more."
+            return
+        inbound = InboundMessage(
+            channel=ChannelType.TELEGRAM, kind=MessageKind.TEXT, sender_id=actor.removeprefix("telegram:"),
+            chat_id=str(source.metadata.get("source_chat_id") or ""), text="undo that",
+        )
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor=actor, task_id=source.id, payload={"reason": "undo_button"},
+        )
+        self._callback_ack = start_undo(self.repositories, self.audit, source, inbound=inbound, conversation_id=source.conversation_id)[:190]
 
     def _answer_offer(self, payload: dict[str, Any], actor: str) -> None:
         """A Yes / No button under the Claude Code offer: the same as typing the answer, once, and only while the question is open."""
