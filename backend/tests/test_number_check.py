@@ -237,3 +237,23 @@ def test_a_listed_total_that_is_right_or_that_counts_something_else_is_left_alon
     assert inconsistent_sum("There are 12 lines in total.\n- a.txt: 12 lines") is None  # one part is not an addition
     assert inconsistent_sum("12 lines in total. Biggest first:\n- a.txt: 4 lines and b.txt: 5 lines") is None  # two numbers in one item
     assert inconsistent_sum("Total: 12 lines\n- Total: 12 lines") is None
+
+
+# --- the Auditor may reword an answer but not make a value in it wrong ---------------------------------------------------------------------
+
+def test_an_auditors_wording_with_a_wrong_sum_is_dropped(tmp_path) -> None:
+    repos, worker = _worker(tmp_path, [])
+    task = repos.tasks.create("How many lines are there in total in all the .txt files in that folder?")
+    fine = "15 lines in total (4 lines in a.txt + 5 lines in b.txt + 6 lines in c.txt)."
+    wrong = "5 lines in total (4 lines in a.txt + 5 lines in b.txt + 6 lines in c.txt)."
+    assert worker._audit_rewrite_adds_no_wrong_value(task, [], fine, "There are 15 lines altogether (4 + 5 + 6).") is True
+    assert worker._audit_rewrite_adds_no_wrong_value(task, [], fine, wrong) is False
+    # An original that was already wrong is not made a reason to refuse every wording.
+    assert worker._audit_rewrite_adds_no_wrong_value(task, [], wrong, wrong) is True
+
+
+def test_an_auditors_wording_with_an_address_nothing_produced_is_dropped(tmp_path) -> None:
+    repos, worker = _worker(tmp_path, [])
+    task = repos.tasks.create("Who owns the project?")
+    assert worker._audit_rewrite_adds_no_wrong_value(task, [], "Grace owns it.", "Grace owns it: grace@navy.example") is False
+    assert worker._audit_rewrite_adds_no_wrong_value(task, [], "Grace owns it.", "Grace is the owner.") is True

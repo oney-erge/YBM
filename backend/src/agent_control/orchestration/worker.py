@@ -38,7 +38,7 @@ from agent_control.orchestration.fulfillment import (
     fulfillment_guidance,
     validate_fulfillment,
 )
-from agent_control.orchestration.number_check import ungrounded_addresses, ungrounded_numbers
+from agent_control.orchestration.number_check import inconsistent_sum, ungrounded_addresses, ungrounded_numbers
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.channels.undo_command import merge_undo_moves, remove_empty_folders_the_move_made, undo_moves_from_output
@@ -1019,7 +1019,9 @@ class TaskWorker:
                         }
                         return self.repositories.tasks.update_metadata(latest.id, metadata, TaskStatus.RUNNING)
                     if audit_result.answer:
-                        final_answer = _ground_operator_final_answer(audit_result.answer, history)
+                        reworded = _ground_operator_final_answer(audit_result.answer, history)
+                        if self._audit_rewrite_adds_no_wrong_value(latest, history, final_answer, reworded):
+                            final_answer = reworded
                 elif self._answer_is_grounded_though_unconfirmed(latest, history, final_answer, memory_context):
                     # The Auditor turned the answer down twice, and the answer holds no number or address that nothing read
                     # produced. A small Auditor rejected a correct two-sentence summary of a 159-character document for being
@@ -2531,6 +2533,31 @@ class TaskWorker:
         if interpreter is not None and interpreter.enabled:
             numbers = ungrounded_numbers(request, answer, history)
         return addresses, numbers
+
+    def _audit_rewrite_adds_no_wrong_value(
+        self, task: TaskRecord, history: list[dict[str, Any]], original: str | None, reworded: str | None
+    ) -> bool:
+        """The Auditor may reword an answer; it may not make a value in it wrong.
+
+        The checks of answer_checks.py run on the Operator's answer, before the Auditor reads it. In a live run the model's answer was
+        corrected to "15 lines (4 + 5 + 6)" and the Auditor's wording of it was "5 lines in total (4 + 5 + 6)", which nothing looked at. A
+        reworded answer with a sum that does not add up, or an address or a calculated number that no tool produced, that the original
+        did not have, is dropped, and the original goes on.
+        """
+        if not reworded or not original:
+            return True
+        if inconsistent_sum(reworded) and not inconsistent_sum(original):
+            return False
+        if not self.verify_numbers:
+            return True
+        request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+        memory = str(task.metadata.get("memory_context") or "")
+        if set(ungrounded_addresses(request, reworded, history, memory)) - set(ungrounded_addresses(request, original, history, memory)):
+            return False
+        interpreter = self.executor.tool_definitions.get("code.interpreter")
+        if interpreter is not None and interpreter.enabled:
+            return not (set(ungrounded_numbers(request, reworded, history)) - set(ungrounded_numbers(request, original, history)))
+        return True
 
     def _offer_finish_or_block(
         self, task: TaskRecord, history: list[dict[str, Any]], *, called: str, blocked_message: str
