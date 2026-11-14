@@ -56,7 +56,7 @@ async def relevant(
         for ability, score in index.search(request, limit=limit * 6)
         if score >= (
             shortlist if shortlist is not None
-            else INSTALLABLE_SHORTLIST_SCORE if ability.state == AbilityState.INSTALLABLE and ability.confirm else SHORTLIST_SCORE
+            else INSTALLABLE_SHORTLIST_SCORE if ability.kind == AbilityKind.MODEL and ability.confirm else SHORTLIST_SCORE
         )
         and (ability.kind not in _ALREADY_LISTED or (ability.kind in _PUSHED_WHEN_CONFIRMED and ability.confirm))
         and not (ability.kind == AbilityKind.AGENT and ability.state == AbilityState.READY)
@@ -108,14 +108,15 @@ def render(abilities: list[Ability]) -> str:
     return "\n".join(lines)
 
 
-async def asks_for_what_could_be_set_up(abilities: Iterable[Ability], request: str, *, confirm: Confirmer | None) -> bool:
-    """Whether a message that was taken for chat asks for something that could be set up (a voice, speech recognition, a tool).
+async def asks_for_what_a_recipe_covers(abilities: Iterable[Ability], request: str, *, confirm: Confirmer | None) -> bool:
+    """Whether a message that was taken for chat asks for something a recipe covers (a voice, speech recognition, a video tool), set up or not.
 
     "Read that to me out loud" is chat to a classifier, and a chat reply knows nothing of recipes: it said "I cannot speak" and offered nothing,
-    though a local voice is a 120 MB download away. A message the same search and the same yes/no question find an installable capability for is
-    a task instead, so the Operator is told what could be set up and can get it. No decision model, no answer.
+    though a local voice is a 120 MB download away, and once the voice was installed it said "that needs a task, send it again". A message the
+    same search and the same yes/no question find a recipe for is a task instead, so the Operator is told what could be set up, or how to use
+    what is. No decision model, no answer.
     """
-    installable = [ability for ability in abilities if ability.state == AbilityState.INSTALLABLE]
-    if not installable or confirm is None:
+    recipes = [ability for ability in abilities if ability.state in (AbilityState.INSTALLABLE, AbilityState.READY)]
+    if not recipes or confirm is None:
         return False
-    return bool(await relevant(AbilityIndex(installable), request, confirm=confirm, shortlist=0.01))
+    return bool(await relevant(AbilityIndex(recipes), request, confirm=confirm, shortlist=0.01))

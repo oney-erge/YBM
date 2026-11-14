@@ -28,6 +28,10 @@ from agent_control.config import AppSettings
 #: without being asked. Below it, whether to ask is the model's judgment (`ask_first`).
 ASK_ALWAYS_MB = 500
 
+#: Measured on the running decision model: the voice question answers 0.89 to 0.96 for the ways of asking to be read to or spoken to, and 0.74 to
+#: "read me the summary of chapter two", which is not out loud. Offering a model for the second would be the wrong thing to do.
+RECIPE_CONFIRM_AT = 0.85
+
 
 @dataclass(frozen=True)
 class Download:
@@ -185,13 +189,34 @@ def recipe_by_id(recipe_id: str) -> Recipe | None:
 
 
 def recipe_abilities(settings: AppSettings) -> list[Ability]:
-    """One record for each recipe whose capability is not there yet, so the same search that finds a tool finds what could be set up."""
+    """One record for each recipe, so the same search that finds a tool finds what could be set up, and what has been.
+
+    A recipe that is ready stays a record, saying how to use what it set up. Live, right after the voice was installed, "read that out loud" was
+    answered "that needs a task, send it again": only recipes not yet set up were records, so nothing recognised the request any more and it fell
+    back to chat.
+    """
     abilities = []
     for recipe in RECIPES:
         try:
-            if recipe.ready(settings):
-                continue
+            ready = bool(recipe.ready(settings))
         except Exception:  # noqa: BLE001 - a check that cannot run says nothing, it does not break the index
+            continue
+        if ready:
+            abilities.append(
+                Ability(
+                    id=f"model:{recipe.id}",
+                    kind=AbilityKind.MODEL,
+                    name=recipe.title,
+                    summary=recipe.summary,
+                    group="setup",
+                    state=AbilityState.READY,
+                    provides=recipe.provides,
+                    guidance=recipe.after,
+                    confirm=recipe.confirm,
+                    confirm_at=RECIPE_CONFIRM_AT,
+                    source="recipes",
+                )
+            )
             continue
         asking = (
             "Ask the user first (a large download or a program installed on this computer): set ask_first true."
@@ -215,9 +240,7 @@ def recipe_abilities(settings: AppSettings) -> list[Ability]:
                     f"carry on with the request. {asking}"
                 ),
                 confirm=recipe.confirm,
-                # Measured on the running decision model: the voice question answers 0.89 to 0.96 for the ways of asking to be read to or spoken to, and
-                # 0.74 to "read me the summary of chapter two", which is not out loud. Installing a model for the second would be the wrong thing to offer.
-                confirm_at=0.85,
+                confirm_at=RECIPE_CONFIRM_AT,
                 source="recipes",
             )
         )

@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Protocol
 
-from agent_control.abilities.context import asks_for_what_could_be_set_up
+from agent_control.abilities.context import asks_for_what_a_recipe_covers
 from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
 from agent_control.channels.memory import memory_context
@@ -475,11 +475,11 @@ async def classify_and_spawn_task(
         is_chat_only = intent_route == IntentRoute.CONVERSATION and classification.task_type != TaskType.STATUS_REQUEST
 
     if is_chat_only and settings is not None and settings.abilities.enabled and settings.abilities.acquire and settings.decision.mode != "off":
-        # A chat reply knows nothing of what could be set up, so it answers "read that out loud" with "I cannot speak" and offers nothing. A message
-        # the index finds an installable capability for, and the decision model confirms, goes to the Operator, which is told about it.
+        # A chat reply knows nothing of recipes, so it answers "read that out loud" with "I cannot speak" and offers nothing (or, once the voice is
+        # installed, "send that again"). A message the index finds a recipe for, and the decision model confirms, goes to the Operator.
         client = DecisionModelClient(settings.decision)
         try:
-            is_chat_only = not await asks_for_what_could_be_set_up(recipe_abilities(settings), inbound.text or "", confirm=client.yes_no)
+            is_chat_only = not await asks_for_what_a_recipe_covers(recipe_abilities(settings), inbound.text or "", confirm=client.yes_no)
         except Exception:  # noqa: BLE001 - help, not a gate: the message stays chat
             logger.info("installable_check_unavailable", exc_info=True)
 

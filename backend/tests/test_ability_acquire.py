@@ -221,7 +221,9 @@ def test_what_is_not_set_up_is_an_installable_record_the_index_finds() -> None:
     assert voice.confirm and "ask_first" in voice.guidance
     assert "winget" not in voice.guidance and "120 MB" in voice.guidance
     ready = AppSettings(_env_file=None, adapters={"stt": {"enabled": True}})
-    assert "model:speech.whisper" not in {a.id for a in recipe_abilities(ready)}  # already on: not a thing to set up
+    whisper = {a.id: a for a in recipe_abilities(ready)}["model:speech.whisper"]
+    # Already on: no longer a thing to set up, but still a record, saying how to use it, so a request for it is still recognised.
+    assert whisper.state == AbilityState.READY and not whisper.call and "audio.transcribe" in whisper.guidance and whisper.confirm
 
 
 def test_the_tool_is_absent_until_it_is_switched_on_so_the_prompt_is_unchanged() -> None:
