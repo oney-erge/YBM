@@ -273,3 +273,24 @@ def test_context_section_is_empty_when_no_skills_are_installed(tmp_path) -> None
     'Skills available' header with nothing under it invites the model to
     invent skill names to read."""
     assert skills_context_section(str(tmp_path)) == ""
+
+
+def test_kept_scripts_are_one_line_in_the_prompt_not_thirty(tmp_path) -> None:
+    """Live 11/14: ten kept scripts listed one per line crowded the tool catalog out of the Operator's prompt."""
+    _write_skill(tmp_path, "invoice.md")
+    for number in range(12):
+        _write_skill(tmp_path, f"helper-{number}.md", name=f"helper-count-the-words-{number}", description="Python script that counts the words in a file", body="print(1)")
+
+    section = skills_context_section(str(tmp_path))
+
+    assert "invoice-extraction" in section  # an authored skill is still listed by name and description
+    assert "helper-count-the-words" not in section and "12 script(s) kept from earlier tasks" in section
+    assert section.count("\n- ") == 2  # the authored skill and the one line for the scripts
+
+
+def test_a_long_description_is_cut_at_a_word_in_the_prompt(tmp_path) -> None:
+    (tmp_path / "long.md").write_text(
+        "---\nname: Long one\ndescription: " + "word " * 80 + "\ntools: []\n---\nbody\n", encoding="utf-8"
+    )
+    line = [item for item in skills_context_section(str(tmp_path)).splitlines() if item.startswith("- Long one")][0]
+    assert len(line) < 200 and line.endswith("…") and "word wor…" not in line

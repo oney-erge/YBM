@@ -339,9 +339,26 @@ def _format_config_context(value: str, max_chars: int) -> str:
     if dropped:
         compacted.append(f"- ... {dropped} more MCP tool(s) left out here; list them with mcp.client list_tools")
         rendered = "\n".join(compacted)
-    return rendered if len(rendered) <= max_chars else _bounded_text(rendered, max_chars)
+    return rendered if len(rendered) <= max_chars else _without_the_tail(compacted, max_chars)
 
 
+def _without_the_tail(lines: list[str], max_chars: int) -> str:
+    """Fit the text by dropping what follows the tool list, from the end, and never a tool.
+
+    What follows the tools is the persona's preferences, the skills list and the closing advice, in that order. The last resort used to be a cut
+    out of the middle of the whole text, which on 11/14 removed the name of `system.inventory`: the model could not see the tool, drove the
+    screen for minutes to count Steam games, and two cases that had passed 11 of 11 times failed. A tool that is not named cannot be chosen, so the
+    tool lines stay whole even when the text then runs over its budget.
+    """
+    last_tool = max((i for i, line in enumerate(lines) if _TOOL_NAME_LINE.match(line) or _MCP_TOOL_LINE.match(line)), default=-1)
+    kept = list(lines)
+    while len(kept) - 1 > last_tool and len("\n".join(kept)) > max_chars:
+        kept.pop()
+    return "\n".join(kept)
+
+
+#: A native tool as the catalog prints it: `- name (capability): description`.
+_TOOL_NAME_LINE = re.compile(r"^- [a-z][\w.]* \(")
 #: One MCP tool as the catalog prints it: `- server="x" tool="y" - description; capability=...; risk=...`.
 _MCP_TOOL_LINE = re.compile(r'^- server="[^"]*" tool="[^"]*"')
 _MCP_SUFFIX = re.compile(r"; capability=[^;]*; risk=[^;]*$")

@@ -77,3 +77,30 @@ def test_the_real_catalog_shape_fits_with_every_tool(tmp_path):
     bounded = _format_config_context(catalog, _MAX_CONFIG_PROMPT_CHARS)
     assert len(bounded) <= _MAX_CONFIG_PROMPT_CHARS
     assert _tool_names(bounded) == TOOLS
+
+
+def _with_tail(catalog: str, *, helper_lines: int, persona: str = "") -> str:
+    """The context the worker really hands over: the catalog, the persona's preferences, the skills section, and the closing advice."""
+    skills = ["## Skills available", "Authored procedures.", "", "- Plan a project: turn a big goal into a plan the user can start"]
+    skills += [f"- helper-script-number-{n}-for-a-job: Python script for: Count the words in the file named something long enough to matter here" for n in range(helper_lines)]
+    return catalog + "\n\n" + persona + "\n\n" + "\n".join(skills) + "\n\nClosing advice for the model."
+
+
+def test_a_crowded_skills_list_can_never_cut_a_tool_name():
+    """Live 11/14: ten kept scripts pushed the context over its limit, the last-resort cut took the middle, and `system.inventory` was gone."""
+    catalog = _catalog(mcp_tools=20, example_chars=190)
+    for helpers in (0, 10, 30, 200):
+        for limit in (_MAX_CONFIG_PROMPT_CHARS, 6_000, 3_000, 800):
+            bounded = _format_config_context(_with_tail(catalog, helper_lines=helpers, persona="Preference: " + "p" * 500), limit)
+            assert _tool_names(bounded) == TOOLS, (helpers, limit)
+
+
+def test_what_follows_the_tools_is_dropped_from_the_end_and_the_persona_outlasts_the_skills():
+    catalog = _catalog(mcp_tools=0, example_chars=0)
+    full = _with_tail(catalog, helper_lines=40, persona="Preference: always answer briefly.")
+    tools_only = _format_config_context(_with_tail(catalog, helper_lines=0).split("\n\n")[0], 10_000)
+    limit = len(tools_only) + 400  # room for the persona and a few skill lines, not for 40 of them
+    bounded = _format_config_context(full, limit)
+    assert _tool_names(bounded) == TOOLS and "Preference: always answer briefly." in bounded
+    assert "Closing advice for the model." not in bounded  # the closing advice goes first
+    assert "helper-script-number-39" not in bounded and len(bounded) <= limit
