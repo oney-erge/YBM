@@ -78,7 +78,7 @@ async def test_a_file_is_saved_in_the_inbox_and_the_task_is_told_where(tmp_path)
     result = await service.handle_update_async(_message(document={"file_id": "d1", "file_name": "tax return (2025).pdf", "file_size": 14}, caption="summarize this"))
     text = result.inbound_message.text
     assert text.startswith("summarize this\n[The user sent a file: ") and "tax return _2025_.pdf" in text
-    saved = text.split("[The user sent a file: ")[1].rstrip("]")
+    saved = text.split("[The user sent a file: ")[1].split("]")[0]
     assert open(saved, "rb").read() == b"%PDF-1.4 hello"
     assert str(tmp_path / "inbox") in saved
 
@@ -87,7 +87,7 @@ async def test_a_file_is_saved_in_the_inbox_and_the_task_is_told_where(tmp_path)
 async def test_a_photo_without_a_caption_still_gives_the_task_something_to_read(tmp_path):
     service, _ = _service_with(tmp_path, FakeBot({"p1": b"\xff\xd8jpeg"}))
     result = await service.handle_update_async(_message(photo=[{"file_id": "p1", "file_size": 6, "width": 10, "height": 10}]))
-    assert result.inbound_message.text.startswith("I am sending you a picture.\n[The user sent a picture: ")
+    assert result.inbound_message.text.startswith("Here is a picture.\n[The user sent a picture: ")
 
 
 @pytest.mark.asyncio
@@ -142,3 +142,29 @@ def test_the_inbox_is_readable_by_the_file_and_document_tools():
     if adapter is not None:  # off in a default config without file access
         assert any(str(root).replace("\\", "/").endswith(".agent_control/inbox") for root in adapter._also_allowed)
         assert not any(str(root).replace("\\", "/").endswith(".agent_control/inbox") for root in adapter.allowed_roots)
+
+
+def test_what_a_file_is_is_said_from_the_file_itself(tmp_path):
+    from PIL import Image
+
+    from agent_control.channels.telegram import _about_file
+
+    picture = tmp_path / "pic.png"
+    Image.new("RGB", (64, 48)).save(picture)
+    assert _about_file(picture).startswith("[It is a PNG file, 64x48 pixels, ")
+    text = tmp_path / "notes.txt"
+    text.write_text("hello")
+    assert _about_file(text) == "[It is a TXT file, 5 bytes.]"
+    odd = tmp_path / "blob"
+    odd.write_bytes(b"x" * 3000)
+    assert _about_file(odd) == "[It is a file, 3 KB.]"
+
+
+def test_a_file_the_user_sent_is_not_a_request_to_send_a_file_back():
+    from agent_control.orchestration.fulfillment import PostconditionType, _postconditions_from_objective
+
+    sent = "Summarize this in two sentences.\n[The user sent a file: C:/data/inbox/quarterly-report.pdf]\n[It is a PDF file, 3 KB.]"
+    assert PostconditionType.ARTIFACT_DELIVERED not in {item.type for item in _postconditions_from_objective(sent)}
+    # The user's own words still count.
+    asked = "Send me that file.\n[The user sent a file: C:/data/inbox/quarterly-report.pdf]\n[It is a PDF file, 3 KB.]"
+    assert PostconditionType.ARTIFACT_DELIVERED in {item.type for item in _postconditions_from_objective(asked)}

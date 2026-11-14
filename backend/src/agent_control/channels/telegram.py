@@ -66,6 +66,25 @@ from agent_control.tools.coding_agent import (
 from agent_control.tools.stt import STTAdapter
 
 
+def _about_file(path: Path) -> str:
+    """What a file sent to the bot is, in a few words, from the file itself: type, pixels for a picture, size.
+
+    A model that cannot see a picture answered "what is this and how big is it?" by trying to read it as text, failing, and offering to
+    hand the task to Claude Code. The facts that can be known without looking inside are said up front.
+    """
+    size = path.stat().st_size
+    shown = f"{size} bytes" if size < 1024 else f"{size / 1024:.0f} KB" if size < 1024 * 1024 else f"{size / (1024 * 1024):.1f} MB"
+    kind, pixels = path.suffix.lstrip(".").upper(), ""
+    try:
+        from PIL import Image  # optional: only pictures are opened, and only for their header
+
+        with Image.open(path) as picture:
+            kind, pixels = str(picture.format or kind), f", {picture.width}x{picture.height} pixels"
+    except Exception:  # noqa: BLE001 - not a picture, or Pillow is not installed: the extension and size are still true
+        pass
+    return f"[It is a {kind + ' ' if kind else ''}file{pixels}, {shown}.]"
+
+
 def _preview(value: str | None, limit: int = 240) -> str | None:
     if value is None:
         return None
@@ -728,8 +747,8 @@ class TelegramIntakeService:
             target.write_bytes(data)
             saved.append(target)
         noun = "a picture" if all(item.kind == MessageKind.IMAGE for item in files) else "a file"
-        lines = "\n".join(f"[The user sent {noun}: {path}]" for path in saved)
-        text = f"{inbound.text}\n{lines}" if inbound.text else f"I am sending you {noun}.\n{lines}"
+        lines = "\n".join(f"[The user sent {noun}: {path}]\n{_about_file(path)}" for path in saved)
+        text = f"{inbound.text}\n{lines}" if inbound.text else f"Here is {noun}.\n{lines}"
         return inbound.model_copy(update={"text": text})
 
     async def _update_conversation_memory(self, conversation_id: str, text: str) -> None:
