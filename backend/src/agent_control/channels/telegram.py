@@ -28,6 +28,8 @@ from agent_control.channels.account_commands import account_command_reply
 from agent_control.channels.undo_command import start_undo, undo_command_reply
 from agent_control.channels.quick_answers import clarifying_options
 from agent_control.learning_cards import decide as learning_decide
+from agent_control.llm.decision import DecisionModelClient
+from agent_control.preference_watch import PreferenceWatch
 from agent_control.plans.card import card_keyboard, card_text
 from agent_control.plans.model import PlanStatus
 from agent_control.plans.runner import cancel_plan, pause_plan
@@ -566,6 +568,8 @@ class TelegramIntakeService:
         # Updates are handled one at a time by the polling loop, so this never
         # spans two presses.
         self._callback_ack: str | None = None
+        # Looks at answered chat messages in the background; kept so they are not collected before they finish.
+        self._background: set[asyncio.Future[bool]] = set()
         # (chat id, message id, text, keyboard) to show again once a button has been handled: the plan card after a tap.
         self._callback_edit: tuple[str, Any, str, dict[str, Any] | None] | None = None
 
@@ -667,12 +671,14 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=clarify_response,
                     )
-                return await classify_and_spawn_task(
+                answered = await classify_and_spawn_task(
                     inbound, conversation_id,
                     repositories=self.repositories, audit=self.audit,
                     classifier=self.classifier, responder=self.responder, settings=self.settings,
                     send_progress=self._send_progress,
                 )
+                self._watch_for_a_preference(inbound, answered)
+                return answered
 
         if result.command:
             self._callback_ack = None
@@ -1104,6 +1110,28 @@ class TelegramIntakeService:
         raw = (payload.get("raw") or {}).get("callback_query", {}).get("message") or {}
         if raw.get("message_id") and (raw.get("chat") or {}).get("id") is not None:
             self._callback_edit = (str(raw["chat"]["id"]), raw["message_id"], shown, None)
+
+    def _watch_for_a_preference(self, inbound: InboundMessage, answered: ChannelUpdateResult) -> None:
+        """After a chat message has been answered (no task was started), see whether it stated a lasting preference (preference_watch.py).
+
+        In the background, so the reply is never held up by it. A message that became a task is looked at by the worker after the task.
+        """
+        if answered.task is not None or self.settings is None or self.bot_api is None or not inbound.text:
+            return
+        config = self.settings.adapters.persona
+        if not (config.enabled and config.learning_enabled):
+            return
+        bot_api = self.bot_api
+        client = DecisionModelClient(self.settings.decision) if self.settings.decision.mode != "off" else None
+
+        async def say(routing: dict[str, str], text: str, keyboard: dict[str, Any] | None) -> None:
+            await bot_api.send_message(routing["source_chat_id"], text, reply_markup=keyboard)
+
+        watch = PreferenceWatch(config, getattr(self.responder, "provider", None), client.yes_no if client else None, say)
+        routing = {"source_channel": ChannelType.TELEGRAM.value, "source_chat_id": str(inbound.chat_id)}
+        pending = asyncio.ensure_future(watch.consider(inbound.text, routing))
+        self._background.add(pending)
+        pending.add_done_callback(self._background.discard)
 
     def _answer_option(self, payload: dict[str, Any], actor: str) -> None:
         """A quick-answer button under a question: the same as typing its words, once, and only while the question is open."""

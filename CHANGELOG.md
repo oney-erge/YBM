@@ -7,6 +7,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A lasting preference stated in a chat message ("always keep answers short") is noticed after the reply and offered as a Remember / No card
+  (`preference_watch.py`). The decision model is asked one yes/no question on the CPU first, and only when it says the message may state a
+  preference is the assistant's own model asked to extract it, with a schema (persona learning had asked a 9B model for free text and got
+  the answer to the question in the message). Nothing reaches `persona.md` without the tap.
+- A request a skill marks `route: plan` (and confirms with a yes/no question) goes to a planner before the Operator's first step instead of
+  the Operator loop (`plans/stage.py`, `plans/planner.py`): the planner drafts steps with owners from what the user said and what the
+  assistant can and cannot do, or asks the one question it cannot do without, once, with options that become buttons. A planner that fails
+  leaves the request to the Operator. A skill can also say `when:` (a yes/no question) to be put in front of the Operator whole when it applies.
 - What the assistant learns is offered in the chat. A skill proposed after a multi-step job, and a preference a message states, are shown
   in the chat the task came from as a card with Keep and Not now (or Remember and No); the tap is the review and has the same effect as
   the console's accept (`learning_cards.py`). Nothing is installed without it. `adapters.skills.learning_enabled` and
