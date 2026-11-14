@@ -5,10 +5,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.1.6] - 2026-11-13
-
 ### Added
 
+- A request to buy, order, book or pay for something ("order me a pizza", "book a flight") is answered honestly. Once the model starts to
+  browse for it, the task's history says that it has no payment method and no shop accounts and must not press a buy button, so it
+  says plainly that it cannot place orders and offers the menu, the website or the phone number (`orchestration/ladder.py`, `money_hint`;
+  `RequestFacts.spends_money`). With the whole tool list visible again (the catalog fix above) the model had started searching for the
+  shop and asking which one.
 - In a form that makes an account, a password field the model filled with text the user never wrote gets the vault's `{{new_password}}`
   instead (a call rewrite, in the order of `call_policy.REWRITES`), so a made-up guessable password never reaches the page, a file or the
   chat. A password the user gave in their own words is left alone.
@@ -35,6 +38,50 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   of a saved workflow.
 - The browser's form fill ticks and clears check boxes and radio buttons (by clicking them, so the page's own handlers run; it used to type a
   value into them, so a terms box stayed unticked) and chooses a drop-down option by its text or value.
+
+### Changed
+
+- Writing the conversation summary after the reply is now an option that is off (`llm.summarize_memory_in_background`, default false). It was
+  on since 0.1.6, and on the frozen vision suite it made "move my files, then undo" fail three times out of three (the operator reads the
+  last turns when the summary is not ready yet, and planned a sort by extension); with the summary written before the reply, and nothing else
+  changed, the case passes. The cost is the summary's model call (a few seconds) before the reply to each message, which is what the
+  option removed; set it to true to have the speed back and accept that the operator reads the heuristic summary of the last turns.
+- A message the local decision model is sure is a task, though it is not sure which tool it needs, no longer waits for the LLM concierge
+  (`decision.settle_tasks_alone`, `decision.task_bar`, default 0.9): the probability that it is a task is the sum over the tool routes,
+  and the route is left "unknown", as the concierge leaves it for most requests, which keeps the operator's full tool list and the check
+  before a first question about something no tool can do. Requests the concierge must read (configuration, a coding agent, the screen) and
+  questions about what the bot can do are never settled this way. Offline, over 444 real messages, the concierge also said "task" for
+  every one of the 303 with a sum of at least 0.9; that is about two thirds of what reached it, about 5 s each. The decision record
+  (`intake_decision`) has `task_probability` and `settled_by` for every message, so it can be checked.
+- Three things that cost a task time without changing what it does. A progress line ("Working on it: ...") is sent in the background,
+  behind the previous one for the task so they arrive in order, and the answer waits for any still on its way (about a second a step; it
+  was awaited). An idle worker looks for a task every second, not every three. And an answer that only reports file writes, moves and
+  sends (every step a successful `filesystem.manage`, `document.manage` or `artifact.deliver` write) is no longer audited by the model,
+  because the receipt checks already compare it to the changed paths and the delivery record (1 to 8 s); any read, search, script,
+  browser step or failed step keeps the audit.
+- Voice notes are quicker and clearer. The speech model loads when the Telegram poller starts, not on the first note (about 4 s); the
+  language model starts loading while the audio is transcribed, not after; "typing" shows at once; and what was heard is sent back
+  ("I heard: ...", `channels.telegram.echo_voice_transcript`) before anything is done with it, so a mishearing is seen first.
+
+### Fixed
+
+- "Which task do you mean?" picked the older of two tasks made within one clock tick (about 15 ms on Windows): `max()` keeps the first of equals
+  and the list is oldest first. It showed as a test that failed one run in six; the newest now wins a tie.
+- On a phone the console's bottom navigation had six items in a five-column grid, so Settings dropped onto a second row.
+- Every page of the admin console waited about four seconds before drawing anything. The console asks "is the default model usable" on each page
+  load, the model server's health check took four seconds because it looks at a second service that was not running, and nothing was shown
+  until it answered. The first answer is waited for; after that the last answer is used at once and refreshed in the background every
+  half minute (hosted profiles, where the check is only a look at a key, are not cached).
+- Two gaps the fresh suite (heldout4) found. "Which file was changed most recently?" asked through `describe_folder` or
+  `collect_folder_snapshot`, which list names and sizes but no dates, ended blocked: such a listing is now made with `inspect_folder` and
+  dates, as the other listings already were. "Rename every .txt so it starts with old-" was planned with `organize_plan`, which only sorts
+  files into folders, and never renamed anything: after such a plan the task's history now says to use `apply_manifest` with a rename entry
+  per file.
+
+## [0.1.6] - 2026-11-13
+
+### Added
+
 - The offer to hand a task to Claude Code (made when the local model has failed repeatedly and Claude Code is set up) comes with
   Yes and No buttons in Telegram. A tap answers the question exactly as typing does, once, and only while the question is open. "No"
   sends "No thanks", because a bare "no" is one of the words that cancel a task and declining should end the task with what was
@@ -189,22 +236,6 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- A message the local decision model is sure is a task, though it is not sure which tool it needs, no longer waits for the LLM concierge
-  (`decision.settle_tasks_alone`, `decision.task_bar`, default 0.9): the probability that it is a task is the sum over the tool routes,
-  and the route is left "unknown", as the concierge leaves it for most requests, which keeps the operator's full tool list and the check
-  before a first question about something no tool can do. Requests the concierge must read (configuration, a coding agent, the screen) and
-  questions about what the bot can do are never settled this way. Offline, over 444 real messages, the concierge also said "task" for
-  every one of the 303 with a sum of at least 0.9; that is about two thirds of what reached it, about 5 s each. The decision record
-  (`intake_decision`) has `task_probability` and `settled_by` for every message, so it can be checked.
-- Three things that cost a task time without changing what it does. A progress line ("Working on it: ...") is sent in the background,
-  behind the previous one for the task so they arrive in order, and the answer waits for any still on its way (about a second a step; it
-  was awaited). An idle worker looks for a task every second, not every three. And an answer that only reports file writes, moves and
-  sends (every step a successful `filesystem.manage`, `document.manage` or `artifact.deliver` write) is no longer audited by the model,
-  because the receipt checks already compare it to the changed paths and the delivery record (1 to 8 s); any read, search, script,
-  browser step or failed step keeps the audit.
-- Voice notes are quicker and clearer. The speech model loads when the Telegram poller starts, not on the first note (about 4 s); the
-  language model starts loading while the audio is transcribed, not after; "typing" shows at once; and what was heard is sent back
-  ("I heard: ...", `channels.telegram.echo_voice_transcript`) before anything is done with it, so a mishearing is seen first.
 - The operator's rules about the model's habits are three ordered lists in their own modules, not branches in the worker's tick (the worker lost about 780 lines, no behavior changed):
   `orchestration/request_facts.py` reads what a request says once, each fact from the text it always came from;
   `orchestration/call_policy.py` is what happens to a tool call before it runs (refusals, canonical form, fourteen labeled rewrites, in order);
@@ -264,18 +295,6 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
-- "Which task do you mean?" picked the older of two tasks made within one clock tick (about 15 ms on Windows): `max()` keeps the first of equals
-  and the list is oldest first. It showed as a test that failed one run in six; the newest now wins a tie.
-- On a phone the console's bottom navigation had six items in a five-column grid, so Settings dropped onto a second row.
-- Every page of the admin console waited about four seconds before drawing anything. The console asks "is the default model usable" on each page
-  load, the model server's health check took four seconds because it looks at a second service that was not running, and nothing was shown
-  until it answered. The first answer is waited for; after that the last answer is used at once and refreshed in the background every
-  half minute (hosted profiles, where the check is only a look at a key, are not cached).
-- Two gaps the fresh suite (heldout4) found. "Which file was changed most recently?" asked through `describe_folder` or
-  `collect_folder_snapshot`, which list names and sizes but no dates, ended blocked: such a listing is now made with `inspect_folder` and
-  dates, as the other listings already were. "Rename every .txt so it starts with old-" was planned with `organize_plan`, which only sorts
-  files into folders, and never renamed anything: after such a plan the task's history now says to use `apply_manifest` with a rename entry
-  per file.
 - A task that asked a question and got its answer runs its next tool call. Answering put the task back to `received`, the worker
   only moved a task to `running` the first time it started, and a call is admitted only for a `running` task (since the lifecycle
   controls), so the first call after an answer was never run and the worker asked the model again on every poll: a live run made

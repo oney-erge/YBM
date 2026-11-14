@@ -206,7 +206,9 @@ PASSWORD_TEXT = (
     "This page asks for a password. Do not make one up, and do not write it in a file or in your answer. Fill every password field "
     "(the one that asks for it and the one that asks it again) with the value {{new_password}}: YBM makes a long random password, keeps "
     "it in its encrypted vault for this site, types it in, and never shows it to you. When you answer, say the account was made and "
-    "that the password is saved in YBM's vault; the user can say 'show my <site> password' to see it."
+    "that the password is saved in YBM's vault; the user can say 'show my <site> password' to see it. Fill the whole form in ONE browser.control "
+    "call (operation fill_form, every field in `fields`, the terms box too if there is one, and \"submit\": true), so it is sent in that step: "
+    "filling it piece by piece loses track of what is done and never sends it."
 )
 LOGIN_TEXT = (
     "This page asks for a login. If the user has an account here that YBM made, fill the username field with {{saved_username}} and "
@@ -252,6 +254,21 @@ RENAME_TEXT = (
 )
 
 
+MONEY_TEXT = (
+    "You cannot buy or order anything for the user: you have no payment method and no shop accounts set up, and you must not enter payment "
+    "details or press a buy or order button. Do not go on with this and do not ask a question first. Finish now (action done) with one or "
+    "two plain sentences: you cannot place orders or pay, and you can look up the place's website, menu or phone number, or open its page "
+    "so they can finish it themselves, if they tell you which place."
+)
+
+
+def money_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
+    """A request to buy, order or book something, said once when the model has started to browse for it: a model that can browse will try."""
+    if "money" in given or not any(step.get("tool_name") in BROWSER_TOOLS for step in steps) or not RequestFacts.from_text(request).spends_money:
+        return None
+    return Hint("money", MONEY_TEXT)
+
+
 def rename_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
     """A request to rename files, after a plan that only sorts them into folders."""
     last = steps[-1]
@@ -294,7 +311,7 @@ def next_hint(
     if not steps:
         return None
     last = steps[-1]
-    form = form_hint(request, steps, given) or rename_hint(request, steps, given)
+    form = money_hint(request, steps, given) or form_hint(request, steps, given) or rename_hint(request, steps, given)
     if form is not None:
         return form
     absent = proven_absent(request, steps)
