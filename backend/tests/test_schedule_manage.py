@@ -293,7 +293,8 @@ async def test_list_shows_each_schedule_to_the_model_and_leaves_out_deleted_ones
 
     summary = listed.output["summary"]
     assert summary.startswith("Found 1 schedule(s).")
-    assert keep.output["schedule_id"] in summary and "news every morning" in summary and "[enabled, next run " in summary
+    # "every morning at 8am" is when, not the job: the schedule is daily at 08:00 and the job is the rest
+    assert keep.output["schedule_id"] in summary and "daily at 08:00 -> Send me a summary of the news" in summary and "[enabled, next run " in summary
     assert "fixture server" not in summary
     assert [item["id"] for item in listed.output["schedules"]] == [keep.output["schedule_id"]]
 

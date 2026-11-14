@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Schedules can name days of the week and a time of day: "every Monday at 9am", "every weekday at 8:30", "daily at 7am" become
+  `every monday at 09:00`, `every weekday at 08:30`, `daily at 07:00` (`cadence.py`; the scheduler, `schedule.manage` and the workflow automation
+  form all take them). Before, any such request was turned into "daily" at whatever time it was made, with the days and the time left in the
+  job's text. The job is now what is left when the when is taken out, and a run a week later is the same wall-clock time across a clock change.
 - `ability.acquire` gets a capability the assistant does not have yet from a recipe (`abilities/recipes.py`, `abilities/acquire.py`): a local
   voice (Kokoro, 120 MB), speech recognition for audio files, ffmpeg (winget) and a vision model (Qwen3-VL through Ollama). A recipe that is not
   ready is an `installable` record the index finds, so the Operator is told what could be set up before its first step. Files come from the
