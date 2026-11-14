@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import datetime
 import json
+import re
 
 from pydantic import ValidationError
 
@@ -280,10 +281,17 @@ def _history_field(value: object) -> str:
 def _format_config_context(value: str, max_chars: int) -> str:
     """Bound the live tool catalog without dropping tool identities.
 
-    Worked examples are the first detail sacrificed because every tool's
-    operation names remain on its definition line. If the catalog is still
-    too large, compact each definition to its routing fields rather than
-    slicing the middle out and making an arbitrary subset of tools invisible.
+    A catalog that fits is returned as it is. One that does not gives up detail in this order, and stops as soon as it fits:
+
+        1. the worked examples (every tool's operation names stay on its definition line),
+        2. the capability and risk suffix and most of the description of each MCP tool (those lines were a third of the catalog on a
+           machine with two MCP servers, and say what the native tools above already say),
+        3. each remaining tool definition compacted to its routing fields,
+        4. the MCP tools themselves, last ones first, with a note that says how many were left out.
+
+    The tool definitions are never cut. This used to end in a slice out of the middle of the text, which on a real configuration
+    removed the last three tools (browser.open, browser.control and computer.use, the ones that open pages and fill forms): the
+    catalog was 136 characters over the limit, and the model could not see that it had a browser.
     """
     if len(value) <= max_chars:
         return value
@@ -292,9 +300,14 @@ def _format_config_context(value: str, max_chars: int) -> str:
     if len(rendered) <= max_chars:
         return rendered
 
+    lines = [_shorter_mcp_line(line) for line in lines]
+    rendered = "\n".join(lines)
+    if len(rendered) <= max_chars:
+        return rendered
+
     compacted: list[str] = []
     for line in lines:
-        if not line.startswith("- "):
+        if not line.startswith("- ") or _MCP_TOOL_LINE.match(line):
             compacted.append(_bounded_text(line, 400))
             continue
         name, separator, detail = line.partition(":")
@@ -314,7 +327,35 @@ def _format_config_context(value: str, max_chars: int) -> str:
             parts.append(f"operations={operations}")
         compacted.append("; ".join(parts))
     rendered = "\n".join(compacted)
-    return _bounded_text(rendered, max_chars)
+    if len(rendered) <= max_chars:
+        return rendered
+
+    dropped = 0
+    while len(rendered) > max_chars and any(_MCP_TOOL_LINE.match(line) for line in compacted):
+        index = max(i for i, line in enumerate(compacted) if _MCP_TOOL_LINE.match(line))
+        del compacted[index]
+        dropped += 1
+        rendered = "\n".join([*compacted, f"- ... {dropped} more MCP tool(s) left out here; list them with mcp.client list_tools"])
+    if dropped:
+        compacted.append(f"- ... {dropped} more MCP tool(s) left out here; list them with mcp.client list_tools")
+        rendered = "\n".join(compacted)
+    return rendered if len(rendered) <= max_chars else _bounded_text(rendered, max_chars)
+
+
+#: One MCP tool as the catalog prints it: `- server="x" tool="y" - description; capability=...; risk=...`.
+_MCP_TOOL_LINE = re.compile(r'^- server="[^"]*" tool="[^"]*"')
+_MCP_SUFFIX = re.compile(r"; capability=[^;]*; risk=[^;]*$")
+_MCP_DESCRIPTION_CHARS = 70
+
+
+def _shorter_mcp_line(line: str) -> str:
+    if not _MCP_TOOL_LINE.match(line):
+        return line
+    line = _MCP_SUFFIX.sub("", line)
+    head, separator, description = line.partition(" - ")
+    if not separator or len(description) <= _MCP_DESCRIPTION_CHARS:
+        return line
+    return f"{head} - {description[:_MCP_DESCRIPTION_CHARS].rstrip()}..."
 
 
 def _context_field(value: str, name: str) -> str:
