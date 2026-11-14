@@ -9,6 +9,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 - A recording sent in Telegram as an audio file (an mp3, a wav, an m4a) is saved in the inbox and handed to the task like any other file. It was ignored:
   no text, no task, no reply, which the first challenge run found when it sent a meeting recording and nothing came back within three minutes.
+- A skill for repeating a job (`skills/starter/schedule-a-job.md`, `when:` a yes/no question at 0.8): the Operator is told to create the schedule with the job
+  as the objective and the days and time as the cadence, and not to do or build the job now. On the deployed code "Every Monday at 9am, send me the top 3
+  Hacker News stories." made the Operator write scripts, ask where to deliver it, and offer to hand the job to Claude Code. Measured on the running decision
+  model: six of eight recurring requests clear 0.8, "what scheduled jobs do I have?" (0.72) does not, and every ordinary message that does is itself a
+  recurring request.
+- The planner is told today's date and to work backwards from a dated goal, starting each step's title with when it is due, and not to invent computer
+  chores. "I'm moving on December 20. Plan it." produced a plan about making folders and spreadsheets, with no dates. A plan card is not read as a claim that
+  files were created.
 - Gaming mode keeps the model off the GPU for the summary of the conversation too. Live, a message held in gaming mode still reloaded the model
   through the memory update (0.8 GB of video memory before, 6.2 GB after); while it is on, the summary is the recent turns and the next message after
   it ends re-summarizes.
