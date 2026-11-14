@@ -3,6 +3,11 @@
 These fixtures replay stored model responses and do not call a live model.
 Prompt matching remains strict, including the enabled tool catalog.
 
+When a prompt changes without changing what the model should answer (a tool line added, a sentence reworded), `ybm scenario rekey <name>`
+(or `--all`) keeps each recorded response under the new key and prints the prompt lines that changed, instead of a live re-record. It shows that
+the scenario still runs through the changed prompt, not that a live model answers the same: use `ybm scenario record` when the change should alter
+the answer.
+
 The document.manage catalog was updated to include compare_documents in October
 2026. Only its description, operation list, example, and derived fixture keys
 were changed. Original system prompts and recorded responses were preserved.

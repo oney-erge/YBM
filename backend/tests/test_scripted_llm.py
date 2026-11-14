@@ -457,3 +457,80 @@ async def test_recording_provider_appends_without_clobbering_existing_entries(tm
     replay = ScriptedLLMProvider(fixture)
     assert await replay.generate_text("sys", "first") == "live response to: first"
     assert await replay.generate_text("sys", "second") == "live response to: second"
+
+
+# --- ybm scenario rekey: a prompt changed, the recorded response is kept under the new key --------------------------------------------
+
+
+def _long_prompt(extra_line: str = "") -> str:
+    lines = [f"Tool {n}: does thing number {n} on the user's computer and says so in one sentence." for n in range(60)]
+    if extra_line:
+        lines.insert(30, extra_line)
+    return "\n".join(lines)
+
+
+def _recorded(tmp_path, *, system: str, user: str, response: str, name: str = "scenario_x") -> Path:
+    from agent_control.testing.scripted_llm import _normalize
+
+    fixture = tmp_path / f"{name}.json"
+    key = fixture_key("generate_text", system, user)
+    _write_fixture(fixture, {key: {"method": "generate_text", "system_prompt": _normalize(system), "user_prompt": _normalize(user), "response": response}})
+    return fixture
+
+
+@pytest.mark.asyncio
+async def test_a_changed_prompt_misses_without_rekey(tmp_path) -> None:
+    fixture = _recorded(tmp_path, system="sys", user=_long_prompt(), response="the recorded answer")
+    with pytest.raises(ScriptedLLMError):
+        await ScriptedLLMProvider(fixture).generate_text("sys", _long_prompt("Tool 99: a new tool."))
+
+
+@pytest.mark.asyncio
+async def test_rekey_keeps_the_response_under_the_new_key_and_logs_what_changed(tmp_path, monkeypatch) -> None:
+    import json
+
+    fixture = _recorded(tmp_path, system="sys", user=_long_prompt(), response="the recorded answer")
+    log = tmp_path / "rekey.log"
+    monkeypatch.setenv("YBM_SCENARIO_REKEY", "scenario_x")
+    monkeypatch.setenv("YBM_SCENARIO_REKEY_LOG", str(log))
+
+    changed = _long_prompt("Tool 99: a new tool.")
+    assert await ScriptedLLMProvider(fixture).generate_text("sys", changed) == "the recorded answer"
+
+    monkeypatch.delenv("YBM_SCENARIO_REKEY")
+    # saved: a plain replay with the new prompt now hits
+    assert await ScriptedLLMProvider(fixture).generate_text("sys", changed) == "the recorded answer"
+    entry = json.loads(log.read_text(encoding="utf-8").splitlines()[0])
+    assert entry["fixture"] == "scenario_x.json" and any("Tool 99: a new tool." in line and line.startswith("+") for line in entry["diff"])
+
+
+@pytest.mark.asyncio
+async def test_rekey_only_touches_the_fixture_it_was_asked_for(tmp_path, monkeypatch) -> None:
+    fixture = _recorded(tmp_path, system="sys", user=_long_prompt(), response="r", name="other_fixture")
+    monkeypatch.setenv("YBM_SCENARIO_REKEY", "scenario_x")
+    with pytest.raises(ScriptedLLMError):
+        await ScriptedLLMProvider(fixture).generate_text("sys", _long_prompt("Tool 99: a new tool."))
+
+
+@pytest.mark.asyncio
+async def test_rekey_refuses_a_prompt_that_is_not_alike_and_never_reuses_a_response_twice(tmp_path, monkeypatch) -> None:
+    fixture = _recorded(tmp_path, system="sys", user=_long_prompt(), response="the recorded answer")
+    monkeypatch.setenv("YBM_SCENARIO_REKEY", "scenario_x")
+    provider = ScriptedLLMProvider(fixture)
+    with pytest.raises(ScriptedLLMError):
+        await provider.generate_text("sys", "something else entirely " * 40)
+    await provider.generate_text("sys", _long_prompt("Tool 98: one."))
+    with pytest.raises(ScriptedLLMError):  # the one recorded response already answered a call; a second call needs its own
+        await provider.generate_text("sys", _long_prompt("Tool 97: two."))
+
+
+@pytest.mark.asyncio
+async def test_a_replay_lists_the_keys_it_used_for_pruning(tmp_path, monkeypatch) -> None:
+    import json
+
+    fixture = _recorded(tmp_path, system="sys", user=_long_prompt(), response="r")
+    track = tmp_path / "used.log"
+    monkeypatch.setenv("YBM_SCENARIO_TRACK", str(track))
+    await ScriptedLLMProvider(fixture).generate_text("sys", _long_prompt())
+    row = json.loads(track.read_text(encoding="utf-8").splitlines()[0])
+    assert row == {"fixture": "scenario_x.json", "key": fixture_key("generate_text", "sys", _long_prompt())}

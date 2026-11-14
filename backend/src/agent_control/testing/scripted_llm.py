@@ -16,15 +16,26 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import tempfile
-from difflib import SequenceMatcher
+from difflib import SequenceMatcher, unified_diff
 from pathlib import Path
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel
 
 T = TypeVar("T", bound=BaseModel)
+
+# `ybm scenario rekey` (tests/scenario/record.py): a prompt changed in a way that does not change what the model should answer (a tool line was
+# added, a sentence reworded). Instead of re-recording against a live model, a call with no recorded key reuses the response recorded for
+# the nearest prompt and stores it under the new key (YBM_SCENARIO_REKEY holds the name of the one fixture being rekeyed). A second pass with REKEY_TRACK_ENV_VAR set lists the keys that are still used, so the
+# superseded ones can be dropped. Neither variable is ever set by anything but that command.
+REKEY_ENV_VAR = "YBM_SCENARIO_REKEY"
+REKEY_LOG_ENV_VAR = "YBM_SCENARIO_REKEY_LOG"
+REKEY_TRACK_ENV_VAR = "YBM_SCENARIO_TRACK"
+# How alike two prompts must be (difflib ratio over the normalized system and user text) for one's response to stand in for the other's.
+REKEY_MIN_SIMILARITY = 0.97
 
 
 class ScriptedLLMError(RuntimeError):
@@ -347,6 +358,7 @@ class ScriptedLLMProvider:
     def __init__(self, fixture_path: str | Path) -> None:
         self.fixture_path = Path(fixture_path)
         self._entries = _reindex(_load(self.fixture_path))
+        self._rekey_used: set[str] = set()  # recorded keys already stood in for a changed prompt (see REKEY_ENV_VAR)
         self.calls: list[dict[str, str]] = []  # for test assertions on call order/count
         # No real API call happens on replay, so there is no real cost to
         # report - always None, never a fabricated zero. Present so callers
@@ -354,9 +366,53 @@ class ScriptedLLMProvider:
         # every provider type without an isinstance check.
         self.last_usage: dict | None = None
 
+    def _nearest_recorded(self, method: str, system_prompt: str, user_prompt: str) -> tuple[str, dict[str, Any]] | None:
+        """The recorded entry for the most alike prompt, if it is alike enough and has not already answered another call."""
+        wanted = f"{_normalize(system_prompt)}\n{_normalize(user_prompt)}"
+        best: tuple[float, str] | None = None
+        for stored_key, stored in self._entries.items():
+            if stored.get("method") != method or stored_key in self._rekey_used or not isinstance(stored.get("user_prompt"), str):
+                continue
+            recorded = f"{stored.get('system_prompt', '')}\n{stored['user_prompt']}"
+            matcher = SequenceMatcher(None, recorded, wanted, autojunk=False)
+            if matcher.real_quick_ratio() < REKEY_MIN_SIMILARITY or matcher.quick_ratio() < REKEY_MIN_SIMILARITY:
+                continue
+            ratio = matcher.ratio()
+            if ratio >= REKEY_MIN_SIMILARITY and (best is None or ratio > best[0]):
+                best = (ratio, stored_key)
+        return (best[1], self._entries[best[1]]) if best else None
+
+    def _rekey(self, key: str, method: str, system_prompt: str, user_prompt: str) -> dict[str, Any] | None:
+        nearest = self._nearest_recorded(method, system_prompt, user_prompt)
+        if nearest is None:
+            return None
+        old_key, old = nearest
+        self._rekey_used.add(old_key)
+        entry = {
+            "method": method,
+            "system_prompt": _normalize(system_prompt),
+            "user_prompt": _normalize(user_prompt),
+            "response": old["response"],
+        }
+        self._entries[key] = entry
+        self._rekey_used.add(key)  # the new entry answered this call; it is not a stand-in for another
+        _save(self.fixture_path, self._entries)
+        log = os.environ.get(REKEY_LOG_ENV_VAR)
+        if log:
+            before = f"{old.get('system_prompt', '')}\n{old.get('user_prompt', '')}".splitlines()
+            after = f"{entry['system_prompt']}\n{entry['user_prompt']}".splitlines()
+            with open(log, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({
+                    "fixture": self.fixture_path.name, "method": method, "old_key": old_key, "new_key": key,
+                    "diff": list(unified_diff(before, after, "recorded", "now", n=0, lineterm="")),
+                }) + "\n")
+        return entry
+
     def _lookup(self, method: str, system_prompt: str, user_prompt: str) -> dict[str, Any]:
         key = fixture_key(method, system_prompt, user_prompt)
         entry = self._entries.get(key)
+        if entry is None and os.environ.get(REKEY_ENV_VAR) == self.fixture_path.stem:
+            entry = self._rekey(key, method, system_prompt, user_prompt)
         if entry is None:
             difference = _closest_prompt_difference(
                 self._entries, method, user_prompt
@@ -370,6 +426,10 @@ class ScriptedLLMProvider:
                 "text changed and every fixture using it needs re-recording."
             )
         self.calls.append({"method": method, "key": key})
+        track = os.environ.get(REKEY_TRACK_ENV_VAR)
+        if track:
+            with open(track, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps({"fixture": self.fixture_path.name, "key": key}) + "\n")
         return _rebase_scenario_paths(entry)
 
     async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
