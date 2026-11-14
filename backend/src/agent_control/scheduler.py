@@ -35,7 +35,7 @@ def validate_schedule(cadence: str, timezone_name: str) -> None:
         raise ValueError("Use a valid IANA timezone, such as America/Chicago or UTC.") from exc
 
 
-def _resolve_timezone(timezone_name: str | None) -> ZoneInfo | timezone:
+def resolve_timezone(timezone_name: str | None) -> ZoneInfo | timezone:
     if timezone_name:
         try:
             return ZoneInfo(timezone_name)
@@ -63,7 +63,7 @@ def next_run_after(cadence: str, after: datetime | None = None, timezone_name: s
     if match := re.search(r"every\s+(\d+)\s+hours?", lowered):
         return base + timedelta(hours=max(1, int(match.group(1))))
 
-    tz = _resolve_timezone(timezone_name)
+    tz = resolve_timezone(timezone_name)
     local = base.astimezone(tz)
 
     if calendar.is_calendar(lowered):
