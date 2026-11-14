@@ -264,21 +264,6 @@ MOVE_TEXT = (
 )
 
 
-MONEY_TEXT = (
-    "You cannot buy or order anything for the user: you have no payment method and no shop accounts set up, and you must not enter payment "
-    "details or press a buy or order button. Do not go on with this and do not ask a question first. Finish now (action done) with one or "
-    "two plain sentences: you cannot place orders or pay, and you can look up the place's website, menu or phone number, or open its page "
-    "so they can finish it themselves, if they tell you which place."
-)
-
-
-def money_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
-    """A request to buy, order or book something, said once when the model has started to browse for it: a model that can browse will try."""
-    if "money" in given or not any(step.get("tool_name") in BROWSER_TOOLS for step in steps) or not RequestFacts.from_text(request).spends_money:
-        return None
-    return Hint("money", MONEY_TEXT)
-
-
 def move_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
     """A request to move some files into a folder it names, once the model has looked at files and before it sorts them all by type."""
     if "move" in given or not any(step.get("tool_name") == FILESYSTEM_TOOL for step in steps):
@@ -344,10 +329,7 @@ def next_hint(
     if not steps:
         return None
     last = steps[-1]
-    form = (
-        money_hint(request, steps, given) or form_hint(request, steps, given) or rename_hint(request, steps, given)
-        or move_hint(request, steps, given)
-    )
+    form = form_hint(request, steps, given) or rename_hint(request, steps, given) or move_hint(request, steps, given)
     if form is not None:
         return form
     absent = proven_absent(request, steps)

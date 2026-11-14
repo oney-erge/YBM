@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
@@ -154,6 +155,10 @@ class ToolDefinition:
     # "did it actually happen", not "is it allowed". Runs only once the
     # result already reports SUCCEEDED.
     verify: Callable[[ToolCallRequest, ToolCallResult], ToolVerification | None] | None = None
+    # What the tool is for, said once, here, next to the tool, for the ability index (abilities/): the domain it belongs to
+    # ("files", "web", "code"...) and the words people use for what it does. Nothing else lists tools by what they are for.
+    group: str = ""
+    provides: tuple[str, ...] = ()
 
     def capability_for(self, value: dict | None) -> Capability:
         """The capability this particular call runs under."""
@@ -227,6 +232,8 @@ class ToolRegistry:
     definition_index: dict[str, ToolDefinition] | None = None
     mcp_summary: str = ""
     mcp_summary_factory: Callable[[], str] | None = None
+    # The index of everything the assistant can do (abilities/catalog.py), when it is switched on.
+    abilities: Any | None = None
 
     def __post_init__(self) -> None:
         if self.definition_index is None:

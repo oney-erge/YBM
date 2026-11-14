@@ -231,23 +231,9 @@ class DecisionModelClient:
         questions: dict[str, Any] = {"route": ROUTE_QUESTION, "ability": ABILITY_QUESTION}
         if with_kind:
             questions["kind"] = KIND_QUESTION
-        body: dict[str, Any] = {"state": text, "questions": questions}
-        if self.config.profile:
-            body["model"] = self.config.profile
-        headers = {}
-        token = read_env_value(self.config.api_token_env) if self.config.api_token_env else None
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
         started = time.monotonic()
+        answers = await self._ask(text, questions)
         try:
-            async with httpx.AsyncClient(timeout=self.config.timeout_seconds, transport=self._transport) as client:
-                response = await client.post(f"{self.config.base_url}/v1/systemone", json=body, headers=headers)
-        except httpx.HTTPError as exc:
-            raise DecisionModelError(f"decision model unreachable: {type(exc).__name__}: {exc}") from exc
-        if response.status_code != 200:
-            raise DecisionModelError(f"decision model answered HTTP {response.status_code}: {response.text[:200]}")
-        try:
-            answers = response.json()["answers"]
             answer = answers["route"]
             route = IntentRoute(answer["choice"])
             probabilities = {str(k): float(v) for k, v in (answer.get("probabilities") or {}).items()}
@@ -259,6 +245,41 @@ class DecisionModelClient:
             route, confidence, probabilities, (time.monotonic() - started) * 1000, ability=_yes_probability(answers.get("ability")),
             kind=kind, kind_confidence=kind_confidence,
         )
+
+    async def yes_no(self, text: str, questions: dict[str, str]) -> dict[str, float]:
+        """Yes/no questions about one message, asked in one call: the probability of yes for each name that was answered.
+
+        This is how the abilities that might bear on a request are confirmed (abilities/context.py). A name the model did not answer is
+        absent, so a caller that needs an answer treats a missing name as no answer, not as no.
+        """
+        if not questions:
+            return {}
+        answers = await self._ask(text, {name: {"type": "noul", "instructions": question} for name, question in questions.items()})
+        found = {name: _yes_probability(answers.get(name)) for name in questions}
+        return {name: value for name, value in found.items() if value is not None}
+
+    async def _ask(self, text: str, questions: dict[str, Any]) -> dict[str, Any]:
+        body: dict[str, Any] = {"state": text, "questions": questions}
+        if self.config.profile:
+            body["model"] = self.config.profile
+        headers = {}
+        token = read_env_value(self.config.api_token_env) if self.config.api_token_env else None
+        if token:
+            headers["Authorization"] = f"Bearer {token}"
+        try:
+            async with httpx.AsyncClient(timeout=self.config.timeout_seconds, transport=self._transport) as client:
+                response = await client.post(f"{self.config.base_url}/v1/systemone", json=body, headers=headers)
+        except httpx.HTTPError as exc:
+            raise DecisionModelError(f"decision model unreachable: {type(exc).__name__}: {exc}") from exc
+        if response.status_code != 200:
+            raise DecisionModelError(f"decision model answered HTTP {response.status_code}: {response.text[:200]}")
+        try:
+            answers = response.json()["answers"]
+        except (KeyError, TypeError, ValueError) as exc:
+            raise DecisionModelError(f"decision model returned an unusable answer: {exc}") from exc
+        if not isinstance(answers, dict):
+            raise DecisionModelError("decision model returned an unusable answer: answers is not an object")
+        return answers
 
 
 def _kind_of(answer: Any) -> tuple[str | None, float | None]:

@@ -594,6 +594,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="system.inventory",
+            group="system",
+            provides=('installed', 'games', 'steam', 'apps', 'programs', 'disk', 'space', 'battery', 'hardware', 'cpu', 'ram', 'gpu', 'drivers', 'many', 'computer',),
             capability=Capability.SYSTEM_INVENTORY,
             enabled=enabled,
             named_when_disabled=False,

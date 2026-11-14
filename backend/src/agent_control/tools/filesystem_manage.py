@@ -1065,6 +1065,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="filesystem.manage",
+            group="files",
+            provides=('file', 'folder', 'directory', 'list', 'find', 'search', 'read', 'write', 'move', 'copy', 'rename', 'organize', 'sort', 'tidy', 'delete', 'download', 'desktop', 'documents', 'disk',),
             capability=Capability.FILESYSTEM_WRITE,
             operation_capabilities={operation: Capability.FILESYSTEM_READ for operation in READ_OPERATIONS},
             enabled=enabled,

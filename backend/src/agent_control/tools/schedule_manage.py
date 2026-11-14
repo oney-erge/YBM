@@ -175,6 +175,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="schedule.manage",
+            group="time",
+            provides=('remind', 'schedule', 'recurring', 'every', 'day', 'daily', 'weekly', 'cron', 'timer', 'alarm', 'later', 'tomorrow',),
             capability=Capability.SCHEDULE_MANAGE,
             enabled=enabled,
             description="create, list, pause, resume, delete, or run recurring task schedules",

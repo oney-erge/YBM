@@ -437,6 +437,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="mcp.client",
+            group="integrations",
+            provides=('mcp', 'server', 'connector', 'plugin', 'external', 'integration',),
             capability=Capability.TERMINAL_RUN,
             enabled=enabled,
             description="discover and call configured external MCP server tools through stdio",

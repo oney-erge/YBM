@@ -34,6 +34,7 @@ from agent_control.schemas import (
     ToolResultStatus,
     utc_now,
 )
+from agent_control.plans.model import Plan, PlanStatus, PlanStep, StepOwner, StepStatus
 from agent_control.storage.database import Database
 from agent_control.storage.redaction import redact_text
 
@@ -1924,6 +1925,121 @@ class AuditRepository:
         )
 
 
+class PlanRepository:
+    """Plans and their steps (plans/model.py). A plan outlives the tasks it starts, so it is stored on its own, not inside a task."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, plan: Plan) -> Plan:
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO plans (id, conversation_id, goal, summary, status, source_task_id, routing_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (plan.id, plan.conversation_id, plan.goal, plan.summary, plan.status.value, plan.source_task_id,
+                 _dump(plan.routing), _dt(plan.created_at), _dt(plan.updated_at)),
+            )
+            for step in plan.steps:
+                self._insert_step(connection, plan.id, step)
+        return self.get(plan.id) or plan
+
+    def get(self, plan_id: str) -> Plan | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None:
+                return None
+            steps = connection.execute("SELECT * FROM plan_steps WHERE plan_id = ? ORDER BY position", (plan_id,)).fetchall()
+        return self._row_to_plan(row, steps)
+
+    def list(self, *, statuses: list[PlanStatus] | None = None, conversation_id: str | None = None, limit: int = 50) -> list[Plan]:
+        clauses, params = [], []
+        if statuses:
+            clauses.append(f"status IN ({','.join('?' * len(statuses))})")
+            params.extend(status.value for status in statuses)
+        if conversation_id is not None:
+            clauses.append("conversation_id = ?")
+            params.append(conversation_id)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.database.connect() as connection:
+            rows = connection.execute(f"SELECT id FROM plans {where} ORDER BY updated_at DESC, rowid DESC LIMIT ?", (*params, limit)).fetchall()
+        return [plan for plan in (self.get(row["id"]) for row in rows) if plan is not None]
+
+    def for_task(self, task_id: str) -> tuple[Plan, PlanStep] | None:
+        """The plan and the step a task belongs to, if it was started for one."""
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT plan_id, id FROM plan_steps WHERE task_id = ?", (task_id,)).fetchone()
+        if row is None:
+            return None
+        plan = self.get(row["plan_id"])
+        step = next((s for s in plan.steps if s.id == row["id"]), None) if plan else None
+        return (plan, step) if plan and step else None
+
+    def set_status(self, plan_id: str, status: PlanStatus) -> None:
+        with self.database.connect() as connection:
+            connection.execute("UPDATE plans SET status = ?, updated_at = ? WHERE id = ?", (status.value, _dt(utc_now()), plan_id))
+
+    def update_step(self, step_id: str, **fields: Any) -> None:
+        """Change a step: status, task_id, result, title, detail, owner, needs, depends_on, ability."""
+        allowed = {"status", "task_id", "result", "title", "detail", "owner", "needs", "depends_on", "ability"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"cannot update plan step fields: {sorted(unknown)}")
+        columns, params = [], []
+        for name, value in fields.items():
+            column = {"needs": "needs_json", "depends_on": "depends_json"}.get(name, name)
+            columns.append(f"{column} = ?")
+            params.append(_dump(value) if name in ("needs", "depends_on") else getattr(value, "value", value))
+        now = utc_now()
+        with self.database.connect() as connection:
+            connection.execute(f"UPDATE plan_steps SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(now), step_id))
+            connection.execute(
+                "UPDATE plans SET updated_at = ? WHERE id = (SELECT plan_id FROM plan_steps WHERE id = ?)", (_dt(now), step_id)
+            )
+
+    def claim_step(self, step_id: str, status: StepStatus) -> bool:
+        """Move a pending step to `status` if it is still pending: true for exactly one of several workers that try at once."""
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE plan_steps SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                (status.value, _dt(utc_now()), step_id, StepStatus.PENDING.value),
+            )
+        return cursor.rowcount == 1
+
+    def add_step(self, plan_id: str, step: PlanStep) -> PlanStep:
+        """Append a step at `step.position`, moving later steps down so positions stay 1..n."""
+        with self.database.connect() as connection:
+            connection.execute("UPDATE plan_steps SET position = position + 1 WHERE plan_id = ? AND position >= ?", (plan_id, step.position))
+            self._insert_step(connection, plan_id, step)
+            connection.execute("UPDATE plans SET updated_at = ? WHERE id = ?", (_dt(utc_now()), plan_id))
+        return step
+
+    @staticmethod
+    def _insert_step(connection: sqlite3.Connection, plan_id: str, step: PlanStep) -> None:
+        connection.execute(
+            "INSERT INTO plan_steps (id, plan_id, position, title, detail, owner, needs_json, depends_json, ability, status, task_id, result, "
+            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (step.id, plan_id, step.position, step.title, step.detail, step.owner.value, _dump(step.needs), _dump(step.depends_on),
+             step.ability, step.status.value, step.task_id, step.result, _dt(step.updated_at)),
+        )
+
+    @staticmethod
+    def _row_to_plan(row: sqlite3.Row, step_rows: list[sqlite3.Row]) -> Plan:
+        steps = [
+            PlanStep(
+                id=s["id"], plan_id=s["plan_id"], position=s["position"], title=s["title"], detail=s["detail"],
+                owner=StepOwner(s["owner"]), needs=_load(s["needs_json"], []), depends_on=_load(s["depends_json"], []),
+                ability=s["ability"], status=StepStatus(s["status"]), task_id=s["task_id"], result=s["result"],
+                updated_at=datetime.fromisoformat(s["updated_at"]),
+            )
+            for s in step_rows
+        ]
+        return Plan(
+            id=row["id"], conversation_id=row["conversation_id"], goal=row["goal"], summary=row["summary"],
+            status=PlanStatus(row["status"]), source_task_id=row["source_task_id"], routing=_load(row["routing_json"], {}), steps=steps,
+            created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+
 @dataclass(frozen=True)
 class Repositories:
     conversations: ConversationRepository
@@ -1942,6 +2058,7 @@ class Repositories:
     workflows: WorkflowRepository
     projects: ProjectRepository
     folder_watches: FolderWatchRepository
+    plans: PlanRepository
 
     @classmethod
     def for_database(cls, database: Database) -> "Repositories":
@@ -1962,4 +2079,5 @@ class Repositories:
             workflows=WorkflowRepository(database),
             projects=ProjectRepository(database),
             folder_watches=FolderWatchRepository(database),
+            plans=PlanRepository(database),
         )

@@ -220,6 +220,39 @@ SCHEMA_STATEMENTS = [
         FOREIGN KEY(schedule_id) REFERENCES schedules(id) ON DELETE CASCADE
     )
     """,
+    """
+    CREATE TABLE IF NOT EXISTS plans (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT,
+        goal TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        status TEXT NOT NULL,
+        source_task_id TEXT,
+        routing_json TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    )
+    """,
+    """
+    CREATE TABLE IF NOT EXISTS plan_steps (
+        id TEXT PRIMARY KEY,
+        plan_id TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        title TEXT NOT NULL,
+        detail TEXT NOT NULL,
+        owner TEXT NOT NULL,
+        needs_json TEXT NOT NULL,
+        depends_json TEXT NOT NULL,
+        ability TEXT NOT NULL,
+        status TEXT NOT NULL,
+        task_id TEXT,
+        result TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_plan_steps_plan ON plan_steps(plan_id, position)",
+    "CREATE INDEX IF NOT EXISTS idx_plan_steps_task ON plan_steps(task_id)",
 ]
 
 

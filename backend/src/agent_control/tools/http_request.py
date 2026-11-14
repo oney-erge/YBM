@@ -390,6 +390,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="http.request",
+            group="web",
+            provides=('api', 'rest', 'http', 'endpoint', 'webhook', 'json', 'request', 'call', 'service',),
             capability=Capability.NETWORK_HTTP,
             enabled=enabled,
             description=(

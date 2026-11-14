@@ -313,6 +313,54 @@ class SkillsInput(ToolInputModel):
         return self
 
 
+class AbilitiesInput(ToolInputModel):
+    operation: Literal["search", "describe"] = "search"
+    # search: what is needed, in the user's words. describe: the exact name of one ability from an earlier search.
+    query: str | None = None
+    name: str | None = None
+    limit: int = Field(default=6, ge=1, le=15)
+
+    @model_validator(mode="after")
+    def needs_its_argument(self) -> "AbilitiesInput":
+        if self.operation == "search" and not (self.query or "").strip():
+            raise ValueError("operation=search requires 'query'")
+        if self.operation == "describe" and not (self.name or "").strip():
+            raise ValueError("operation=describe requires 'name'")
+        return self
+
+
+class PlanManageInput(ToolInputModel):
+    operation: Literal["create", "show", "add_step", "update_step", "set_status"] = "show"
+    # create: the goal, a line on what done looks like, and the steps in order. Each step: title, detail, owner (ybm, user or access),
+    # needs (what the user must give or do first), depends_on (positions of earlier steps it waits for), ability (a tool or skill it uses).
+    goal: str | None = None
+    summary: str | None = None
+    steps: list[dict[str, Any]] | None = None
+    # show, add_step, update_step, set_status: which plan (default: the newest in this chat) and which step.
+    plan_id: str | None = None
+    position: int | None = Field(default=None, ge=1)
+    title: str | None = None
+    detail: str | None = None
+    owner: Literal["ybm", "user", "access"] | None = None
+    needs: list[str] | None = None
+    depends_on: list[int] | None = None
+    ability: str | None = None
+    # update_step: done, skipped or pending (what the user told you). set_status: active (start), paused or cancelled.
+    status: Literal["done", "skipped", "pending", "active", "paused", "cancelled"] | None = None
+
+    @model_validator(mode="after")
+    def needs_its_arguments(self) -> "PlanManageInput":
+        if self.operation == "create" and not ((self.goal or "").strip() and self.steps):
+            raise ValueError("operation=create requires 'goal' and 'steps'")
+        if self.operation in ("update_step",) and self.position is None:
+            raise ValueError("operation=update_step requires 'position'")
+        if self.operation == "add_step" and not (self.title or "").strip():
+            raise ValueError("operation=add_step requires 'title'")
+        if self.operation == "set_status" and self.status not in ("active", "paused", "cancelled"):
+            raise ValueError("operation=set_status requires 'status' of active, paused or cancelled")
+        return self
+
+
 class TaskStatusInput(ToolInputModel):
     operation: Literal["status"] = "status"
     limit: int = Field(default=10, ge=1, le=50)
@@ -1048,6 +1096,19 @@ class DependenciesOutput(ToolOutputModel):
     installed: list[str] = Field(default_factory=list)
     allowed_packages: list[str] = Field(default_factory=list)
     target_dir: str | None = None
+
+
+class AbilitiesOutput(ToolOutputModel):
+    operation: Literal["search", "describe"] = "search"
+    summary: str = Field(min_length=1)
+    abilities: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class PlanManageOutput(ToolOutputModel):
+    operation: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    plan_id: str | None = None
+    plan: dict[str, Any] | None = None
 
 
 class SkillsOutput(ToolOutputModel):

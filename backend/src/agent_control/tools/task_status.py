@@ -174,6 +174,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="task.status",
+            group="assistant",
+            provides=('status', 'progress', 'tasks', 'working', 'queue',),
             capability=Capability.AGENT_CORE,
             enabled=enabled,
             description="report current task, plan, active, completed, and blocked state for status questions",

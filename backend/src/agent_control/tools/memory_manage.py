@@ -92,6 +92,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="memory.manage",
+            group="memory",
+            provides=('remember', 'forget', 'fact', 'that', 'note', 'down',),
             capability=Capability.MEMORY_MANAGE,
             enabled=enabled,
             description=(

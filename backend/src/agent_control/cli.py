@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 import os
 from pathlib import Path
 import sys
@@ -34,7 +34,8 @@ from agent_control.channels.whatsapp_notifications import WhatsAppTaskNotifier
 from agent_control.config import AppSettings, backend_base_url, load_settings
 from agent_control.llm import LLMMessageClassifier, build_default_llm_provider
 from agent_control.llm.classifier import MessageClassifier
-from agent_control.llm.decision import build_decision_classifier
+from agent_control.abilities.context import relevant, render as render_notes
+from agent_control.llm.decision import DecisionModelClient, build_decision_classifier
 from agent_control.task_inbox import find_steerable_task
 from agent_control.llm.providers import build_major_llm_provider, build_role_llm_provider
 from agent_control.observation import ArtifactService, ScreenshotService
@@ -485,6 +486,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "plan_parts": settings.operator.plan_parts,
         "voice_pass": settings.operator.voice_pass,
         "heartbeat_seconds": settings.operator.heartbeat_seconds,
+        "ability_notes": _ability_notes(registry, settings),
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
         "auditor": AuditorService(auditor_provider) if auditor_provider else None,
@@ -492,6 +494,19 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "llm_call_max_chars": settings.storage.llm_call_max_chars,
         "redact_patterns": settings.logging.redact_patterns,
     }
+
+
+def _ability_notes(registry, settings: AppSettings) -> Callable[[str], Awaitable[str]] | None:
+    """The function that says what bears on a request and is not in the Operator's tool list (abilities/context.py), or None when off."""
+    catalog = registry.abilities
+    if catalog is None:
+        return None
+    client = DecisionModelClient(settings.decision) if settings.decision.mode != "off" else None
+
+    async def notes(request: str) -> str:
+        return render_notes(await relevant(catalog.index(), request, confirm=client.yes_no if client else None))
+
+    return notes
 
 
 #: How often an idle worker looks for a new task. A task waited, on average, half of this before anything started; 3 s was the default.

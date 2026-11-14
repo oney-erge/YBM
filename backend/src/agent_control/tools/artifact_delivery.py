@@ -433,6 +433,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="artifact.deliver",
+            group="files",
+            provides=('send', 'file', 'screenshot', 'deliver', 'share', 'attach', 'give',),
             capability=Capability.TELEGRAM_SEND,
             enabled=enabled,
             description="list task artifacts and deliver screenshots or files to the source Telegram chat",

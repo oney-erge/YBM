@@ -425,6 +425,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="vscode.copilot_terminal",
+            group="code",
+            provides=('vscode', 'copilot', 'editor', 'terminal', 'prompt',),
             capability=Capability.VSCODE_WRITE_FILES,
             enabled=enabled,
             description="send a prompt to VS Code/Copilot terminal or local Copilot CLI fallback",
@@ -435,6 +437,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="vscode.terminal_command",
+            group="code",
+            provides=('vscode', 'terminal', 'command', 'run', 'editor',),
             capability=Capability.VSCODE_WRITE_FILES,
             enabled=enabled,
             description="queue an explicit terminal command through the VS Code bridge",

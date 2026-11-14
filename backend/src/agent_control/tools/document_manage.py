@@ -574,6 +574,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="document.manage",
+            group="documents",
+            provides=('pdf', 'word', 'docx', 'powerpoint', 'pptx', 'slide', 'deck', 'spreadsheet', 'excel', 'xlsx', 'summarize', 'document', 'report', 'presentation',),
             capability=Capability.FILESYSTEM_WRITE,
             # Reading a document is looking, not changing: available in the
             # Read-only access mode. Creating or revising a presentation is not.

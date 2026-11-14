@@ -1040,6 +1040,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="browser.open",
+            group="web",
+            provides=('website', 'open', 'site', 'browse', 'tab', 'url', 'chrome', 'page', 'web', 'search', 'screenshot',),
             capability=Capability.BROWSER_OPEN,
             enabled=open_enabled,
             description=(
@@ -1088,6 +1090,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="browser.control",
+            group="web",
+            provides=('click', 'fill', 'form', 'sign', 'up', 'register', 'log', 'in', 'login', 'submit', 'navigate', 'account', 'website',),
             capability=Capability.BROWSER_CONTROL,
             enabled=control_enabled,
             description="navigate, close tabs, click elements, and fill simple forms in Chrome through DevTools",

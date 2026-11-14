@@ -150,6 +150,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="dependencies.install",
+            group="code",
+            provides=('install', 'package', 'pip', 'library', 'module', 'dependency',),
             capability=Capability.DEPENDENCIES_INSTALL,
             enabled=enabled,
             description=(

@@ -448,6 +448,10 @@ class CodingAgentAdapter:
             return [executable, "copilot", "--", *args]
         return [executable, *args]
 
+    def providers_available(self) -> tuple[str, ...]:
+        """The coding agents (codex, github_copilot, claude_code) whose command-line tool is installed on this machine."""
+        return tuple(provider for provider in PROVIDERS if self._executable(provider))
+
     def _executable(self, provider: str) -> str | None:
         configured = {
             "codex": self.config.codex_path,
@@ -1070,6 +1074,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="coding.agent",
+            group="code",
+            provides=('code', 'program', 'build', 'implement', 'refactor', 'fix', 'bug', 'app', 'website', 'repository', 'claude', 'codex', 'copilot', 'develop', 'software',),
             capability=Capability.TERMINAL_RUN,
             enabled=enabled,
             description=(

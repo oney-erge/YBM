@@ -531,6 +531,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     definitions.append(
         ToolDefinition(
             name="computer.use",
+            group="desktop",
+            provides=('click', 'type', 'open', 'app', 'press', 'key', 'screen', 'window', 'mouse', 'keyboard', 'desktop', 'control',),
             capability=Capability.DESKTOP_CONTROL,
             enabled=enabled,
             description="observe and control the local Windows desktop with bounded screenshot/action loops",
