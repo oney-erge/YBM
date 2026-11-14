@@ -30,6 +30,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - `scripts/e2e_scorecard.py` prints each case's own history across runs (oldest first), what each suite is for, and which cases are flaky, so a score is only compared with itself.
   The run summary has an "Answer at" column: when the answer reached the person (the last message that is not an edit of a progress line). A chat reply showed 67 s in the summaries
   because the runner waits that long to see whether a task starts; the audit log says the answer went out 1 to 6 s after the message.
+- Jobs that take hours, research first (`jobs/`, `tools/job_manage.py`, phase 3 of the ultimate-assistant plan). "Read a hundred sources about heat pumps and come back to me" starts a job the
+  person approves; the worker then carries it out one small unit at a time (plan the questions, search, read one page, take notes, write a section), only when no task is waiting, saving after every unit
+  so a restart, a pause or a question in between loses nothing. Nothing is trusted that can be checked: a note is a claim with the exact words from the page, and a claim whose quotation is not in the page
+  is dropped; a section is written from numbered notes and a citation to a number that was not given is removed; a question no source answered is said to be unanswered. It messages the person
+  as it goes and ends with a cited Markdown report sent to the chat. `job.manage` has `start_research` (approval-gated), `status`, `pause`, `resume`, `stop`; the skill `Research a topic in depth`
+  (`when:` question measured: 7 of 7 phrasings at 0.84 to 0.97, ordinary requests at most 0.26) puts it in front of the Operator. Off in the code's defaults like plans (`jobs.enabled`); the shipped config turns it on.
 - A script that fails for want of a package `dependencies.install` may install is told to install it (`tools/code_interpreter.py`), not to do without: the hint names the package
   (`python-docx` for `docx`, `python-pptx` for `pptx`), says the user is asked first, and to add the install folder to `sys.path`. It reads the pandas wording too ("Missing optional
   dependency 'openpyxl'"). With the installer off or the package not on the allowlist the old advice stands. In the second challenge run the model gave up on adding a row to a

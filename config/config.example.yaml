@@ -282,6 +282,14 @@ abilities:
 plans:
   enabled: true
 
+# Jobs that take hours ("read a hundred sources about heat pumps and come back to me"): `job.manage` starts one after you approve it, and the worker carries
+# it out one small unit at a time whenever nothing else is running, saving after every unit, so a restart or a question in between loses nothing. It messages
+# you as it goes and ends with a cited report. Needs web search and the public web read tool (both on by default). Install "Research a topic in depth".
+jobs:
+  enabled: true
+  default_pages: 60   # pages a research job reads when you give no number
+  max_pages: 150      # the most it ever reads
+
 # Looking at pictures (a photo you send, a screenshot) with a local vision model through LocalDeploy. The assistant's own model reads
 # text only. Each use asks you first, because it loads a model of about 3 GB. Nothing leaves this computer.
 vision:

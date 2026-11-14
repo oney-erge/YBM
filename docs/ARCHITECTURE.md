@@ -259,6 +259,23 @@ words they offer ("done", "skip"), and it does not expire after a day the way a 
 (`skills/starter/`) tells the Operator how to draft one: ask one question first when the goal is vague, give every step an owner, never plan
 for the assistant to pay.
 
+### Jobs: work that takes hours
+
+"Read a hundred sources about heat pumps and come back to me" is not a task or a plan: it is hours of small steps (search, read one page, take notes, write a
+section) between which the person may ask something else, pause it, or restart the computer. A 9B model cannot hold that in its head, so the job holds it
+in saved state and shows the model one small thing at a time.
+
+| Module | What it is |
+|---|---|
+| `jobs/model.py`, `storage/repositories.py` `JobRepository` | `Job`: a kind, a goal, a status (running, paused, done, failed, cancelled), the engine's state as data, and where its messages go. One table, `background_jobs`; the state is saved after every unit. |
+| `jobs/research.py` | The research engine. `advance` does exactly one unit: plan the questions, search one question, read one page, write one section, or finish. A note is a claim and a quotation, and the quotation must be in the page text or the claim is dropped; a section is written from numbered notes alone and a citation to a number that was not given is removed; a question no source answered is reported as unanswered. The model, the search and the page read are passed in, so it is the same in a test and on the laptop. |
+| `jobs/io.py` | The real ones: the Operator's model, the `web.search` adapter and the `http.request` adapter (public websites only, every redirect checked), and the reduction of a page to its visible text. |
+| `jobs/runner.py` | One unit of the oldest running job per worker pass, and only when no task is waiting, so a question asked in the middle of a six-hour job is answered at once. It keeps no state of its own; five failed units in a row stop the job with what it has. The report is written to `.agent_control/jobs/<id>/report.md` and sent to the chat. |
+| `tools/job_manage.py` | `job.manage`: `start_research` (approval-gated, with a sentence that says what it will do), `status` ("how far are you?"), `pause`, `resume`, `stop`. At most two open jobs in a chat. |
+
+The skill `Research a topic in depth` (`skills/starter/`, `ask: always`, its `when:` question measured at 0.6) tells the Operator to start a job for a request that wants thorough
+research instead of answering from a few searches.
+
 ### Gaming mode
 
 The person can say they are about to play (`channels/gaming_command.py`: "gaming mode", "I'm about to play a game", "free up the GPU") and the

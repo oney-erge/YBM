@@ -34,6 +34,7 @@ from agent_control.schemas import (
     ToolResultStatus,
     utc_now,
 )
+from agent_control.jobs.model import Job, JobStatus
 from agent_control.plans.model import Plan, PlanStatus, PlanStep, StepOwner, StepStatus
 from agent_control.storage.database import Database
 from agent_control.storage.redaction import redact_text
@@ -1925,6 +1926,60 @@ class AuditRepository:
         )
 
 
+class JobRepository:
+    """Jobs (jobs/model.py): work that takes hours, saved after every unit so a restart picks it up where it stopped."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, job: Job) -> Job:
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO background_jobs (id, kind, goal, status, state_json, routing_json, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (job.id, job.kind, job.goal, job.status.value, _dump(job.state), _dump(job.routing), _dt(job.created_at), _dt(job.updated_at)),
+            )
+        return self.get(job.id) or job
+
+    def get(self, job_id: str) -> Job | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM background_jobs WHERE id = ?", (job_id,)).fetchone()
+        return self._row_to_job(row) if row is not None else None
+
+    def list(self, *, statuses: list[JobStatus] | None = None, chat_id: str | None = None, limit: int = 50) -> list[Job]:
+        clauses, params = [], []
+        if statuses:
+            clauses.append(f"status IN ({','.join('?' * len(statuses))})")
+            params.extend(status.value for status in statuses)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        with self.database.connect() as connection:
+            rows = connection.execute(f"SELECT * FROM background_jobs {where} ORDER BY created_at, rowid LIMIT ?", (*params, limit * 4 if chat_id else limit)).fetchall()
+        jobs = [self._row_to_job(row) for row in rows]
+        if chat_id is not None:
+            jobs = [job for job in jobs if job.routing.get("source_chat_id") == chat_id]
+        return jobs[:limit]
+
+    def save(self, job_id: str, *, state: dict[str, Any] | None = None, status: JobStatus | None = None) -> None:
+        """Keep a job's state and, when it changes, its status. The one write after every unit of work."""
+        columns, params = [], []
+        if state is not None:
+            columns.append("state_json = ?")
+            params.append(_dump(state))
+        if status is not None:
+            columns.append("status = ?")
+            params.append(status.value)
+        if not columns:
+            return
+        with self.database.connect() as connection:
+            connection.execute(f"UPDATE background_jobs SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(utc_now()), job_id))
+
+    @staticmethod
+    def _row_to_job(row: Any) -> Job:
+        return Job(
+            id=row["id"], kind=row["kind"], goal=row["goal"], status=JobStatus(row["status"]), state=_load(row["state_json"], {}),
+            routing=_load(row["routing_json"], {}), created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+        )
+
+
 class PlanRepository:
     """Plans and their steps (plans/model.py). A plan outlives the tasks it starts, so it is stored on its own, not inside a task."""
 
@@ -2059,6 +2114,7 @@ class Repositories:
     projects: ProjectRepository
     folder_watches: FolderWatchRepository
     plans: PlanRepository
+    jobs: JobRepository
 
     @classmethod
     def for_database(cls, database: Database) -> "Repositories":
@@ -2080,4 +2136,5 @@ class Repositories:
             projects=ProjectRepository(database),
             folder_watches=FolderWatchRepository(database),
             plans=PlanRepository(database),
+            jobs=JobRepository(database),
         )

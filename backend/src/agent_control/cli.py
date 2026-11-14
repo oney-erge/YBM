@@ -51,6 +51,8 @@ from agent_control.recovery import RetryPolicy
 from agent_control.heartbeat import run_heartbeat_forever
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
+from agent_control.jobs.io import build_io as build_job_io
+from agent_control.jobs.runner import JobRunner
 from agent_control.plans.context import open_plan_note
 from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
@@ -482,6 +484,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
             if settings.plans.enabled
             else None
         ),
+        "job_runner": _job_runner(settings, repositories, audit, registry, notification_sink, operator_provider),
         "task_budget_seconds": float(settings.limits.task_budget_seconds),
         "operator": (
             OperatorLoopService(
@@ -535,6 +538,15 @@ def _task_notes(
         return text, route
 
     return notes
+
+
+def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditLogger, registry, sink, provider) -> JobRunner | None:
+    """Carries long jobs (jobs/) forward one unit at a time between tasks; None when jobs are off or the model, the search or the web read is missing."""
+    search, fetch = registry.adapters.get("web.search"), registry.adapters.get("http.request")
+    if not settings.jobs.enabled or provider is None or search is None or fetch is None:
+        return None
+    io = build_job_io(provider, search, fetch)
+    return JobRunner(repositories, audit, lambda _job: io, say=sink.say, send_file=sink.send_file, reports_dir=settings.jobs.reports_dir)
 
 
 def _gpu_hold(settings: AppSettings) -> Callable[[], bool]:
@@ -813,6 +825,19 @@ class RoutingNotificationSink:
             await notifier.say(routing, text, reply_markup)
         except Exception as exc:  # noqa: BLE001
             self.audit.append(AuditEventType.ERROR, actor="notifier", payload={"error": "say_failed", "reason": str(exc)})
+
+    async def send_file(self, routing: dict[str, str], path: str, caption: str = "") -> None:
+        """A file to the chat a job belongs to (the report a research job ends with). Best effort, like every notification."""
+        if routing.get("source_channel", ChannelType.TELEGRAM.value) != ChannelType.TELEGRAM.value or not routing.get("source_chat_id"):
+            return
+        client = _telegram_client(self.settings, self.audit)
+        if client is None:
+            return
+        try:
+            await client.send_document_file(routing["source_chat_id"], path, caption)
+        except Exception as exc:  # noqa: BLE001
+            self.audit.append(AuditEventType.ERROR, actor="notifier", payload={"error": "send_file_failed", "reason": str(exc)})
+            raise
 
     async def notify(self, task: TaskRecord) -> None:
         source_channel = task.metadata.get("source_channel") or ChannelType.TELEGRAM.value

@@ -232,6 +232,7 @@ _PHRASES: dict[tuple[str, str], str] = {
     ("computer.use", ""): "looking at your screen",
     ("memory.manage", ""): "checking what I know about you",
     ("schedule.manage", ""): "setting up the reminder",
+    ("job.manage", ""): "setting up a long job",
     ("artifact.deliver", ""): "getting the file ready to send",
     ("task.status", ""): "checking on your tasks",
     ("knowledge.search", ""): "searching your notes",
@@ -368,5 +369,8 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
     if tool == "image.describe":
         name = str(data.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1] or "a picture"
         return f"Load a vision model to look at {name} (about 3 GB of GPU memory; the picture stays on this computer)"
+    if tool == "job.manage" and operation == "start_research":
+        pages = f"up to {data['max_pages']} pages" if data.get("max_pages") else "many pages"
+        return f"Research this in depth, reading {pages} over a few hours, and message you as I go: {' '.join(str(data.get('goal') or '').split())[:160]}"
     phrase = progress_phrase(tool, operation, data)
     return phrase[:1].upper() + phrase[1:]
