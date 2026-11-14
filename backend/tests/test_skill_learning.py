@@ -23,13 +23,21 @@ from agent_control.tools.skills import _load_skills
 
 
 class StubProvider:
+    """Answers the way the model is asked to: a verdict and a procedure. "NONE" stands for a one-off; anything that is not JSON for a
+    reply the schema could not hold (the provider raises, as a structured call that cannot be validated does)."""
+
     def __init__(self, reply: str) -> None:
         self.reply = reply
         self.calls = 0
 
-    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+    async def generate_structured(self, system_prompt: str, user_prompt: str, schema, **kwargs):
         self.calls += 1
-        return self.reply
+        if self.reply.upper() == "NONE":
+            return schema(worth_keeping=False)
+        try:
+            return schema(worth_keeping=True, **json.loads(self.reply))
+        except ValueError as exc:
+            raise RuntimeError("the reply did not fit the schema") from exc
 
 
 def _config(tmp_path, *, learning: bool = True) -> SkillsAdapterConfig:

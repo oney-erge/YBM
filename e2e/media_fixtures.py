@@ -6,6 +6,7 @@ runner skips the cases that need it instead of failing them.
 
 from __future__ import annotations
 
+import os
 import random
 import subprocess
 from pathlib import Path
@@ -22,12 +23,7 @@ def _font(size: int, *, japanese: bool = False):
             candidate = folder / name
             if candidate.exists():
                 return ImageFont.truetype(str(candidate), size)
-    if japanese:
-        return None
-    try:
-        return ImageFont.load_default(size=size)
-    except TypeError:  # Pillow before 10.1 draws only the small built-in font
-        return ImageFont.load_default()
+    return None if japanese else ImageFont.load_default(size=size)
 
 
 def text_image(path: Path, lines: list[str], *, size: tuple[int, int] = (900, 560), font_size: int = 38, japanese: bool = False) -> bool:
@@ -100,13 +96,13 @@ def speak_wav(path: Path, text: str) -> bool:
     """Speech as a WAV, from the voice Windows already has. False when there is none (other systems, or no voice)."""
     script = (
         "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-        "$s.Rate = -1; $s.SetOutputToWaveFile($args[0]); $s.Speak($args[1]); $s.Dispose()"
+        "$s.Rate = -1; $s.SetOutputToWaveFile($env:YBM_FIXTURE_WAV); $s.Speak($env:YBM_FIXTURE_TEXT); $s.Dispose()"
     )
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         done = subprocess.run(
-            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script, str(path), text],
-            capture_output=True, text=True, timeout=120,
+            ["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+            capture_output=True, text=True, timeout=120, env={**os.environ, "YBM_FIXTURE_WAV": str(path), "YBM_FIXTURE_TEXT": text},
         )
     except (OSError, subprocess.TimeoutExpired):
         return False

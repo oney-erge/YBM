@@ -25,6 +25,8 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from agent_control.config import SkillsAdapterConfig
 from agent_control.schemas import TaskRecord, TaskStatus, new_id, utc_now
 from agent_control.tools.skills import _load_skills, write_skill_file
@@ -35,18 +37,23 @@ MIN_STEPS_FOR_A_SKILL = 3
 
 SKILL_SYSTEM_PROMPT = """You write short reusable procedures from a task that already succeeded.
 
-Return ONLY compact JSON:
-{"name": "...", "description": "...", "body": "..."}
-or NONE.
-
 - name: 3-5 words, the KIND of job, never this one instance
   (good "Invoice Total Extraction" / bad "Extract total from march-invoice.pdf")
 - description: one line on when to use it
 - body: numbered steps, naming the tools and operations that worked, written
   so they apply to the next job of this kind - no paths, dates or values from
   this specific run
-- NONE when this was a one-off, trivial, or too specific to generalise.
-  Prefer NONE: a catalog of near-duplicates is worse than a small one."""
+- worth_keeping: false when this was a one-off, trivial, or too specific to generalise.
+  Prefer false: a catalog of near-duplicates is worse than a small one."""
+
+
+class _Proposal(BaseModel):
+    """A schema, because a small model asked for JSON in free text answered in sentences or wrapped it in prose."""
+
+    worth_keeping: bool = Field(description="true only when the steps are a procedure that will apply to the next job of this kind")
+    name: str = Field(default="", description="3 to 5 words, the kind of job")
+    description: str = Field(default="", description="one line on when to use it")
+    body: str = Field(default="", description="numbered steps, naming the tools and operations that worked")
 
 
 @dataclass
@@ -162,21 +169,11 @@ async def propose_from_task(provider: Any, config: SkillsAdapterConfig, task: Ta
     )
     prompt = f"Objective: {task.objective}\n\nSteps that worked:\n{rendered}"
     try:
-        raw = await provider.generate_text(SKILL_SYSTEM_PROMPT, prompt[:4000])
+        proposal = await provider.generate_structured(SKILL_SYSTEM_PROMPT, prompt[:4000], _Proposal, temperature=0.0)
     except Exception:  # noqa: BLE001 - never fail a finished task over this
         return None
-    text = (raw or "").strip()
-    if not text or text.upper().startswith("NONE"):
-        return None
-    try:
-        start, end = text.index("{"), text.rindex("}") + 1
-        payload = json.loads(text[start:end])
-    except (ValueError, json.JSONDecodeError):
-        return None
-    name = str(payload.get("name") or "").strip()
-    description = str(payload.get("description") or "").strip()
-    body = str(payload.get("body") or "").strip()
-    if not (name and description and body):
+    name, description, body = proposal.name.strip(), proposal.description.strip(), proposal.body.strip()
+    if not (proposal.worth_keeping and name and description and body):
         return None
     return SkillSuggestionStore.load(config).add(name, description, body, task)
 

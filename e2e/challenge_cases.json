@@ -26,7 +26,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -45,7 +46,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "here is the audio",
@@ -275,7 +277,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -310,7 +313,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -346,7 +350,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -381,7 +386,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -416,7 +422,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -435,7 +442,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -470,7 +478,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -506,7 +515,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -542,7 +552,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "the backup failed because",
@@ -579,7 +590,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -616,7 +628,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "I bought",
@@ -654,7 +667,8 @@
     "assertions": {
       "final_status_in": [
         "completed",
-        "clarifying"
+        "clarifying",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -694,7 +708,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "I deleted",
@@ -732,7 +747,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -751,7 +767,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -788,7 +805,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_contains_any": [
         "lentil",
@@ -833,7 +851,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -852,7 +871,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -891,7 +911,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -910,7 +931,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -928,7 +950,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -1043,7 +1066,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1111,7 +1135,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1159,7 +1184,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1277,7 +1303,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1312,7 +1339,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1445,7 +1473,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1464,7 +1493,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -1576,7 +1606,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -1611,7 +1642,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_contains_any": [
         "pay",

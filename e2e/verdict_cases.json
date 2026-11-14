@@ -24,7 +24,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "voice message sent",
@@ -140,7 +141,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "I called",
@@ -180,7 +182,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -216,7 +219,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -287,7 +291,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "I ordered",
@@ -327,7 +332,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "I sent the email",
@@ -534,7 +540,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -573,7 +580,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -592,7 +600,8 @@
           "final_status_in": [
             "completed",
             "clarifying",
-            "blocked"
+            "blocked",
+            "chat"
           ],
           "bot_reply_excludes_all": [
             "task_",
@@ -635,7 +644,8 @@
       "final_status_in": [
         "completed",
         "clarifying",
-        "blocked"
+        "blocked",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",
