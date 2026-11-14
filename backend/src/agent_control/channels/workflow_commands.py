@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 
+from agent_control import cadence as calendar
 from agent_control.schemas import (
     AuditEventType, ChannelType, InboundMessage, OutboundMessage, TaskRecord, TaskStatus, TaskWorkflow,
 )
@@ -40,7 +41,7 @@ _SCHEDULE = re.compile(
     r"(?:\s+(?:with|using|for)\s+(?P<values>.+?))?\s*[.!]*\s*$",
     re.IGNORECASE,
 )
-#: Words that say when, which the scheduler cannot do yet (it repeats on an interval, with no time of day or weekday).
+#: Words that say when. cadence.py turns the ones that name days or a time of day into a schedule; what it cannot read is explained.
 _WHEN_WORDS = re.compile(r"\b(?:every|each|daily|weekly|monthly|weekdays?|mondays?|tuesdays?|wednesdays?|thursdays?|fridays?|saturdays?|sundays?|nightly|hourly)\b|\bat\s+\d", re.IGNORECASE)
 DEFAULT_TIMEZONE = "America/Chicago"
 _PAIR = re.compile(r"(\w+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^,;]+)")
@@ -217,10 +218,13 @@ def workflow_command_reply(
         own = set(_norm(workflow.name).split()) if workflow is not None else set()
         rest = " ".join(w for w in (match.group("name") or "").split() if _norm(w) not in own)
         if workflow is not None and _WHEN_WORDS.search(rest):
-            # "run steam count every Monday at 9": the scheduler repeats on an interval, with no weekday or time of day, and
-            # running it now would be the wrong reading of a request to run it later.
-            return _reply(inbound, "I can repeat a workflow daily, weekly, or every N minutes, hours, days or weeks, but not on a particular "
-                                   f"weekday or at a time of day yet. For example: run {workflow.name} every 2 days.")
+            # "run steam count every Monday at 9" is a schedule. Running it now would be the wrong reading of a request to run it later,
+            # so what cannot be read as one is explained and nothing runs.
+            if (spoken := calendar.from_text(rest)) is not None:
+                return _schedule(repositories, audit, inbound, workflow, spoken, match.group("values"))
+            return _reply(inbound, "I can repeat a workflow daily, weekly, every N minutes, hours, days or weeks, or on days of the week at a "
+                                   f"time, but I could not tell which days you mean. For example: run {workflow.name} every monday at 9am, "
+                                   f"or run {workflow.name} every 2 days.")
         if workflow is not None:
             return _run(repositories, audit, inbound, conversation_id, workflow, match.group("values"))
     return None
