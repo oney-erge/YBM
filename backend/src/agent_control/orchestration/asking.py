@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from agent_control.orchestration import ladder
-from agent_control.orchestration.call_rewrites import known_written_file_path
+from agent_control.orchestration.call_rewrites import exact_delivery_call, known_written_file_path
 from agent_control.orchestration.check_entries import CHECK_ENTRY_NAMES
 from agent_control.orchestration.fulfillment import (
     validate_fulfillment,
@@ -117,9 +117,10 @@ def clarification_recovery_reason(
     if PostconditionType.ARTIFACT_DELIVERED in missing:
         output_path = known_written_file_path(task, history)
         if output_path:
+            call = exact_delivery_call(task, history)
             return (
                 f"artifact delivery is still required and the successful write already provides "
-                f"the exact path {output_path!r}; use the delivery tool"
+                f"the exact path {output_path!r}; send it with this call, as written: {call}"
             )
     if PostconditionType.ADAPTER_PROPOSAL in missing and _request_has_named_adapter(task):
         return (

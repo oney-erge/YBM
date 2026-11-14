@@ -36,7 +36,11 @@ from pathlib import Path
 class Hardware:
     detected: bool
     gpu_name: str | None = None
+    #: The graphics memory a model could use now (free when the server says so): what decides which local model fits.
     vram_gb: float | None = None
+    #: The card's own total. "Can this computer run a 70B model?" is about this, not about what is free right now: the live answer quoted
+    #: 1.7 GB free as if it were the card, on an 8 GB card.
+    vram_total_gb: float | None = None
     ram_gb: float | None = None
     #: Why detection gave up, shown to the user rather than swallowed.
     reason: str | None = None
@@ -47,6 +51,7 @@ class Hardware:
             "detected": self.detected,
             "gpu_name": self.gpu_name,
             "vram_gb": self.vram_gb,
+            "vram_total_gb": self.vram_total_gb,
             "ram_gb": self.ram_gb,
             "reason": self.reason,
             "notes": list(self.notes),
@@ -164,6 +169,7 @@ def _from_localdeploy(payload: dict) -> Hardware | None:
         detected=True,
         gpu_name=best.get("name"),
         vram_gb=usable_gb,
+        vram_total_gb=round(total_mb / 1024, 1) if isinstance(total_mb, (int, float)) and total_mb else None,
         ram_gb=ram_gb,
         notes=notes,
     )
@@ -221,7 +227,7 @@ def probe() -> Hardware:
         return Hardware(detected=True, ram_gb=ram, notes=notes)
 
     name, vram = gpu
-    return Hardware(detected=True, gpu_name=name, vram_gb=vram, ram_gb=ram, notes=notes)
+    return Hardware(detected=True, gpu_name=name, vram_gb=vram, vram_total_gb=vram, ram_gb=ram, notes=notes)
 
 
 #: Rough VRAM needed per preset, in GB. Weights plus KV cache plus overhead at

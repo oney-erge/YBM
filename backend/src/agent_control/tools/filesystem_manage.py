@@ -96,7 +96,10 @@ class FilesystemManageAdapter:
             return failed_result(request, f"filesystem operation failed: {exc}")
 
         output["operation"] = operation
-        output["with_dates"] = bool(request.input.get("with_dates"))
+        # A listing says when each file was modified unless the call says not to. It was off unless the request used a word for recency
+        # (newest, latest, oldest), so "which files are older than a year?" got sizes only and the model asked the person which files were old
+        # (the sealed Verdict run, 11/14). A date costs a few tokens a line; a question about time that cannot be answered costs the answer.
+        output["with_dates"] = bool(request.input.get("with_dates", operation in _DATED_LISTINGS))
         output["terminal_output"] = [_terminal_output(operation, output)]
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
@@ -821,6 +824,9 @@ def _type_bucket(path: Path) -> str:
 def _extension_bucket(path: Path) -> str:
     return path.suffix.lower().lstrip(".") or "no_extension"
 
+
+#: The operations whose listing of files carries each file's modified time by default.
+_DATED_LISTINGS = frozenset({"inspect_folder", "search"})
 
 #: Formats that are not text. Text written to one makes a file that will not open, and over an existing one destroys it.
 _NOT_TEXT_EXTENSIONS = frozenset({

@@ -493,11 +493,12 @@ async def test_a_large_file_is_not_read_by_the_text_search(tmp_path) -> None:
 
 
 
-# ---- modified times, shown only when the request is about which file is newest or oldest -----------------------------
+# ---- modified times, shown in a listing unless the call says not to ---------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_a_listing_shows_modified_times_only_when_asked(tmp_path) -> None:
+async def test_a_listing_shows_modified_times_unless_the_call_turns_them_off(tmp_path) -> None:
+    """"Which files are older than a year?" got sizes only, and the model asked the person which files were old (the sealed Verdict run, 11/14)."""
     import os
 
     old, new = tmp_path / "old.md", tmp_path / "latest.md"
@@ -507,12 +508,18 @@ async def test_a_listing_shows_modified_times_only_when_asked(tmp_path) -> None:
     os.utime(new, (1_767_225_600, 1_767_225_600))  # 2026-01-01
     adapter = FilesystemManageAdapter([str(tmp_path)])
 
-    plain = await adapter.execute(_request(tmp_path, "inspect_folder"))
-    dated = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=True))
+    plain = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=False))
+    dated = await adapter.execute(_request(tmp_path, "inspect_folder"))
+    explicit = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=True))
+    searched = await adapter.execute(_request(tmp_path, "search", query="md"))
+    written = await adapter.execute(_request(tmp_path, "write_text_file", path=str(tmp_path / "w.txt"), content="x"))
 
     plain_text = plain.output["terminal_output"][0]["content"]
     dated_text = dated.output["terminal_output"][0]["content"]
-    assert ", modified " not in plain_text and "- [file] latest.md (1 bytes)" in plain_text  # the text every recording was made from
+    assert ", modified " not in plain_text and "- [file] latest.md (1 bytes)" in plain_text  # with_dates false: sizes only, as before
+    assert explicit.output["terminal_output"][0]["content"] == dated_text
+    assert ", modified " in searched.output["terminal_output"][0]["content"]  # a search lists the same way
+    assert ", modified " not in written.output["terminal_output"][0]["content"]  # a write result is not a listing
     assert "- [file] old.md (1 bytes, modified 2020-01-01 00:00 UTC)" in dated_text
     assert "- [file] latest.md (1 bytes, modified 2026-01-01 00:00 UTC)" in dated_text
 

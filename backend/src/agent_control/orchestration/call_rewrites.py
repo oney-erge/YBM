@@ -13,6 +13,7 @@ for `call_policy` instead of changing the call.
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import re
@@ -805,6 +806,21 @@ def known_written_file_path(task: TaskRecord, history: list[dict[str, Any]]) -> 
         if isinstance(values, list) and values:
             return str(values[-1])
     return None
+
+
+def exact_delivery_call(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
+    """The call that sends the file this task made, written out, or None when the task made no file.
+
+    "Use the delivery tool" was said to the model three times in the sealed Verdict run while it held `file_sizes_chart.png`, and it read the
+    picture, described it, and asked where to save it: a 9B model told which tool to use still has to work out the operation and the path. The
+    call written out is one it can copy. A script the interpreter wrote to make the file is not what the person asked for, so a file that is
+    not a `.py` is preferred.
+    """
+    made = [str(item) for item in task.metadata.get("files_created") or [] if str(item).strip()]
+    path = next((name for name in reversed(made) if not name.lower().endswith(".py")), None) or known_written_file_path(task, history)
+    if not path:
+        return None
+    return json.dumps({"tool_name": "artifact.deliver", "tool_input": {"operation": "send_file", "path": path}}, ensure_ascii=False)
 
 
 #: History status of a side-effecting call that was not run again because it already succeeded.

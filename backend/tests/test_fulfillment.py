@@ -642,3 +642,24 @@ def test_applied_moves_count_even_when_a_listing_came_after() -> None:
     assert not _postcondition_satisfied(failed, PostconditionType.FILE_ORGANIZATION)
     changed = _organize_task([], {"changed_paths": ["Downloads/Documents/q3-report.pdf"]})
     assert _postcondition_satisfied(changed, PostconditionType.FILE_ORGANIZATION)
+
+
+def test_a_missing_delivery_is_told_with_the_exact_call_to_make() -> None:
+    """The sealed Verdict run (d3): "use the delivery tool" was said three times while the chart sat in the workspace; the guidance for a missing
+    delivery was keyed `..._delivered_missing`, the gap is `..._delivery_missing`, so the model only ever got the generic fallback."""
+    from agent_control.orchestration.call_rewrites import exact_delivery_call
+    from agent_control.orchestration.fulfillment import fulfillment_guidance
+    from agent_control.schemas import TaskRecord
+
+    gap = "expected_artifact_delivery_missing"
+    assert "generic" not in fulfillment_guidance(gap).lower() and "artifact.deliver" in fulfillment_guidance(gap)  # the key matches the gap code now
+
+    task = TaskRecord(objective="Draw a bar chart of the file sizes and send it to me as an image.",
+                      metadata={"files_created": ["generate_bar_chart.py", "file_sizes_chart.png"], "files_modified": ["generate_bar_chart.py"]})
+    call = exact_delivery_call(task, [])
+    assert call == '{"tool_name": "artifact.deliver", "tool_input": {"operation": "send_file", "path": "file_sizes_chart.png"}}'  # not the script
+    assert call in fulfillment_guidance(gap, call) and "as written" in fulfillment_guidance(gap, call)
+    assert exact_delivery_call(TaskRecord(objective="x", metadata={}), []) is None  # nothing was made: nothing to send
+    # a file the interpreter made only as a script is not offered as the thing to send when a written file is known
+    written = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "write_text_file", "path": "C:\out\notes.txt"}}]
+    assert "notes.txt" in (exact_delivery_call(TaskRecord(objective="x", metadata={}), written) or "")

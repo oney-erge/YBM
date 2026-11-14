@@ -22,6 +22,7 @@ from agent_control.orchestration.number_check import (
     ungrounded_numbers,
 )
 from agent_control.orchestration.repeats import repeated_no_progress_call
+from agent_control.orchestration.request_facts import RequestFacts
 from agent_control.orchestration.task_record import claude_code_decision
 from agent_control.schemas import (
     AuditEventType,
@@ -67,7 +68,7 @@ class GuardStage:
         request = " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
         if ungrounded_addresses(request, answer, history, memory_context):
             return False
-        return not ungrounded_numbers(request, answer, history)
+        return not ungrounded_numbers(request, answer, history, counts=RequestFacts.from_task(task).counts_things)
 
     def _values_no_tool_produced(
         self, task: TaskRecord, history: list[dict[str, Any]], answer: str | None, copied_from_results: bool
@@ -85,7 +86,7 @@ class GuardStage:
         numbers: list[str] = []
         interpreter = self.executor.tool_definitions.get("code.interpreter")
         if interpreter is not None and interpreter.enabled:
-            numbers = ungrounded_numbers(request, answer, history)
+            numbers = ungrounded_numbers(request, answer, history, counts=RequestFacts.from_task(task).counts_things)
         return addresses, numbers
 
     def _audit_rewrite_adds_no_wrong_value(
@@ -110,7 +111,8 @@ class GuardStage:
             return False
         interpreter = self.executor.tool_definitions.get("code.interpreter")
         if interpreter is not None and interpreter.enabled:
-            return not (set(ungrounded_numbers(request, reworded, history)) - set(ungrounded_numbers(request, original, history)))
+            counts = RequestFacts.from_task(task).counts_things
+            return not (set(ungrounded_numbers(request, reworded, history, counts=counts)) - set(ungrounded_numbers(request, original, history, counts=counts)))
         return True
 
     def _offer_finish_or_block(

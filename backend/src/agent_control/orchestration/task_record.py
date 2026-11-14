@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import json
-import re
 from typing import Any
 
 from agent_control.orchestration.asking import users_own_words
 from agent_control.orchestration.auditor import RAW_OUTPUT_CHARS, AuditorService
 from agent_control.orchestration.check_entries import CHECK_ENTRY_NAMES
+from agent_control.orchestration.finishing import without_program_labels
 from agent_control.orchestration.repeats import REPEAT_SENSITIVE_EFFECTS
 from agent_control.schemas import (
     OperatorAction,
@@ -46,16 +46,6 @@ def normalization_history_fields(
     }
 
 
-#: The lines a tool writes for a program, not for a person: "Code interpreter operation completed: run_python", "Workspace: <folder>",
-#: "Backend: local_subprocess (not sandboxed)", "Script: <path>", "Return code: 0". Live, a task that had only searched listed them as what it
-#: had done: "Done: - Code interpreter operation completed: run_python Workspace: task_task_eb3c... Backend: local_subprocess".
-_PROGRAM_LABEL = re.compile(r"^(?:\w[\w ]* operation completed: \w+|(?:Workspace|Backend|Script|Return code): .*)$")
-
-
-def _without_program_labels(text: str) -> str:
-    return "\n".join(line for line in text.split("\n") if not _PROGRAM_LABEL.match(line.strip()))
-
-
 def answer_from_results(history: list[dict[str, Any]], question: str | None) -> str:
     """What the task did, in its own successful results, and the question the model still had.
 
@@ -75,7 +65,7 @@ def answer_from_results(history: list[dict[str, Any]], question: str | None) -> 
         ) in REPEAT_SENSITIVE_EFFECTS
     ]
     done = list(dict.fromkeys(
-        " ".join(_without_program_labels(str(entry["output_summary"])).split())[:300] for entry in (changed or succeeded[-1:])
+        " ".join(without_program_labels(str(entry["output_summary"])).split())[:300] for entry in (changed or succeeded[-1:])
     ))
     done = [line for line in done if line]
     asked = " ".join(str(question or "").split())

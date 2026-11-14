@@ -102,3 +102,20 @@ def test_a_plan_card_lists_what_will_be_done_and_is_not_a_claim_that_it_was() ->
     )
     assert unbacked_claims(card, []) == []
     assert _kinds("I created the file notes.txt and moved the photos into folders.") == ["moved"]  # an answer that says it did is still checked
+
+
+@pytest.mark.parametrize("answer", [
+    "The file code.txt has been created in C:/work/out containing 'Falcon'.", "I've created code.txt in the out folder with the text Falcon.",
+    "Done. I wrote 'Falcon' to code.txt.", "code.txt was created and contains Falcon.", "I saved the totals in report.xlsx.",
+])
+def test_a_file_named_by_its_extension_is_a_write_claim_nothing_backs(answer) -> None:
+    """The sealed run's h4_remember_then_use: "The file code.txt has been created", no tool run, and the check did not see the claim."""
+    assert [claim.kind for claim in unbacked_claims(answer, [], {})] == ["created"]
+    backed = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "write_text_file", "path": "C:/work/out/code.txt"},
+               "output_summary": "Wrote text file C:/work/out/code.txt."}]
+    assert unbacked_claims("The file code.txt has been created in out.", backed, {}) == []  # a recorded write of that file backs it
+
+
+@pytest.mark.parametrize("answer", ["I could not create code.txt.", "code.txt was not created.", "The report lives in notes.md and I changed nothing.", "Pi is 3.14159."])
+def test_a_denial_or_a_file_name_without_a_creation_is_not_a_claim(answer) -> None:
+    assert unbacked_claims(answer, [], {}) == []

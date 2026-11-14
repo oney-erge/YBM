@@ -128,3 +128,16 @@ def test_the_worker_guards_still_decide_the_same_way(tmp_path):
     assert _is_simulated_delete(_task("delete the junk and organize the rest"), "filesystem.manage", organize) is False
     assert user_asked_to_be_asked_first(_task("ask me before changing anything")) is True
     assert _named_coding_providers(_task("use claude code")) == ["claude_code"]
+
+
+def test_counting_is_a_fact_only_the_decision_model_can_raise() -> None:
+    """The words of "How many times does the word error appear across the log files?" match nothing, and the model added the counts in its head."""
+    from agent_control.orchestration.request_facts import ADDED_FACT_QUESTIONS, ALL_FACT_QUESTIONS, CHECKS_KEY
+
+    task = _task("How many times does the word error appear across the log files?")
+    assert not RequestFacts.from_task(task).counts_things  # no pattern, no model answer: False, as before
+    task.metadata[CHECKS_KEY] = {"counts_things": True}
+    assert RequestFacts.from_task(task).counts_things
+    task.metadata[CHECKS_KEY] = {"counts_things": False}
+    assert not RequestFacts.from_task(task).counts_things
+    assert set(ADDED_FACT_QUESTIONS) <= set(ALL_FACT_QUESTIONS) and "tallies" in ALL_FACT_QUESTIONS

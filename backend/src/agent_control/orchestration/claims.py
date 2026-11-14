@@ -18,10 +18,14 @@ _WRITE_OPERATIONS = frozenset(
 )
 
 
+#: A file named by its extension: "created code.txt" says a file was made as surely as "created a file". The sealed run's `h4_remember_then_use`
+#: answered "The file code.txt has been created in out" having run no tool, and the second answer in that wording slipped past this check.
+_NAMED_FILE = r"[\w-]+\.(?:txt|md|csv|json|xlsx?|docx?|pptx?|pdf|png|jpe?g|gif|py|js|ts|html?|css|log|xml|ya?ml|zip|mp3|wav|mp4)"
 _WRITE_CLAIM = re.compile(
     r"(?i)\b(?:created?|creating|wrote|written|writing|saved|saving|scaffolded|scaffolding|generated|"
-    r"added|placed)\b[^.!?\n]{0,90}?\b(?:file|files|folder|directory|package\.json|readme|extension|script)\b"
+    r"added|placed)\b[^.!?\n]{0,90}?\b(?:file|files|folder|directory|package\.json|readme|extension|script|" + _NAMED_FILE + r")\b"
     r"|\bfiles?\b[^.!?\n]{0,40}?\b(?:were|was|have been|has been|is|are)\s+(?:created|written|saved|added)\b"
+    r"|\b" + _NAMED_FILE + r"\b[^.!?\n]{0,40}?\b(?:was|has been|have been|is)\s+(?:created|written|saved|added)\b"
 )
 
 

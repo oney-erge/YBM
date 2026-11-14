@@ -35,6 +35,47 @@ KNOWN_GAPS: tuple[Ability, ...] = (
         source="known gaps",
     ),
     Ability(
+        id="gap:phone.call",
+        kind=AbilityKind.GAP,
+        name="phone or text someone",
+        summary="phone, call or text a person for the user (a dentist, a landlord, a friend)",
+        group="communication",
+        state=AbilityState.UNAVAILABLE,
+        provides=("phone", "call", "dial", "ring", "text", "sms", "voicemail", "telephone"),
+        # Measured on the running decision model: phone and text requests score 0.76 to 0.99 (one, "ring the pizza place", 0.15); a reminder to call
+        # ("remind me to call mom at 5pm", 0.84) and a message to read aloud (0.77) are the near misses, so the bar is 0.9.
+        confirm="Does the user want the assistant to phone, call or text a person for them?",
+        confirm_at=0.9,
+        needs=(NEED_ACCOUNT,),
+        guidance=(
+            "This assistant cannot place phone calls or send texts. Say so plainly in the first sentence and never claim to have called. "
+            "Offer the nearest things: find the number (in the user's files or by searching), write a short script to read out or a text "
+            "to send, and, if the user only wants to be reminded to call, schedule the reminder. Do not try to open a calling app or a tel: link."
+        ),
+        source="known gaps",
+    ),
+    Ability(
+        id="gap:mail.send",
+        kind=AbilityKind.GAP,
+        name="send an email or message to someone",
+        summary="send an email or a message to another person for the user (a landlord, a boss, a team)",
+        group="communication",
+        state=AbilityState.UNAVAILABLE,
+        provides=("email", "mail", "message", "send", "reply", "landlord", "write"),
+        # Measured: sending requests score 0.77 to 0.98; "draft an email, I will send it myself" scores 0.88, which is harmless (the guidance says to
+        # draft), and "send it to me" requests in the e2e suites stay at or under 0.65.
+        confirm="Does the user want the assistant to send an email or a message to another person for them?",
+        confirm_at=0.85,
+        needs=(NEED_ACCOUNT,),
+        guidance=(
+            "No mailbox is connected to this assistant yet, so it cannot send email or messages to other people. Say so plainly in the first "
+            "sentence and never claim to have sent anything. Do not ask for the recipient's address before saying it. Offer the nearest things: "
+            "a ready-to-send draft in the chat (subject and body), finding the person's address if it is in the user's files, and, if the user "
+            "wants the assistant to send mail itself in future, an account of its own that they set up and approve."
+        ),
+        source="known gaps",
+    ),
+    Ability(
         id="gap:physical.act",
         kind=AbilityKind.GAP,
         name="act in the physical world",

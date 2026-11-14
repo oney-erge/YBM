@@ -44,7 +44,7 @@ from agent_control.observation import ArtifactService, ScreenshotService
 from agent_control.persona import persona_prompt_section
 from agent_control.tools.skills import skills_context_section
 from agent_control.orchestration import AuditorService, OperatorLoopService, TaskWorker, ToolExecutor, reconcile_orphaned_tasks
-from agent_control.orchestration.request_facts import FACT_CONFIRM_AT, FACT_QUESTIONS
+from agent_control.orchestration.request_facts import ALL_FACT_QUESTIONS, FACT_CONFIRM_AT
 from agent_control.orchestration.worker import TaskNotificationSink
 from agent_control.policy import PolicyEngine
 from agent_control.recovery import RetryPolicy
@@ -560,7 +560,7 @@ def _fact_checker(settings: AppSettings) -> Callable[[str, tuple[str, ...]], Awa
     client = DecisionModelClient(settings.decision)
 
     async def check(request: str, names: tuple[str, ...]) -> dict[str, bool]:
-        answers = await client.yes_no(request, {name: FACT_QUESTIONS[name] for name in names})
+        answers = await client.yes_no(request, {name: ALL_FACT_QUESTIONS[name] for name in names})
         return {name: answers[name] >= FACT_CONFIRM_AT for name in names if name in answers}
 
     return check

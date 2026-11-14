@@ -520,7 +520,12 @@ class SystemInventoryAdapter:
         cores = os.cpu_count()
         lines = []
         if found.gpu_name:
-            memory = f" with {found.vram_gb:g} GB of video memory" if found.vram_gb else ""
+            # The card's total is what "can this computer run it" is about; what is free right now is a fact about this minute (the live answer
+            # said "1.7 GB available on the RTX 3080" and concluded the card was tiny).
+            total = found.vram_total_gb or found.vram_gb
+            memory = f" with {total:g} GB of video memory" if total else ""
+            if found.vram_total_gb and found.vram_gb is not None and abs(found.vram_total_gb - found.vram_gb) > 0.05:
+                memory += f" ({found.vram_gb:g} GB of it free right now: programs that are open, such as this assistant's own model, use the rest)"
             lines.append(f"Graphics card: {found.gpu_name}{memory}.")
         elif found.detected:
             lines.append("No dedicated graphics card was found.")
@@ -528,7 +533,7 @@ class SystemInventoryAdapter:
             lines.append(f"RAM: {found.ram_gb:g} GB.")
         if cores:
             lines.append(f"Processor: {cores} logical cores.")
-        lines.extend(found.notes)
+        lines.extend(note for note in found.notes if "free right now" not in note)  # said above, with the card's total
         if not lines:
             lines.append(found.reason or "This computer's hardware could not be read.")
         return {"count": 1, "items": [{**found.as_dict(), "cpu_cores": cores}], "summary": "\n".join(lines)}

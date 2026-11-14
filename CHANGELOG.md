@@ -7,6 +7,21 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Phase 1 of the ultimate-assistant plan, from the sealed Verdict run (7 of 13 by rubric):
+  - **Counts come from code.** The decision model can raise a fact the patterns miss, `counts_things` (`request_facts.ADDED_FACT_QUESTIONS`, asked about every request in the same call as the
+    others; 8 of 10 count phrasings clear 0.5 and 13 of 178 e2e messages do, all counts or totals). For such a request the number check also looks at two-digit numbers, and what a
+    file read returns no longer vouches for a number (a `17` in every log timestamp let "17 errors" pass where the files hold 16).
+  - **A missing delivery is told with the call to make.** The guidance for `expected_artifact_delivery_missing` was keyed `..._delivered_missing`, so the model only ever got the generic
+    fallback; it is keyed right now, and all three pushbacks write out `artifact.deliver send_file` with the file the task made (`call_rewrites.exact_delivery_call`). The chart case heard
+    "use the delivery tool" three times, read the picture, described it and asked where to save it.
+  - **A listing carries modified dates by default** (`filesystem.manage inspect_folder` and `search`; `with_dates: false` turns them off). It was off unless the request used a word for
+    recency, so "which files are older than a year?" got sizes only and the model asked the person which were old.
+  - **Phoning and emailing are known gaps** (`abilities/gaps.py`, `gap:phone.call` at 0.9 and `gap:mail.send` at 0.85, measured): say so in the first sentence, never claim to have done it, offer a
+    script or a draft. "Phone my dentist" opened a `tel:` link and waited for approval; "email my landlord" asked for the address first.
+  - **The answer when the budget runs out says what the work produced** before it names the folder (`finishing.fulfilled_step_budget_answer`). "Why is my laptop fan loud?" ran seven scripts and ended
+    "Completed the requested work in the project folder I made for this task."
+  - **The hardware report gives the card's total memory** and says what is free right now as a fact about this minute. The live answer quoted "1.7 GB available" for an 8 GB card.
+  - **"Created code.txt" is a write claim.** The check looked for the noun "file" and missed a named file, so a made-up "The file code.txt has been created" with no tool run could pass.
 - The Operator's prompt never loses the name of a tool, and the skills list stays short (`orchestration/operator.py _without_the_tail`, `tools/skills.py`). On 11/14 ten scripts the
   assistant had kept from test tasks, listed one per line, pushed the tool catalog over its limit; the last-resort trim cut a slice out of the middle, `system.inventory` was gone, and "how many
   Steam games do I have?" and "where is this file?" (11 of 11 passes before) went to the screen tool for minutes. Authored skills are listed with their description cut at a word, kept

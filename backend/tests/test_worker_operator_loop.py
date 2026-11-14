@@ -4095,3 +4095,19 @@ def test_a_finished_replay_with_no_output_keeps_the_short_answer() -> None:
     history = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "move", "path": "a"}}]
     decision, _metadata = next_replay_decision(_replay_plan()[:1], history, {}, _tool_defs(_WRITE_TOOL))
     assert decision.final_answer == "Replayed 1/1 step(s) successfully."
+
+
+def test_a_budget_reached_answer_says_what_the_work_produced_before_naming_its_folder() -> None:
+    """The sealed Verdict run (c1): seven scripts, then "Completed the requested work in the project folder I made for this task."."""
+    from agent_control.orchestration.finishing import fulfilled_step_budget_answer, without_program_labels
+
+    header = "Code interpreter operation completed: run_python\nWorkspace: C:/x/code_interpreter/task_task_ab12\nBackend: local_subprocess (not sandboxed)\nReturn code: 0"
+    found = {"tool_name": "code.interpreter", "status": "succeeded", "output_summary": header + "\nStdout:\nTop CPU: chrome.exe 41%, ffmpeg.exe 22%\nFan curve: Auto"}
+    task = TaskRecord(objective="why is my fan loud", metadata={"workspace_dir": "C:/x/code_interpreter/task_task_ab12"})
+
+    answer = fulfilled_step_budget_answer(task, [found])
+    assert "Top CPU: chrome.exe 41%" in answer and "Workspace:" not in answer and "Backend:" not in answer
+    # nothing readable left: the old sentences, in the old order
+    assert fulfilled_step_budget_answer(task, [{**found, "output_summary": header}]).startswith("Completed the requested work in ")
+    assert fulfilled_step_budget_answer(TaskRecord(objective="x", metadata={"schedule_id": "s1"}), [found]) == "Created the requested schedule (s1)."
+    assert without_program_labels("Return code: 0\nhello") == "hello"
