@@ -178,6 +178,44 @@ None of them touches storage, runs a tool or calls a model, so each is tested on
 scenarios, the same frozen end-to-end suites. To add a rule, add it to the list where it belongs, with a test, not a branch in the tick.
 What follows the checks (the Auditor's grounding pass, fulfillment, the voice pass) stays in the worker, which owns the model calls.
 
+### How the worker is laid out
+
+`orchestration/worker.py` held the tick, every stage of it and a thousand lines of helpers in one 4,100-line file. The tick is still there
+(`TaskWorker._process_operator_loop`) and the worker keeps the part only it can own (claiming a task, the loop, the transitions); the rest
+lives in the module of the stage it belongs to, with the code unchanged. `TaskWorker` is composed of the stage classes, and the helpers are
+plain functions in modules named for what they read.
+
+| Stage class | Module | What it does |
+|---|---|---|
+| `PlanningStage` | `planning.py` | before the first step: the notes about the request, whether it is a project, the parts of a big one |
+| `GuardStage` | `guards.py` | between the model's decision and the world: refusals, the ladder of next steps, the offers to finish or hand over |
+| `ApprovalStage` | `approvals.py` | asking the person, for one call or a batch, and what follows their answer |
+| `DelegationStage` | `delegation.py` | independent calls in parallel, and a sub-task in an inner loop |
+| `ExternalStage` | `external.py` | work that finishes somewhere else or later: a coding agent, a usage limit, an uncertain result |
+| `RecordsStage` | `records.py` | what happened, written down: model usage, model calls, tool results |
+| `ReplyStage` | `reply.py` | telling the person, and what is remembered of a finished task |
+| `LearningStage` | `learning.py` | after a task: what could be kept, offered in the chat |
+
+| Helpers | What they read |
+|---|---|
+| `recovery.py` | a task that was running when the worker stopped |
+| `asking.py` | when a question to the person is needed, and when it is not |
+| `task_record.py` | a task's own history, results, effects and evidence |
+| `repeats.py` | calls and reads that were already done |
+| `finishing.py` | how a task ends |
+| `grounding.py` | putting the final answer back in line with what was read |
+| `replay.py` | replaying a saved workflow |
+| `claims.py` | what an answer says it did, against what the record shows it did |
+
+A name that another module needs is public in its module (`redundant_read`, not `_redundant_read`); one that only its module uses stays private.
+
+### Answers are checked against what happened
+
+`claims.py` reads the sentences of an answer that say something was done to the world (a file written or moved, something deleted, a message
+sent to someone else, something installed, something paid for) and looks for the record that backs each one. Payment is never backed: this
+assistant does not pay. `answer_checks.py` sends the model back once with the sentence and what is missing; the end-to-end suites use the
+same function as a test of the whole system, so what is measured is what is protected.
+
 ### Abilities: one index of what it can do, could do, and cannot do
 
 Everything the assistant can use was listed by its own code in its own format: the tool catalog (`tools/spec.py`), the skills section
