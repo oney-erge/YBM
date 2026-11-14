@@ -133,7 +133,7 @@ export function AppShell() {
             </ErrorBoundary>
           </main>
         </div>
-        <nav className="fixed inset-x-0 bottom-0 z-40 grid h-17 grid-cols-5 border-t border-sidebar-border bg-sidebar/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
+        <nav className="fixed inset-x-0 bottom-0 z-40 grid h-17 grid-cols-6 border-t border-sidebar-border bg-sidebar/95 px-2 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
           {NAV_ITEMS.map((item) => {
             const { to, label, icon: Icon, end } = item
             const active = isNavItemActive(item, location.pathname)

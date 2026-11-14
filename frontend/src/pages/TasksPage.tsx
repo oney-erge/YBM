@@ -1,3 +1,5 @@
+import { taskSource } from "@/lib/task-source"
+import { Mic } from "lucide-react"
 import { useMemo, useState } from "react"
 import { useNavigate } from "react-router"
 import { ListTree, Search } from "lucide-react"
@@ -38,6 +40,25 @@ const STATUS_OPTIONS: (TaskStatus | "all")[] = [
 
 const columnHelper = createColumnHelper<TaskRecord>()
 
+/** What the person said (when the concierge reworded it), with where it came from: "Telegram", and a mic for a voice note. */
+function TaskWords({ task }: { task: { objective: string; metadata: Record<string, unknown> } }) {
+  const source = taskSource(task)
+  const shown = source.words ?? task.objective
+  return (
+    <span className="flex min-w-0 flex-col gap-0.5">
+      <span className="line-clamp-2 text-sm font-medium [overflow-wrap:anywhere]" title={shown}>
+        {shown}
+      </span>
+      {(source.channel || source.voice) && (
+        <span className="flex items-center gap-1 text-xs text-muted-foreground">
+          {source.voice && <Mic className="size-3" aria-label="Voice note" />}
+          {source.channel}
+        </span>
+      )}
+    </span>
+  )
+}
+
 export function TasksPage() {
   const { data, isPending, isError, error } = useTasks(100)
   const navigate = useNavigate()
@@ -70,11 +91,7 @@ export function TasksPage() {
       columnHelper.accessor("objective", {
         header: "Objective",
         meta: { headClassName: "w-[38%]", cellClassName: "whitespace-normal" },
-        cell: (info) => (
-          <span className="line-clamp-2 [overflow-wrap:anywhere]" title={info.getValue()}>
-            {info.getValue()}
-          </span>
-        ),
+        cell: (info) => <TaskWords task={info.row.original} />,
       }),
       columnHelper.accessor("status", {
         header: "Status",
@@ -177,7 +194,7 @@ export function TasksPage() {
               className="flex min-w-0 flex-col gap-2 rounded-xl bg-card p-3 text-left shadow-sm ring-1 ring-border transition-colors hover:bg-muted/40"
             >
               <div className="flex min-w-0 items-start justify-between gap-2">
-                <span className="line-clamp-2 min-w-0 text-sm font-medium [overflow-wrap:anywhere]">{task.objective}</span>
+                <TaskWords task={task} />
                 <StatusBadge status={task.status} />
               </div>
               <TaskOutcomeCell task={task} />

@@ -1,6 +1,6 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { toast } from "sonner"
-import { KeyRound, Trash2 } from "lucide-react"
+import { Eye, EyeOff, KeyRound, Trash2 } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -8,7 +8,65 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ConfirmDialog } from "@/components/access/ConfirmDialog"
 import { ApiError } from "@/lib/api"
-import { useDeleteSecret, useInitSecretVault, useSecrets, useSetSecret } from "@/lib/queries"
+import { useDeleteSecret, useInitSecretVault, useRevealAccount, useSecrets, useSetSecret } from "@/lib/queries"
+
+/** How long a shown password stays on the screen. */
+const SHOWN_FOR_MS = 20_000
+
+/**
+ * A login YBM made for a website (service "accounts", the key is the site). The password is never in the list; pressing Show asks
+ * the backend for it, shows it for a few seconds, and the audit trail records which site was shown.
+ */
+function AccountRow({ host, onDelete }: { host: string; onDelete: () => void }) {
+  const reveal = useRevealAccount()
+  const [login, setLogin] = useState<{ username: string; password: string } | null>(null)
+
+  useEffect(() => {
+    if (!login) return
+    const timer = window.setTimeout(() => setLogin(null), SHOWN_FOR_MS)
+    return () => window.clearTimeout(timer)
+  }, [login])
+
+  function show() {
+    reveal.mutate(host, {
+      onSuccess: (entry) => setLogin({ username: entry.username, password: entry.password }),
+      onError: (err) => toast.error(err instanceof ApiError ? err.message : "Could not show that login."),
+    })
+  }
+
+  return (
+    <div className="flex min-w-0 flex-col gap-1 rounded-lg bg-muted/60 px-3 py-2 text-sm">
+      <div className="flex min-w-0 items-center justify-between gap-2">
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          <span className="font-medium">{host}</span> <span className="text-muted-foreground">(login YBM made)</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          <Button
+            variant="ghost"
+            size="sm"
+            aria-label={login ? `Hide the login for ${host}` : `Show the login for ${host}`}
+            disabled={reveal.isPending}
+            onClick={() => (login ? setLogin(null) : show())}
+          >
+            {login ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            {login ? "Hide" : "Show"}
+          </Button>
+          <Button variant="ghost" size="icon-sm" aria-label={`Delete the login for ${host}`} onClick={onDelete}>
+            <Trash2 className="size-3.5" />
+          </Button>
+        </span>
+      </div>
+      {login && (
+        <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 font-mono text-xs">
+          <dt className="text-muted-foreground">Username</dt>
+          <dd className="[overflow-wrap:anywhere]">{login.username || "(none saved)"}</dd>
+          <dt className="text-muted-foreground">Password</dt>
+          <dd className="[overflow-wrap:anywhere] select-all">{login.password}</dd>
+        </dl>
+      )}
+    </div>
+  )
+}
 
 /**
  * Secret vault (docs/archive/UI_REWRITE_PLAN.md §13) - list `service.key`, never
@@ -95,7 +153,9 @@ export function SecretVaultCard() {
             )}
             <div className="flex flex-col gap-1">
               {Object.entries(data.services).flatMap(([svc, keys]) =>
-                keys.map((k) => (
+                keys.map((k) => svc === "accounts" ? (
+                  <AccountRow key={`${svc}.${k}`} host={k} onDelete={() => setPendingDelete({ service: svc, key: k })} />
+                ) : (
                   <div key={`${svc}.${k}`} className="flex min-w-0 items-center justify-between gap-2 rounded-lg bg-muted/60 px-3 py-2 text-sm">
                     <span className="min-w-0 font-mono [overflow-wrap:anywhere]">
                       {svc}.{k}

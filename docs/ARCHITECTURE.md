@@ -178,6 +178,26 @@ None of them touches storage, runs a tool or calls a model, so each is tested on
 scenarios, the same frozen end-to-end suites. To add a rule, add it to the list where it belongs, with a test, not a branch in the tick.
 What follows the checks (the Auditor's grounding pass, fulfillment, the voice pass) stays in the worker, which owns the model calls.
 
+### Logins, files and voice
+
+**Logins for websites** (`accounts.py`). A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`. The browser
+tool resolves them after the request was recorded: a long random password is made for the site, kept with the username in the encrypted
+secret vault (service `accounts`, key = the site's host) and typed into every field that asks for it, so the model, the logs, approvals and
+the chat only ever see the placeholder (`storage/redaction.py` lets the placeholder through; the key name would otherwise mask it).
+`orchestration/ladder.py` (`form_hint`) tells the task, once, when the page has a password field and the request is to make an account or
+log in, and handles a terms box, a CAPTCHA (a screenshot to the user, never a way around it) and a "confirm your email" page (the honest
+ending: the account is not active until the user clicks the link). The person reads a login back by asking ("show my <site> password" in
+Telegram, `channels/account_commands.py`) or with Show in the console's secret vault card (`/api/accounts/reveal`); both are audited
+without the value.
+
+**Files and voice in Telegram** (`channels/telegram.py`). A photo or a document is downloaded to `channels.telegram.inbox_dir` (one folder
+per day, 20 MB) and the task text gets the caption plus `[The user sent a file: <path>]`; the file tools may use the inbox without it being
+named in a catalog or a refusal. A voice note shows "typing" at once, starts the language model's warm-up while it is transcribed (the
+speech model is loaded when the poller starts), and is echoed back ("I heard: ...") before anything is done with it.
+
+**Intake speed** (`llm/decision.py`). A message the decision model is sure is a task, though not sure which tool, is settled as a task with
+the route left `unknown` (`decision.settle_tasks_alone`, `task_bar`); `intake_decision` records `task_probability` and `settled_by`.
+
 ## Task states
 
 ```mermaid

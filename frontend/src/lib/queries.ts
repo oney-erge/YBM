@@ -23,6 +23,7 @@ import {
   deleteProject,
   getWorkflow,
   initSecretVault,
+  revealAccount,
   installSkill,
   listActiveGrants,
   listAudit,
@@ -414,6 +415,10 @@ export function useDeleteSecret() {
       void queryClient.invalidateQueries({ queryKey: ["secrets"] })
     },
   })
+}
+
+export function useRevealAccount() {
+  return useMutation({ mutationFn: (host: string) => revealAccount(host) })
 }
 
 export function useInitSecretVault() {

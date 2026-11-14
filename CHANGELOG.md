@@ -9,6 +9,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- The console's secret vault card shows the logins YBM made for websites with a **Show** button (the password is never in the list; Show asks
+  the backend, displays it for 20 seconds, and the audit trail records which site was shown, never the value). The task list shows what
+  the person actually said, not the concierge's rewording of it, with the channel ("Telegram") and a microphone for a voice note.
 - Telegram has buttons and a menu where they save typing. The progress line carries a **Stop** button (one tap cancels the task; every
   edit sends the keyboard again, because Telegram removes it otherwise); the answer to a move or rename carries **Undo** (once, and not
   under the answer to an undo); `/stop` stops the task that is working in the chat, with no task id to type; `/undo` and `/passwords`
@@ -258,6 +261,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- On a phone the console's bottom navigation had six items in a five-column grid, so Settings dropped onto a second row.
 - Every page of the admin console waited about four seconds before drawing anything. The console asks "is the default model usable" on each page
   load, the model server's health check took four seconds because it looks at a second service that was not running, and nothing was shown
   until it answered. The first answer is waited for; after that the last answer is used at once and refreshed in the background every

@@ -97,6 +97,7 @@ from agent_control.storage.audit_view import format_audit_event
 from agent_control.storage.database import Database
 from agent_control.storage.repositories import Repositories
 from agent_control.storage.redaction import redact_payload
+from agent_control.accounts import AccountVault
 from agent_control.storage.secrets import SecretVault, SecretVaultError
 from agent_control.tools.registry import build_tool_registry
 from agent_control.tools.artifact_delivery import artifact_delivery_roots, path_from_uri
@@ -339,6 +340,10 @@ class AdminSecretSetRequest(StrictBaseModel):
     service: str = Field(min_length=1, max_length=80)
     key: str = Field(min_length=1, max_length=80)
     value: str = Field(min_length=1, max_length=8000)
+
+
+class AdminAccountRevealRequest(StrictBaseModel):
+    host: str = Field(min_length=1, max_length=253)
 
 
 class AdminMemoryFactCreateRequest(StrictBaseModel):
@@ -2813,6 +2818,21 @@ def create_admin_router(
             {"action": "delete", "service": service, "key": key},
         )
         return {"service": service, "key": key, "deleted": True}
+
+    @router.post("/api/accounts/reveal")
+    def admin_reveal_account(request: Request, response: Response, payload: AdminAccountRevealRequest) -> dict[str, Any]:
+        """Show the login YBM made for a site (accounts.py): the person asked for it by pressing the button, so it is shown, once, never
+        cached, and the audit trail says which site was shown, never the value."""
+        loaded = require_admin(request)
+        try:
+            entry = AccountVault(loaded.secrets).get(payload.host.strip().lower())
+        except SecretVaultError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if entry is None:
+            raise HTTPException(status_code=404, detail=f"no login is saved for {payload.host}")
+        _audit_config_update(repositories_loader(), loaded, "secrets", {"action": "account_password_shown", "service": "accounts", "key": payload.host})
+        response.headers["Cache-Control"] = "private, no-store"
+        return {"host": payload.host, "username": entry.get("username") or "", "password": entry.get("password") or "", "created_at": entry.get("created_at")}
 
     @router.get("/api/chat/messages")
     def admin_list_chat_messages(
