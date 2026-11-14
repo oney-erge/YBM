@@ -7,12 +7,14 @@ the user starts a plan, and plans/runner.py carries it out one step at a time, e
 
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 from pydantic import ValidationError
 
 from agent_control.config import AppSettings
 from agent_control.plans.model import MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus
+from agent_control.plans.planner import can_do_text, draft_plan
 from agent_control.plans.runner import audit_plan, cancel_plan, pause_plan, render_plan, routing_of
 from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.storage.audit import AuditLogger
@@ -45,9 +47,19 @@ _STEP_FIELDS = {"title", "detail", "owner", "needs", "depends_on", "ability"}
 
 
 class PlanManageAdapter:
-    def __init__(self, repositories: Repositories, audit: AuditLogger) -> None:
+    def __init__(self, repositories: Repositories, audit: AuditLogger, provider: Any | None = None) -> None:
         self.repositories = repositories
         self.audit = audit
+        # The model that drafts a plan when the Operator gives only the goal (plans/planner.py).
+        self.provider = provider
+        self._catalog: Any | None = None
+
+    def bind(self, catalog: Any) -> None:
+        """The ability index, so the planner is told what the assistant can do and what it cannot."""
+        self._catalog = catalog
+
+    def _can_do(self) -> str:
+        return can_do_text(self._catalog)
 
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
         operation = str(request.input.get("operation") or "show")
@@ -59,7 +71,8 @@ class PlanManageAdapter:
             }.get(operation)
             if handler is None:
                 return failed_result(request, f"unsupported plan operation: {operation}")
-            plan, text = handler(request, task)
+            outcome = handler(request, task)
+            plan, text = await outcome if inspect.isawaitable(outcome) else outcome
         except ValueError as exc:
             return failed_result(request, str(exc))
         if task is not None and plan.status in _OPEN:
@@ -75,13 +88,18 @@ class PlanManageAdapter:
 
     # --- operations -------------------------------------------------------------------------------------------------------------------------
 
-    def _create(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
+    async def _create(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
         data = request.input
-        steps = _steps_from(list(data.get("steps") or []))
+        goal = str(data.get("goal") or "").strip()[:500]
+        summary = str(data.get("summary") or "").strip()[:1200]
+        raw_steps = list(data.get("steps") or [])
+        if not raw_steps:
+            raw_steps, drafted = await self._draft(goal, task)
+            summary = summary or drafted
+        steps = _steps_from(raw_steps)
         plan = self.repositories.plans.create(
             Plan(
-                conversation_id=task.conversation_id if task else None,
-                goal=str(data.get("goal") or "").strip()[:500], summary=str(data.get("summary") or "").strip()[:1200],
+                conversation_id=task.conversation_id if task else None, goal=goal, summary=summary,
                 source_task_id=request.task_id, routing=routing_of(task) if task else {}, steps=steps,
             )
         )
@@ -91,6 +109,19 @@ class PlanManageAdapter:
             "Answer the user with a short message that shows this plan and asks them to start it: Start and Cancel buttons are attached "
             "to your answer. Do not start any step yourself."
         )
+
+    async def _draft(self, goal: str, task: Any) -> tuple[list[dict[str, Any]], str]:
+        """The steps for a goal the Operator gave no steps for: the planner's draft, from what the user said and what the assistant can do."""
+        if self.provider is None:
+            raise ValueError("give the steps yourself: no planner model is available here")
+        said = str(getattr(task, "objective", "") or "")
+        try:
+            draft = await draft_plan(self.provider, goal, said, self._can_do())
+        except Exception as exc:  # noqa: BLE001 - say what happened; the Operator can write the steps itself
+            raise ValueError(f"the planner could not draft the plan ({type(exc).__name__}); give the steps yourself") from exc
+        if not draft.steps:  # the goal is too vague to plan: the Operator asks the user the planner's question
+            raise ValueError(f"the goal is too vague to plan. Ask the user this one question (ask_user): {draft.question}")
+        return [step.model_dump() for step in draft.steps], draft.summary
 
     def _find(self, request: ToolCallRequest, task: Any) -> Plan:
         plan_id = str(request.input.get("plan_id") or "").strip()
@@ -174,9 +205,9 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             named_when_disabled=False,
             description=(
-                "turn a goal too big for one task into a plan: steps in order, each owned by you (ybm), by the user (user) or by you once the "
-                "user gives you something (access); drafts and keeps the plan, the user starts it. Ask the user what they want first if the "
-                "goal is vague"
+                "turn a goal too big for one task (build something, set something up, plan a trip) into a plan the user can start: give the "
+                "goal and a planner drafts the steps, each owned by you (ybm), by the user (user) or by you once the user gives you something "
+                "(access); the plan is saved and the user starts it. Use this instead of asking a list of questions: at most one question first"
             ),
             operations=("create", "show", "add_step", "update_step", "set_status"),
             input_schema=PlanManageInput,
@@ -184,19 +215,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_output_schemas=same_output_schema(("create", "show", "add_step", "update_step", "set_status"), PlanManageOutput),
             default_operation="show",
             examples=(
-                {
-                    "operation": "create", "goal": "Set up a weekly backup of my photos",
-                    "summary": "Pick where to back up, then set it up and test it.",
-                    "steps": [
-                        {"title": "Choose where the backup goes", "owner": "user", "needs": ["a drive or cloud folder"]},
-                        {"title": "Write the backup script and a weekly schedule", "owner": "ybm"},
-                        {"title": "Run it once and check the copy", "owner": "ybm"},
-                    ],
-                },
+                {"operation": "create", "goal": "Build a small indoor quadcopter with a camera and a small language model on it, about 300 dollars"},
                 {"operation": "show"},
                 {"operation": "update_step", "position": 1, "status": "done"},
             ),
         )
     )
     if deps.repositories is not None and deps.audit_logger is not None:
-        adapters["plan.manage"] = PlanManageAdapter(deps.repositories, deps.audit_logger)  # type: ignore[arg-type]
+        adapters["plan.manage"] = PlanManageAdapter(deps.repositories, deps.audit_logger, deps.provider)  # type: ignore[arg-type]

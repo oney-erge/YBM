@@ -109,12 +109,15 @@ def build_tool_registry(
         definition_index={definition.name: definition for definition in definitions},
         mcp_summary_factory=lambda: mcp_client.mcp_catalog_summary(settings.mcp),
     )
+    planner = adapters.get("plan.manage")
     if settings.abilities.enabled:
         workflows = getattr(getattr(repositories, "workflows", None), "list_all", None)
         registry.abilities = AbilityCatalog(registry, settings, workflows=workflows)
         abilities_adapter = adapters.get("ability.search")
         if isinstance(abilities_adapter, AbilitiesAdapter):
             abilities_adapter.bind(registry.abilities)
+        if hasattr(planner, "bind"):
+            planner.bind(registry.abilities)
     adapter_factory_adapter = adapters.get("adapter.factory")
     if isinstance(adapter_factory_adapter, AdapterFactoryAdapter):
         adapter_factory_adapter.set_promotion_callback(registry.register_dynamic_tool)

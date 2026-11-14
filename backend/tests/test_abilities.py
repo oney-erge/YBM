@@ -89,8 +89,14 @@ def test_skills_and_kept_scripts_are_read_from_the_folder(tmp_path):
     root.mkdir()
     (root / "invoice.md").write_text("---\nname: Invoice Totals\ndescription: find the total on an invoice\n---\n1. read it\n", encoding="utf-8")
     (root / "helper.md").write_text("---\nname: helper-count-lines\ndescription: count lines in text files\n---\nprint(1)\n", encoding="utf-8")
+    (root / "planner.md").write_text(
+        "---\nname: Plan It\ndescription: plan a big goal\nwhen: Is it a big goal?\nwhen_at: 0.8\nroute: plan\n---\nsteps\n", encoding="utf-8"
+    )
     records = {a.name: a for a in skill_abilities(_settings(tmp_path))}
     assert records["Invoice Totals"].kind == AbilityKind.SKILL and records["Invoice Totals"].call["input"]["name"] == "Invoice Totals"
+    assert (records["Invoice Totals"].confirm, records["Invoice Totals"].route) == ("", "")
+    planner = records["Plan It"]
+    assert (planner.confirm, planner.confirm_at, planner.route) == ("Is it a big goal?", 0.8, "plan")
     assert records["helper-count-lines"].kind == AbilityKind.HELPER
 
 

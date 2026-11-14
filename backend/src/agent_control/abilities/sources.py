@@ -129,7 +129,8 @@ def skill_abilities(settings: AppSettings) -> list[Ability]:
                 detail=str(skill.get("body") or "")[:SKILL_DETAIL_CHARS],
                 call={"tool": "skills.use", "input": {"operation": "read", "name": name}},
                 confirm=str(skill.get("when") or ""),
-                confirm_at=SKILL_CONFIRM_AT,
+                confirm_at=float(skill.get("when_at") or SKILL_CONFIRM_AT),
+                route=str(skill.get("route") or ""),
                 source="skills folder",
             )
         )

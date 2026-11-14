@@ -50,7 +50,9 @@ from agent_control.heartbeat import run_heartbeat_forever
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
 from agent_control.plans.context import open_plan_note
+from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
+from agent_control.plans.stage import run_plan_stage
 from agent_control.storage import ApprovalRepository, AuditLogger, Database, Repositories
 from agent_control.storage.repositories import PlanRepository
 from agent_control.tools.call_schema import CachedOperatorSchema
@@ -498,6 +500,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "voice_pass": settings.operator.voice_pass,
         "heartbeat_seconds": settings.operator.heartbeat_seconds,
         "ability_notes": _task_notes(registry, settings, repositories),
+        "plan_stage": _plan_stage(registry, settings, repositories, audit, operator_provider),
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
         "auditor": AuditorService(auditor_provider) if auditor_provider else None,
@@ -507,7 +510,9 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
     }
 
 
-def _task_notes(registry, settings: AppSettings, repositories: Repositories) -> Callable[[str, str | None], Awaitable[str]] | None:
+def _task_notes(
+    registry, settings: AppSettings, repositories: Repositories
+) -> Callable[[str, str | None], Awaitable[tuple[str, str]]] | None:
     """What to tell the Operator before a task's first step beyond its tool list: what bears on the request (abilities/context.py) and the
     plan open in the chat (plans/context.py). None when both are off."""
     catalog = registry.abilities
@@ -515,15 +520,28 @@ def _task_notes(registry, settings: AppSettings, repositories: Repositories) -> 
         return None
     client = DecisionModelClient(settings.decision) if settings.decision.mode != "off" else None
 
-    async def notes(request: str, conversation_id: str | None) -> str:
-        text = ""
+    async def notes(request: str, conversation_id: str | None) -> tuple[str, str]:
+        text, route = "", ""
         if catalog is not None:
-            text += render_notes(await relevant(catalog.index(), request, confirm=client.yes_no if client else None))
+            shown = await relevant(catalog.index(), request, confirm=client.yes_no if client else None)
+            text += render_notes(shown)
+            route = next((ability.route for ability in shown if ability.route), "")
         if settings.plans.enabled:
             text += open_plan_note(repositories.plans, conversation_id)
-        return text
+        return text, route
 
     return notes
+
+
+def _plan_stage(registry, settings: AppSettings, repositories: Repositories, audit: AuditLogger, provider) -> Callable | None:
+    """The planner for requests a skill routes to it (plans/stage.py), or None when plans or the model are not there."""
+    if not settings.plans.enabled or provider is None:
+        return None
+
+    async def stage(task):
+        return await run_plan_stage(repositories, audit, provider, can_do_text(registry.abilities), task)
+
+    return stage
 
 
 #: How often an idle worker looks for a new task. A task waited, on average, half of this before anything started; 3 s was the default.

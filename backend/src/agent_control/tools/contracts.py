@@ -331,8 +331,8 @@ class AbilitiesInput(ToolInputModel):
 
 class PlanManageInput(ToolInputModel):
     operation: Literal["create", "show", "add_step", "update_step", "set_status"] = "show"
-    # create: the goal, a line on what done looks like, and the steps in order. Each step: title, detail, owner (ybm, user or access),
-    # needs (what the user must give or do first), depends_on (positions of earlier steps it waits for), ability (a tool or skill it uses).
+    # create: the goal; the steps are optional, and when omitted a planner drafts them. Each step: title, detail, owner (ybm, user or
+    # access), needs (what the user must give or do first), depends_on (positions of earlier steps it waits for), ability.
     goal: str | None = None
     summary: str | None = None
     steps: list[dict[str, Any]] | None = None
@@ -350,8 +350,8 @@ class PlanManageInput(ToolInputModel):
 
     @model_validator(mode="after")
     def needs_its_arguments(self) -> "PlanManageInput":
-        if self.operation == "create" and not ((self.goal or "").strip() and self.steps):
-            raise ValueError("operation=create requires 'goal' and 'steps'")
+        if self.operation == "create" and not (self.goal or "").strip():
+            raise ValueError("operation=create requires 'goal'")
         if self.operation in ("update_step",) and self.position is None:
             raise ValueError("operation=update_step requires 'position'")
         if self.operation == "add_step" and not (self.title or "").strip():
