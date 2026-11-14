@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `image.describe` reads a scanned PDF (a PDF whose pages are only pictures, as a scanner makes it): the picture of each of the first three pages is read
+  out of the file and looked at in turn, and the answer says which page said what. The first challenge run asked for the total on a scanned invoice; the
+  assistant tried the document tools, then asked the vision model about the PDF itself ten times, which it refused, and was cancelled at 11 minutes. A PDF
+  that has text and no page pictures is pointed at `document.manage extract_text` without loading a model.
 - A question the Operator asks can offer its choices as buttons: `ask_user` takes `options` (up to four short answers) and the Telegram card shows them
   as the quick answers it already showed for a plan step and the planner's question. Before, only those two could; "which of the files I found?"
   was a free-text question. A later question without choices is not given an earlier one's buttons. The operator prompt and the strict reply

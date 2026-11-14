@@ -229,3 +229,59 @@ def test_it_is_off_and_unnamed_by_default_or_without_the_file_tool_so_recorded_p
     assert not build_tool_registry(no_files, "http://127.0.0.1:8765").definition_index["image.describe"].enabled
     off = AppSettings(_env_file=None, capabilities={Capability.FILESYSTEM_READ: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.LOW)})
     assert not build_tool_registry(off, "http://127.0.0.1:8765").definition_index["image.describe"].enabled
+
+
+# --- a scanned PDF: pages that are only pictures --------------------------------------------------------------------------------------------
+
+
+def _scanned_pdf(tmp_path: Path, pages: int = 2, name: str = "scan.pdf") -> Path:
+    from PIL import Image, ImageDraw
+
+    images = []
+    for number in range(1, pages + 1):
+        image = Image.new("RGB", (800, 1000), "white")
+        ImageDraw.Draw(image).text((60, 60), f"INVOICE PAGE {number}", fill="black")
+        images.append(image)
+    path = tmp_path / name
+    images[0].save(path, "PDF", save_all=True, append_images=images[1:], resolution=100.0)
+    return path
+
+
+@pytest.mark.asyncio
+async def test_a_scanned_pdf_is_read_page_by_page_and_the_scratch_pictures_are_removed(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    adapter, seen = _adapter(tmp_path, answers=("TOTAL DUE 457.15 USD", "Thank you for your business"))
+    result = await adapter.execute(_request(_scanned_pdf(tmp_path), question="What is the total due?"))
+    assert result.status == ToolResultStatus.SUCCEEDED
+    assert result.output["description"] == "Page 1: TOTAL DUE 457.15 USD\n\nPage 2: Thank you for your business"
+    calls = seen["provider"].calls
+    assert len(calls) == 2 and all(call[1] == "What is the total due?" and call[2][0].endswith(".png") for call in calls)
+    scratch = tmp_path / ".agent_control" / "tmp" / "vision"
+    assert not scratch.exists() or list(scratch.iterdir()) == []  # nothing left behind
+
+
+@pytest.mark.asyncio
+async def test_only_the_first_few_pages_of_a_long_scan_are_looked_at(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    adapter, seen = _adapter(tmp_path, answers=("a", "b", "c", "d", "e"))
+    result = await adapter.execute(_request(_scanned_pdf(tmp_path, pages=5)))
+    assert result.output["description"].count("Page ") == 3 and len(seen["provider"].calls) == 3
+
+
+@pytest.mark.asyncio
+async def test_a_pdf_with_no_page_pictures_is_pointed_at_the_document_tool(tmp_path, monkeypatch):
+    from pypdf import PdfWriter
+
+    monkeypatch.chdir(tmp_path)
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    text_pdf = tmp_path / "text.pdf"
+    with text_pdf.open("wb") as handle:
+        writer.write(handle)
+    adapter, seen = _adapter(tmp_path)
+    result = await adapter.execute(_request(text_pdf))
+    assert result.status == ToolResultStatus.FAILED and "no scanned page pictures" in result.error_message and "document.manage extract_text" in result.error_message
+    assert "provider" not in seen  # no vision model was asked, so nothing was loaded for it
+    broken = tmp_path / "broken.pdf"
+    broken.write_bytes(b"not a pdf at all")
+    assert "could not be opened as a PDF" in (await adapter.execute(_request(broken))).error_message
