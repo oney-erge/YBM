@@ -751,15 +751,15 @@ class RoutingNotificationSink:
         self.approvals = approvals
         self.plans = plans
 
-    async def say(self, routing: dict[str, str], text: str) -> None:
-        """A line to the chat a plan belongs to, outside any task. Best effort, like every notification."""
+    async def say(self, routing: dict[str, str], text: str, reply_markup: dict | None = None) -> None:
+        """A line to the chat a plan belongs to, outside any task, optionally with buttons. Best effort, like every notification."""
         if routing.get("source_channel", ChannelType.TELEGRAM.value) != ChannelType.TELEGRAM.value:
             return
         notifier = _telegram_notifier(self.settings, self.audit, approvals=self.approvals, plans=self.plans)
         if notifier is None:
             return
         try:
-            await notifier.say(routing, text)
+            await notifier.say(routing, text, reply_markup)
         except Exception as exc:  # noqa: BLE001
             self.audit.append(AuditEventType.ERROR, actor="notifier", payload={"error": "say_failed", "reason": str(exc)})
 

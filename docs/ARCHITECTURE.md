@@ -231,6 +231,17 @@ each use is an approval the user sees ("Load a vision model ... to look at invoi
 for the task. If LocalDeploy answers that Ollama is not running, `vision.start_ollama` starts it once as part of loading the model the user
 just approved. The path is held to the folders the file tool may touch, the inbox included.
 
+### Learning, with the person in the loop
+
+The assistant proposes what it has learned: a procedure from a job that took several successful steps (`skill_learning.py`), a preference a
+message states ("always keep answers short", `persona_learning.py`), and the script that settled a task, kept as a helper. A learned skill is
+instructions the Operator follows on every similar request and a learned preference is a line it reads on every task, so each changes
+tomorrow's behaviour and has to be agreed to. `learning_cards.py` puts the agreement where the person is: a proposal is shown in the chat the
+task came from as a short card with **Keep** and **Not now** (or **Remember** and **No**), and the tap is the review, with the same effect as the
+console's accept. Nothing is installed without it, a proposal nobody answers stays in the queue, and a kept skill is found by the ability
+index (`abilities/sources.py`) and listed in the Operator's prompt like any skill. Scripts kept as helpers need no review: they are the script
+that already ran.
+
 ### Logins, files and voice
 
 **Logins for websites** (`accounts.py`). A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`. The browser

@@ -31,7 +31,8 @@ from agent_control.orchestration.check_entries import (  # noqa: F401 - re-expor
     CHECK_ENTRY_STUCK,
 )
 from agent_control.orchestration.request_facts import RequestFacts, own_words
-from agent_control.plans.runner import PlanRunner
+from agent_control.learning_cards import card as learning_card
+from agent_control.plans.runner import PlanRunner, routing_of
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -2467,14 +2468,28 @@ class TaskWorker:
         try:
             from agent_control.persona_learning import propose_from_message
 
-            await propose_from_message(
+            suggestion = await propose_from_message(
                 getattr(self.operator, "provider", None),
                 self.persona_config,
                 message,
                 task_id=task.id,
             )
+            await self._offer_learning(task, suggestion)
         except Exception:  # noqa: BLE001 - never surface as a task failure
             logger.warning("persona learning pass failed", exc_info=True)
+
+    async def _offer_learning(self, task: TaskRecord, suggestion: Any) -> None:
+        """Show a new proposal (a skill, a preference) in the chat the task came from, with Keep and Drop buttons (learning_cards.py).
+
+        Nothing is installed here: the proposal waits in its queue (and in the console) until someone answers. A chat that cannot be reached,
+        or a sink that cannot send a line with buttons, leaves it there.
+        """
+        say = getattr(self.notification_sink, "say", None)
+        routing = routing_of(task)
+        if suggestion is None or say is None or not routing:
+            return
+        text, keyboard = learning_card(suggestion)
+        await say(routing, text, keyboard)
 
     async def _maybe_learn_skill(self, task: TaskRecord) -> None:
         """Offer to save a successful multi-step run as a reusable procedure.
@@ -2492,7 +2507,8 @@ class TaskWorker:
 
             # The script that produced the answer is kept as is: no model call, nothing to review.
             save_helper(self.skills_config, task)
-            await propose_from_task(getattr(self.operator, "provider", None), self.skills_config, task)
+            suggestion = await propose_from_task(getattr(self.operator, "provider", None), self.skills_config, task)
+            await self._offer_learning(task, suggestion)
         except Exception:  # noqa: BLE001 - never surface as a task failure
             logger.warning("skill learning pass failed", exc_info=True)
 

@@ -27,6 +27,7 @@ from agent_control.channels.profile_facts import describe_pairs, learn_sender_na
 from agent_control.channels.account_commands import account_command_reply
 from agent_control.channels.undo_command import start_undo, undo_command_reply
 from agent_control.channels.quick_answers import clarifying_options
+from agent_control.learning_cards import decide as learning_decide
 from agent_control.plans.card import card_keyboard, card_text
 from agent_control.plans.model import PlanStatus
 from agent_control.plans.runner import cancel_plan, pause_plan
@@ -504,6 +505,8 @@ class TelegramAdapter:
             return {"kind": "answer", "task_id": parts[1], "option": int(parts[2][1:])}
         if len(parts) == 3 and parts[0] == "plan" and parts[2] in {"start", "resume", "pause", "cancel"}:
             return {"kind": "plan", "plan_id": parts[1], "action": parts[2]}
+        if len(parts) == 4 and parts[0] == "learn" and parts[1] in {"s", "p"} and parts[3] in {"k", "d"}:
+            return {"kind": "learn", "what": parts[1], "id": parts[2], "keep": parts[3] == "k"}
         if len(parts) == 2 and parts[0] == "undo":
             return {"kind": "undo", "task_id": parts[1]}
         return {"kind": "unknown", "data": data}
@@ -1080,7 +1083,27 @@ class TelegramIntakeService:
                 self._answer_offer(payload, actor)
         if payload.get("kind") == "plan":
             self._plan_button(payload, actor)
+        if payload.get("kind") == "learn":
+            self._learning_button(payload, actor)
         return None
+
+    def _learning_button(self, payload: dict[str, Any], actor: str) -> None:
+        """Keep or Drop under a skill or a preference the assistant proposed: the person's answer is the review (learning_cards.py)."""
+        if self.settings is None:
+            self._callback_ack = "I cannot save that here."
+            return
+        shown = learning_decide(self.settings, str(payload["what"]), str(payload["id"]), bool(payload["keep"]))
+        if shown is None:
+            self._callback_ack = "That was already answered."
+            return
+        self._callback_ack = shown[:190]
+        self.audit.append(AuditEventType.CONFIG_UPDATED, actor=actor, payload={
+            "what": "skill_suggestion" if payload["what"] == "s" else "persona_suggestion", "suggestion_id": payload["id"],
+            "decision": "accepted" if payload["keep"] else "rejected", "via": "telegram_button",
+        })
+        raw = (payload.get("raw") or {}).get("callback_query", {}).get("message") or {}
+        if raw.get("message_id") and (raw.get("chat") or {}).get("id") is not None:
+            self._callback_edit = (str(raw["chat"]["id"]), raw["message_id"], shown, None)
 
     def _answer_option(self, payload: dict[str, Any], actor: str) -> None:
         """A quick-answer button under a question: the same as typing its words, once, and only while the question is open."""

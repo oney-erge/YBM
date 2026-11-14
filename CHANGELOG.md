@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- What the assistant learns is offered in the chat. A skill proposed after a multi-step job, and a preference a message states, are shown
+  in the chat the task came from as a card with Keep and Not now (or Remember and No); the tap is the review and has the same effect as
+  the console's accept (`learning_cards.py`). Nothing is installed without it. `adapters.skills.learning_enabled` and
+  `adapters.persona.learning_enabled` are on in `config.example.yaml`.
 - `image.describe` looks at a picture (a photo sent in Telegram, a screenshot) and says what is in it or answers a question about it, reading
   any text, with a local vision model found in LocalDeploy (the smallest it lists, or `vision.profile`). The assistant's own model reads text
   only. Each use asks the user first (it loads a model of about 3 GB; the picture stays on this computer), and when LocalDeploy says Ollama
