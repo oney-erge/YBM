@@ -161,14 +161,14 @@ async def test_the_worker_works_out_the_notes_once_and_keeps_them_with_the_task(
     repos, audit = make_repos(tmp_path)
     calls = []
 
-    async def notes(request: str, conversation_id: str | None) -> str:
+    async def notes(request: str, conversation_id: str | None) -> tuple[str, str]:
         calls.append(request)
-        return "\n\n## What bears on this request\n- order and pay"
+        return "\n\n## What bears on this request\n- order and pay", "plan"
 
     worker = TaskWorker(repos, audit, ability_notes=notes)
     task = repos.tasks.create("Order me a pizza.")
     task = await worker._with_ability_notes(task)
-    assert task.metadata["ability_notes"].startswith("\n\n## What bears") and calls == ["Order me a pizza."]
+    assert task.metadata["ability_notes"].startswith("\n\n## What bears") and task.metadata["task_route"] == "plan" and calls == ["Order me a pizza."]
     again = await worker._with_ability_notes(task)
     assert again.metadata["ability_notes"] == task.metadata["ability_notes"] and len(calls) == 1
 
@@ -177,12 +177,12 @@ async def test_the_worker_works_out_the_notes_once_and_keeps_them_with_the_task(
 async def test_notes_that_fail_leave_the_task_without_them_and_a_worker_without_the_option_is_unchanged(tmp_path):
     repos, audit = make_repos(tmp_path)
 
-    async def broken(request: str, conversation_id: str | None) -> str:
+    async def broken(request: str, conversation_id: str | None) -> tuple[str, str]:
         raise RuntimeError("index unreadable")
 
     task = repos.tasks.create("Anything.")
     failed = await TaskWorker(repos, audit, ability_notes=broken)._with_ability_notes(task)
-    assert failed.metadata["ability_notes"] == ""
+    assert failed.metadata["ability_notes"] == "" and failed.metadata["task_route"] == ""
     plain = await TaskWorker(repos, audit)._with_ability_notes(task)
     assert "ability_notes" not in plain.metadata
 

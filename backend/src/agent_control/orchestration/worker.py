@@ -33,6 +33,7 @@ from agent_control.orchestration.check_entries import (  # noqa: F401 - re-expor
 from agent_control.orchestration.request_facts import RequestFacts, own_words
 from agent_control.learning_cards import card as learning_card
 from agent_control.plans.runner import PlanRunner, routing_of
+from agent_control.plans.stage import StageOutcome, answer_for as plan_answer
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -345,11 +346,14 @@ class TaskWorker:
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
-        ability_notes: Callable[[str, str | None], Awaitable[str]] | None = None,
+        ability_notes: Callable[[str, str | None], Awaitable[tuple[str, str]]] | None = None,
         plan_runner: PlanRunner | None = None,
+        plan_stage: Callable[[TaskRecord], Awaitable[StageOutcome]] | None = None,
     ) -> None:
         # Moves started plans forward on every pass (plans/runner.py); None when plans are off.
         self.plan_runner = plan_runner
+        # Plans a request that a skill routes to the planner (plans/stage.py); None when plans are off.
+        self.plan_stage = plan_stage
         # What bears on a request that the Operator cannot already see (abilities/context.py, plans/context.py), as prompt text, given
         # the request and the chat; "" for most.
         self.ability_notes = ability_notes
@@ -877,6 +881,9 @@ class TaskWorker:
             return self._transition_operator(latest, latest.metadata, TaskStatus.BLOCKED, "operator_loop_not_configured")
         else:
             latest = await self._with_ability_notes(latest)
+            staged = await self._planned(latest)
+            if staged is not None:
+                return staged
             try:
                 with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
                     decision = await self.operator.decide(
@@ -2894,6 +2901,26 @@ class TaskWorker:
         )
         return updated
 
+    async def _planned(self, task: TaskRecord) -> TaskRecord | None:
+        """A request a skill routed to the planner is planned before the Operator sees it (plans/stage.py); None when the Operator takes it.
+
+        The worker owns the task's lifecycle, so it is the worker that moves the task: to a question the user answers with a tap, or to
+        completed with the plan as the answer (the chat shows the plan's card in its place). A planner that cannot be reached or does not
+        answer with a plan leaves the request to the Operator loop, as if there were no stage.
+        """
+        if self.plan_stage is None or task.metadata.get("task_route") != "plan" or task.metadata.get("plan_stage_done"):
+            return None
+        outcome = await self.plan_stage(task)
+        base = {**task.metadata, "plan_stage_done": True}
+        if outcome.kind == "plan" and outcome.plan is not None:
+            metadata = {**base, "plan_card": outcome.plan.id, "synthesized_answer": plan_answer(outcome.plan)}
+            return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "plan_proposed")
+        if outcome.kind == "ask" and outcome.question:
+            updated = self.repositories.tasks.update_metadata(task.id, {**base, "plan_stage_done": False, "clarifying_options": list(outcome.options)})
+            return self._operator_ask_user(updated, outcome.question)
+        self.repositories.tasks.update_metadata(task.id, base)
+        return None
+
     async def _with_ability_notes(self, task: TaskRecord) -> TaskRecord:
         """Work out once, before the task's first step, what bears on the request that the Operator cannot see, and keep it with the task.
 
@@ -2903,11 +2930,11 @@ class TaskWorker:
         if self.ability_notes is None or "ability_notes" in task.metadata:
             return task
         try:
-            notes = await self.ability_notes(_users_own_words(task), task.conversation_id)
+            notes, route = await self.ability_notes(_users_own_words(task), task.conversation_id)
         except Exception:  # noqa: BLE001 - see above
             logger.warning("ability notes failed; the task goes on without them", exc_info=True)
-            notes = ""
-        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "ability_notes": notes})
+            notes, route = "", ""
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "ability_notes": notes, "task_route": route})
 
     def _planner_context(self, extra: str = "", *, metadata: dict[str, Any] | None = None) -> str:
         """The tool catalog and advice for an Operator step, narrowed to the task's route when ``metadata`` is given."""

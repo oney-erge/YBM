@@ -259,7 +259,6 @@ ResultOK = ToolResultStatus.SUCCEEDED
 async def test_a_plan_that_is_not_a_plan_is_refused_with_the_reason(tmp_path):
     repos, _, adapter, task = _adapter(tmp_path)
     for bad, words in (
-        ([], "between 1 and"),
         ([{"title": "a", "depends_on": [2]}, {"title": "b"}], "only wait for earlier"),
         ([{"title": ""}], "not valid"),
         ([{"title": "a", "owner": "robot"}], "not valid"),
@@ -342,3 +341,75 @@ def test_a_database_that_still_has_the_old_unused_plans_table_gets_plans_beside_
     assert repos.plans.get(saved.id).goal.startswith("Build a small drone") and repos.plans.list(statuses=[PlanStatus.PROPOSED])
     with database.connect() as connection:
         assert connection.execute("SELECT id FROM plans").fetchone()["id"] == "plan_old"  # left as it was
+
+
+# --- the planner -----------------------------------------------------------------------------------------------------------------------------
+
+
+class _Planner:
+    """Stands in for the model: returns a draft, or raises, and remembers what it was asked."""
+
+    def __init__(self, draft=None, error: Exception | None = None) -> None:
+        self.draft, self.error, self.asked = draft, error, []
+
+    async def generate_structured(self, system_prompt, user_prompt, schema, **kwargs):
+        self.asked.append((system_prompt, user_prompt, schema.__name__))
+        if self.error is not None:
+            raise self.error
+        return self.draft
+
+
+def _draft():
+    from agent_control.plans.planner import PlanDraft, StepDraft
+
+    return PlanDraft(summary="A 250 g indoor quadcopter with a Pi Zero 2; I assumed Wi-Fi only.", steps=[
+        StepDraft(title="Compare three small flight controllers"),
+        StepDraft(title="Buy the parts", owner="user", needs=["300 dollars"]),
+        StepDraft(title="Write the control code", depends_on=[1]),
+    ])
+
+
+@pytest.mark.asyncio
+async def test_a_goal_without_steps_is_planned_by_the_planner_from_what_the_user_said_and_what_the_assistant_can_do(tmp_path):
+    repos, audit, adapter, task = _adapter(tmp_path)
+    planner = _Planner(_draft())
+    adapter.provider = planner
+    adapter._catalog = type("Catalog", (), {"index": lambda self: _Index()})()
+    result = await adapter.execute(_request(task.id, operation="create", goal="Build a small indoor drone with a language model, about 300 dollars"))
+    assert result.status == ResultOK
+    plan = repos.plans.get(result.output["plan_id"])
+    assert [(s.title, s.owner) for s in plan.steps] == [
+        ("Compare three small flight controllers", StepOwner.YBM), ("Buy the parts", StepOwner.USER), ("Write the control code", StepOwner.YBM),
+    ]
+    assert plan.steps[1].needs == ["300 dollars"] and plan.steps[2].depends_on == [1] and plan.summary.startswith("A 250 g indoor quadcopter")
+    system, user, schema = planner.asked[0]
+    assert schema == "PlanDraft" and "never pays" in system and "Do not ask questions." in user  # a tool call is never a place to ask
+    assert "Goal: Build a small indoor drone" in user and "Build me a drone" in user  # the goal and what the user said
+    assert "- can: files: read and move files" in user and "- cannot: order and pay. never pays" in user
+
+
+class _Index:
+    def all(self):
+        from agent_control.abilities.model import Ability, AbilityKind, AbilityState
+
+        return (
+            Ability(id="tool:files", kind=AbilityKind.TOOL, name="files", summary="read and move files", state=AbilityState.READY),
+            Ability(id="tool:off", kind=AbilityKind.TOOL, name="off", summary="switched off", state=AbilityState.DISABLED),
+            Ability(id="gap:pay", kind=AbilityKind.GAP, name="order and pay", summary="x", state=AbilityState.UNAVAILABLE, guidance="never pays"),
+        )
+
+
+@pytest.mark.asyncio
+async def test_steps_the_operator_wrote_are_used_as_they_are_and_a_planner_that_fails_says_so(tmp_path):
+    repos, _, adapter, task = _adapter(tmp_path)
+    planner = _Planner(_draft())
+    adapter.provider = planner
+    own = await adapter.execute(_request(task.id, operation="create", goal="g", steps=[{"title": "only step"}]))
+    assert own.status == ResultOK and planner.asked == []
+    adapter.provider = _Planner(error=TimeoutError("slow"))
+    failed = await adapter.execute(_request(task.id, operation="create", goal="g"))
+    assert failed.status == ToolResultStatus.FAILED and "could not draft the plan (TimeoutError)" in failed.error_message
+    adapter.provider = None
+    nobody = await adapter.execute(_request(task.id, operation="create", goal="g"))
+    assert nobody.status == ToolResultStatus.FAILED and "no planner model" in nobody.error_message
+    assert len(repos.plans.list()) == 1  # only the plan the Operator wrote itself

@@ -71,6 +71,9 @@ class Ability:
     #: is shown for a request only when the answer is yes (`confirm_at`) or the words match very strongly.
     confirm: str = ""
     confirm_at: float = 0.3
+    #: Where a request this ability is confirmed for goes: "plan" hands it to the planner (plans/stage.py) instead of the Operator loop.
+    #: Set by a skill's `route:` line; empty for everything else.
+    route: str = ""
     #: Where the record came from, for the console ("registry", "mcp catalog", "skills folder", "localdeploy").
     source: str = ""
 
