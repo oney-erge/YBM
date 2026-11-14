@@ -73,24 +73,35 @@ def asks_for_a_calculation(request_text: str) -> bool:
     return bool(_CALCULATION.search(request_text or ""))
 
 
-def _is_result_sized(number: str) -> bool:
+#: For a request that asks to count, a count of this many digits is a result too: "17 times" is not read from anywhere, it is the sum of three
+#: counts the model made in its head (the answer was 17, the files hold 16).
+_MIN_DIGITS_WHEN_COUNTING = 2
+#: Operations that return what a file holds: the data a count is made from.
+_DATA_READS = frozenset({"read_file", "extract_text", "inspect_document", "describe_file"})
+
+
+def _is_result_sized(number: str, min_digits: int = _MIN_DIGITS) -> bool:
     digits = number.lstrip("-").replace(".", "")
-    return len(digits) >= _MIN_DIGITS or "." in number
+    return len(digits) >= min_digits or "." in number
 
 
-def ungrounded_numbers(request_text: str, answer: str, history: Iterable[dict[str, Any]]) -> list[str]:
+def ungrounded_numbers(request_text: str, answer: str, history: Iterable[dict[str, Any]], *, counts: bool = False) -> list[str]:
     """Numbers in ``answer`` that neither the request nor any tool result contains.
 
-    Empty unless the request asks for a calculation. Every number the user wrote, and every number in any tool output or
-    error, counts as grounded; so does a number a script printed. Only result-sized numbers (three digits or a decimal
-    point) are checked, so a count such as "3 files" never triggers it.
+    Empty unless the request asks for a calculation, by its words or, with ``counts``, because the decision model said answering means
+    counting or adding up (request_facts.ADDED_FACT_QUESTIONS). Every number the user wrote, and every number in any tool output or
+    error, counts as grounded; so does a number a script printed. Only result-sized numbers (three digits or a decimal point, two for a
+    counting request) are checked, so a count such as "3 files" never triggers it.
     """
-    if not asks_for_a_calculation(request_text):
+    if not (counts or asks_for_a_calculation(request_text)):
         return []
+    min_digits = _MIN_DIGITS_WHEN_COUNTING if counts else _MIN_DIGITS
     grounded = _numbers(request_text)
     for entry in history:
         if not isinstance(entry, dict) or str(entry.get("tool_name") or "").startswith("_"):
             continue
+        if counts and str((entry.get("input") or {}).get("operation") or "") in _DATA_READS:
+            continue  # the file being counted is the data, not a result: a 17 in one of its timestamps must not vouch for a total of 17
         grounded |= _numbers(str(entry.get("output_summary") or ""))
         grounded |= _numbers(str(entry.get("error") or ""))
         stdout = entry.get("output") if isinstance(entry.get("output"), dict) else {}
@@ -98,7 +109,7 @@ def ungrounded_numbers(request_text: str, answer: str, history: Iterable[dict[st
     found = []
     for token in _NUMBER.findall(answer or ""):
         number = _normalise(token)
-        if number is not None and number not in grounded and _is_result_sized(number) and number not in found:
+        if number is not None and number not in grounded and _is_result_sized(number, min_digits) and number not in found:
             found.append(number)
     return found
 

@@ -396,3 +396,20 @@ def test_the_walk_stops_a_few_seconds_after_the_first_match_instead_of_touring_e
     report = system_inventory.WalkReport()
     found = system_inventory.walk_search([tmp_path], ["needle"], [], cap=100, budget_seconds=500, report=report, clock=lambda: next(ticks))
     assert [Path(item["path"]).name for item in found] == ["needle.txt"] and report.folders < 10
+
+
+def test_hardware_gives_the_cards_total_and_says_what_is_free_as_a_fact_about_this_minute(monkeypatch):
+    """Live (challenge c2): "1.7 GB available on the RTX 3080" was taken for the card, on an 8 GB card, and a 70B model was refused for the wrong reason."""
+    from agent_control.llm.hardware import Hardware
+
+    monkeypatch.setattr(system_inventory.os, "cpu_count", lambda: 16)
+    monkeypatch.setattr(system_inventory, "probe_hardware", lambda: Hardware(
+        detected=True, gpu_name="NVIDIA GeForce RTX 3080 Laptop GPU", vram_gb=1.7, vram_total_gb=8.0, ram_gb=32.0,
+        notes=["1.7 GB of 8 GB free right now."],
+    ))
+    summary = _run(SystemInventoryAdapter([]), operation="hardware").output["summary"]
+    assert summary.splitlines()[0].startswith("Graphics card: NVIDIA GeForce RTX 3080 Laptop GPU with 8 GB of video memory (1.7 GB of it free right now")
+    assert "free right now" in summary and summary.count("free right now") == 1  # the server's own note is not repeated
+    # nothing is free to say when the total is all that is known, or when all of it is free
+    monkeypatch.setattr(system_inventory, "probe_hardware", lambda: Hardware(detected=True, gpu_name="Card", vram_gb=8.0, vram_total_gb=8.0, ram_gb=16.0))
+    assert "free right now" not in _run(SystemInventoryAdapter([]), operation="hardware").output["summary"]

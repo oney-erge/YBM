@@ -2,6 +2,7 @@
 of a transition that failed."""
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from agent_control.orchestration.check_entries import (
@@ -39,20 +40,37 @@ def finish_offer_pending(history: list[dict[str, Any]]) -> bool:
     return bool(history) and history[-1].get("tool_name") == CHECK_ENTRY_STUCK and history[-1].get("status") == "stuck"
 
 
+#: The lines a tool writes for a program, not for a person: "Code interpreter operation completed: run_python", "Workspace: <folder>",
+#: "Backend: local_subprocess (not sandboxed)", "Script: <path>", "Return code: 0". Live, a task that had only searched listed them as what it
+#: had done: "Done: - Code interpreter operation completed: run_python Workspace: task_task_eb3c... Backend: local_subprocess".
+_PROGRAM_LABEL = re.compile(r"^(?:\w[\w ]* operation completed: \w+|(?:Workspace|Backend|Script|Return code): .*)$")
+_READABLE_CHARS = 1500
+
+
+def without_program_labels(text: str) -> str:
+    return "\n".join(line for line in text.split("\n") if not _PROGRAM_LABEL.match(line.strip()))
+
+
 def fulfilled_step_budget_answer(task: TaskRecord, history: list[dict[str, Any]]) -> str:
-    """Ground a completion that reached the step cap after fulfillment."""
+    """Ground a completion that reached the step cap after fulfillment.
+
+    What the last successful step produced comes before the name of the folder it worked in: the sealed Verdict run's "why is my laptop fan so
+    loud?" ran seven scripts and ended "Completed the requested work in the project folder I made for this task." with what they found nowhere in it.
+    """
     adapter_dir = task.metadata.get("adapter_dir")
     if adapter_dir:
         return f"Created the adapter proposal in the cache at {adapter_dir}. It was not loaded automatically."
-    workspace_dir = task.metadata.get("workspace_dir")
-    if workspace_dir:
-        return f"Completed the requested work in {workspace_dir}."
     schedule_id = task.metadata.get("schedule_id")
     if schedule_id:
         return f"Created the requested schedule ({schedule_id})."
     for entry in reversed(history):
         if entry.get("status") == "succeeded" and entry.get("output_summary"):
-            return str(entry["output_summary"])
+            readable = without_program_labels(str(entry["output_summary"])).strip()
+            if readable:
+                return readable[:_READABLE_CHARS]
+    workspace_dir = task.metadata.get("workspace_dir")
+    if workspace_dir:
+        return f"Completed the requested work in {workspace_dir}."
     return "Completed the requested work and recorded the required result."
 
 

@@ -9,7 +9,7 @@ from agent_control.orchestration.asking import users_own_words
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_STRATEGY,
 )
-from agent_control.orchestration.request_facts import CHECKS_KEY, RequestFacts
+from agent_control.orchestration.request_facts import ADDED_FACT_QUESTIONS, CHECKS_KEY, RequestFacts
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.plans.stage import answer_for as plan_answer
 from agent_control.schemas import (
@@ -92,15 +92,13 @@ class PlanningStage:
         """Ask the decision model, once, before the task's first step, whether the facts the request's words matched are really so.
 
         The patterns in request_facts.py take a word for a fact ("do not delete anything" matches "delete"); the model, which reads the
-        sentence, confirms or cancels each. Only matched facts are asked about, so most requests cost nothing, and the answers are kept
-        with the task so every rule that reads a fact reads the same answer. A model that is down or answers nothing leaves the
-        pattern's word, which is what the task had before this existed.
+        sentence, confirms or cancels each. Matched facts are asked about, and so are the facts the model can raise by itself
+        (`ADDED_FACT_QUESTIONS`), all in the one call. The answers are kept with the task so every rule that reads a fact reads the
+        same answer. A model that is down or answers nothing leaves the pattern's word, which is what the task had before this existed.
         """
         if self.fact_checks is None or CHECKS_KEY in task.metadata:
             return task
-        candidates = RequestFacts.from_task(task).candidates()
-        if not candidates:
-            return task
+        candidates = (*RequestFacts.from_task(task).candidates(), *ADDED_FACT_QUESTIONS)
         try:
             answers = await self.fact_checks(users_own_words(task), candidates)
         except Exception:  # noqa: BLE001 - help, not a gate

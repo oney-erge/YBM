@@ -89,6 +89,17 @@ FACT_QUESTIONS: dict[str, str] = {
     "asks_to_understand_a_document": "Does the user ask what a document is about, or for a summary or explanation of it?",
     "tallies": "Does the user ask to add up, total, count or average numbers or items across several things?",
 }
+#: Facts the decision model can raise on its own, asked about every request (the facts above are only asked about when their words matched, and
+#: the model can only cancel them). Counting is the one a pattern missed: "How many times does the word error appear across the log files?"
+#: has none of the words, the model added three counts in its head and answered 17 where the files hold 16 (the sealed Verdict run, 11/14).
+#: Measured on the running decision model: 8 of 10 phrasings of a count or a total clear 0.5 (the two it missed are an average and a
+#: percentage, which the number check's own words already cover), one of ten ordinary requests does ("add its total to expenses.xlsx", 0.57,
+#: harmless: a number that a tool produced is never pushed back), and 13 of 178 messages in the e2e suites do, all of them counts or totals.
+ADDED_FACT_QUESTIONS: dict[str, str] = {
+    "counts_things": "Does answering this request mean counting or adding up several things (words, lines, files, amounts, or how many times something appears)?",
+}
+#: Every fact the decision model is asked about, with its question.
+ALL_FACT_QUESTIONS: dict[str, str] = {**FACT_QUESTIONS, **ADDED_FACT_QUESTIONS}
 #: The probability of "yes" at which a pattern-matched fact is confirmed (the corpus above was read at this).
 FACT_CONFIRM_AT = 0.5
 #: Where the answers are kept: a task's metadata, `{fact: bool}`, written once before its first step (orchestration/planning.py).
@@ -185,6 +196,11 @@ class RequestFacts:
     def providers(self) -> tuple[str, ...]:
         text = self.both.casefold()
         return tuple(name for name, pattern in _PROVIDERS if pattern.search(text))
+
+    @property
+    def counts_things(self) -> bool:
+        """The decision model said answering means counting or adding up (no pattern: with the model off or unsure it is False)."""
+        return bool(self.confirmed.get("counts_things", False))
 
     @property
     def names_a_coding_agent(self) -> bool:

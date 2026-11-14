@@ -24,6 +24,7 @@ from agent_control.orchestration.asking import (
 from agent_control.orchestration.auditor import AuditorService
 from agent_control.orchestration.call_rewrites import (
     ALREADY_DONE_STATUS,
+    exact_delivery_call,
 )
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_AUDIT,
@@ -638,7 +639,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     "status": "fulfillment_gap",
                     "error": (
                         f"The normal tool budget was reached, but the objective still expects: {gap}. "
-                        f"One targeted repair is allowed. Next step: {fulfillment_guidance(gap)}"
+                        f"One targeted repair is allowed. Next step: {fulfillment_guidance(gap, exact_delivery_call(latest, history))}"
                     ),
                 })
                 metadata = {
@@ -966,7 +967,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         "status": "fulfillment_gap",
                         "error": (
                             f"Declared done, but the objective still expects: {gap}. Keep working "
-                            f"toward the objective. Next step: {fulfillment_guidance(gap)} "
+                            f"toward the objective. Next step: {fulfillment_guidance(gap, exact_delivery_call(latest, history))} "
                             "If that cannot run, explain the concrete blocker before declaring done again."
                         ),
                         "step_id": step_id,

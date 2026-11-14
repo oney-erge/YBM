@@ -236,3 +236,16 @@ def test_the_tool_is_off_and_unnamed_unless_enabled_so_recorded_prompts_do_not_c
     assert "ability.search" not in registry.context()
     enabled = build_tool_registry(AppSettings(_env_file=None, abilities={"enabled": True}), "http://127.0.0.1:8765")
     assert "ability.search" in enabled.context()
+
+
+def test_phoning_and_emailing_are_known_gaps_that_say_so_first_and_offer_the_nearest_thing(tmp_path):
+    """The sealed Verdict run: "phone my dentist" opened a tel: link and waited for approval, and "email my landlord" asked for the address first."""
+    settings = _settings(tmp_path)
+    index = build_index(build_tool_registry(settings, "http://127.0.0.1:8765"), settings)
+    phone, _ = index.search("phone my dentist and move my appointment")[0]
+    mail, _ = index.search("email my landlord that the heating is broken")[0]
+    assert phone.id == "gap:phone.call" and mail.id == "gap:mail.send"
+    for gap in (phone, mail):
+        assert gap.kind == AbilityKind.GAP and gap.state == AbilityState.UNAVAILABLE and gap.confirm and gap.confirm_at >= 0.85
+        assert "never claim" in gap.guidance and "first sentence" in gap.guidance
+    assert "script" in phone.guidance and "tel:" in phone.guidance and "draft" in mail.guidance and "Do not ask for the recipient's address" in mail.guidance

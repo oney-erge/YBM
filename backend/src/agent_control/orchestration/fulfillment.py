@@ -788,7 +788,7 @@ def _gap_reason(value: PostconditionType) -> str:
     return f"expected_{value.value}_missing"
 
 
-def fulfillment_guidance(gap: str) -> str:
+def fulfillment_guidance(gap: str, delivery_call: str | None = None) -> str:
     """Turn an internal postcondition code into an actionable next step.
 
     The code remains stable for traces/tests, while the Operator gets the tool
@@ -800,8 +800,10 @@ def fulfillment_guidance(gap: str) -> str:
         "expected_preview_url_missing": "Use workspace.manage launch_static/web_app_preview and retain preview_url.",
         "expected_adapter_proposal_missing": "Call adapter.factory with operation=scaffold and retain adapter_dir.",
         "expected_schedule_created_missing": "Call schedule.manage with operation=create and retain schedule_id.",
-        "expected_artifact_delivered_missing": (
-            "Call artifact.deliver with operation=send_screenshot for a requested screenshot; "
+        "expected_artifact_delivery_missing": (
+            "Send the file you made with this call, as written: " + delivery_call
+            if delivery_call
+            else "Call artifact.deliver with operation=send_screenshot for a requested screenshot; "
             "for other files use send_file with the exact requested path."
         ),
         "expected_screenshot_delivered_missing": (

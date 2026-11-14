@@ -257,3 +257,35 @@ def test_an_auditors_wording_with_an_address_nothing_produced_is_dropped(tmp_pat
     task = repos.tasks.create("Who owns the project?")
     assert worker._audit_rewrite_adds_no_wrong_value(task, [], "Grace owns it.", "Grace owns it: grace@navy.example") is False
     assert worker._audit_rewrite_adds_no_wrong_value(task, [], "Grace owns it.", "Grace is the owner.") is True
+
+
+# --- a count the model made in its head (the sealed Verdict run, 11/14) -------------------------------------------------------------------------
+
+LOGS = [
+    {"tool_name": "filesystem.manage", "input": {"operation": "read_file"}, "status": "succeeded",
+     "output_summary": "Read app.log. 2026-11-14 17:03 error disk\n2026-11-14 17:04 error net\n2026-11-14 17:05 error disk"},
+    {"tool_name": "filesystem.manage", "input": {"operation": "read_file"}, "status": "succeeded",
+     "output_summary": "Read web.log. 2026-11-14 17:09 error 500\n2026-11-14 17:10 error 502"},
+]
+COUNT_ASK = "How many times does the word error appear across the log files, and which file has the most?"
+
+
+def test_a_count_added_up_in_the_head_is_caught_when_the_model_says_the_request_is_a_count() -> None:
+    """"times" made the check listen, but 17 is two digits and a 17 sat in every timestamp of the logs: it passed, and the files hold 16."""
+    assert ungrounded_numbers(COUNT_ASK, "The word error appears 17 times in all.", LOGS) == []  # as before: two digits is not a result
+    assert ungrounded_numbers(COUNT_ASK, "The word error appears 17 times in all.", LOGS, counts=True) == ["17"]
+
+
+def test_a_number_in_the_data_being_counted_does_not_vouch_for_a_count() -> None:
+    # "17" is in every timestamp of the logs: with the data counted as grounding, the wrong total would be believed
+    answer = "The word error appears 17 times."
+    assert "17" in LOGS[0]["output_summary"]
+    assert ungrounded_numbers(COUNT_ASK, answer, LOGS, counts=True) == ["17"]
+
+
+def test_a_count_a_script_printed_is_grounded_and_a_small_count_is_left_alone() -> None:
+    history = [*LOGS, {"tool_name": "code.interpreter", "input": {"operation": "run_python"}, "status": "succeeded",
+                       "output_summary": "Python completed successfully and created 0 file(s). app.log 9\nweb.log 7\ntotal 16"}]
+    assert ungrounded_numbers(COUNT_ASK, "The word error appears 16 times, most in app.log.", history, counts=True) == []
+    assert ungrounded_numbers(COUNT_ASK, "There are 5 log files.", LOGS, counts=True) == []  # one digit: counted, not calculated, as before
+    assert ungrounded_numbers("Find my resume.", "It is in Documents, 2026 version.", LOGS) == []
