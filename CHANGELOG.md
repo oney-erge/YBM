@@ -13,7 +13,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A request to move some files into a folder it names ("move the .png files into a subfolder called pictures") is told once, as soon as
   the model has looked at files, not to use `organize_plan` (it sorts every file by type into folders of its own naming) but to apply a
   manifest with exactly the files named (`orchestration/ladder.py`, `move_hint`; `RequestFacts.moves_into_a_named_folder`). In the
-  vision suite, run after the other cases in one chat, the model had planned a sort by type three times and asked the user.
+  vision suite, run after the other cases in one chat, the model had planned a sort by type three times and asked the user. The hint
+  says to write the file name after the folder: a destination that is only the name of a folder that does not exist yet is taken as the
+  new name of the file (three pictures came out called pictures, pictures_2 and pictures_3).
 - The check for an answer whose sum is wrong also reads a total with its parts listed under it ("12 lines in total: - a.txt: 4 lines
   - b.txt: 5 lines - c.txt: 6 lines"): the parts that stand before the total's own unit are added and the model is sent back once when
   they do not make the total (`orchestration/number_check.py`, `_itemised_total`). The earlier check only read "4 + 5 + 6" on one line.
