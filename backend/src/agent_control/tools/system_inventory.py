@@ -9,6 +9,8 @@ know:
     - ``steam_games``    Steam's own library manifests (every library folder, every drive)
     - ``installed_apps`` the list Windows keeps for "Apps & features"
     - ``disk_space``     free and total space per drive
+    - ``hardware``       the graphics card and its video memory, RAM and processor count (the same
+                         reading that decides which local model fits, ``llm/hardware.py``)
     - ``find_files``     the Windows Search index (a full-text index of the user's files that
                          already exists and answers in milliseconds), or a bounded folder walk
                          where there is no index
@@ -33,6 +35,7 @@ from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
+from agent_control.llm.hardware import probe as probe_hardware
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools.contracts import (
     SystemFindFilesInput,
@@ -53,7 +56,7 @@ from agent_control.tools.spec import (
     same_output_schema,
 )
 
-OPERATIONS = ("steam_games", "installed_apps", "disk_space", "find_files")
+OPERATIONS = ("steam_games", "installed_apps", "disk_space", "hardware", "find_files")
 
 #: Steam installs these next to the games; they are not games a person would count.
 _STEAM_NOT_GAMES = {228980}
@@ -460,6 +463,8 @@ class SystemInventoryAdapter:
                 output = self._apps(str(request.input.get("query") or ""), int(request.input.get("limit") or 60))
             elif operation == "disk_space":
                 output = self._disks()
+            elif operation == "hardware":
+                output = self._hardware()
             elif operation == "find_files":
                 output = self._find(request)
             else:
@@ -503,6 +508,30 @@ class SystemInventoryAdapter:
         disks = disk_space()
         lines = [f"- {d['drive']} {d['free_gb']} GB free of {d['total_gb']} GB" for d in disks]
         return {"count": len(disks), "items": disks, "summary": "Disk space:\n" + "\n".join(lines)}
+
+    @staticmethod
+    def _hardware() -> dict[str, Any]:
+        """What this computer can run, in the words a person uses: the card, its video memory, RAM and processors.
+
+        Asked to "run a 70B model on my laptop" the Operator asked the person for their GPU model and VRAM, with this tool listed as covering
+        hardware, cpu, ram and gpu and no operation that reported any of them.
+        """
+        found = probe_hardware()
+        cores = os.cpu_count()
+        lines = []
+        if found.gpu_name:
+            memory = f" with {found.vram_gb:g} GB of video memory" if found.vram_gb else ""
+            lines.append(f"Graphics card: {found.gpu_name}{memory}.")
+        elif found.detected:
+            lines.append("No dedicated graphics card was found.")
+        if found.ram_gb:
+            lines.append(f"RAM: {found.ram_gb:g} GB.")
+        if cores:
+            lines.append(f"Processor: {cores} logical cores.")
+        lines.extend(found.notes)
+        if not lines:
+            lines.append(found.reason or "This computer's hardware could not be read.")
+        return {"count": 1, "items": [{**found.as_dict(), "cpu_cores": cores}], "summary": "\n".join(lines)}
 
     def _find(self, request: ToolCallRequest) -> dict[str, Any]:
         query = str(request.input.get("query") or "")
@@ -601,15 +630,17 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             named_when_disabled=False,
             description=(
                 "answer questions about this computer from the places that already know: how many Steam "
-                "games are installed, which apps are installed, free disk space, or find a file anywhere "
-                "by name or content (Windows Search). Read-only; prefer it over opening apps or searching "
-                "one folder at a time"
+                "games are installed, which apps are installed, free disk space, the graphics card with its "
+                "video memory and the RAM, or find a file anywhere by name or content (Windows Search). "
+                "Read-only; prefer it over opening apps or searching one folder at a time, and over asking "
+                "the user what this computer has"
             ),
             operations=OPERATIONS,
             input_schema=SystemInventoryInput,
             operation_schemas={
                 "steam_games": SystemSimpleInput,
                 "disk_space": SystemSimpleInput,
+                "hardware": SystemSimpleInput,
                 "installed_apps": SystemInstalledAppsInput,
                 "find_files": SystemFindFilesInput,
             },
@@ -622,6 +653,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 {"operation": "find_files", "query": "resume", "extensions": ["docx", "pdf"]},
                 {"operation": "installed_apps", "query": "python"},
                 {"operation": "disk_space"},
+                {"operation": "hardware"},
             ),
         )
     )
