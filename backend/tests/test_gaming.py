@@ -200,3 +200,27 @@ async def test_the_wake_up_call_is_not_sent_while_gaming(tmp_path, monkeypatch) 
     gaming.turn_off()
     assert await warm_up(settings, build=lambda p: _Provider()) is True and sent == ["OK?"]
     forget_warm_state()
+
+
+@pytest.mark.asyncio
+async def test_no_model_is_asked_for_a_conversation_summary_while_gaming(tmp_path, monkeypatch) -> None:
+    """Found live: a message held in gaming mode still reloaded the model through the memory summary (0.8 GB to 6.2 GB of video memory)."""
+    from agent_control.channels.memory import ConversationMemoryService
+
+    monkeypatch.chdir(tmp_path)
+    repos, _ = make_repos(tmp_path)
+    asked: list[str] = []
+
+    class _Provider:
+        async def generate_text(self, system: str, user: str) -> str:
+            asked.append(user)
+            return "a summary"
+
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    service = ConversationMemoryService(repos, provider=_Provider())
+    gaming.turn_on()
+    state = await service.update_from_user_message(conversation, "what is the capital of France?")
+    assert asked == [] and "capital of France" in str(state)
+    gaming.turn_off()
+    await service.update_from_user_message(conversation, "and of Spain?")
+    assert asked  # back to normal: the model is used again

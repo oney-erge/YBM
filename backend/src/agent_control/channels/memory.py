@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 
+from agent_control import gaming
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import render_prompt
 from agent_control.schemas import MemoryFact, TaskStatus, utc_now
@@ -153,7 +154,11 @@ class ConversationMemoryService:
         state["strategy"] = "rolling_summary_with_recent_turns"
 
         existing_summary = str((existing or {}).get("summary") or DEFAULT_SUMMARY)
-        if self.summarize_in_background and self.provider is not None:
+        if gaming.is_on():
+            # The person said they are gaming: no model is loaded for a summary. The recent turns are kept and the next message after
+            # gaming mode ends re-summarizes. (Found live: a held message reloaded the model through this call, 0.8 GB to 6.2 GB of video memory.)
+            summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
+        elif self.summarize_in_background and self.provider is not None:
             summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
             self._summarize_later(conversation_id)
         elif self._task_in_flight(conversation_id):

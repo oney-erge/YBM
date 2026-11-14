@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Gaming mode keeps the model off the GPU for the summary of the conversation too. Live, a message held in gaming mode still reloaded the model
+  through the memory update (0.8 GB of video memory before, 6.2 GB after); while it is on, the summary is the recent turns and the next message after
+  it ends re-summarizes.
 - A message taken for chat that asks for something that could be set up ("read that to me out loud") becomes a task, so the Operator is told what
   could be set up and can get it (`abilities/context.py asks_for_what_could_be_set_up`, `channels/base.py`). A chat reply knows nothing of recipes: the
   deployed assistant answered "I cannot speak" and offered nothing, though a local voice is a 120 MB download away. The same search and the same
