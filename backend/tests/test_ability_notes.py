@@ -227,3 +227,28 @@ async def test_a_skill_without_a_question_stays_in_the_list_the_prompt_already_h
     found = await relevant(index, "I want you to build me a robot, a plan for building a robot", confirm=confirmer)
     assert [a for a in found if a.kind.value == "skill"] == []
     assert all("skill:plan-a-project" not in questions for _, questions in confirmer.asked)
+
+
+@pytest.mark.asyncio
+async def test_a_skill_that_routes_to_the_planner_is_asked_about_for_every_request(tmp_path):
+    """The words of "I'm moving on December 20. Plan it." do not reach a skill about building a robot, and the planner is the right place for it."""
+    root = tmp_path / "skills"
+    root.mkdir()
+    (root / "plan.md").write_text(
+        "---\nname: Plan a project\ndescription: turn a big goal such as building a robot into a plan\nwhen: Is this a big goal with many steps?\nroute: plan\n---\n1. Ask.\n",
+        encoding="utf-8",
+    )
+    (root / "other.md").write_text(
+        "---\nname: Invoice totals\ndescription: add up invoices\nwhen: Does the user want invoice totals?\n---\nsteps\n", encoding="utf-8"
+    )
+    settings = AppSettings(_env_file=None, abilities={"enabled": True}, adapters={"skills": {"enabled": True, "root_dir": str(root)}})
+    index = build_index(build_tool_registry(settings, "http://127.0.0.1:8765"), settings)
+    request = "I'm moving to a new apartment on December 20. Plan it."
+    yes = _Confirmer({"skill:plan-a-project": 0.9, "skill:invoice-totals": 0.9})
+    shown = [a for a in await relevant(index, request, confirm=yes) if a.kind.value == "skill"]
+    asked = set(yes.asked[0][1])
+    assert "skill:plan-a-project" in asked and [a.id for a in shown] == ["skill:plan-a-project"]
+    assert "skill:invoice-totals" not in asked  # a skill that does not route is still only asked about when its words reach it
+    no = _Confirmer({"skill:plan-a-project": 0.1})
+    assert [a for a in await relevant(index, request, confirm=no) if a.kind.value == "skill"] == []
+    assert [a for a in await relevant(index, request, confirm=None) if a.kind.value == "skill"] == []  # no decision model: nothing to confirm with
