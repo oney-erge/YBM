@@ -13,6 +13,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   The scenario fixtures key a prompt without run times (`testing/scripted_llm.py`), because a daily schedule's first run is one day from now at this minute; `schedule_create` was rekeyed.
 - The voice's usage note says to send the recording with `artifact.deliver send_file` and the name `tts.synthesize` returned, and that `send_latest` sends the text.
   Live, the Operator tried `send_latest` first and the person got a text file before the audio.
+- The plan skill confirms at 0.45 instead of 0.55. Live, "I'm moving on December 20. Plan it." scored 0.54 on the decision model, just under the bar, so the
+  Operator asked four questions (address, rooms, budget, special needs) instead of showing a plan, and was cancelled at 2.5 minutes. Measured on the running decision
+  model with the same question: 16 of 16 genuine plan requests clear 0.45 (the weakest are 0.47 and 0.52, and four of them were under 0.55), and none of 178 ordinary
+  messages falls between 0.45 and 0.55 (the nearest below is 0.43, "Clean up this folder"). Four other wordings of the question were tried and scored worse.
 - A recording sent in Telegram as an audio file (an mp3, a wav, an m4a) is saved in the inbox and handed to the task like any other file. It was ignored:
   no text, no task, no reply, which the first challenge run found when it sent a meeting recording and nothing came back within three minutes.
 - A skill for repeating a job (`skills/starter/schedule-a-job.md`, `when:` a yes/no question at 0.8): the Operator is told to create the schedule with the job
