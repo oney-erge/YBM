@@ -274,6 +274,12 @@ class TelegramBotApi:
 
 
 #: Menu shortcuts that mean a sentence the chat already understands.
+# What Telegram says an audio file is, as the suffix the file tools and the speech tool know it by, for a recording sent without a file name.
+_AUDIO_SUFFIXES = {
+    "audio/mpeg": ".mp3", "audio/mp3": ".mp3", "audio/mp4": ".m4a", "audio/x-m4a": ".m4a", "audio/m4a": ".m4a", "audio/ogg": ".ogg",
+    "audio/wav": ".wav", "audio/x-wav": ".wav", "audio/wave": ".wav", "audio/flac": ".flac", "audio/aac": ".aac", "audio/webm": ".webm",
+}
+
 _COMMANDS_THAT_ARE_SAYINGS = {
     "undo": "undo that", "passwords": "which accounts did you make", "logins": "which accounts did you make", "plan": "show my plan",
 }
@@ -377,7 +383,9 @@ class TelegramAdapter:
         voice = message.get("voice")
         photo = message.get("photo")
         document = message.get("document")
-        kind = MessageKind.VOICE if voice else MessageKind.IMAGE if photo else MessageKind.DOCUMENT if document else MessageKind.TEXT
+        # A recording sent as a file ("audio" to Telegram: an mp3, a wav, an m4a) is a file like any other. It was ignored: no text, no task, no reply.
+        audio = message.get("audio")
+        kind = MessageKind.VOICE if voice else MessageKind.IMAGE if photo else MessageKind.DOCUMENT if (document or audio) else MessageKind.TEXT
         attachments = []
         if isinstance(photo, list) and photo:
             # Telegram sends every size of a photo; the biggest one is the picture.
@@ -391,6 +399,13 @@ class TelegramAdapter:
             attachments.append(Attachment(
                 kind=MessageKind.DOCUMENT, file_id=document.get("file_id"), file_name=document.get("file_name"),
                 mime_type=document.get("mime_type"), size_bytes=document.get("file_size"),
+            ))
+        elif isinstance(audio, dict) and audio.get("file_id"):
+            mime = str(audio.get("mime_type") or "")
+            suffix = _AUDIO_SUFFIXES.get(mime.lower(), ".audio")
+            attachments.append(Attachment(
+                kind=MessageKind.DOCUMENT, file_id=audio.get("file_id"), file_name=audio.get("file_name") or f"audio_{message.get('message_id')}{suffix}",
+                mime_type=mime or None, size_bytes=audio.get("file_size"),
             ))
         if voice:
             attachments.append(

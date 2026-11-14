@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A recording sent in Telegram as an audio file (an mp3, a wav, an m4a) is saved in the inbox and handed to the task like any other file. It was ignored:
+  no text, no task, no reply, which the first challenge run found when it sent a meeting recording and nothing came back within three minutes.
 - Gaming mode keeps the model off the GPU for the summary of the conversation too. Live, a message held in gaming mode still reloaded the model
   through the memory update (0.8 GB of video memory before, 6.2 GB after); while it is on, the summary is the recent turns and the next message after
   it ends re-summarizes.
