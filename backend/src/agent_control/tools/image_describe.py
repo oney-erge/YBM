@@ -54,15 +54,32 @@ def localdeploy_root(settings: AppSettings) -> str | None:
 
 
 async def list_vision_profiles(root: str) -> list[dict[str, Any]]:
-    """The profiles LocalDeploy offers that can look at pictures, smallest first (a 4B model before a 12B one: the GPU is shared)."""
+    """The profiles LocalDeploy offers that can look at pictures, smallest first (a 4B model before a 12B one: the GPU is shared).
+
+    LocalDeploy lists a profile whether or not its model has been downloaded, so each Ollama profile says whether its model is installed:
+    True, False, or None when Ollama could not be asked (it is not running).
+    """
     async with httpx.AsyncClient(timeout=10) as client:
         response = await client.get(f"{root}/v1/models")
         response.raise_for_status()
+        installed: set[str] | None = None
+        try:
+            models = (await client.get(f"{root}/models")).json().get("ollama", {})
+            if not models.get("error"):
+                installed = {str(name) for name in models.get("models", [])}
+        except (httpx.HTTPError, ValueError):
+            pass
     found = []
     for entry in response.json().get("data", []):
         details = entry.get("localdeploy") or {}
-        if details.get("supports_vision") and details.get("kind") != "decision":
-            found.append({"profile": entry.get("id"), "model": str(details.get("model_id") or "")})
+        if not details.get("supports_vision") or details.get("kind") == "decision":
+            continue
+        model = str(details.get("model_id") or "")
+        backend = str(details.get("backend") or "")
+        found.append({
+            "profile": entry.get("id"), "model": model, "backend": backend,
+            "installed": (model in installed if installed is not None else None) if backend == "ollama" else True,
+        })
     return sorted(found, key=lambda item: (_size_in_billions(item["model"]), item["profile"]))
 
 
@@ -99,10 +116,10 @@ class ImageDescribeAdapter:
             return failed_result(request, "no vision model server is configured: the default model has no address to ask LocalDeploy at")
         try:
             profile_name = await self._profile_name(root)
+        except ValueError as exc:
+            return failed_result(request, str(exc))
         except Exception as exc:  # noqa: BLE001 - say what is wrong, in words the user can act on
             return failed_result(request, f"I could not ask LocalDeploy which vision models it has ({type(exc).__name__}). Is it running?")
-        if profile_name is None:
-            return failed_result(request, "LocalDeploy has no vision model set up. Pull one into Ollama (for example qwen3-vl:4b) and add its profile.")
         question = str(request.input.get("question") or "").strip() or DEFAULT_QUESTION
         provider = self._provider_factory(
             LLMProfileConfig(model=profile_name, base_url=f"{root}/v1", timeout_seconds=VISION_TIMEOUT_SECONDS, max_tokens=700, temperature=0.1)
@@ -120,12 +137,21 @@ class ImageDescribeAdapter:
         }
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
-    async def _profile_name(self, root: str) -> str | None:
+    async def _profile_name(self, root: str) -> str:
+        """The profile to use: the one the user chose, or the smallest whose model is installed. Says what is missing when there is none."""
         chosen = self.settings.vision.profile.strip()
         if chosen:
             return chosen
         profiles = await self._listing(root)
-        return str(profiles[0]["profile"]) if profiles else None
+        if any(p["installed"] is None for p in profiles) and self.settings.vision.start_ollama and await _start_ollama():
+            profiles = await self._listing(root)  # Ollama could not be asked because it was not running; it is now
+        if not profiles:
+            raise ValueError("LocalDeploy has no vision model set up. Add a vision profile for a model such as qwen3-vl:4b-instruct.")
+        usable = [p for p in profiles if p["installed"] is not False]
+        if not usable:
+            names = ", ".join(sorted({p["model"] for p in profiles})[:3])
+            raise ValueError(f"none of the vision models LocalDeploy lists is installed in Ollama ({names}). Pull one, for example: ollama pull qwen3-vl:4b-instruct")
+        return str(usable[0]["profile"])
 
     async def _ask(self, provider: Any, question: str, path: Path, root: str) -> str:
         try:

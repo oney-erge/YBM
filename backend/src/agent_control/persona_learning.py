@@ -28,21 +28,31 @@ import json
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
+
 from agent_control.config import PersonaAdapterConfig
 from agent_control.persona import read_persona, write_persona, DEFAULT_PERSONA
 from agent_control.schemas import new_id, utc_now
 
 
-LEARNING_SYSTEM_PROMPT = """You extract durable, general preferences from one user message.
+LEARNING_SYSTEM_PROMPT = """You read one message a user sent to their personal assistant. Decide whether it states a LASTING preference about how
+the assistant should behave or answer in the future: tone, format, defaults, things to always or never do ("always", "from now on", "never",
+"I prefer").
 
-A durable preference is true for FUTURE tasks too: tone, format, defaults,
-things to always or never do. It is NOT the content of this one request.
+It is NOT a preference when it asks for one thing now (a question, a file to move), or asks for a reminder or a recurring job: those are requests.
+Most messages are just requests, so when unsure say it is not a preference.
 
-Return ONLY one of:
-- A single imperative line, under 120 characters, e.g.
-  "Keep answers under 5 bullet points." / "Never ask before read-only file searches."
-- NONE - when the message expresses no lasting preference. This is the common
-  case; most messages are just requests. Prefer NONE when unsure."""
+If it is one, write it as a single imperative line under 120 characters, e.g. "Keep answers under 5 bullet points." or
+"Never ask before read-only file searches." Leave the line empty when it is not."""
+
+
+class _Preference(BaseModel):
+    """Free text from a 9B model answered the question in the message instead of extracting from it; a schema keeps it to the job."""
+
+    states_a_lasting_preference: bool = Field(
+        description="true only if the user says how the assistant should behave from now on, not just what they want done this time"
+    )
+    preference: str = Field(default="", description="the preference as one short imperative line; empty when there is none")
 
 
 @dataclass
@@ -152,11 +162,11 @@ async def propose_from_message(
     if not text:
         return None
     try:
-        raw = await provider.generate_text(LEARNING_SYSTEM_PROMPT, text[:2000])
+        found = await provider.generate_structured(LEARNING_SYSTEM_PROMPT, text[:2000], _Preference, temperature=0.0)
     except Exception:  # noqa: BLE001 - never fail a finished task over this
         return None
-    line = (raw or "").strip().splitlines()[0].strip() if (raw or "").strip() else ""
-    if not line or line.upper().startswith("NONE") or len(line) > 200:
+    line = " ".join(str(found.preference or "").split())
+    if not found.states_a_lasting_preference or not line or len(line) > 200:
         return None
     store = SuggestionStore.load(config)
     return store.add(line, text, task_id)
