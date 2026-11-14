@@ -120,3 +120,27 @@ async def asks_for_what_a_recipe_covers(abilities: Iterable[Ability], request: s
     if not recipes or confirm is None:
         return False
     return bool(await relevant(AbilityIndex(recipes), request, confirm=confirm, shortlist=0.01))
+
+
+#: Asked about a message taken for chat. Measured on the running decision model: 9 of 10 ways of asking about the assistant clear 0.8 and the tenth
+#: ("what can you do now that you couldn't do last week") scores 0.56; ten ordinary messages that share its words score at most 0.26, and none of
+#: the 178 messages in the e2e suites that chat would have taken reaches 0.5.
+ABOUT_THE_ASSISTANT = "Is the user asking what this assistant can do, cannot do, is missing, or needs from them to be more useful?"
+ABOUT_THE_ASSISTANT_AT = 0.5
+
+
+async def asks_about_the_assistant(request: str, *, confirm: Confirmer | None) -> bool:
+    """Whether a message taken for chat is a question about the assistant itself: what it can do, cannot do, is missing or needs.
+
+    The chat reply is composed with the classification, from a prompt that knows nothing of the ability index: asked "what can't you do?" it
+    listed what it can do, and asked what is new it said commands run "without needing explicit approval". Such a question is a task instead,
+    so the Operator can read the index (`ability.search` overview) and answer from it. No decision model, no answer.
+    """
+    if confirm is None:
+        return False
+    try:
+        answers = await confirm(request, {"about_the_assistant": ABOUT_THE_ASSISTANT})
+    except Exception:  # noqa: BLE001 - help, not a gate: the message stays chat
+        logger.info("about_the_assistant_unavailable", exc_info=True)
+        return False
+    return answers.get("about_the_assistant", 0.0) >= ABOUT_THE_ASSISTANT_AT

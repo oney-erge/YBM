@@ -179,6 +179,49 @@ async def test_the_tool_searches_and_describes(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_the_overview_lists_what_cannot_be_done_first_and_tells_the_model_to_answer_from_it(tmp_path):
+    """Live (challenge a7, g1, g2): asked what it cannot do, what it needs and what it can do, chat answered from nowhere."""
+    settings = _settings(tmp_path)
+    registry = build_tool_registry(settings, "http://127.0.0.1:8765")
+    result = await registry.adapters["ability.search"].execute(_request(operation="overview"))
+    assert result.status == ToolResultStatus.SUCCEEDED
+    text = result.output["terminal_output"][0]["content"]
+    assert text.index("Cannot be done by this assistant") < text.index("Ready now")  # the common question first
+    assert "payment" in text.lower()  # a gap says why and what to do instead
+    assert "Answer from this list only" in text and "recommend the two or three" in text and "no dates" in text
+    assert result.output["operation"] == "overview" and result.output["abilities"]
+
+
+def test_the_overview_caps_each_section_and_says_how_many_more(tmp_path):
+    from agent_control.tools.abilities import _overview
+
+    many = tuple(_ability(f"tool{n:02d}", f"does thing {n}") for n in range(30))
+    text, output = _overview(many)
+    assert text.count("\n- tool") == 25 and "- ...and 5 more." in text and "Ready now:" in text
+    assert "Cannot be done" not in text  # a section with nothing in it is left out
+    assert len(output["abilities"]) == 25
+    assert _overview(())[0].startswith("Nothing is listed.")
+
+
+def test_the_overview_counts_the_tools_of_mcp_servers_instead_of_listing_them_and_cuts_text_at_a_word():
+    from agent_control.tools.abilities import _overview
+
+    served = tuple(
+        Ability(id=f"mcp:fs/t{n}", kind=AbilityKind.MCP_TOOL, name=f"filesystem/tool{n}", summary="reads a file", state=AbilityState.READY)
+        for n in range(7)
+    )
+    long_gap = Ability(
+        id="gap:pay", kind=AbilityKind.GAP, name="pay for things", summary="buy or order something", state=AbilityState.UNAVAILABLE,
+        guidance="It has no payment method. " * 20,
+    )
+    text, output = _overview((*served, _ability("files", "reads and moves files"), long_gap))
+    assert "filesystem/tool0" not in text and "- 7 more tools from connected MCP servers." in text
+    assert "- files: reads and moves files" in text and len(output["abilities"]) == 2
+    gap_line = next(line for line in text.splitlines() if line.startswith("- pay for things"))
+    assert gap_line.endswith("…)") and "payment method." in gap_line  # shortened at a word, not in the middle of one
+
+
+@pytest.mark.asyncio
 async def test_an_empty_search_says_what_to_do_next(tmp_path):
     registry = build_tool_registry(_settings(tmp_path), "http://127.0.0.1:8765")
     result = await registry.adapters["ability.search"].execute(_request(operation="search", query="zzzz qqqq"))

@@ -12,10 +12,11 @@ those things, each behind its own approval; the record says which.
 from __future__ import annotations
 
 import json
+from textwrap import shorten
 from typing import Any
 
 from agent_control.abilities.catalog import AbilityCatalog
-from agent_control.abilities.model import Ability, AbilityState
+from agent_control.abilities.model import Ability, AbilityKind, AbilityState
 from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools.contracts import AbilitiesInput, AbilitiesOutput
 from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDefinition, failed_result, same_output_schema
@@ -63,6 +64,53 @@ def _text(entries: list[dict[str, Any]], heading: str) -> str:
     return "\n".join(lines)
 
 
+#: What an overview lists, in the order a person asks: what cannot be done, what could be set up, what needs an account, what is switched
+#: off, then what is ready. The cap is per section: the question was what the assistant can and cannot do, not for its whole catalog.
+_OVERVIEW_SECTIONS = (
+    (AbilityState.UNAVAILABLE, "Cannot be done by this assistant, and what to do instead", 15),
+    (AbilityState.INSTALLABLE, "Could be set up, with the user's approval", 12),
+    (AbilityState.NEEDS_ACCESS, "Would work with an account, key or login from the user", 12),
+    (AbilityState.DISABLED, "Switched off (the user can turn them on in Access)", 12),
+    (AbilityState.READY, "Ready now", 25),
+)
+_OVERVIEW_ANSWER = (
+    "Answer from this list only. For what cannot be done, say each plainly with the nearest thing that can be done. For what is needed or "
+    "missing, name the concrete things above, say in a few words what each would unlock, recommend the two or three that would help "
+    "most and offer to set them up. This list has no dates, so do not say what is new since a day. Do not name tool ids."
+)
+
+
+def _overview(abilities: tuple[Ability, ...]) -> tuple[str, dict[str, Any]]:
+    """The assistant's own abilities by state, for "what can't you do?", "what do you need from me?" and "what can you do?".
+
+    The chat reply to those questions is written without the index, and it invented: "execute terminal commands without needing explicit
+    approval", and a list of what it can do for "what can't you do".
+    """
+    lines: list[str] = []
+    shown: list[dict[str, Any]] = []
+    for state, heading, cap in _OVERVIEW_SECTIONS:
+        in_state = [ability for ability in abilities if ability.state == state]
+        # The tools of an MCP server are a catalog of their own (dozens, named like "filesystem/list_directory"): counted, not listed.
+        members = sorted((ability for ability in in_state if ability.kind != AbilityKind.MCP_TOOL), key=lambda ability: ability.name)
+        from_servers = len(in_state) - len(members)
+        if not in_state:
+            continue
+        lines.append(f"{heading}:")
+        for ability in members[:cap]:
+            note = ability.guidance if state == AbilityState.UNAVAILABLE else ability.detail if state == AbilityState.INSTALLABLE else ""
+            what = shorten(" ".join(ability.summary.split()), 110, placeholder="…")
+            lines.append(f"- {ability.name}: {what}" + (f" ({shorten(' '.join(note.split()), 220, placeholder='…')})" if note else ""))
+            shown.append(describe_ability(ability))
+        if len(members) > cap:
+            lines.append(f"- ...and {len(members) - cap} more.")
+        if from_servers:
+            lines.append(f"- {from_servers} more tools from connected MCP servers.")
+        lines.append("")
+    body = "\n".join(lines).rstrip() or "Nothing is listed."
+    text = f"{body}\n\n{_OVERVIEW_ANSWER}"
+    return text, {"summary": f"{len(shown)} abilities by state. {_OVERVIEW_ANSWER}", "abilities": shown}
+
+
 class AbilitiesAdapter:
     """Search and describe abilities. The catalog is bound after the registry exists, because the index reads the registry's tools."""
 
@@ -89,6 +137,8 @@ class AbilitiesAdapter:
             )
             output: dict[str, Any] = {"summary": heading, "abilities": matches}
             text = _text(matches, heading)
+        elif operation == "overview":
+            text, output = _overview(index.all())
         elif operation == "describe":
             name = str(request.input.get("name") or "")
             ability = index.find_by_name(name)
@@ -117,16 +167,19 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             named_when_disabled=False,
             description=(
                 "find out what could do something, across every tool, skill, MCP tool, coding agent and saved workflow, "
-                "including ones that are switched off or not installed, and what cannot be done at all and what to do instead"
+                "including ones that are switched off or not installed, and what cannot be done at all and what to do instead. "
+                "When the question is about the assistant itself (what can you do, what can't you do, what are you missing, what do you "
+                "need from me) use operation overview and answer from it, never from memory"
             ),
-            operations=("search", "describe"),
+            operations=("search", "describe", "overview"),
             input_schema=AbilitiesInput,
             output_schema=AbilitiesOutput,
-            operation_output_schemas=same_output_schema(("search", "describe"), AbilitiesOutput),
+            operation_output_schemas=same_output_schema(("search", "describe", "overview"), AbilitiesOutput),
             default_operation="search",
             examples=(
                 {"operation": "search", "query": "what could turn a photo into text"},
                 {"operation": "describe", "name": "{{ability_name}}"},
+                {"operation": "overview"},
             ),
         )
     )
