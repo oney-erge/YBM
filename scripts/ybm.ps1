@@ -68,6 +68,8 @@ YBM - local agentic control stack
   ybm trace <task_id> [--json] full post-mortem for one task - reads the DB directly, no running backend needed
   ybm scenario record <name> [--profile <name>]
                                 re-record a scenario fixture against a live LLM (real API calls, may cost money)
+  ybm scenario rekey <name>|--all
+                                keep the recorded responses of a fixture whose prompts changed, under the new prompts' keys
   ybm ui-build                 build the React admin console into backend/src/agent_control/static/admin
   ybm ui-dev                   run the admin console with hot reload against a running backend
   ybm package-extension        build the VS Code bridge extension .vsix
@@ -891,11 +893,12 @@ switch ($Command) {
     exit $LASTEXITCODE
   }
   "scenario" {
-    if ($Sub -ne "record" -or $Rest.Count -lt 1) {
+    if (($Sub -ne "record" -and $Sub -ne "rekey") -or $Rest.Count -lt 1) {
       Write-Host 'usage: ybm scenario record <name> [--profile <name>]'
+      Write-Host '       ybm scenario rekey <name>|--all'
       exit 1
     }
-    & (Get-YbmPython) "$Script:YbmRoot\backend\tests\scenario\record.py" @Rest
+    & (Get-YbmPython) "$Script:YbmRoot\backend\tests\scenario\record.py" $Sub @Rest
     exit $LASTEXITCODE
   }
   # Frontend build/dev live in the Python CLI, but AGENTS.md and README both

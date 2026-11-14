@@ -1,5 +1,6 @@
 """ybm scenario record <name> - re-record a scenario fixture against a live
-LLM (docs/archive/HISTORY.md N3).
+LLM (docs/archive/HISTORY.md N3); ybm scenario rekey <name>|--all - keep the recorded
+responses of a fixture whose prompts changed in a way that does not change the answer.
 
 Not a pytest test module (doesn't match the ``test_*.py`` discovery pattern),
 so it's never auto-collected or run by ``ybm test`` / plain ``pytest``.
@@ -38,6 +39,11 @@ def find_scenario_files(name: str) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] == "rekey":
+        return rekey_main(argv[1:])
+    if argv and argv[0] == "record":
+        argv = argv[1:]
     parser = argparse.ArgumentParser(prog="ybm scenario record")
     parser.add_argument("name", help='fixture name, e.g. "filesystem_search" (matches fixtures/<name>.json)')
     parser.add_argument(
@@ -110,6 +116,93 @@ def main(argv: list[str] | None = None) -> int:
             "RecordingLLMProvider saves after every call, not just on success."
         )
     return result.returncode
+
+
+# --------------------------------------------------------------------------------------------------------------------------------
+# ybm scenario rekey <name>|--all
+#
+# A fixture is keyed on the exact text of the prompt, so any change to a prompt (a tool line added, a sentence reworded) misses every
+# recorded call and the scenario fails. Re-recording needs a live model and records what that model says today. When the change does not
+# change what the model should answer, this is the cheaper and more honest tool: the response recorded for the nearest prompt is kept under
+# the new key, the prompt lines that changed are printed so a person can judge that, and keys that nothing uses any more are dropped.
+# It proves the scenario still runs through the changed prompt; it does not prove a live model answers the same, which is what `record`
+# is for.
+# --------------------------------------------------------------------------------------------------------------------------------
+
+
+def _fixture_names() -> list[str]:
+    return sorted(p.stem for p in FIXTURES_DIR.glob("*.json"))
+
+
+def _run_pytest(files: list[Path], env: dict[str, str]) -> int:
+    return subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", *[str(f) for f in files]], cwd=BACKEND_DIR, env=env).returncode
+
+
+def rekey(name: str) -> int:
+    import json
+
+    files = find_scenario_files(name)
+    fixture_path = FIXTURES_DIR / f"{name}.json"
+    if not files or not fixture_path.exists():
+        print(f"{name}: no scenario test builds this fixture, or there is no recorded fixture to rekey.")
+        return 1
+    before = fixture_path.read_bytes()
+    log_path = SCENARIO_DIR / f".rekey-{name}.log"
+    track_path = SCENARIO_DIR / f".rekey-{name}.used"
+    for path in (log_path, track_path):
+        path.unlink(missing_ok=True)
+
+    def restore() -> None:
+        fixture_path.write_bytes(before)
+        print(f"{name}: restored the previous fixture.")
+
+    try:
+        env = {**os.environ, "YBM_SCENARIO_REKEY": name, "YBM_SCENARIO_REKEY_LOG": str(log_path)}
+        if _run_pytest(files, env) != 0:
+            restore()
+            print(f"{name}: a call has no recorded prompt alike enough (or a test failed): re-record this one with `ybm scenario record {name}`.")
+            return 1
+        changes = [json.loads(line) for line in log_path.read_text(encoding="utf-8").splitlines()] if log_path.exists() else []
+
+        env = {**os.environ, "YBM_SCENARIO_TRACK": str(track_path)}
+        env.pop("YBM_SCENARIO_REKEY", None)
+        if _run_pytest(files, env) != 0:
+            restore()
+            return 1
+        used = {
+            row["key"]
+            for row in (json.loads(line) for line in track_path.read_text(encoding="utf-8").splitlines())
+            if row["fixture"] == fixture_path.name
+        }
+        entries = json.loads(fixture_path.read_text(encoding="utf-8"))
+        kept = {key: entries[key] for key in sorted(entries) if key in used}
+        fixture_path.write_text(json.dumps(kept, indent=2), encoding="utf-8")
+    finally:
+        for path in (log_path, track_path):
+            path.unlink(missing_ok=True)
+
+    print(f"\n{name}: {len(changes)} call(s) rekeyed, {len(entries) - len(kept)} superseded key(s) dropped, {len(kept)} kept.")
+    seen: dict[str, int] = {}
+    for change in changes:
+        shown = "\n".join(line for line in change["diff"] if not line.startswith(("---", "+++")))
+        seen[shown] = seen.get(shown, 0) + 1
+    for shown, count in seen.items():
+        print(f"\nPrompt change seen in {count} call(s):")
+        lines = shown.splitlines()
+        print("\n".join(f"    {line[:200]}" for line in lines[:30]) + (f"\n    ... {len(lines) - 30} more line(s)" if len(lines) > 30 else ""))
+    print("\nThe recorded responses were kept. Read the change above: if it should change what the model answers, re-record with `record`.")
+    return 0
+
+
+def rekey_main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="ybm scenario rekey")
+    parser.add_argument("name", nargs="?", help="fixture name, e.g. filesystem_search")
+    parser.add_argument("--all", action="store_true", help="rekey every recorded fixture")
+    args = parser.parse_args(argv)
+    if not args.all and not args.name:
+        parser.error("give a fixture name or --all")
+    names = _fixture_names() if args.all else [args.name]
+    return max((rekey(name) for name in names), default=0)
 
 
 if __name__ == "__main__":
