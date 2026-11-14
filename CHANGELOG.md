@@ -7,6 +7,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A preference line that copied the output format is replaced by the person's own words (`persona_learning.py`). The model that extracts the line is asked for structured
+  output and sometimes writes that instruction into the field: "From now on keep your answers very short." was offered back as "Keep answers very short and return only valid JSON."
+  (challenge c6). When the line mentions JSON and the message does not, the message is the line; one too long to be a line is not offered.
 - `system.inventory` reports the hardware (`operation: hardware`): the graphics card with its video memory, RAM and processor count, from the same reading that
   decides which local model fits (`llm/hardware.py`). The tool already listed hardware, cpu, ram and gpu among what it covers and had no operation that reported any of
   them: asked to "run a 70B parameter model on my laptop", the Operator asked the person for their GPU model and VRAM and was cancelled after two asks (challenge c2).

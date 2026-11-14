@@ -59,6 +59,23 @@ async def test_a_preference_is_queued_not_written(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_line_that_copied_the_output_format_is_replaced_by_the_persons_own_words(tmp_path) -> None:
+    """Live (challenge c6): "From now on keep your answers very short." was offered as "Keep answers very short and return only valid JSON."."""
+    config = _config(tmp_path)
+    leaked = StubProvider("Keep answers very short and return only valid JSON.")
+
+    suggestion = await propose_from_message(leaked, config, "From now on keep your answers very short.")
+
+    assert suggestion is not None and suggestion.line == "From now on keep your answers very short."
+    # When the person did ask for JSON the model's line stands.
+    wanted = await propose_from_message(StubProvider("Always answer in valid JSON."), config, "From now on always answer in JSON.")
+    assert wanted is not None and wanted.line == "Always answer in valid JSON."
+    # A message too long to be used as the line is not offered at all rather than offered polluted.
+    long_message = "From now on " + "keep every answer short and plain, " * 8
+    assert await propose_from_message(StubProvider("Keep it short. Return valid JSON."), config, long_message) is None
+
+
+@pytest.mark.asyncio
 async def test_learning_off_proposes_nothing(tmp_path) -> None:
     config = _config(tmp_path, learning=False)
     provider = StubProvider("Keep answers short.")

@@ -166,6 +166,10 @@ async def propose_from_message(
     except Exception:  # noqa: BLE001 - never fail a finished task over this
         return None
     line = " ".join(str(found.preference or "").split())
+    if line and "json" in line.lower() and "json" not in text.lower():
+        # A model asked for structured output sometimes copies that instruction into the field: live, "From now on keep your answers very short" was
+        # offered back as "Keep answers very short and return only valid JSON." The person's own words are the line then.
+        line = " ".join(text.split())
     if not found.states_a_lasting_preference or not line or len(line) > 200:
         return None
     store = SuggestionStore.load(config)
