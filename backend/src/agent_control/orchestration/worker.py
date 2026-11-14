@@ -1053,7 +1053,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         latest.id, metadata, TaskStatus.RUNNING
                     )
             latest = self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
-            return self._operator_ask_user(latest, decision.question or "Need more information to continue.")
+            return self._operator_ask_user(latest, decision.question or "Need more information to continue.", decision.options)
 
         if decision.action == OperatorAction.BLOCKED:
             reason = operator_blocked_reason(decision.reason, history)
