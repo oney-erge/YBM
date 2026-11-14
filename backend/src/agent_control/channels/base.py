@@ -34,7 +34,7 @@ from dataclasses import dataclass
 import re
 from typing import Any, Protocol
 
-from agent_control.abilities.context import asks_for_what_a_recipe_covers
+from agent_control.abilities.context import asks_about_the_assistant, asks_for_what_a_recipe_covers
 from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
 from agent_control.channels.memory import memory_context
@@ -474,12 +474,16 @@ async def classify_and_spawn_task(
     else:
         is_chat_only = intent_route == IntentRoute.CONVERSATION and classification.task_type != TaskType.STATUS_REQUEST
 
-    if is_chat_only and settings is not None and settings.abilities.enabled and settings.abilities.acquire and settings.decision.mode != "off":
-        # A chat reply knows nothing of recipes, so it answers "read that out loud" with "I cannot speak" and offers nothing (or, once the voice is
-        # installed, "send that again"). A message the index finds a recipe for, and the decision model confirms, goes to the Operator.
+    if is_chat_only and settings is not None and settings.abilities.enabled and settings.decision.mode != "off":
+        # A chat reply knows nothing of the ability index. It answers "read that out loud" with "I cannot speak" and offers nothing (or, once the
+        # voice is installed, "send that again"), and it answers "what can't you do?" from nowhere. A message the index finds a recipe for, or
+        # that asks about the assistant itself, and the decision model confirms, goes to the Operator, which can read the index.
         client = DecisionModelClient(settings.decision)
         try:
-            is_chat_only = not await asks_for_what_a_recipe_covers(recipe_abilities(settings), inbound.text or "", confirm=client.yes_no)
+            covered = settings.abilities.acquire and await asks_for_what_a_recipe_covers(
+                recipe_abilities(settings), inbound.text or "", confirm=client.yes_no
+            )
+            is_chat_only = not (covered or await asks_about_the_assistant(inbound.text or "", confirm=client.yes_no))
         except Exception:  # noqa: BLE001 - help, not a gate: the message stays chat
             logger.info("installable_check_unavailable", exc_info=True)
 

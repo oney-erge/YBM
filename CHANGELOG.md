@@ -21,6 +21,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   binary format by its extension, and any file with a NUL byte in its first 4 KB by its content. The error says nothing was changed and to use a program
   (`code.interpreter` with openpyxl or python-docx). Live (challenge e2), asked to add a row to `expenses.xlsx`, the Operator overwrote the 1.5 KB workbook with 95 bytes of
   plain text that Excel cannot open and answered that the row had been added.
+- A question about the assistant itself ("what can't you do?", "what do you need from me to be more useful?", "what can you do?") is answered from the ability index,
+  not from the chat reply, which is written without it. `ability.search` has `operation: overview`: what cannot be done (and what to do instead), what could be set up,
+  what needs an account, what is switched off, then what is ready, with MCP server tools counted rather than listed, and a closing line telling the model to answer from
+  the list only, recommend the two or three things that would help most, and not say what is new since a day (the records have no dates). At intake a message taken for chat
+  that the decision model confirms is about the assistant (`abilities/context.py asks_about_the_assistant`, 0.5, measured: 9 of 10 phrasings clear 0.8, the other 0.56, ordinary
+  messages that share its words at most 0.26) becomes a task, and the chat-to-task check no longer needs installs switched on. The second challenge run found chat answering "what can't you do?"
+  with what it can do, and "what is new?" with "execute terminal commands without needing explicit approval".
 - A schedule says when it first runs: the weekday, the date and the time in its own timezone (`tools/schedule_manage.py when_it_runs`, used by create, a repeated create
   and list). The tool said only that the schedule was created, and the model, asked to say when it first runs, wrote "Monday, December 23" for a run on
   November 16 (live; December 23, 2026 is a Wednesday). The list showed a UTC clock time the person had to convert.

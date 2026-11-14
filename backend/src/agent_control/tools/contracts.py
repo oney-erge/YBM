@@ -314,7 +314,7 @@ class SkillsInput(ToolInputModel):
 
 
 class AbilitiesInput(ToolInputModel):
-    operation: Literal["search", "describe"] = "search"
+    operation: Literal["search", "describe", "overview"] = "search"
     # search: what is needed, in the user's words. describe: the exact name of one ability from an earlier search.
     query: str | None = None
     name: str | None = None
@@ -1135,7 +1135,7 @@ class AbilityAcquireOutput(ToolOutputModel):
 
 
 class AbilitiesOutput(ToolOutputModel):
-    operation: Literal["search", "describe"] = "search"
+    operation: Literal["search", "describe", "overview"] = "search"
     summary: str = Field(min_length=1)
     abilities: list[dict[str, Any]] = Field(default_factory=list)
 
