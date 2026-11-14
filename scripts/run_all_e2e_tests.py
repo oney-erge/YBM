@@ -66,6 +66,8 @@ HELDOUT2_PATH = ROOT / "e2e" / "heldout2_cases.json"
 HELDOUT3_PATH = ROOT / "e2e" / "heldout3_cases.json"
 VISION_PATH = ROOT / "e2e" / "vision_cases.json"
 HELDOUT4_PATH = ROOT / "e2e" / "heldout4_cases.json"
+CHALLENGE_PATH = ROOT / "e2e" / "challenge_cases.json"
+VERDICT_PATH = ROOT / "e2e" / "verdict_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -646,7 +648,7 @@ def expects_task_mode(value: object) -> bool | str:
 def load_cases() -> list[dict]:
     """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH):
+    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH, CHALLENGE_PATH, VERDICT_PATH):
         if path.exists():
             cases += json.loads(path.read_text(encoding="utf-8"))
     return cases
@@ -761,6 +763,11 @@ class TurnResult:
     # True when the runner answered a clarifying question during this turn, so
     # a reader can tell an unprompted result from an assisted one.
     clarification_sent: bool = False
+    # Seconds from sending the message to the first thing the bot said back, and what the answer claims that the record does not show.
+    first_sign_s: float | None = None
+    start_iso: str = ""
+    unbacked_claims: list[str] = field(default_factory=list)
+    approvals_seen: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -777,6 +784,9 @@ class StageResult:
     passed: bool = False
     failure_reason: str | None = None
     runner_exception: str | None = None    # set if the stage itself crashed
+    skipped: str | None = None             # why the case was not run (manual, or a fixture this machine cannot build)
+    rubric: list[str] = field(default_factory=list)
+    hook_notes: list[str] = field(default_factory=list)
 
 
 def _load_env() -> None:
@@ -788,7 +798,7 @@ def _load_env() -> None:
             os.environ.setdefault(key.strip(), value.strip())
 
 
-async def _send_message(message: str) -> int:
+async def _send_message(message: str, attachments: list[str] | None = None) -> int:
     from telethon import TelegramClient
 
     api_id = int(os.environ["TELEGRAM_API_ID"])
@@ -799,7 +809,10 @@ async def _send_message(message: str) -> int:
     client = TelegramClient(session, api_id, api_hash)
     async with client:
         peer = await client.get_entity(bot_username)
-        sent = await client.send_message(peer, message)
+        if attachments:
+            sent = await client.send_file(peer, attachments[0], caption=message)
+        else:
+            sent = await client.send_message(peer, message)
         return sent.id
 
 
@@ -807,6 +820,8 @@ async def _find_new_task(
     known_ids: set[str],
     original_message_text: str,
     spawn_timeout_s: int = TASK_SPAWN_TIMEOUT_S,
+    *,
+    by_prefix: bool = False,
 ) -> str | None:
     """Find the task created for this exact Telegram message.
 
@@ -828,7 +843,11 @@ async def _find_new_task(
             if (
                 t["id"] not in known_ids
                 and metadata.get("source_channel") == "telegram"
-                and metadata.get("original_message_text") == original_message_text
+                and (
+                    str(metadata.get("original_message_text") or "").startswith(original_message_text)
+                    if by_prefix
+                    else metadata.get("original_message_text") == original_message_text
+                )
             ):
                 return t["id"]
     return None
@@ -1066,6 +1085,18 @@ def _diagnose_turn(
         leaked = [needle for needle in excluded if needle.lower() in haystack]
         if leaked:
             return False, f"reply leaked forbidden content: {leaked}"
+
+    # What the answer says it did must be something the record shows (orchestration/claims.py: the same check the product runs on its own
+    # answers). Cases of the challenge and verdict suites set "claims": true.
+    if case.get("claims"):
+        from agent_control.orchestration.claims import unbacked_claims
+
+        said = f"{_turn_text_the_user_gets(turn)}\n{turn.telegram_confirmed_text}".strip()
+        history = (turn.metadata or {}).get("operator_history") or []
+        found = unbacked_claims(said, history if isinstance(history, list) else [], turn.metadata)
+        turn.unbacked_claims = [f"{c.kind}: {c.said}" for c in found]
+        if found:
+            return False, f"the answer says something was done that the record does not show: {turn.unbacked_claims[:3]}"
 
     # The audit trail is persisted and operator-visible, so a secret redacted
     # from the reply but written into an event payload is still a leak. Fetched
@@ -1314,6 +1345,11 @@ def _capture_sent_messages(turn: TurnResult, turn_start_iso: str) -> None:
     turn.telegram_confirmed_media_count = sum(
         1 for event in turn.telegram_sent_events if (event.get("payload") or {}).get("kind") in {"photo", "document"}
     )
+    sent_times = [_parse_timestamp(str(event.get("time"))) for event in turn.telegram_sent_events]
+    started = _parse_timestamp(turn_start_iso)
+    sent_times = [moment for moment in sent_times if moment is not None]
+    if started is not None and sent_times:
+        turn.first_sign_s = round(max((min(sent_times) - started).total_seconds(), 0.0), 1)
     turn.telegram_max_update_gap_seconds = _max_update_gap_seconds(
         turn_start_iso,
         datetime.now(timezone.utc).isoformat(),
@@ -1375,6 +1411,7 @@ async def _run_turn(
     resume_task_id: str | None = None,
     settled_statuses: set[str] | None = None,
     expects_task: bool | str = True,
+    attachments: list[str] | None = None,
 ) -> TurnResult:
     """Send one message + poll the spawned task until terminal/timeout. All errors caught.
 
@@ -1397,9 +1434,10 @@ async def _run_turn(
         # Anchor for the audit-log truth source: only MESSAGE_SENT events
         # recorded after this point belong to this turn.
         turn_start_iso = datetime.now(timezone.utc).isoformat()
+        turn.start_iso = turn_start_iso
 
         try:
-            await _send_message(message)
+            await _send_message(message, attachments)
         except Exception as exc:
             turn.error = f"telegram send failed: {exc}"
             turn.duration_s = round(time.monotonic() - start_mono, 1)
@@ -1436,6 +1474,7 @@ async def _run_turn(
             known,
             message,
             spawn_timeout_s=spawn_timeout_s,
+            by_prefix=bool(attachments),
         )
         if not task_id:
             # Distinguish "classifier said is_task=False" from "polling didn't see the message"
@@ -1614,6 +1653,78 @@ async def _run_turn(
     return turn
 
 
+def _run_case_hook(spec: dict, fixtures: dict[str, str]) -> str:
+    _ensure_fixtures_path()
+    from e2e_hooks import run_hook  # type: ignore[import]
+
+    try:
+        return run_hook(spec, fixtures, render_text)
+    except Exception as exc:  # noqa: BLE001 - a hook that fails is a finding about the harness, not a crash
+        return f"hook {spec.get('hook')} failed: {exc}"
+
+
+async def _run_after_hook(spec: dict, fixtures: dict[str, str], *, since_iso: str) -> str:
+    if spec.get("hook") == "wait_for_message":
+        needle = str(spec.get("contains") or "").lower()
+        deadline = time.monotonic() + float(spec.get("seconds", 120))
+        since = (datetime.now(timezone.utc) - timedelta(seconds=float(spec.get("lookback_seconds", 300)))).isoformat()
+        while time.monotonic() < deadline:
+            for event in fetch_message_sent_events(since):
+                payload = event.get("payload") or {}
+                if needle in str(payload.get("text") or payload.get("caption") or "").lower() and event.get("time", "") > since:
+                    return f"a message with {needle!r} arrived"
+            await asyncio.sleep(5)
+        return f"no message with {needle!r} arrived in {spec.get('seconds', 120)}s"
+    return await asyncio.to_thread(_run_case_hook, spec, fixtures)
+
+
+_BURST_TERMINAL = {"completed", "failed", "blocked", "cancelled", "clarifying"}
+
+
+async def _run_burst(case: dict, fixtures: dict[str, str], max_seconds: int) -> TurnResult:
+    """Send several messages with set delays, without waiting for any task, then wait until everything they started has settled.
+
+    The conversation a person really has: a correction while it works, a question in the middle, a message that is only small talk.
+    """
+    items = [(float(item.get("after_seconds", 0)), render_text(str(item["message"]), fixtures)) for item in case["burst"]]
+    turn = TurnResult(label="burst", message=" | ".join(text for _, text in items))
+    start = time.monotonic()
+    try:
+        known = {t["id"] for t in admin_summary().get("tasks", [])}
+        turn_start_iso = datetime.now(timezone.utc).isoformat()
+        turn.start_iso = turn_start_iso
+        for delay, text in items:
+            await asyncio.sleep(max(0.0, start + delay - time.monotonic()))
+            await _send_message(text)
+        last_send = time.monotonic()
+        tasks: list[dict] = []
+        while time.monotonic() - start < max_seconds:
+            await asyncio.sleep(4)
+            tasks = [t for t in admin_summary().get("tasks", []) if t["id"] not in known]
+            if time.monotonic() - last_send > 12 and all(str(t.get("status")) in _BURST_TERMINAL for t in tasks):
+                break
+        histories: list[dict] = []
+        statuses: list[str] = []
+        for t in tasks:
+            statuses.append(str(t.get("status")))
+            meta = (admin_trace(t["id"]).get("task") or {}).get("metadata") or {}
+            histories.extend(h for h in (meta.get("operator_history") or []) if isinstance(h, dict))
+            if str(t.get("status")) not in _BURST_TERMINAL:
+                cancel_task(t["id"])
+        turn.task_id = tasks[0]["id"] if tasks else None
+        turn.metadata = {"operator_history": histories, "burst_tasks": len(tasks)}
+        turn.final_status = "completed" if not statuses or all(s == "completed" for s in statuses) else ("blocked" if "blocked" in statuses else statuses[0])
+        _capture_sent_messages(turn, turn_start_iso)
+        turn.bot_reply_text = turn.telegram_confirmed_text
+        turn.tools_seen = sorted({str(h.get("tool_name")) for h in histories if h.get("tool_name")})
+        turn.duration_s = round(time.monotonic() - start, 1)
+        print(f"    [burst] {len(tasks)} task(s), {turn.telegram_update_count} message(s) back")
+    except Exception as exc:  # noqa: BLE001
+        turn.error = f"runner exception: {exc}\n{traceback.format_exc()[-800:]}"
+        turn.duration_s = round(time.monotonic() - start, 1)
+    return turn
+
+
 async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
     stage = StageResult(
         case_id=case.get("id") or "(unknown)",
@@ -1631,6 +1742,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
     print(f"  > {stage.message[:140]}")
     print(f"{'=' * 78}")
 
+    stage.rubric = [str(item) for item in case.get("rubric") or []]
     try:
         # Clear memory at the start of each top-level stage, EXCEPT when this
         # case is explicitly a follow-up-with-memory case.
@@ -1639,16 +1751,41 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
 
         rendered_message = render_text(stage.message, fixtures)
         max_seconds = int(case.get("timeout_seconds") or 360)
+        attachments = [render_text(str(item), fixtures) for item in case.get("attachments") or []]
+        if case.get("manual"):
+            stage.skipped = f"manual: {case['manual']}"
+            stage.passed = True
+            return stage
+        if any(not item or not Path(item).exists() for item in attachments):
+            stage.skipped = "a fixture this machine cannot build (no speech voice or font), so the file was not sent"
+            stage.passed = True
+            return stage
 
-        initial = await _run_turn(
-            "initial",
-            rendered_message,
-            max_seconds=max_seconds,
-            settled_statuses={str(item) for item in case.get("settled_statuses") or []},
-            expects_task=expects_task_mode(case.get("expects_task", True)),
-        )
+        for spec in case.get("before") or []:
+            note = _run_case_hook(spec, fixtures)
+            stage.hook_notes.append(note)
+            print(f"    [hook] {note}")
+
+        if case.get("burst"):
+            initial = await _run_burst(case, fixtures, max_seconds)
+        else:
+            initial = await _run_turn(
+                "initial",
+                rendered_message,
+                max_seconds=max_seconds,
+                settled_statuses={str(item) for item in case.get("settled_statuses") or []},
+                expects_task=expects_task_mode(case.get("expects_task", True)),
+                attachments=attachments or None,
+            )
         stage.turns.append(initial)
         passed, reason = _diagnose_turn(case, initial, is_followup=False, fixtures=fixtures)
+        for spec in case.get("after_initial") or []:
+            note = await _run_after_hook(spec, fixtures, since_iso=stage.started_at)
+            stage.hook_notes.append(note)
+            print(f"    [hook] {note}")
+        if case.get("after_initial"):
+            _capture_sent_messages(initial, initial.start_iso or stage.started_at)
+            passed, reason = _diagnose_turn(case, initial, is_followup=False, fixtures=fixtures)
 
         # Follow-ups (keep memory) - declared in JSON
         for fu in (case.get("follow_ups") or []):
@@ -1891,8 +2028,8 @@ def _write_summary(run_dir: Path, results: list[StageResult]) -> None:
     try:
         rows: list[str] = []
         for r in results:
-            icon = "✅" if r.passed else "❌"
-            outcome = "PASS" if r.passed else f"FAIL ({(r.failure_reason or '')[:80]})"
+            icon = "⏭" if r.skipped else ("✅" if r.passed else "❌")
+            outcome = f"SKIPPED ({r.skipped[:70]})" if r.skipped else ("PASS" if r.passed else f"FAIL ({(r.failure_reason or '')[:80]})")
             final_statuses = ",".join(t.final_status or "-" for t in r.turns)
             rows.append(
                 f"| {icon} | `{r.case_id}` | {r.size} | {final_statuses} | "
@@ -1903,8 +2040,9 @@ def _write_summary(run_dir: Path, results: list[StageResult]) -> None:
             "",
             f"Started: {results[0].started_at if results else '-'}",
             f"Total:   {len(results)}",
-            f"Passed:  {sum(1 for r in results if r.passed)}",
+            f"Passed:  {sum(1 for r in results if r.passed and not r.skipped)}",
             f"Failed:  {sum(1 for r in results if not r.passed)}",
+            f"Skipped: {sum(1 for r in results if r.skipped)}",
             "",
             "| | Case | Size | Final statuses | Duration | Replans | Outcome |",
             "|---|---|---|---|---|---|---|",
@@ -1918,8 +2056,40 @@ def _write_summary(run_dir: Path, results: list[StageResult]) -> None:
             json.dumps([asdict(r) for r in results], indent=2, default=str),
             encoding="utf-8",
         )
+        _write_grade_sheet(run_dir, results)
     except Exception as exc:
         print(f"  [warn] failed to write summary: {exc}")
+
+
+def _write_grade_sheet(run_dir: Path, results: list[StageResult]) -> None:
+    """One page to read the run from: for each case what was asked, what came back, how fast, and the rubric questions to answer.
+
+    Machine checks decide pass or fail. The rubric is for a person (or a reviewer reading these logs) to answer yes or no per question;
+    the run does not guess at them.
+    """
+    sheet = ["# Grade sheet", "", "Read each case, answer its rubric questions yes or no, and write the verdict under the case.", ""]
+    for r in results:
+        if r.skipped and not r.rubric:
+            continue
+        sheet += [f"## {r.case_id}  ({'SKIPPED' if r.skipped else 'PASS' if r.passed else 'FAIL'}, {r.total_duration_s:.0f}s)", ""]
+        if r.skipped:
+            sheet += [f"Not run: {r.skipped}", ""]
+        for turn in r.turns:
+            reply = (turn.telegram_confirmed_text or turn.bot_reply_text or "").strip()
+            sheet += [
+                f"**{turn.label}**: {turn.message[:240]}",
+                f"- status {turn.final_status}, {turn.duration_s:.0f}s, tools: {', '.join(turn.tools_seen) or '-'}, "
+                f"messages back {turn.telegram_update_count}, approvals asked {turn.tool_approval_count}",
+            ]
+            if turn.unbacked_claims:
+                sheet.append(f"- UNBACKED CLAIMS: {turn.unbacked_claims}")
+            sheet += ["", "> " + (reply[:900].replace("\n", "\n> ") or "(no reply)"), ""]
+        if r.failure_reason and not r.passed:
+            sheet += [f"Machine check: {r.failure_reason[:300]}", ""]
+        for note in r.hook_notes:
+            sheet.append(f"Hook: {note}")
+        sheet += [f"- [ ] {question}" for question in r.rubric] + ["", "Verdict: ", ""]
+    (run_dir / "grade_sheet.md").write_text("\n".join(sheet), encoding="utf-8")
 
 
 def _preflight() -> list[str]:
@@ -2025,7 +2195,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,challenge,verdict,full"
         ),
     )
     parser.add_argument("--include-guarded", action="store_true",
@@ -2189,12 +2359,13 @@ async def main() -> int:
 
     print(f"\n{'=' * 78}")
     passed = sum(1 for r in results if r.passed)
+    skipped_count = sum(1 for r in results if r.skipped)
     total_time = _fmt_duration(time.monotonic() - suite_start)
     print(f"{_progress_bar(len(results), total, width=24)} {len(results)}/{total} done")
     print(f"Summary: {run_dir / 'summary.md'}")
     if granted_approvals:
         print(f"Approvals granted during the run: {len(granted_approvals)}")
-    print(f"Passed {passed} / {len(results)}  |  total {total_time}")
+    print(f"Passed {passed - skipped_count} / {len(results) - skipped_count}" + (f" ({skipped_count} skipped)" if skipped_count else "") + f"  |  total {total_time}")
     exit_code = 0 if passed == len(results) else 2
     if mcp_fixture is not None:
         print("  Restoring MCP config/catalog and reloading YBM...")

@@ -7,6 +7,25 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An answer that says something was done to the world (deleted, sent to someone else, installed, paid for) is checked against the task's record
+  (`orchestration/claims.py`, `answer_checks.py`): the model is sent back once with the sentence and what is missing. A payment is never
+  backed, because the assistant does not pay. The end-to-end suites use the same function (`claims: true`), so what is measured is what is
+  protected.
+- The challenge suite (`e2e/challenge_cases.json`, 39 cases) and the verdict suite (`e2e/verdict_cases.json`, 16 cases, frozen by hash) test where
+  YBM stops being good: what it cannot do yet and should offer to get, goals that are projects, answers that could go bad, mechanisms it has to
+  invent, a correction in the middle of a task, a model server that dies. The runner gained attachments, hooks, bursts, a grade sheet for the
+  rubric of each case, and `manual` cases it lists but does not run (`e2e/README.md`).
+- `ybm scenario rekey <name>|--all` keeps the recorded responses of a scenario fixture whose prompts changed in a way that does not change the
+  answer, under the new prompts' keys, and prints the prompt lines that changed, instead of a live re-record.
+
+### Changed
+
+- `orchestration/worker.py` is split by stage with the code unchanged: it went from 4,100 to 1,470 lines. `TaskWorker` is composed of stage
+  classes (`approvals.py`, `delegation.py`, `external.py`, `guards.py`, `learning.py`, `planning.py`, `records.py`, `reply.py`), and the helpers
+  that read a task or an answer are plain functions in modules named for what they read (`recovery.py`, `asking.py`, `task_record.py`,
+  `repeats.py`, `finishing.py`, `grounding.py`, `replay.py`, `claims.py`). A name another module needs is public. The tests import from the
+  new modules, and the re-exports `worker.py` kept for them are gone.
+
 - A lasting preference stated in a chat message ("always keep answers short") is noticed after the reply and offered as a Remember / No card
   (`preference_watch.py`). The decision model is asked one yes/no question on the CPU first, and only when it says the message may state a
   preference is the assistant's own model asked to extract it, with a schema (persona learning had asked a 9B model for free text and got
@@ -81,9 +100,6 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   of a saved workflow.
 - The browser's form fill ticks and clears check boxes and radio buttons (by clicking them, so the page's own handlers run; it used to type a
   value into them, so a terms box stayed unticked) and chooses a drop-down option by its text or value.
-
-### Changed
-
 - A request to buy, order or pay for something is no longer handled by a rule in the ladder that fired on its words once the model had
   started browsing. It is the `gap:commerce.order` record: found from the request before the first step, confirmed by the decision model
   ("pay my electricity bill" is a match, "remind me to pay the rent" and "total order value" are not), and carrying the same honest
