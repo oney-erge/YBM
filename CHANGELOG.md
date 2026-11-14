@@ -25,7 +25,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   through the memory update (0.8 GB of video memory before, 6.2 GB after); while it is on, the summary is the recent turns and the next message after
   it ends re-summarizes.
 - A message taken for chat that asks for something that could be set up ("read that to me out loud") becomes a task, so the Operator is told what
-  could be set up and can get it (`abilities/context.py asks_for_what_could_be_set_up`, `channels/base.py`). A chat reply knows nothing of recipes: the
+  could be set up and can get it (`abilities/context.py asks_for_what_a_recipe_covers`, `channels/base.py`). A chat reply knows nothing of recipes: the
   deployed assistant answered "I cannot speak" and offered nothing, though a local voice is a 120 MB download away. The same search and the same
   yes/no question decide; the bar for a recipe is 0.85, measured on the running decision model (0.89 to 0.96 for ways of asking to be spoken to, 0.74
   for "read me the summary of chapter two", which is not out loud). No decision model, no change: it stays chat.
