@@ -19,7 +19,7 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 from uuid import uuid4
 
 import httpx
@@ -50,6 +50,37 @@ VISION_TIMEOUT_SECONDS = 240
 OLLAMA_START_WAIT_SECONDS = 25.0
 
 Listing = Callable[[str], Awaitable[list[dict[str, Any]]]]
+
+
+class ModelSwap(Protocol):
+    async def make_room(self, root: str) -> None: ...
+
+    async def release(self, root: str, profile: str) -> None: ...
+
+
+class LocalDeploySwap:
+    """Give the vision model the whole GPU for the look, then give it back.
+
+    An 8 GB GPU holds the assistant's model (6.5 GB) or a vision model (3 GB) with room to work, not both: loading the second made the two evict
+    each other, so each look took one to two minutes (the first challenge run: a screen description took 9 minutes) and a message that arrived
+    meanwhile waited more than three minutes to be taken up. LocalDeploy is asked to free the GPU first (it stops the main model), and to unload
+    the vision model after, so the main model loads once into free memory at the next step that needs it. Best effort: if LocalDeploy cannot do
+    either, the look goes ahead as it did.
+    """
+
+    async def make_room(self, root: str) -> None:
+        await self._post(f"{root}/models/free", {})
+
+    async def release(self, root: str, profile: str) -> None:
+        await self._post(f"{root}/models/stop", {"profile": profile})
+
+    @staticmethod
+    async def _post(url: str, body: dict[str, Any]) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.post(url, json=body)
+        except httpx.HTTPError:
+            logger.info("vision_model_swap_unavailable", url=url, exc_info=True)
 
 
 def localdeploy_root(settings: AppSettings) -> str | None:
@@ -138,8 +169,10 @@ class ImageDescribeAdapter:
         *,
         listing: Listing = list_vision_profiles,
         provider_factory: Callable[[LLMProfileConfig], Any] = OpenAICompatibleProvider,
+        swap: ModelSwap | None = None,
     ) -> None:
         self.settings = settings
+        self._swap = swap if settings.vision.swap_models else None
         self._path_guard = path_guard
         self._listing = listing
         self._provider_factory = provider_factory
@@ -174,6 +207,8 @@ class ImageDescribeAdapter:
         provider = self._provider_factory(
             LLMProfileConfig(model=profile_name, base_url=f"{root}/v1", timeout_seconds=VISION_TIMEOUT_SECONDS, max_tokens=700, temperature=0.1)
         )
+        if self._swap is not None:
+            await self._swap.make_room(root)
         try:
             seen = [(await self._ask(provider, question, picture, root)).strip() for picture in pictures]
         except Exception as exc:  # noqa: BLE001
@@ -181,6 +216,8 @@ class ImageDescribeAdapter:
         finally:
             if scratch is not None:
                 shutil.rmtree(scratch, ignore_errors=True)
+            if self._swap is not None:
+                await self._swap.release(root, profile_name)
         text = "\n\n".join(f"Page {number}: {page}" for number, page in enumerate(seen, 1)) if scanned else seen[0]
         text = text.strip()
         if not text:
@@ -281,4 +318,4 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
     )
     if enabled:
-        adapters["image.describe"] = ImageDescribeAdapter(settings, guard)  # type: ignore[arg-type]
+        adapters["image.describe"] = ImageDescribeAdapter(settings, guard, swap=LocalDeploySwap())  # type: ignore[arg-type]
