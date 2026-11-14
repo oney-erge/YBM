@@ -7,6 +7,12 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A fact the words of a request matched (it deletes, moves, changes a file, asks what a document is about, adds things up) is believed only when the
+  decision model agrees (`request_facts.FACT_QUESTIONS`, `planning._with_request_facts`). The patterns took "keep every file; do not delete
+  anything" for a delete and "the latest price" for a request for the newest file; one yes/no question on the CPU, asked once before the first step
+  and only about the facts a pattern matched, cancels those. Measured over the 199 messages the end-to-end suites send, it said no to all 13
+  false matches of these five and to none of the true ones, and yes to 58 of 60 true phrasings written for the check. The other facts stay
+  words only: the model was wrong about them.
 - An answer that says something was done to the world (deleted, sent to someone else, installed, paid for) is checked against the task's record
   (`orchestration/claims.py`, `answer_checks.py`): the model is sent back once with the sentence and what is missing. A payment is never
   backed, because the assistant does not pay. The end-to-end suites use the same function (`claims: true`), so what is measured is what is

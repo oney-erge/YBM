@@ -14,7 +14,8 @@ be settled by the decision model instead of by words, this is the only place tha
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any
 
 # --- patterns: what a request is about ---------------------------------------------------------------------------------------------------
@@ -75,6 +76,25 @@ _PROVIDERS = (
 )
 
 
+#: Facts whose pattern is only a candidate. "Do not delete anything", "do not make that change", "the latest price" and "put together" match a
+#: word and mean the opposite or something else, so each is believed only when one yes/no question to the decision model (the CPU model that
+#: routes the message) agrees; a model that is down or unsure leaves the pattern's word as it was. Over the 199 messages the end-to-end suites
+#: send, the model said no to all 13 false matches of these five and to none of the true ones, and over 60 true phrasings it said yes to 58 (it
+#: missed "calculate the median"). For appends, renames, a named folder, recency and asking first it said no to true matches too, or yes to
+#: false ones, so those stay words only. A fact the model has not been asked about is the pattern's.
+FACT_QUESTIONS: dict[str, str] = {
+    "deletes": "Does the user ask to delete, erase or get rid of files, folders or data?",
+    "moves": "Does the user ask to move, rename, sort, copy or reorganize files or folders?",
+    "changes": "Does the user ask to change, rewrite or replace the contents of an existing file?",
+    "asks_to_understand_a_document": "Does the user ask what a document is about, or for a summary or explanation of it?",
+    "tallies": "Does the user ask to add up, total, count or average numbers or items across several things?",
+}
+#: The probability of "yes" at which a pattern-matched fact is confirmed (the corpus above was read at this).
+FACT_CONFIRM_AT = 0.5
+#: Where the answers are kept: a task's metadata, `{fact: bool}`, written once before its first step (orchestration/planning.py).
+CHECKS_KEY = "fact_checks"
+
+
 def own_words(task: Any) -> str:
     """What the user wrote, without the question and answer a clarification round appends to the task's objective.
 
@@ -96,15 +116,24 @@ class RequestFacts:
 
     own: str
     both: str
+    #: What the decision model said about each fact in FACT_QUESTIONS that the pattern matched: a "no" cancels the match.
+    confirmed: Mapping[str, bool] = field(default_factory=dict)
+
+    def _believed(self, name: str, matched: bool) -> bool:
+        return matched and self.confirmed.get(name, True)
+
+    def candidates(self) -> tuple[str, ...]:
+        """The facts in FACT_QUESTIONS whose pattern matched, which the decision model is asked about."""
+        return tuple(name for name in FACT_QUESTIONS if getattr(RequestFacts(self.own, self.both), name))
 
     # read from `own`
     @property
     def deletes(self) -> bool:
-        return bool(DELETE.search(self.own))
+        return self._believed("deletes", bool(DELETE.search(self.own)))
 
     @property
     def moves(self) -> bool:
-        return bool(MOVE.search(self.own))
+        return self._believed("moves", bool(MOVE.search(self.own)))
 
     @property
     def appends(self) -> bool:
@@ -112,15 +141,15 @@ class RequestFacts:
 
     @property
     def changes(self) -> bool:
-        return bool(CHANGE.search(self.own))
+        return self._believed("changes", bool(CHANGE.search(self.own)))
 
     @property
     def asks_to_understand_a_document(self) -> bool:
-        return bool(DOCUMENT_UNDERSTANDING.search(self.own))
+        return self._believed("asks_to_understand_a_document", bool(DOCUMENT_UNDERSTANDING.search(self.own)))
 
     @property
     def tallies(self) -> bool:
-        return bool(TALLY.search(URL.sub(" ", self.own)))
+        return self._believed("tallies", bool(TALLY.search(URL.sub(" ", self.own))))
 
     @property
     def moves_into_a_named_folder(self) -> bool:
@@ -169,7 +198,8 @@ class RequestFacts:
 
     @classmethod
     def from_task(cls, task: Any) -> RequestFacts:
-        return cls(own=own_words(task), both=own_and_objective(task))
+        checks = task.metadata.get(CHECKS_KEY)
+        return cls(own=own_words(task), both=own_and_objective(task), confirmed=checks if isinstance(checks, dict) else {})
 
     @classmethod
     def from_text(cls, text: str) -> RequestFacts:
