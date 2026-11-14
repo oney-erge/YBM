@@ -13,6 +13,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from agent_control import gaming
 from agent_control.llm.cloud_gate import is_hosted
 from agent_control.llm.providers import build_provider_for_profile
 
@@ -28,6 +29,8 @@ def warm_profile_name(settings: Any) -> str | None:
 
 async def warm_up(settings: Any, *, clock: Callable[[], float] = time.monotonic, build: Callable[..., Any] = build_provider_for_profile) -> bool:
     """Send the wake-up request if it is due and the model is local. True when one was sent and answered."""
+    if gaming.is_on():
+        return False  # the person said they are gaming: no model is loaded until they say they are done
     name = warm_profile_name(settings)
     profile = settings.llm.profiles.get(name) if name else None
     if profile is None or is_hosted(profile.provider, profile.base_url):

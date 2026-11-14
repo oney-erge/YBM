@@ -7,6 +7,42 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A look at a picture gives the vision model the whole GPU and gives it back (`vision.swap_models`, on by default): LocalDeploy is asked to free the GPU
+  first (it stops the main model) and to unload the vision model after, so the main model loads once into free memory at the next step. On an 8 GB
+  GPU the two evicted each other: in the first challenge run a screen description took 9 minutes, a scanned invoice 11, and a photo sent meanwhile
+  waited more than three minutes to be taken up. Needs the LocalDeploy whose `/models/free` also stops llama.cpp; with an older one the look goes
+  ahead as before.
+- `image.describe` reads a scanned PDF (a PDF whose pages are only pictures, as a scanner makes it): the picture of each of the first three pages is read
+  out of the file and looked at in turn, and the answer says which page said what. The first challenge run asked for the total on a scanned invoice; the
+  assistant tried the document tools, then asked the vision model about the PDF itself ten times, which it refused, and was cancelled at 11 minutes. A PDF
+  that has text and no page pictures is pointed at `document.manage extract_text` without loading a model.
+- A question the Operator asks can offer its choices as buttons: `ask_user` takes `options` (up to four short answers) and the Telegram card shows them
+  as the quick answers it already showed for a plan step and the planner's question. Before, only those two could; "which of the files I found?"
+  was a free-text question. A later question without choices is not given an earlier one's buttons. The operator prompt and the strict reply
+  schema describe the field; the scenario fixtures were rekeyed with `ybm scenario rekey --all`.
+- Gaming mode: say "I'm about to play a game", "gaming mode" or "free up the GPU" in Telegram and the assistant unloads the model at once
+  (LocalDeploy `/models/free`, which now also stops the llama.cpp server) and loads nothing again until you say "I'm done gaming": the worker
+  claims no task, the warm-up request is not sent, and a message that needs the model gets one reply that it waits and is listed when you come
+  back. A task that is running is finished first. It only turns on because you said so (`gaming.py`, `channels/gaming_command.py`).
+- Schedules can name days of the week and a time of day: "every Monday at 9am", "every weekday at 8:30", "daily at 7am" become
+  `every monday at 09:00`, `every weekday at 08:30`, `daily at 07:00` (`cadence.py`; the scheduler, `schedule.manage` and the workflow automation
+  form all take them). Before, any such request was turned into "daily" at whatever time it was made, with the days and the time left in the
+  job's text. The job is now what is left when the when is taken out, and a run a week later is the same wall-clock time across a clock change.
+- `ability.acquire` gets a capability the assistant does not have yet from a recipe (`abilities/recipes.py`, `abilities/acquire.py`): a local
+  voice (Kokoro, 120 MB), speech recognition for audio files, ffmpeg (winget) and a vision model (Qwen3-VL through Ollama). A recipe that is not
+  ready is an `installable` record the index finds, so the Operator is told what could be set up before its first step. Files come from the
+  address written in the recipe and are checked against its SHA-256 before anything is switched on; the configuration is written last. Whether
+  to ask the user is the model's judgment (`ask_first`), except that 500 MB or more, or a program installed on the computer, is always asked.
+  After an install the request that needed it is started again as a new task, once, so it carries on by itself. `abilities.acquire` is off in
+  the code's defaults and on in `config.example.yaml`.
+- `audio.transcribe` writes down what is said in an audio file (a voicemail, a meeting recording), with the Whisper model that already
+  transcribes Telegram voice notes (`adapters.stt`). A read: no approval.
+- A fact the words of a request matched (it deletes, moves, changes a file, asks what a document is about, adds things up) is believed only when the
+  decision model agrees (`request_facts.FACT_QUESTIONS`, `planning._with_request_facts`). The patterns took "keep every file; do not delete
+  anything" for a delete and "the latest price" for a request for the newest file; one yes/no question on the CPU, asked once before the first step
+  and only about the facts a pattern matched, cancels those. Measured over the 199 messages the end-to-end suites send, it said no to all 13
+  false matches of these five and to none of the true ones, and yes to 58 of 60 true phrasings written for the check. The other facts stay
+  words only: the model was wrong about them.
 - An answer that says something was done to the world (deleted, sent to someone else, installed, paid for) is checked against the task's record
   (`orchestration/claims.py`, `answer_checks.py`): the model is sent back once with the sentence and what is missing. A payment is never
   backed, because the assistant does not pay. The end-to-end suites use the same function (`claims: true`), so what is measured is what is

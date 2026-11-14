@@ -36,6 +36,7 @@ from agent_control.config import AppSettings, backend_base_url, load_settings
 from agent_control.llm import LLMMessageClassifier, build_default_llm_provider
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.abilities.context import relevant, render as render_notes
+from agent_control import gaming
 from agent_control.llm.decision import DecisionModelClient, build_decision_classifier
 from agent_control.task_inbox import find_steerable_task
 from agent_control.llm.providers import build_major_llm_provider, build_role_llm_provider
@@ -43,6 +44,7 @@ from agent_control.observation import ArtifactService, ScreenshotService
 from agent_control.persona import persona_prompt_section
 from agent_control.tools.skills import skills_context_section
 from agent_control.orchestration import AuditorService, OperatorLoopService, TaskWorker, ToolExecutor, reconcile_orphaned_tasks
+from agent_control.orchestration.request_facts import FACT_CONFIRM_AT, FACT_QUESTIONS
 from agent_control.orchestration.worker import TaskNotificationSink
 from agent_control.policy import PolicyEngine
 from agent_control.recovery import RetryPolicy
@@ -500,6 +502,8 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "voice_pass": settings.operator.voice_pass,
         "heartbeat_seconds": settings.operator.heartbeat_seconds,
         "ability_notes": _task_notes(registry, settings, repositories),
+        "fact_checks": _fact_checker(settings),
+        "gpu_hold": _gpu_hold(settings),
         "plan_stage": _plan_stage(registry, settings, repositories, audit, operator_provider),
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
@@ -531,6 +535,35 @@ def _task_notes(
         return text, route
 
     return notes
+
+
+def _gpu_hold(settings: AppSettings) -> Callable[[], bool]:
+    """True while gaming mode is on (gaming.py); the first time the worker is idle with it on, the GPU is freed."""
+    profile = settings.llm.profiles.get(settings.llm.default_profile)
+    root = gaming.localdeploy_root(profile.base_url if profile else None)
+
+    def hold() -> bool:
+        if not gaming.is_on():
+            return False
+        if gaming.gpu_still_to_free():
+            gaming.free_gpu(root)
+            gaming.mark_gpu_freed()
+        return True
+
+    return hold
+
+
+def _fact_checker(settings: AppSettings) -> Callable[[str, tuple[str, ...]], Awaitable[dict[str, bool]]] | None:
+    """What the decision model says about the facts a request's words matched (request_facts.FACT_QUESTIONS), or None when it is off."""
+    if settings.decision.mode == "off":
+        return None
+    client = DecisionModelClient(settings.decision)
+
+    async def check(request: str, names: tuple[str, ...]) -> dict[str, bool]:
+        answers = await client.yes_no(request, {name: FACT_QUESTIONS[name] for name in names})
+        return {name: answers[name] >= FACT_CONFIRM_AT for name in names if name in answers}
+
+    return check
 
 
 def _plan_stage(registry, settings: AppSettings, repositories: Repositories, audit: AuditLogger, provider) -> Callable | None:

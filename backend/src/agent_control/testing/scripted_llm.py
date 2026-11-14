@@ -36,6 +36,8 @@ REKEY_LOG_ENV_VAR = "YBM_SCENARIO_REKEY_LOG"
 REKEY_TRACK_ENV_VAR = "YBM_SCENARIO_TRACK"
 # How alike two prompts must be (difflib ratio over the normalized system and user text) for one's response to stand in for the other's.
 REKEY_MIN_SIMILARITY = 0.97
+# How much more alike the best recorded prompt must be than the next best: the steps of one task differ only by their history.
+REKEY_MIN_MARGIN = 0.002
 
 
 class ScriptedLLMError(RuntimeError):
@@ -359,6 +361,7 @@ class ScriptedLLMProvider:
         self.fixture_path = Path(fixture_path)
         self._entries = _reindex(_load(self.fixture_path))
         self._rekey_used: set[str] = set()  # recorded keys already stood in for a changed prompt (see REKEY_ENV_VAR)
+        self._rekey_hunks: list[tuple[str, str]] = []  # the prompt change learned from the first call rekeyed, to take back on the next ones
         self.calls: list[dict[str, str]] = []  # for test assertions on call order/count
         # No real API call happens on replay, so there is no real cost to
         # report - always None, never a fabricated zero. Present so callers
@@ -366,10 +369,50 @@ class ScriptedLLMProvider:
         # every provider type without an isinstance check.
         self.last_usage: dict | None = None
 
+    def _undo_learned_changes(self, text: str) -> str:
+        """The prompt as it was recorded, by taking back the changes already learned from an earlier call of this run."""
+        for old_chunk, new_chunk in self._rekey_hunks:
+            if new_chunk:
+                text = text.replace(new_chunk, old_chunk)
+        return text
+
+    def _same_user_prompt(self, method: str, system_prompt: str, user_prompt: str) -> tuple[str, dict[str, Any]] | None:
+        """The recorded entry whose user prompt is exactly this one, when only the system prompt changed. The user prompt carries the task's
+        state (what was asked, what has happened), so an identical one is the same step; of several (the system prompt varies by step), the one
+        whose system prompt is most alike."""
+        wanted_user = _normalize(user_prompt)
+        same = [
+            (key, entry) for key, entry in self._entries.items()
+            if entry.get("method") == method and key not in self._rekey_used and entry.get("user_prompt") == wanted_user
+        ]
+        if not same:
+            return None
+        wanted_system = _normalize(system_prompt)
+        ranked = sorted(
+            ((SequenceMatcher(None, str(entry.get("system_prompt", "")), wanted_system, autojunk=False).ratio(), key) for key, entry in same),
+            reverse=True,
+        )
+        if ranked[0][0] < REKEY_MIN_SIMILARITY or (len(ranked) > 1 and ranked[0][0] - ranked[1][0] < REKEY_MIN_MARGIN):
+            return None
+        return ranked[0][1], self._entries[ranked[0][1]]
+
+    def _same_call_before_the_change(self, method: str, system_prompt: str, user_prompt: str) -> tuple[str, dict[str, Any]] | None:
+        """The recorded entry whose prompts are exactly these once the learned change is taken back: no guessing, the same step."""
+        if not self._rekey_hunks:
+            return None
+        old_key = fixture_key(method, self._undo_learned_changes(system_prompt), self._undo_learned_changes(user_prompt))
+        entry = self._entries.get(old_key)
+        return (old_key, entry) if entry is not None and old_key not in self._rekey_used else None
+
     def _nearest_recorded(self, method: str, system_prompt: str, user_prompt: str) -> tuple[str, dict[str, Any]] | None:
-        """The recorded entry for the most alike prompt, if it is alike enough and has not already answered another call."""
+        """The recorded entry for the most alike prompt, when it is alike enough, clearly the most alike, and has not answered another call.
+
+        Prompts of the steps of one task differ only by the history each carries, so two recorded steps can be almost as alike to a new
+        prompt as the right one. A match that another is nearly as good as is refused: handing a step another step's answer would pass
+        a scenario for the wrong reason.
+        """
         wanted = f"{_normalize(system_prompt)}\n{_normalize(user_prompt)}"
-        best: tuple[float, str] | None = None
+        scored: list[tuple[float, str]] = []
         for stored_key, stored in self._entries.items():
             if stored.get("method") != method or stored_key in self._rekey_used or not isinstance(stored.get("user_prompt"), str):
                 continue
@@ -378,15 +421,31 @@ class ScriptedLLMProvider:
             if matcher.real_quick_ratio() < REKEY_MIN_SIMILARITY or matcher.quick_ratio() < REKEY_MIN_SIMILARITY:
                 continue
             ratio = matcher.ratio()
-            if ratio >= REKEY_MIN_SIMILARITY and (best is None or ratio > best[0]):
-                best = (ratio, stored_key)
-        return (best[1], self._entries[best[1]]) if best else None
+            if ratio >= REKEY_MIN_SIMILARITY:
+                scored.append((ratio, stored_key))
+        scored.sort(reverse=True)
+        if not scored or (len(scored) > 1 and scored[0][0] - scored[1][0] < REKEY_MIN_MARGIN):
+            return None
+        return scored[0][1], self._entries[scored[0][1]]
+
+    @staticmethod
+    def _changes_between(old: str, new: str) -> list[tuple[str, str]]:
+        """The line changes that turn one prompt into the other, as (what it said, what it says now)."""
+        before, after = old.splitlines(keepends=True), new.splitlines(keepends=True)
+        return [
+            ("".join(before[i1:i2]), "".join(after[j1:j2]))
+            for tag, i1, i2, j1, j2 in SequenceMatcher(None, before, after, autojunk=False).get_opcodes()
+            if tag != "equal"
+        ]
 
     def _rekey(self, key: str, method: str, system_prompt: str, user_prompt: str) -> dict[str, Any] | None:
-        nearest = self._nearest_recorded(method, system_prompt, user_prompt)
-        if nearest is None:
+        found = self._same_user_prompt(method, system_prompt, user_prompt) or self._same_call_before_the_change(method, system_prompt, user_prompt)
+        learned = found is None
+        if found is None:
+            found = self._nearest_recorded(method, system_prompt, user_prompt)
+        if found is None:
             return None
-        old_key, old = nearest
+        old_key, old = found
         self._rekey_used.add(old_key)
         entry = {
             "method": method,
@@ -394,6 +453,10 @@ class ScriptedLLMProvider:
             "user_prompt": _normalize(user_prompt),
             "response": old["response"],
         }
+        if learned:
+            # What changed between this recorded prompt and the new one is the prompt change; the calls after it are matched by taking it back.
+            self._rekey_hunks.extend(self._changes_between(str(old.get("system_prompt", "")), entry["system_prompt"]))
+            self._rekey_hunks.extend(self._changes_between(str(old.get("user_prompt", "")), entry["user_prompt"]))
         self._entries[key] = entry
         self._rekey_used.add(key)  # the new entry answered this call; it is not a stand-in for another
         _save(self.fixture_path, self._entries)

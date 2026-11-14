@@ -47,6 +47,9 @@ Each call, choose exactly one `action`:
   information; it is not permission to ask the user what remains. Do not ask
   optional polish, refinement, or confirmation questions after the requested
   artifact and evidence already exist - use `done` and state remaining gaps.
+  When the answer is a choice between a few things (which of the files you
+  found, which of two options), also set `options` to those choices, each a
+  few words, so the user can tap one.
 - `blocked` - no available tool/capability can make progress, or every
   reasonable approach in the history has already failed. Set `reason`.
 

@@ -19,7 +19,8 @@ import sys
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
+from uuid import uuid4
 
 import httpx
 import structlog
@@ -34,6 +35,11 @@ logger = structlog.get_logger(__name__)
 
 IMAGE_SUFFIXES = frozenset({".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"})
 MAX_IMAGE_BYTES = 10 * 1024 * 1024
+#: A scanned document is a PDF that is only pictures of pages; its pages are looked at one by one, the first few, because each is a model call.
+MAX_PDF_BYTES = 40 * 1024 * 1024
+MAX_PDF_PAGES = 3
+MAX_PAGE_PIXELS = 2000
+SCRATCH_DIR = Path(".agent_control/tmp/vision")
 SYSTEM_PROMPT = (
     "You describe pictures accurately for someone who cannot see them. Say what is shown, quote any text exactly as written, and say plainly "
     "what you cannot tell. Do not guess names, numbers or details that are not visible."
@@ -44,6 +50,37 @@ VISION_TIMEOUT_SECONDS = 240
 OLLAMA_START_WAIT_SECONDS = 25.0
 
 Listing = Callable[[str], Awaitable[list[dict[str, Any]]]]
+
+
+class ModelSwap(Protocol):
+    async def make_room(self, root: str) -> None: ...
+
+    async def release(self, root: str, profile: str) -> None: ...
+
+
+class LocalDeploySwap:
+    """Give the vision model the whole GPU for the look, then give it back.
+
+    An 8 GB GPU holds the assistant's model (6.5 GB) or a vision model (3 GB) with room to work, not both: loading the second made the two evict
+    each other, so each look took one to two minutes (the first challenge run: a screen description took 9 minutes) and a message that arrived
+    meanwhile waited more than three minutes to be taken up. LocalDeploy is asked to free the GPU first (it stops the main model), and to unload
+    the vision model after, so the main model loads once into free memory at the next step that needs it. Best effort: if LocalDeploy cannot do
+    either, the look goes ahead as it did.
+    """
+
+    async def make_room(self, root: str) -> None:
+        await self._post(f"{root}/models/free", {})
+
+    async def release(self, root: str, profile: str) -> None:
+        await self._post(f"{root}/models/stop", {"profile": profile})
+
+    @staticmethod
+    async def _post(url: str, body: dict[str, Any]) -> None:
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                await client.post(url, json=body)
+        except httpx.HTTPError:
+            logger.info("vision_model_swap_unavailable", url=url, exc_info=True)
 
 
 def localdeploy_root(settings: AppSettings) -> str | None:
@@ -83,6 +120,42 @@ async def list_vision_profiles(root: str) -> list[dict[str, Any]]:
     return sorted(found, key=lambda item: (_size_in_billions(item["model"]), item["profile"]))
 
 
+def scanned_pages(path: Path) -> tuple[list[Path], Path]:
+    """The page pictures of a scanned PDF, as PNG files in a scratch folder (which the caller removes), first few pages only.
+
+    A scanner makes a PDF whose every page is one picture, so the picture is already inside the file and is read out of it (no renderer is
+    needed). A PDF whose pages are text has no such picture: its text is read with the document tool, and this says so.
+    """
+    from pypdf import PdfReader
+
+    try:
+        reader = PdfReader(str(path))
+        pages = list(reader.pages[:MAX_PDF_PAGES])
+    except Exception as exc:  # noqa: BLE001 - a damaged or locked PDF is said, not raised
+        raise ValueError(f"{path.name} could not be opened as a PDF ({type(exc).__name__})") from exc
+    scratch = SCRATCH_DIR / uuid4().hex
+    scratch.mkdir(parents=True, exist_ok=True)
+    saved: list[Path] = []
+    for number, page in enumerate(pages, 1):
+        try:
+            images = list(page.images)
+        except Exception:  # noqa: BLE001 - a page whose pictures cannot be read has none to look at
+            images = []
+        if not images:
+            continue
+        # The picture of the page is the biggest one on it (a logo or a stamp is not).
+        biggest = max(images, key=lambda item: item.image.width * item.image.height)
+        picture = biggest.image.convert("RGB")
+        picture.thumbnail((MAX_PAGE_PIXELS, MAX_PAGE_PIXELS))
+        target = scratch / f"page-{number}.png"
+        picture.save(target, "PNG")
+        saved.append(target)
+    if not saved:
+        shutil.rmtree(scratch, ignore_errors=True)
+        raise ValueError(f"{path.name} has no scanned page pictures to look at. If it has text, read it with document.manage extract_text.")
+    return saved, scratch
+
+
 def _size_in_billions(model: str) -> float:
     match = re.search(r"(\d+(?:\.\d+)?)b\b", model.lower())
     return float(match.group(1)) if match else 99.0
@@ -96,8 +169,10 @@ class ImageDescribeAdapter:
         *,
         listing: Listing = list_vision_profiles,
         provider_factory: Callable[[LLMProfileConfig], Any] = OpenAICompatibleProvider,
+        swap: ModelSwap | None = None,
     ) -> None:
         self.settings = settings
+        self._swap = swap if settings.vision.swap_models else None
         self._path_guard = path_guard
         self._listing = listing
         self._provider_factory = provider_factory
@@ -107,10 +182,18 @@ class ImageDescribeAdapter:
             path = self._path_guard(str(request.input["path"]))
         except ValueError as exc:
             return failed_result(request, str(exc))
-        if path.suffix.lower() not in IMAGE_SUFFIXES or not path.is_file():
-            return failed_result(request, f"{path.name} is not a picture file I can look at (png, jpg, gif, webp or bmp)")
-        if path.stat().st_size > MAX_IMAGE_BYTES:
-            return failed_result(request, f"{path.name} is larger than {MAX_IMAGE_BYTES // (1024 * 1024)} MB; send a smaller copy")
+        scanned = path.suffix.lower() == ".pdf"
+        if (path.suffix.lower() not in IMAGE_SUFFIXES and not scanned) or not path.is_file():
+            return failed_result(request, f"{path.name} is not a picture file I can look at (png, jpg, gif, webp, bmp, or a scanned PDF)")
+        limit = MAX_PDF_BYTES if scanned else MAX_IMAGE_BYTES
+        if path.stat().st_size > limit:
+            return failed_result(request, f"{path.name} is larger than {limit // (1024 * 1024)} MB; send a smaller copy")
+        pictures, scratch = [path], None
+        if scanned:
+            try:
+                pictures, scratch = await asyncio.to_thread(scanned_pages, path)
+            except ValueError as exc:
+                return failed_result(request, str(exc))
         root = localdeploy_root(self.settings)
         if root is None:
             return failed_result(request, "no vision model server is configured: the default model has no address to ask LocalDeploy at")
@@ -124,10 +207,18 @@ class ImageDescribeAdapter:
         provider = self._provider_factory(
             LLMProfileConfig(model=profile_name, base_url=f"{root}/v1", timeout_seconds=VISION_TIMEOUT_SECONDS, max_tokens=700, temperature=0.1)
         )
+        if self._swap is not None:
+            await self._swap.make_room(root)
         try:
-            text = await self._ask(provider, question, path, root)
+            seen = [(await self._ask(provider, question, picture, root)).strip() for picture in pictures]
         except Exception as exc:  # noqa: BLE001
             return failed_result(request, f"the vision model ({profile_name}) could not look at {path.name}: {_reason(exc)}")
+        finally:
+            if scratch is not None:
+                shutil.rmtree(scratch, ignore_errors=True)
+            if self._swap is not None:
+                await self._swap.release(root, profile_name)
+        text = "\n\n".join(f"Page {number}: {page}" for number, page in enumerate(seen, 1)) if scanned else seen[0]
         text = text.strip()
         if not text:
             return failed_result(request, f"the vision model ({profile_name}) returned nothing for {path.name}")
@@ -204,7 +295,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             named_when_disabled=False,
             description=(
-                "look at a picture file (png, jpg, gif, webp) and say what is in it, or answer a question about it, reading any text in it; "
+                "look at a picture file (png, jpg, gif, webp) or a scanned PDF (a PDF that is only pictures of pages, which document.manage cannot read) "
+                "and say what is in it, or answer a question about it, reading any text in it; "
                 "the assistant's own model cannot see, so a local vision model is loaded for this and the user approves each use"
             ),
             operations=("describe",),
@@ -226,4 +318,4 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
     )
     if enabled:
-        adapters["image.describe"] = ImageDescribeAdapter(settings, guard)  # type: ignore[arg-type]
+        adapters["image.describe"] = ImageDescribeAdapter(settings, guard, swap=LocalDeploySwap())  # type: ignore[arg-type]

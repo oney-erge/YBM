@@ -165,6 +165,7 @@ def operator_response_schema(
                     "reasoning": {"type": "string"},
                     "final_answer": {"type": "string"},
                     "question": {"type": "string"},
+                    "options": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 40}, "maxItems": 4},
                     "reason": {"type": "string"},
                 },
                 "required": ["action"],

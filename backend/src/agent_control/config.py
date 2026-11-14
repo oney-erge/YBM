@@ -742,6 +742,10 @@ class AbilitiesConfig(StrictBaseModel):
     """
 
     enabled: bool = False
+    # The tool that gets a capability from a recipe (abilities/recipes.py): off in the code's defaults for the same reason, on in config.example.yaml.
+    acquire: bool = False
+    # Where fetched model files are kept: this assistant's own folder, never anywhere else.
+    models_dir: str = ".agent_control/models"
 
 
 class PlansConfig(StrictBaseModel):
@@ -766,6 +770,9 @@ class VisionConfig(StrictBaseModel):
     profile: str = ""
     # When LocalDeploy answers that Ollama is not running, start `ollama serve` once as part of loading the model the user just approved.
     start_ollama: bool = True
+    # On a GPU that cannot hold the assistant's model and a vision model together, free the GPU before looking and unload the vision model
+    # after, instead of letting the two evict each other (a look took one to two minutes, and the next message waited behind it).
+    swap_models: bool = True
 
 
 class AppSettings(BaseSettings):

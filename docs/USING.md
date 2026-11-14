@@ -56,8 +56,11 @@ In Telegram you can do the same without the dashboard: after a task finishes, sa
 From a completed task's trace, choose **Save as workflow**. In **Agent -> Workflows**, choose
 **Automate**, fill any parameters, select a project if desired, and set a cadence and timezone.
 Supported cadences are `daily`, `weekly`, `every day`, `every week`, or `every N minutes/hours/days/weeks`
-with N from 1 to 9999. Use an IANA timezone such as `America/Chicago` or `UTC`. The first run is one
-interval from creation; a daily schedule keeps the local time across daylight-saving changes.
+with N from 1 to 9999, or days of the week and a time: `every monday at 09:00`, `every monday and thursday at 18:00`,
+`every weekday at 08:30`, `every weekend`, `daily at 07:00` (the Telegram chat and the schedule tool also take
+"every Monday at 9am" and store it in that form). Use an IANA timezone such as `America/Chicago` or `UTC`. The first
+run of an interval is one interval from creation; a schedule with days fires on the next matching day, and every
+daily or weekday schedule keeps its local time across daylight-saving changes.
 
 The Automations card shows the next due time, status, failure count, and a link to the last run and
 receipt. **Pause** stops future runs; **Resume** restarts the trigger and clears the failure streak
@@ -154,6 +157,13 @@ Telegram adds real channel intake. You need a BotFather token and your Telegram 
 3. Restart YBM so the Telegram intake process starts.
 4. Send `what tasks are running right now?` to your bot, then `/tasks`.
 5. Confirm the reply comes back in the same chat and **Tasks** shows the task completing.
+
+**Gaming mode.** The model that runs the assistant sits in the video memory of the machine you may also play on. Tell it so in the chat
+("I'm about to play a game", "gaming mode", "free up the GPU") and it unloads the model at once (through LocalDeploy) and loads nothing
+again, not for a message, not to warm up, not for a scheduled job, until you say you are done ("I'm done gaming", "gaming mode off").
+Messages you send meanwhile get one reply saying it is waiting, and are listed when you come back so nothing is silently dropped. It only
+ever turns on because you said so. A task that is running is finished first. Needs a LocalDeploy whose `/models/free` also stops the
+llama.cpp server (LocalDeploy pull request 98); with an older one the assistant says the language model is still running.
 
 ## If something stalls
 

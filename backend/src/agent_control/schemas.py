@@ -563,6 +563,8 @@ class OperatorDecision(StrictBaseModel):
     risk_level: RiskLevel = RiskLevel.LOW
     final_answer: str | None = None
     question: str | None = None
+    # action=ask_user only: when the answer is a choice between a few things, the choices, as short answers the user can tap.
+    options: list[str] = Field(default_factory=list)
     reason: str | None = None
     # action=call_tools_parallel only.
     parallel_calls: list[ParallelToolCall] = Field(default_factory=list)

@@ -34,6 +34,7 @@ from agent_control.plans.card import card_keyboard, card_text
 from agent_control.plans.model import PlanStatus
 from agent_control.plans.runner import cancel_plan, pause_plan
 from agent_control.channels.chat_commands import chat_command_reply
+from agent_control.channels.gaming_command import gaming_command_reply, while_gaming_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
@@ -652,6 +653,9 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=plain_response,
                     )
+                gaming_reply = gaming_command_reply(self.repositories, inbound, localdeploy_url=self._model_server_url())
+                if gaming_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=gaming_reply)
                 undo_reply = undo_command_reply(self.repositories, self.audit, inbound, conversation_id)
                 if undo_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=undo_reply)
@@ -671,6 +675,9 @@ class TelegramIntakeService:
                         inbound_message=inbound,
                         outbound_message=clarify_response,
                     )
+                gaming_hold = while_gaming_reply(inbound)  # a message that needs the model waits while the person is gaming
+                if gaming_hold is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=gaming_hold)
                 answered = await classify_and_spawn_task(
                     inbound, conversation_id,
                     repositories=self.repositories, audit=self.audit,
@@ -716,6 +723,13 @@ class TelegramIntakeService:
             )
 
         return result
+
+    def _model_server_url(self) -> str | None:
+        """Where the default model is served (LocalDeploy), for the commands that ask it to do something."""
+        if self.settings is None:
+            return None
+        profile = self.settings.llm.profiles.get(self.settings.llm.default_profile)
+        return profile.base_url if profile else None
 
     def _start_warming(self) -> None:
         """Fire and forget: loads an idle local model while the message is routed (llm/warmup.py). Once per message."""

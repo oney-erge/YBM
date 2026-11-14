@@ -168,7 +168,7 @@ once, and the worker only calls them:
 
 | Module | What it decides | Reads |
 |---|---|---|
-| `orchestration/request_facts.py` | What the request says: that it deletes, moves, adds to a file, changes one, wants the newest, asks to be asked first, names a coding agent, asks what a document is about, holds URLs. Each fact is read from one text, the same text it always came from (the user's own words, or those plus the objective the concierge wrote). | the task |
+| `orchestration/request_facts.py` | What the request says: that it deletes, moves, adds to a file, changes one, wants the newest, asks to be asked first, names a coding agent, asks what a document is about, holds URLs. Each fact is read from one text, the same text it always came from (the user's own words, or those plus the objective the concierge wrote). Five of them (deletes, moves, changes, asks about a document, tallies) are only believed when the decision model agrees: the pattern takes "do not delete anything" for a delete, and one yes/no question on the CPU, asked once before the task's first step and only for the facts the words matched, says no. A model that is down leaves the word. | the task |
 | `orchestration/call_policy.py` | What happens to a tool call before it runs: a refusal on the call as written, canonical form, a refusal on the canonical call, then the labeled rewrites in `REWRITES`, in order. A refusal comes back as a `Refusal`; the worker writes it into the history because it owns the repositories. The rules themselves are in `call_rewrites.py`. | the call, the history, the tool definitions |
 | `orchestration/answer_checks.py` | What a script can find wrong in a `done` answer, in the order of `CHECKS`: a value no tool produced, a sum that does not add up, a quotation nothing contains, a receipt that does not match the request. The first failing check returns a `Pushback` (one history entry and any metadata) and the model is sent back with it; each check says how often it may speak. | the answer, the history |
 | `orchestration/check_entries.py` | The names of the pseudo-entries a check appends to the history (`_number_check`, `_strategy_check`, ...), which the step budget does not count. | |
@@ -259,6 +259,17 @@ words they offer ("done", "skip"), and it does not expire after a day the way a 
 (`skills/starter/`) tells the Operator how to draft one: ask one question first when the goal is vague, give every step an owner, never plan
 for the assistant to pay.
 
+### Gaming mode
+
+The person can say they are about to play (`channels/gaming_command.py`: "gaming mode", "I'm about to play a game", "free up the GPU") and the
+assistant frees the GPU and stays off it until they say they are done (`gaming.py`). The phrases are exact and answered without a model call,
+because asking a language model to free the GPU would load it first. The state is a file, since intake, worker and scheduler are separate
+processes. While it exists: the worker claims no task (`gpu_hold`, which also frees the GPU the first time it is idle, so a running task is
+finished first), the warm-up request is not sent (`llm/warmup.py`), and a message that needs the model gets one reply that it waits and is kept in
+a short list that is read back when gaming mode ends. Freeing is LocalDeploy's `POST /models/free`, which stops Ollama's models and the managed
+llama.cpp server; the reply says so in words when the language model is still running. Nothing watches for a game: it turns on only when
+the person says so.
+
 ### Looking at pictures
 
 The model that runs the assistant locally reads text only, so a photo sent in Telegram was answered with "a JPEG, 8 KB". `image.describe`
@@ -269,6 +280,28 @@ it is loaded and 17 seconds when it is not. It is a different model from the ass
 each use is an approval the user sees ("Load a vision model ... to look at invoice.png. The picture stays on this computer") and can allow
 for the task. If LocalDeploy answers that Ollama is not running, `vision.start_ollama` starts it once as part of loading the model the user
 just approved. The path is held to the folders the file tool may touch, the inbox included.
+
+### Getting what is missing
+
+"Read that to me out loud" used to end in "I can't". Several of those are a small download away, so what is missing is a record, like what is
+impossible (`abilities/recipes.py`): a recipe says what a capability is, the words people use for it, where each file comes from and its SHA-256,
+how big it is, whether it installs a program on the computer, and what to switch on once it is there. The index shows each recipe whose capability
+is not ready as an `installable` record, found by the same search and confirmed by the same yes/no question as everything else, so the Operator
+is told "a voice is not set up; get it with `ability.acquire`" before its first step.
+
+`ability.acquire` (`tools/ability_acquire.py`, `abilities/acquire.py`) carries a recipe out: files first, into this assistant's own folder, each
+checked against its hash; then the command (winget, `ollama pull`); and the configuration last, so a download that fails or does not match leaves
+the capability off and the configuration as it was. Nothing in a request or a model's output names an address, a command or a path. Then the
+request that needed the capability is started again as a new task, because the worker chose its tools before the install: the person's "read
+that out loud" carries on by itself, once (a task that is itself such a retry does not start another).
+
+Whether to ask is the model's judgment, with floors it cannot lower: `ask_first` is the model saying the user should be asked, and a recipe of
+500 MB or more, or one that installs a program on the computer, is always put to the user. Both are the same approval card, worded with what is
+fetched, how big it is and where from. A small curated file is rated low risk so that the approval policy's own floor does not ask about it
+and the model's judgment is what decides. The recipes today are a local voice (Kokoro, 120 MB, switches on `tts.synthesize`), speech recognition
+for audio files (Whisper, switches on `audio.transcribe`), ffmpeg (winget) and a vision model (Qwen3-VL through Ollama). Installing an arbitrary
+Python package stays `dependencies.install`, with its allowlist and an approval on every call. It is off in the code's defaults
+(`abilities.acquire`) so a new tool line does not change recorded prompts.
 
 ### Learning, with the person in the loop
 

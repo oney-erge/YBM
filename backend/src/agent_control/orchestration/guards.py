@@ -342,7 +342,7 @@ class GuardStage:
         )
         return self._operator_ask_user(updated, question)
 
-    def _operator_ask_user(self, task: TaskRecord, question: str) -> TaskRecord:
+    def _operator_ask_user(self, task: TaskRecord, question: str, options: list[str] | None = None) -> TaskRecord:
         """The question is used verbatim - the operator already composed a
         specific question because it decided it needs one, so there's nothing
         to template from a failure reason. Two-question exhaustion limit,
@@ -361,6 +361,10 @@ class GuardStage:
             "clarifying_question": question,
             "clarifying_reason": question[:400],
         }
+        if options is not None:
+            # The Operator's own question: its choices, or none, never the buttons of an earlier question. (None keeps what the caller set,
+            # as the planner does for its question.)
+            metadata["clarifying_options"] = options
         updated = self.repositories.tasks.update_metadata(latest.id, metadata, TaskStatus.CLARIFYING)
         self.audit.task_state_changed("worker", latest.id, latest.status, updated.status)
         self.audit.append(
