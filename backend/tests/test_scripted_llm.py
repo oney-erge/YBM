@@ -106,6 +106,15 @@ def test_fixture_key_normalizes_embedded_tempdir_names() -> None:
     )
 
 
+def test_fixture_key_normalizes_the_run_time_a_schedule_reports() -> None:
+    # schedule.manage says when a schedule first runs. A daily schedule with no time of day runs one day from now, at this minute, so the words
+    # differ on every run of the same scenario.
+    created_a = "Created schedule schedule_1: daily -> Check it. First run: Sunday, November 15 at 12:03 (America/Chicago)."
+    created_b = "Created schedule schedule_1: daily -> Check it. First run: Monday, December 7 at 08:41 (America/Chicago)."
+    assert fixture_key("generate_text", "sys", created_a) == fixture_key("generate_text", "sys", created_b)
+    assert fixture_key("generate_text", "sys", created_a) != fixture_key("generate_text", "sys", "Created schedule schedule_1: daily -> Check it.")
+
+
 def test_fixture_key_normalizes_cross_platform_line_endings() -> None:
     windows = "Stdout:\r\n6765\r\n\r\nAvailable tools:"
     linux = "Stdout:\n6765\n\nAvailable tools:"

@@ -61,6 +61,10 @@ class _LiveProvider(Protocol):
 # regardless of which random id they happened to embed.
 _HEX_RUN = re.compile(r"[0-9a-f]{6,}", re.IGNORECASE)
 
+# A run time as the schedule tool writes it: "Monday, November 16 at 09:00 (America/Chicago)". For a schedule with no time of day it is the next
+# moment after now in the person's timezone, so it changes every minute and a prompt carrying it could never replay.
+_RUN_TIME = re.compile(r"\b[A-Z][a-z]+day, [A-Z][a-z]+ \d{1,2} at \d{2}:\d{2} \([A-Za-z0-9_+\-/]+\)")
+
 # Python's tempfile.TemporaryDirectory()/mkdtemp() default naming scheme -
 # "tmp" + 8 chars from [a-z0-9], not restricted to hex digits, so _HEX_RUN
 # alone doesn't catch it. pytest's own tmp_path fixture uses this scheme too,
@@ -194,6 +198,8 @@ def _normalize(text: str) -> str:
     # name is not part of the behaviour under test, and committing it to a
     # public repository is a disclosure with no upside.
     text = _WINDOWS_USER_DIR.sub(r"\1<user>", text)
+
+    text = _RUN_TIME.sub("<run time>", text)
 
     return _HEX_RUN.sub("<id>", _TEMPDIR_RUN.sub("<tmpdir>", text))
 

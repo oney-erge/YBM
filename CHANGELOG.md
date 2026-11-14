@@ -10,6 +10,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A schedule says when it first runs: the weekday, the date and the time in its own timezone (`tools/schedule_manage.py when_it_runs`, used by create, a repeated create
   and list). The tool said only that the schedule was created, and the model, asked to say when it first runs, wrote "Monday, December 23" for a run on
   November 16 (live; December 23, 2026 is a Wednesday). The list showed a UTC clock time the person had to convert.
+  The scenario fixtures key a prompt without run times (`testing/scripted_llm.py`), because a daily schedule's first run is one day from now at this minute; `schedule_create` was rekeyed.
 - The voice's usage note says to send the recording with `artifact.deliver send_file` and the name `tts.synthesize` returned, and that `send_latest` sends the text.
   Live, the Operator tried `send_latest` first and the person got a text file before the audio.
 - A recording sent in Telegram as an audio file (an mp3, a wav, an m4a) is saved in the inbox and handed to the task like any other file. It was ignored:
