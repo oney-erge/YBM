@@ -534,3 +534,74 @@ async def test_a_replay_lists_the_keys_it_used_for_pruning(tmp_path, monkeypatch
     await ScriptedLLMProvider(fixture).generate_text("sys", _long_prompt())
     row = json.loads(track.read_text(encoding="utf-8").splitlines()[0])
     assert row == {"fixture": "scenario_x.json", "key": fixture_key("generate_text", "sys", _long_prompt())}
+
+
+def _step_prompt(history_steps: int, extra_line: str = "") -> str:
+    """The prompt of one step of a task: the same text each time, plus the history so far."""
+    header = [f"Tool {n}: does thing number {n} on the user's computer and says so in one sentence." for n in range(60)]
+    if extra_line:
+        header.insert(30, extra_line)
+    history = [f"{n}. tool call number {n} returned a long result about the files it found there, in detail." for n in range(1, history_steps + 1)]
+    return "\n".join([*header, "History:", *history])
+
+
+@pytest.mark.asyncio
+async def test_each_step_of_a_task_gets_its_own_recorded_answer_when_the_prompt_changed(tmp_path, monkeypatch) -> None:
+    """Steps of one task differ only by the history they carry, so a similarity match alone could hand step 1 the answer recorded for step 2."""
+    from agent_control.testing.scripted_llm import _normalize
+
+    fixture = tmp_path / "scenario_x.json"
+    entries = {}
+    for step in (1, 2, 3):
+        prompt = _step_prompt(step)
+        entries[fixture_key("generate_text", "sys", prompt)] = {
+            "method": "generate_text", "system_prompt": _normalize("sys"), "user_prompt": _normalize(prompt), "response": f"answer for step {step}",
+        }
+    _write_fixture(fixture, entries)
+    monkeypatch.setenv("YBM_SCENARIO_REKEY", "scenario_x")
+    provider = ScriptedLLMProvider(fixture)
+    changed = "Tool 99: a new tool."
+    assert [await provider.generate_text("sys", _step_prompt(step, changed)) for step in (1, 2, 3)] == [
+        "answer for step 1", "answer for step 2", "answer for step 3",
+    ]
+    monkeypatch.delenv("YBM_SCENARIO_REKEY")
+    replay = ScriptedLLMProvider(fixture)
+    assert [await replay.generate_text("sys", _step_prompt(step, changed)) for step in (1, 2, 3)] == ["answer for step 1", "answer for step 2", "answer for step 3"]
+
+
+@pytest.mark.asyncio
+async def test_a_match_another_is_nearly_as_good_as_is_refused(tmp_path, monkeypatch) -> None:
+    from agent_control.testing.scripted_llm import _normalize
+
+    fixture = tmp_path / "scenario_x.json"
+    entries = {}
+    for name, tail in (("a", "ends this way."), ("b", "ends that way.")):  # two recorded calls the new prompt is equally near to
+        prompt = _step_prompt(1) + "\n" + tail
+        entries[fixture_key("generate_text", "sys", prompt)] = {
+            "method": "generate_text", "system_prompt": _normalize("sys"), "user_prompt": _normalize(prompt), "response": name,
+        }
+    _write_fixture(fixture, entries)
+    monkeypatch.setenv("YBM_SCENARIO_REKEY", "scenario_x")
+    with pytest.raises(ScriptedLLMError):
+        await ScriptedLLMProvider(fixture).generate_text("sys", _step_prompt(1, "Tool 99: a new tool.") + "\nends some other way.")
+
+
+@pytest.mark.asyncio
+async def test_a_changed_system_prompt_is_matched_by_the_unchanged_user_prompt_even_when_it_varies_by_step(tmp_path, monkeypatch) -> None:
+    from agent_control.testing.scripted_llm import _normalize
+
+    fixture = tmp_path / "scenario_x.json"
+    entries = {}
+    for step in (1, 2):
+        system = "You are the operator.\n" + "\n".join(f"Rule {n}: do it carefully." for n in range(60)) + f"\nThis is step {step} of 12."
+        prompt = _step_prompt(step)
+        entries[fixture_key("generate_text", system, prompt)] = {
+            "method": "generate_text", "system_prompt": _normalize(system), "user_prompt": _normalize(prompt), "response": f"answer for step {step}",
+        }
+    _write_fixture(fixture, entries)
+    monkeypatch.setenv("YBM_SCENARIO_REKEY", "scenario_x")
+    provider = ScriptedLLMProvider(fixture)
+    new_system = "You are the operator.\n" + "\n".join(f"Rule {n}: do it carefully." for n in range(60)) + "\nA new rule.\nThis is step {} of 12."
+    assert [await provider.generate_text(new_system.format(step), _step_prompt(step)) for step in (2, 1)] == [
+        "answer for step 2", "answer for step 1",
+    ]
