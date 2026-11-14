@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from agent_control import cadence as calendar
-from agent_control.scheduler import cadence_from_text, create_due_task, next_run_after, normalize_cadence, objective_from_schedule_text, schedule_to_output
+from agent_control.scheduler import cadence_from_text, create_due_task, next_run_after, normalize_cadence, objective_from_schedule_text, resolve_timezone, schedule_to_output
 from agent_control.schemas import (
     Capability,
     ChannelType,
@@ -90,7 +90,7 @@ class ScheduleManageAdapter:
                 "schedules": [schedule_to_output(existing)],
                 "next_run_at": existing.next_run_at.isoformat(),
                 "summary": f"Schedule {existing.id} already does this ({existing.cadence} -> {existing.objective}); "
-                "no new schedule was created.",
+                f"no new schedule was created. Next run: {when_it_runs(existing)}.",
             }
         schedule = self.repositories.schedules.create(
             ScheduleRecord(
@@ -107,7 +107,7 @@ class ScheduleManageAdapter:
             "schedule_id": schedule.id,
             "schedules": [schedule_to_output(schedule)],
             "next_run_at": schedule.next_run_at.isoformat(),
-            "summary": f"Created schedule {schedule.id}: {schedule.cadence} -> {schedule.objective}",
+            "summary": f"Created schedule {schedule.id}: {schedule.cadence} -> {schedule.objective}. First run: {when_it_runs(schedule)}.",
         }
 
     def _list(self) -> dict:
@@ -117,7 +117,7 @@ class ScheduleManageAdapter:
         ]
         lines = [
             f"- {schedule.id}: {schedule.cadence} -> {schedule.objective} [{schedule.status.value}, next run "
-            f"{schedule.next_run_at.strftime('%Y-%m-%d %H:%M UTC') if schedule.next_run_at else 'not scheduled'}]"
+            f"{when_it_runs(schedule) if schedule.next_run_at else 'not scheduled'}]"
             for schedule in schedules[:25]
         ]
         if len(schedules) > 25:
@@ -156,6 +156,17 @@ class ScheduleManageAdapter:
             "next_run_at": updated.next_run_at.isoformat(),
             "summary": f"Created task {task.id} from schedule {schedule.id}.",
         }
+
+
+def when_it_runs(schedule: ScheduleRecord) -> str:
+    """The next run as a person says it: "Monday, November 16 at 09:00 (America/Chicago)", in the schedule's own timezone.
+
+    The tool said only that a schedule was created, and the model, asked to tell the person when it first runs, wrote "Monday, December 23" for
+    a run on November 16 (live: a day that is not even a Monday). It writes what it is given, so it is given the weekday, the date and the time.
+    """
+    zone = resolve_timezone(schedule.timezone)
+    local = schedule.next_run_at.astimezone(zone)
+    return f"{local:%A}, {local:%B} {local.day} at {local:%H:%M} ({getattr(zone, 'key', 'UTC')})"  # a zone that cannot be read is shown as the UTC it fell back to
 
 
 def _matching_enabled_schedule(

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -18,7 +19,7 @@ from agent_control.schemas import (
     utc_now,
 )
 from agent_control.tools.registry import build_tool_registry
-from agent_control.tools.schedule_manage import ScheduleManageAdapter
+from agent_control.tools.schedule_manage import ScheduleManageAdapter, when_it_runs
 from helpers import make_repos
 
 
@@ -297,6 +298,37 @@ async def test_list_shows_each_schedule_to_the_model_and_leaves_out_deleted_ones
     assert keep.output["schedule_id"] in summary and "daily at 08:00 -> Send me a summary of the news" in summary and "[enabled, next run " in summary
     assert "fixture server" not in summary
     assert [item["id"] for item in listed.output["schedules"]] == [keep.output["schedule_id"]]
+
+
+@pytest.mark.asyncio
+async def test_the_result_says_when_the_first_run_is_with_the_weekday_so_the_model_does_not_make_one_up(tmp_path) -> None:
+    """Live: told only that the schedule was created, the model wrote "Monday, December 23" for a run on November 16."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Every Monday at 9am send me the top 3 Hacker News stories.", metadata={"source_chat_id": "100"})
+    adapter = ScheduleManageAdapter(repos, audit)
+
+    async def run(**payload):
+        return await adapter.execute(ToolCallRequest(
+            task_id=task.id, tool_name="schedule.manage", capability=Capability.SCHEDULE_MANAGE, risk_level=RiskLevel.MEDIUM, input=payload,
+        ))
+
+    created = await run(operation="create", objective="send me the top 3 Hacker News stories", cadence="every monday at 09:00",
+                        timezone="America/Chicago", source_chat_id="100")
+    schedule = repos.schedules.get(created.output["schedule_id"])
+    local = schedule.next_run_at.astimezone(ZoneInfo("America/Chicago"))
+    assert local.strftime("%A") == "Monday" and local.hour == 9  # the stored time is right; the words must say the same
+    expected = f"Monday, {local:%B} {local.day} at 09:00 (America/Chicago)"
+    assert f"First run: {expected}." in created.output["summary"]
+
+    again = await run(operation="create", objective="send me the top 3 Hacker News stories", cadence="every monday at 09:00",
+                      timezone="America/Chicago", source_chat_id="100")
+    assert f"Next run: {expected}." in again.output["summary"]
+    assert f"next run {expected}]" in (await run(operation="list")).output["summary"]  # not a UTC clock time the person has to convert
+
+
+def test_a_timezone_that_is_not_known_is_written_as_utc() -> None:
+    schedule = ScheduleRecord(objective="x", cadence="daily", timezone="Not/AZone", next_run_at=datetime(2026, 11, 16, 15, 0, tzinfo=timezone.utc))
+    assert when_it_runs(schedule) == "Monday, November 16 at 15:00 (UTC)"  # an unknown zone is shown as the UTC it falls back to, not under its name
 
 
 @pytest.mark.asyncio

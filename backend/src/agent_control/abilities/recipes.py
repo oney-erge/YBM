@@ -128,7 +128,11 @@ RECIPES: tuple[Recipe, ...] = (
         confirm="Does the user want the assistant to speak, read something aloud, or send a voice message or audio of text?",
         size_mb=120,
         source="github.com (the Kokoro model files, run on this computer)",
-        after="The voice is set up. Make the audio with tts.synthesize (text in, a .wav file out) and send it with artifact.deliver.",
+        after=(
+            "The voice is set up. Make the audio with tts.synthesize (text in, a .wav file out), then send that file with artifact.deliver "
+            "send_file and the file name tts.synthesize returned. send_latest sends the text of the last answer, not the audio: live, it was "
+            "tried first and the person got a text file before the recording."
+        ),
         ready=_voice_ready,
         downloads=(
             Download(f"{KOKORO_BASE}/kokoro-v1.0.int8.onnx", "kokoro-v1.0.int8.onnx", "6e742170d309016e5891a994e1ce1559c702a2ccd0075e67ef7157974f6406cb", 92361271),
