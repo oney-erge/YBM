@@ -187,12 +187,14 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
         ability_notes: Callable[[str, str | None], Awaitable[tuple[str, str]]] | None = None,
         plan_runner: PlanRunner | None = None,
+        job_runner: Any | None = None,
         plan_stage: Callable[[TaskRecord], Awaitable[StageOutcome]] | None = None,
         fact_checks: Callable[[str, tuple[str, ...]], Awaitable[dict[str, bool]]] | None = None,
         gpu_hold: Callable[[], bool] | None = None,
     ) -> None:
         # Moves started plans forward on every pass (plans/runner.py); None when plans are off.
         self.plan_runner = plan_runner
+        self.job_runner = job_runner
         # Plans a request that a skill routes to the planner (plans/stage.py); None when plans are off.
         self.plan_stage = plan_stage
         # What bears on a request that the Operator cannot already see (abilities/context.py, plans/context.py), as prompt text, given
@@ -292,6 +294,11 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 await self.plan_runner.tick()
             except Exception:  # noqa: BLE001 - a plan's trouble must never stop the worker taking tasks
                 logger.warning("plan_runner_tick_failed", exc_info=True)
+        if self.job_runner is not None:
+            try:
+                await self.job_runner.tick()  # one unit of a long job, and only when no task is waiting (jobs/runner.py)
+            except Exception:  # noqa: BLE001 - a job's trouble must never stop the worker taking tasks
+                logger.warning("job_runner_tick_failed", exc_info=True)
         # A claim can expire after startup. Reconcile it before another worker
         # can claim a running task with an uncertain in-flight operation.
         reconcile_orphaned_tasks(self.repositories, self.audit, expired_claims_only=True)

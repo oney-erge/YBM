@@ -758,6 +758,20 @@ class PlansConfig(StrictBaseModel):
     enabled: bool = False
 
 
+class JobsConfig(StrictBaseModel):
+    """Jobs that take hours (jobs/): the `job.manage` tool and the runner that carries a started job out one unit at a time. Research is the first kind.
+
+    Off in the code's defaults for the same reason as `plans.enabled`: a new tool line changes the text of the Operator's prompt, which the recorded
+    scenario fixtures are keyed on. The shipped config turns it on.
+    """
+
+    enabled: bool = False
+    #: Pages a research job reads when the person gives no number, and the most it may ever read.
+    default_pages: int = Field(default=60, ge=5, le=150)
+    max_pages: int = Field(default=150, ge=5, le=500)
+    reports_dir: str = ".agent_control/jobs"
+
+
 class VisionConfig(StrictBaseModel):
     """Looking at pictures with a local vision model through LocalDeploy (tools/image_describe.py).
 
@@ -805,6 +819,7 @@ class AppSettings(BaseSettings):
     operator: OperatorConfig = Field(default_factory=OperatorConfig)
     abilities: AbilitiesConfig = Field(default_factory=AbilitiesConfig)
     plans: PlansConfig = Field(default_factory=PlansConfig)
+    jobs: JobsConfig = Field(default_factory=JobsConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @classmethod

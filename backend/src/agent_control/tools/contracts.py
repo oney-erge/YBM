@@ -361,6 +361,29 @@ class PlanManageInput(ToolInputModel):
         return self
 
 
+class JobManageInput(ToolInputModel):
+    operation: Literal["start_research", "status", "pause", "resume", "stop"] = "status"
+    # start_research: what to find out, as a full goal with everything the user said (the topic, the place, the budget), and how many pages
+    # at most (the person's own number if they gave one).
+    goal: str | None = None
+    max_pages: int | None = Field(default=None, ge=5, le=150)
+    # status, pause, resume, stop: which job (default: the newest of this chat that has not ended).
+    job_id: str | None = None
+
+    @model_validator(mode="after")
+    def needs_its_arguments(self) -> "JobManageInput":
+        if self.operation == "start_research" and not (self.goal or "").strip():
+            raise ValueError("operation=start_research requires 'goal'")
+        return self
+
+
+class JobManageOutput(ToolOutputModel):
+    operation: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+    job_id: str | None = None
+    jobs: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class ImageDescribeInput(ToolInputModel):
     operation: Literal["describe"] = "describe"
     path: str
