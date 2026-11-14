@@ -215,7 +215,9 @@ def recipe_abilities(settings: AppSettings) -> list[Ability]:
                     f"carry on with the request. {asking}"
                 ),
                 confirm=recipe.confirm,
-                confirm_at=0.6,
+                # Measured on the running decision model: the voice question answers 0.89 to 0.96 for the ways of asking to be read to or spoken to, and
+                # 0.74 to "read me the summary of chapter two", which is not out loud. Installing a model for the second would be the wrong thing to offer.
+                confirm_at=0.85,
                 source="recipes",
             )
         )

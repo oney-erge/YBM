@@ -26,6 +26,7 @@ text both channels' notifiers render into their own transport.
 
 from __future__ import annotations
 
+import logging
 import time
 
 from collections.abc import Awaitable, Callable
@@ -33,6 +34,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Protocol
 
+from agent_control.abilities.context import asks_for_what_could_be_set_up
+from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
 from agent_control.channels.memory import memory_context
 from agent_control.channels.responder import ChatResponder, gateway_context
@@ -45,6 +48,7 @@ from agent_control.clarification import (
 from agent_control.config import AppSettings
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
+from agent_control.llm.decision import DecisionModelClient
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.schemas import (
     ApprovalStatus,
@@ -66,6 +70,8 @@ from agent_control.schemas import (
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
 from agent_control.task_inbox import acknowledgement, attach_note, find_steerable_task, is_status_question, status_reply
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -467,6 +473,15 @@ async def classify_and_spawn_task(
         is_chat_only = not classification.is_task and classification.task_type != TaskType.STATUS_REQUEST
     else:
         is_chat_only = intent_route == IntentRoute.CONVERSATION and classification.task_type != TaskType.STATUS_REQUEST
+
+    if is_chat_only and settings is not None and settings.abilities.enabled and settings.abilities.acquire and settings.decision.mode != "off":
+        # A chat reply knows nothing of what could be set up, so it answers "read that out loud" with "I cannot speak" and offers nothing. A message
+        # the index finds an installable capability for, and the decision model confirms, goes to the Operator, which is told about it.
+        client = DecisionModelClient(settings.decision)
+        try:
+            is_chat_only = not await asks_for_what_could_be_set_up(recipe_abilities(settings), inbound.text or "", confirm=client.yes_no)
+        except Exception:  # noqa: BLE001 - help, not a gate: the message stays chat
+            logger.info("installable_check_unavailable", exc_info=True)
 
     if is_chat_only:
         # Persist before replying, so the acknowledgment only claims what was

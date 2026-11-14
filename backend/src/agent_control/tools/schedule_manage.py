@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from agent_control import cadence as calendar
 from agent_control.scheduler import cadence_from_text, create_due_task, next_run_after, normalize_cadence, objective_from_schedule_text, schedule_to_output
 from agent_control.schemas import (
     Capability,
@@ -55,13 +56,28 @@ class ScheduleManageAdapter:
         output["terminal_output"] = [_terminal_output(operation, output)]
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 
+    def _the_days_and_time_the_user_named(self, request: ToolCallRequest, cadence: str) -> str:
+        """The person's own words win over a plain daily or weekly the model picked.
+
+        Asked "remind me every Monday at 9am to check my email" the model wrote the cadence "daily" and the job "check my email" (live, after
+        calendar cadences existed), and then asked the person whether a daily schedule was acceptable. When the message the task came from names
+        days of the week or a time of day, that is the cadence.
+        """
+        if cadence not in ("daily", "weekly", "every day", "every week"):
+            return cadence
+        task = self.repositories.tasks.get(request.task_id)
+        said = str((task.metadata.get("original_message_text") if task else "") or "")
+        return calendar.from_text(said) or cadence
+
     def _create(self, request: ToolCallRequest) -> dict:
         if {'folder_trigger', 'workflow_plan_template'} & set(request.input.get('metadata') or {}):
             raise ValueError('Configure folder automations from a saved workflow in Workflows.')
         raw_objective = str(request.input.get("objective") or request.input.get("prompt") or "").strip()
         if not raw_objective:
             raise ValueError("objective is required")
-        cadence = normalize_cadence(str(request.input.get("cadence") or cadence_from_text(raw_objective)))
+        cadence = self._the_days_and_time_the_user_named(
+            request, normalize_cadence(str(request.input.get("cadence") or cadence_from_text(raw_objective)))
+        )
         objective = objective_from_schedule_text(raw_objective)
         timezone_name = str(request.input.get("timezone") or self.default_timezone)
         # A model that does not see its create succeeded asks again (one live run made the same

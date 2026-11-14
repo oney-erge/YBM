@@ -7,6 +7,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A message taken for chat that asks for something that could be set up ("read that to me out loud") becomes a task, so the Operator is told what
+  could be set up and can get it (`abilities/context.py asks_for_what_could_be_set_up`, `channels/base.py`). A chat reply knows nothing of recipes: the
+  deployed assistant answered "I cannot speak" and offered nothing, though a local voice is a 120 MB download away. The same search and the same
+  yes/no question decide; the bar for a recipe is 0.85, measured on the running decision model (0.89 to 0.96 for ways of asking to be spoken to, 0.74
+  for "read me the summary of chapter two", which is not out loud). No decision model, no change: it stays chat.
+- The days and time a person names win over a plain daily or weekly the model picked for a schedule. Asked "remind me every Monday at 9am to check my
+  email" the model wrote the cadence "daily" and the job "check my email" (live, with calendar cadences deployed), and then asked whether a daily
+  schedule was acceptable. `schedule.manage` now reads the days and time from the message the task came from when the cadence is a plain daily or weekly.
 - A big goal now reaches the planner. A skill that routes to the planner (`route: plan`) is asked about for every request, not only for those that
   share words with it, and the shipped plan skill confirms at 0.55 instead of 0.8. On the deployed code the first challenge run sent "Build me a robot."
   to the Operator, which asked a three-part questionnaire, and "I'm moving on December 20. Plan it.", which it retried for ten minutes and then offered
