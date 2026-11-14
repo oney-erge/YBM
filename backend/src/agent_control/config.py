@@ -220,6 +220,13 @@ class DecisionConfig(StrictBaseModel):
     # starts also waits for llama-server to start and load the model, so allow for that.
     timeout_seconds: float = Field(default=10.0, gt=0, le=60)
     min_confidence: float = Field(default=0.9, ge=0.5, le=1.0)
+    # A message the model is sure is a task, though not sure which tool it needs, is settled as a task with the route left open
+    # ("unknown", which keeps the check that stops a question about something no tool can do). The probability that it is a task is the
+    # sum over the tool routes. On 444 real messages the concierge, asked as well, also said "task" every time the sum was at least 0.9
+    # (303 of 303) and every time it was at least 0.95 (193 of 193); that is two thirds of what used to go to the concierge, about 5
+    # seconds each. `settle_tasks_alone: false` turns it off.
+    settle_tasks_alone: bool = True
+    task_bar: float = Field(default=0.9, ge=0.5, le=1.0)
     # The routes `cascade` may decide without the LLM concierge: tasks that need
     # nothing it extracts (a provider name, a schedule, a delivery kind). Chat and
     # status stay with the concierge there because it also writes the reply.

@@ -489,6 +489,10 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
     }
 
 
+#: How often an idle worker looks for a new task. A task waited, on average, half of this before anything started; 3 s was the default.
+WORKER_POLL_SECONDS = 1.0
+
+
 class WorkerRuntimeReloader:
     """Keeps a running worker in step with config.yaml and .env.
 
@@ -554,7 +558,7 @@ async def run_worker() -> None:
         TaskWorker(repositories, audit, **reloader.kwargs, runtime_refresh=reloader)
         for _ in range(max(settings.limits.max_parallel_tasks, 1))
     ]
-    loops = [worker.run_forever() for worker in workers]
+    loops = [worker.run_forever(poll_interval_seconds=WORKER_POLL_SECONDS) for worker in workers]
     # Beside the workers, not inside them: a worker awaiting a long subprocess
     # cannot emit anything, which is exactly when an update matters most.
     if settings.limits.heartbeat_interval_seconds > 0:

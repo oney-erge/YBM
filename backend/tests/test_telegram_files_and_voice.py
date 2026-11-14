@@ -140,4 +140,5 @@ def test_the_inbox_is_readable_by_the_file_and_document_tools():
     registry = build_tool_registry(settings, "http://127.0.0.1:8765")
     adapter = registry.adapters.get("filesystem.manage")
     if adapter is not None:  # off in a default config without file access
-        assert any(str(root).replace("\\", "/").endswith(".agent_control/inbox") for root in adapter.allowed_roots)
+        assert any(str(root).replace("\\", "/").endswith(".agent_control/inbox") for root in adapter._also_allowed)
+        assert not any(str(root).replace("\\", "/").endswith(".agent_control/inbox") for root in adapter.allowed_roots)

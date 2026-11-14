@@ -178,6 +178,19 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A message the local decision model is sure is a task, though it is not sure which tool it needs, no longer waits for the LLM concierge
+  (`decision.settle_tasks_alone`, `decision.task_bar`, default 0.9): the probability that it is a task is the sum over the tool routes,
+  and the route is left "unknown", as the concierge leaves it for most requests, which keeps the operator's full tool list and the check
+  before a first question about something no tool can do. Requests the concierge must read (configuration, a coding agent, the screen) and
+  questions about what the bot can do are never settled this way. Offline, over 444 real messages, the concierge also said "task" for
+  every one of the 303 with a sum of at least 0.9; that is about two thirds of what reached it, about 5 s each. The decision record
+  (`intake_decision`) has `task_probability` and `settled_by` for every message, so it can be checked.
+- Three things that cost a task time without changing what it does. A progress line ("Working on it: ...") is sent in the background,
+  behind the previous one for the task so they arrive in order, and the answer waits for any still on its way (about a second a step; it
+  was awaited). An idle worker looks for a task every second, not every three. And an answer that only reports file writes, moves and
+  sends (every step a successful `filesystem.manage`, `document.manage` or `artifact.deliver` write) is no longer audited by the model,
+  because the receipt checks already compare it to the changed paths and the delivery record (1 to 8 s); any read, search, script,
+  browser step or failed step keeps the audit.
 - Voice notes are quicker and clearer. The speech model loads when the Telegram poller starts, not on the first note (about 4 s); the
   language model starts loading while the audio is transcribed, not after; "typing" shows at once; and what was heard is sent back
   ("I heard: ...", `channels.telegram.echo_voice_transcript`) before anything is done with it, so a mishearing is seen first.
