@@ -179,10 +179,12 @@ capabilities:
     scopes: []
     requires_approval: true
     max_risk_level: "critical"
+  # Also what `ability.acquire` runs under (abilities.acquire below): it asks you when the model thinks it should, and always for a large
+  # download or a program installed on your computer. The older dependencies.install tool (adapters.dependencies) asks on every call.
   dependencies.install:
-    enabled: false
+    enabled: true
     scopes: []
-    requires_approval: true
+    requires_approval: false
     max_risk_level: "high"
   # Read-only questions about this computer (Steam games, installed apps, disk space, finding a file
   # anywhere). Nothing here changes anything; set enabled: true to turn it on.
@@ -269,6 +271,10 @@ limits:
 # request that matches something it cannot see otherwise ("order me a pizza") is told so before its first step. See docs/ARCHITECTURE.md.
 abilities:
   enabled: true
+  # Lets the assistant get a capability it lacks (a voice, speech recognition, ffmpeg, a vision model) from a recipe, and carry your request on
+  # with it. A small download into its own folder is its call whether to ask you; a large one, or a program installed on your computer, is
+  # always asked. See docs/ARCHITECTURE.md.
+  acquire: true
 
 # Plans for goals too big for one task ("build me a small drone"): the Operator drafts steps that each have an owner (the assistant,
 # you, or the assistant once you give it something), you tap Start, and each step runs as a task or asks you to do it. Needs a plan

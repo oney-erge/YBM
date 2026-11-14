@@ -126,6 +126,11 @@ _EFFECT_BY_TOOL_OPERATION: dict[tuple[str, str], EffectKind] = {
     ("coding.agent", "run_goal"): "other",
     ("coding.agent", "resume"): "other",
     ("coding.agent", "stop"): "other",
+    # audio.transcribe
+    ("audio.transcribe", "transcribe"): "read",
+    # ability.acquire: fetches files and switches a capability on
+    ("ability.acquire", "install"): "modified",
+    ("ability.acquire", "plan"): "read",
     # tts.synthesize
     ("tts.synthesize", "synthesize"): "created",
     # adapter.factory

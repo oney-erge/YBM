@@ -28,6 +28,9 @@ logger = structlog.get_logger(__name__)
 
 #: A record shares at least this much with the request to be asked about. One common word scores about 2 to 4.
 SHORTLIST_SCORE = 5.0
+#: A capability that could be set up is asked about on a single shared word: its yes/no question decides, and a request phrased in words the
+#: record does not list ("read that out loud" for a voice) should still reach it. Only a few records are in this state, so few questions are added.
+INSTALLABLE_SHORTLIST_SCORE = 2.0
 #: A record whose words match this strongly is shown without a question: two or three specific words ("order", "pizza").
 CLEAR_SCORE = 10.0
 MAX_SHOWN = 3
@@ -49,7 +52,7 @@ async def relevant(
     candidates = [
         (ability, score)
         for ability, score in index.search(request, limit=limit * 6)
-        if score >= SHORTLIST_SCORE
+        if score >= (INSTALLABLE_SHORTLIST_SCORE if ability.state == AbilityState.INSTALLABLE and ability.confirm else SHORTLIST_SCORE)
         and (ability.kind not in _ALREADY_LISTED or (ability.kind in _PUSHED_WHEN_CONFIRMED and ability.confirm))
         and not (ability.kind == AbilityKind.AGENT and ability.state == AbilityState.READY)
     ]

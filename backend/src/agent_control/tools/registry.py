@@ -10,7 +10,9 @@ from __future__ import annotations
 from agent_control.abilities.catalog import AbilityCatalog
 from agent_control.config import AppSettings
 from agent_control.tools import (
+    ability_acquire,
     abilities,
+    audio_transcribe,
     adapter_factory,
     artifact_delivery,
     browser,
@@ -53,6 +55,8 @@ _REGISTRARS: tuple[Registrar, ...] = (
     web_search.register,
     filesystem_manage.register,
     image_describe.register,
+    ability_acquire.register,
+    audio_transcribe.register,
     adapter_factory.register,
     code_interpreter.register,
     http_request.register,

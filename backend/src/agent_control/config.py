@@ -742,6 +742,10 @@ class AbilitiesConfig(StrictBaseModel):
     """
 
     enabled: bool = False
+    # The tool that gets a capability from a recipe (abilities/recipes.py): off in the code's defaults for the same reason, on in config.example.yaml.
+    acquire: bool = False
+    # Where fetched model files are kept: this assistant's own folder, never anywhere else.
+    models_dir: str = ".agent_control/models"
 
 
 class PlansConfig(StrictBaseModel):

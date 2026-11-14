@@ -368,6 +368,11 @@ class ImageDescribeInput(ToolInputModel):
     question: str | None = None
 
 
+class AudioTranscribeInput(ToolInputModel):
+    operation: Literal["transcribe"] = "transcribe"
+    path: str
+
+
 class TaskStatusInput(ToolInputModel):
     operation: Literal["status"] = "status"
     limit: int = Field(default=10, ge=1, le=50)
@@ -1105,6 +1110,30 @@ class DependenciesOutput(ToolOutputModel):
     target_dir: str | None = None
 
 
+class AbilityAcquireInput(ToolInputModel):
+    operation: Literal["plan", "install"] = "install"
+    # The id of one recipe this assistant has (see the tool's description).
+    recipe: str = Field(min_length=1)
+    # True when the user should be asked before this is fetched; a large download or a program installed on their computer is always asked.
+    ask_first: bool = False
+    # Why it is needed, in a few words that finish "so I can ...": shown on the approval.
+    reason: str = ""
+    # Start the request that needed this again once it is set up, so it sees the new capability.
+    resume: bool = True
+
+
+class AbilityAcquireOutput(ToolOutputModel):
+    operation: Literal["plan", "install"] = "install"
+    summary: str = Field(min_length=1)
+    recipe: str = ""
+    ready: bool = False
+    installed: bool = False
+    size_mb: int = 0
+    source: str = ""
+    # The request that needed the capability, started again as a new task that sees it.
+    retry_task_id: str | None = None
+
+
 class AbilitiesOutput(ToolOutputModel):
     operation: Literal["search", "describe"] = "search"
     summary: str = Field(min_length=1)
@@ -1124,6 +1153,14 @@ class ImageDescribeOutput(ToolOutputModel):
     description: str = ""
     model: str | None = None
     file: str | None = None
+
+
+class AudioTranscribeOutput(ToolOutputModel):
+    operation: Literal["transcribe"] = "transcribe"
+    summary: str = Field(min_length=1)
+    transcript: str = ""
+    file: str | None = None
+    language: str | None = None
 
 
 class SkillsOutput(ToolOutputModel):
