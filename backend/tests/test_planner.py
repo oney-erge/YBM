@@ -237,6 +237,6 @@ def test_the_planner_knows_the_date_and_is_told_to_work_backwards_from_a_dated_g
     from agent_control.plans.planner import SYSTEM_PROMPT, user_prompt
 
     prompt = user_prompt("Move apartment on December 20", "", "", may_ask=False, today=date(2026, 11, 14))
-    assert prompt.startswith("Today is Saturday, November 14, 2026.\nGoal: Move apartment on December 20")
+    assert prompt.startswith("Today is Saturday, November 14, 2026.\n\nGoal: Move apartment on December 20")
     assert "work backwards from it" in SYSTEM_PROMPT and "N days before" in SYSTEM_PROMPT
     assert "Do not invent chores on the computer" in SYSTEM_PROMPT  # a move is boxes and utilities, not folders and spreadsheets
