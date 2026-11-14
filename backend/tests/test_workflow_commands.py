@@ -146,13 +146,27 @@ def test_the_cadences_the_scheduler_accepts(chat, phrase, cadence):
     assert _say(repos, audit, conv, f"run steam count {phrase}").text.startswith(f'Scheduled "steam count" to run {cadence}.')
 
 
-def test_a_weekday_or_a_time_of_day_is_explained_and_nothing_runs(chat):
+def test_days_of_the_week_and_a_time_are_a_schedule(chat):
     repos, audit, conv = chat
     _saved(chat)
     before = {t.id for t in repos.tasks.list_recent(50)}
-    for phrase in ("run steam count every Monday at 9", "run steam count weekdays", "run steam count at 9am"):
-        reply = _say(repos, audit, conv, phrase)
-        assert "not on a particular weekday or at a time of day yet" in reply.text and "run steam count every 2 days" in reply.text
+    for phrase, cadence in (
+        ("run steam count every Monday at 9", "every monday at 09:00"),
+        ("run steam count weekdays at 8:30am", "every weekday at 08:30"),
+        ("run steam count every friday and sunday", "every friday and sunday"),
+    ):
+        assert _say(repos, audit, conv, phrase).text.startswith(f'Scheduled "steam count" to run {cadence}.')
+    assert {t.id for t in repos.tasks.list_recent(50)} == before  # scheduled, not run now
+    schedules = [s for s in repos.schedules.list_recent(10) if s.objective.startswith("steam count")]
+    assert sorted(s.cadence for s in schedules) == ["every friday and sunday", "every monday at 09:00", "every weekday at 08:30"]
+
+
+def test_a_time_with_no_day_is_explained_and_nothing_runs(chat):
+    repos, audit, conv = chat
+    _saved(chat)
+    before = {t.id for t in repos.tasks.list_recent(50)}
+    reply = _say(repos, audit, conv, "run steam count at 9am")
+    assert "could not tell which days you mean" in reply.text and "run steam count every monday at 9am" in reply.text
     assert {t.id for t in repos.tasks.list_recent(50)} == before  # not run now either
 
 
