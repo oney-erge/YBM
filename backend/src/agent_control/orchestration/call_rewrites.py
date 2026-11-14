@@ -331,6 +331,9 @@ def _filesystem_path_relative_to_a_listed_root(
     return tool_input
 
 
+_LISTINGS_WITHOUT_DATES = frozenset({"describe_folder", "collect_folder_snapshot"})
+
+
 def _filesystem_listing_input_with_dates_intent(
     task: TaskRecord,
     tool_name: str | None,
@@ -342,10 +345,17 @@ def _filesystem_listing_input_with_dates_intent(
     looked for a tool that reports timestamps. Dates are added only for such a request: every other listing, and every
     prompt built from one, stays exactly as it was.
     """
-    if tool_name != "filesystem.manage" or tool_input.get("operation") not in {"inspect_folder", "search"}:
+    if tool_name != "filesystem.manage" or tool_input.get("operation") not in {"inspect_folder", "search", *_LISTINGS_WITHOUT_DATES}:
         return tool_input
     if not RequestFacts.from_task(task).wants_recency:
         return tool_input
+    if tool_input.get("operation") in _LISTINGS_WITHOUT_DATES:
+        # describe_folder and collect_folder_snapshot list names and sizes and cannot show when a file changed, so a question about the
+        # newest or oldest file asked through them could never be answered (a fresh-suite case ended "blocked" on exactly this).
+        # The folder is listed with inspect_folder, which can.
+        if not tool_input.get("root"):
+            return tool_input
+        return {"operation": "inspect_folder", "root": tool_input["root"], "with_dates": True}
     return {**tool_input, "with_dates": True}
 
 
