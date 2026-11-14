@@ -219,3 +219,21 @@ def test_only_a_written_out_addition_counts_not_numbers_that_are_merely_near_a_p
 def test_decimals_and_thousands_separators_are_added_exactly():
     assert inconsistent_sum("It is 20 (0.1 + 0.2 + 12.5).") == (["0.1", "0.2", "12.5"], "12.8")
     assert inconsistent_sum("It is 3 (1,000 + 2,500)") == (["1000", "2500"], "3500")
+
+
+# --- a total stated first with its parts listed under it ---------------------------------------------------------------------------------------
+
+LISTED = "There are 12 lines in total across all .txt files. The files contain:\n- a.txt: 4 lines\n- sub/b.txt: 5 lines\n- sub/deeper/c.txt: 6 lines"
+
+
+def test_a_total_that_the_listed_parts_do_not_add_up_to_is_caught():
+    assert inconsistent_sum(LISTED) == (["4", "5", "6"], "15")
+    assert inconsistent_sum("- a.txt: 4 lines\n- b.txt: 5 lines\nTotal: 12 lines") == (["4", "5"], "9")
+
+
+def test_a_listed_total_that_is_right_or_that_counts_something_else_is_left_alone():
+    assert inconsistent_sum(LISTED.replace("12 lines", "15 lines")) is None
+    assert inconsistent_sum("There are 3 files in total:\n- a.txt: 4 lines\n- b.txt: 5 lines\n- c.txt: 6 lines") is None
+    assert inconsistent_sum("There are 12 lines in total.\n- a.txt: 12 lines") is None  # one part is not an addition
+    assert inconsistent_sum("12 lines in total. Biggest first:\n- a.txt: 4 lines and b.txt: 5 lines") is None  # two numbers in one item
+    assert inconsistent_sum("Total: 12 lines\n- Total: 12 lines") is None

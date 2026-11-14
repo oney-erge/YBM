@@ -115,7 +115,46 @@ def inconsistent_sum(answer: str | None) -> tuple[list[str], str] | None:
     c.txt)": every term right, the total wrong, and the number check passed it because 5 is in a tool result. Whenever an answer writes
     "a + b + c" out, the total is arithmetic code can do, and a total the answer does not state is the one that was got wrong.
     """
-    text = str(answer or "")
+    return _written_out_addition(str(answer or "")) or _itemised_total(str(answer or ""))
+
+
+# "There are 12 lines in total" / "Total: 12 lines" ...
+_TOTAL_FIRST = re.compile(r"(?<![\w.])(?P<n>\d[\d,]*)\s+(?P<unit>[A-Za-z]+)\b[^\n]{0,60}?\b(?:in\s+total|in\s+all|altogether|combined|total)\b", re.IGNORECASE)
+_TOTAL_LABEL = re.compile(r"\btotal\b[^\n\d]{0,25}(?P<n>\d[\d,]*)\s+(?P<unit>[A-Za-z]+)\b", re.IGNORECASE)
+_ITEM_LINE = re.compile(r"^[ \t]*(?:[-*•]|\d{1,2}[.)])[ \t]+(?P<body>.+)$", re.MULTILINE)
+
+
+def _itemised_total(text: str) -> tuple[list[str], str] | None:
+    """A total stated in words with its parts listed one to a line, when the parts add up to something else.
+
+    The same mistake as above in the other layout: "There are 12 lines in total: - a.txt: 4 lines - b.txt: 5 lines - c.txt: 6 lines".
+    The parts are the numbers in list items that stand directly before the total's own unit ("lines"), so "3 files in total" over items
+    that count lines is left alone, and so is a list with one item.
+    """
+    stated = _TOTAL_FIRST.search(text) or _TOTAL_LABEL.search(text)
+    if stated is None:
+        return None
+    unit = stated.group("unit").casefold()
+    claimed = _normalise(stated.group("n"))
+    parts: list[str] = []
+    for item in _ITEM_LINE.finditer(text):
+        found = re.findall(rf"(?<![\w.])(\d[\d,]*)\s+{re.escape(unit)}\b", item.group("body"), re.IGNORECASE)
+        if len(found) != 1 or item.start("body") <= stated.start() < item.end("body"):
+            continue
+        value = _normalise(found[0])
+        if value is not None:
+            parts.append(value)
+    if claimed is None or len(parts) < 2:
+        return None
+    total = sum(Decimal(value) for value in parts)
+    correct = format(total.normalize(), "f")
+    correct = correct[:-2] if correct.endswith(".0") else correct
+    if correct == claimed or correct in _numbers(text):
+        return None
+    return parts, correct
+
+
+def _written_out_addition(text: str) -> tuple[list[str], str] | None:
     matches = list(_NUMBER_AT.finditer(text))
     best: list[Any] = []
     chain: list[Any] = [matches[0]] if matches else []

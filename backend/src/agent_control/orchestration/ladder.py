@@ -254,6 +254,14 @@ RENAME_TEXT = (
 )
 
 
+MOVE_TEXT = (
+    "The user named the folder and the files to move, so do not use organize_plan: it sorts every file in the folder into folders it names "
+    "itself, by type. Call filesystem.manage with operation apply_manifest, the folder as root, and a manifest with one entry for each "
+    "file the request names and no other: {\"source\": <the file's name>, \"destination\": <the folder the user named>}. Files the "
+    "request does not name stay where they are."
+)
+
+
 MONEY_TEXT = (
     "You cannot buy or order anything for the user: you have no payment method and no shop accounts set up, and you must not enter payment "
     "details or press a buy or order button. Do not go on with this and do not ask a question first. Finish now (action done) with one or "
@@ -267,6 +275,15 @@ def money_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hi
     if "money" in given or not any(step.get("tool_name") in BROWSER_TOOLS for step in steps) or not RequestFacts.from_text(request).spends_money:
         return None
     return Hint("money", MONEY_TEXT)
+
+
+def move_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
+    """A request to move some files into a folder it names, once the model has looked at files and before it sorts them all by type."""
+    if "move" in given or not any(step.get("tool_name") == FILESYSTEM_TOOL for step in steps):
+        return None
+    if any(_operation(step) == "apply_manifest" for step in steps) or not RequestFacts.from_text(request).moves_into_a_named_folder:
+        return None
+    return Hint("move", MOVE_TEXT)
 
 
 def rename_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
@@ -311,7 +328,10 @@ def next_hint(
     if not steps:
         return None
     last = steps[-1]
-    form = money_hint(request, steps, given) or form_hint(request, steps, given) or rename_hint(request, steps, given)
+    form = (
+        money_hint(request, steps, given) or form_hint(request, steps, given) or rename_hint(request, steps, given)
+        or move_hint(request, steps, given)
+    )
     if form is not None:
         return form
     absent = proven_absent(request, steps)

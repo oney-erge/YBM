@@ -7,6 +7,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A request to move some files into a folder it names ("move the .png files into a subfolder called pictures") is told once, as soon as
+  the model has looked at files, not to use `organize_plan` (it sorts every file by type into folders of its own naming) but to apply a
+  manifest with exactly the files named (`orchestration/ladder.py`, `move_hint`; `RequestFacts.moves_into_a_named_folder`). In the
+  vision suite, run after the other cases in one chat, the model had planned a sort by type three times and asked the user.
+- The check for an answer whose sum is wrong also reads a total with its parts listed under it ("12 lines in total: - a.txt: 4 lines
+  - b.txt: 5 lines - c.txt: 6 lines"): the parts that stand before the total's own unit are added and the model is sent back once when
+  they do not make the total (`orchestration/number_check.py`, `_itemised_total`). The earlier check only read "4 + 5 + 6" on one line.
 - A request to buy, order, book or pay for something ("order me a pizza", "book a flight") is answered honestly. Once the model starts to
   browse for it, the task's history says that it has no payment method and no shop accounts and must not press a buy button, so it
   says plainly that it cannot place orders and offers the menu, the website or the phone number (`orchestration/ladder.py`, `money_hint`;

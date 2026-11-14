@@ -61,6 +61,9 @@ NEW_ACCOUNT = re.compile(
 )
 #: Give files new names ("rename every .txt so it starts with old-", "name them ...").
 RENAME = re.compile(r"\brename\b|\bnew names?\b|\bnames? (?:should )?(?:start|begin|end)s? with\b", re.IGNORECASE)
+#: Move files into a folder the user names ("move the .png files into a subfolder called pictures").
+MOVE_VERB = re.compile(r"\bmove\b", re.IGNORECASE)
+NAMED_FOLDER = re.compile(r"\b(?:sub-?)?(?:folder|directory)\s+(?:called|named)\s+\S", re.IGNORECASE)
 #: Buy, order or book something that costs money ("order me a pizza", "book a flight", "buy a laptop").
 SPENDS_MONEY = re.compile(
     r"(?<!in )\b(?:order(?!\s+(?:to|of|by)\b)|buy|purchase|book|reserve|rent|subscribe\s+to)\b[^.?!\n]{0,40}\b(?:pizzas?|burgers?|food|meals?|dinner|lunch|breakfast|coffee|"
@@ -119,6 +122,11 @@ class RequestFacts:
     @property
     def asks_to_understand_a_document(self) -> bool:
         return bool(DOCUMENT_UNDERSTANDING.search(self.own))
+
+    @property
+    def moves_into_a_named_folder(self) -> bool:
+        own = URL.sub(" ", self.own)
+        return bool(MOVE_VERB.search(own) and NAMED_FOLDER.search(own))
 
     @property
     def renames(self) -> bool:
