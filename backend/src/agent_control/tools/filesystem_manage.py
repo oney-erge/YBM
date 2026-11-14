@@ -289,6 +289,7 @@ class FilesystemManageAdapter:
 
     def _write_text_file(self, request: ToolCallRequest) -> dict[str, Any]:
         path = self._safe_path(str(request.input["path"]))
+        _refuse_text_for_a_file_that_is_not_text(path)
         overwrite = bool(request.input.get("overwrite", False))
         if bool(request.input.get("append", False)) and path.exists() and path.is_file():
             return self._append_text_file(path, str(request.input.get("content") or ""))
@@ -819,6 +820,38 @@ def _type_bucket(path: Path) -> str:
 
 def _extension_bucket(path: Path) -> str:
     return path.suffix.lower().lstrip(".") or "no_extension"
+
+
+#: Formats that are not text. Text written to one makes a file that will not open, and over an existing one destroys it.
+_NOT_TEXT_EXTENSIONS = frozenset({
+    ".xlsx", ".xlsm", ".xls", ".docx", ".doc", ".pptx", ".ppt", ".odt", ".ods", ".pdf", ".zip", ".7z", ".rar",
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".mp3", ".wav", ".mp4", ".mkv", ".exe", ".dll", ".sqlite", ".db",
+})
+
+
+def _refuse_text_for_a_file_that_is_not_text(path: Path) -> None:
+    """A text write must not touch a spreadsheet, a document, a picture or any file whose bytes are not text.
+
+    Live (challenge e2): asked to add a row to `expenses.xlsx`, the Operator wrote the row as text to that path with `overwrite` true. The workbook
+    (1.5 KB) became 95 bytes of plain text that Excel cannot open, and the answer said the row had been added. The file's bytes decide, not only
+    its name: a file with a NUL byte near the start is not text whatever it is called.
+    """
+    reason = ""
+    if path.suffix.lower() in _NOT_TEXT_EXTENSIONS:
+        reason = f"{path.name} is a {path.suffix.lower()} file, which is not text"
+    elif path.is_file():
+        try:
+            with path.open("rb") as handle:
+                if b"\x00" in handle.read(4096):
+                    reason = f"{path.name} holds binary data, not text"
+        except OSError:
+            return
+    if reason:
+        raise ValueError(
+            f"{reason}: writing text to it would make a file that cannot be opened, or destroy the one that is there. Nothing was changed. "
+            "Change it with a program instead (code.interpreter with openpyxl for a spreadsheet, python-docx for a document), working "
+            "on a copy if the original matters."
+        )
 
 
 def _dedupe_destination(path: Path) -> Path:

@@ -17,6 +17,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   task_task_eb3c... Backend: local_subprocess (not sandboxed)" for a question about a backup, and "Workspace: task_task_833b..." under a chart.
 - The challenge suite checks that the final answer leaves out terms (`answer_excludes_all`), apart from everything the user was sent on the way. c_d1_blurry failed on its
   approval prompt, which names all six photos to ask permission to look at them, while the answer named exactly the three blurry ones.
+- `filesystem.manage write_text_file` refuses a file that is not text, even with `overwrite` or `append`: a spreadsheet, document, archive, picture or other known
+  binary format by its extension, and any file with a NUL byte in its first 4 KB by its content. The error says nothing was changed and to use a program
+  (`code.interpreter` with openpyxl or python-docx). Live (challenge e2), asked to add a row to `expenses.xlsx`, the Operator overwrote the 1.5 KB workbook with 95 bytes of
+  plain text that Excel cannot open and answered that the row had been added.
 - A schedule says when it first runs: the weekday, the date and the time in its own timezone (`tools/schedule_manage.py when_it_runs`, used by create, a repeated create
   and list). The tool said only that the schedule was created, and the model, asked to say when it first runs, wrote "Monday, December 23" for a run on
   November 16 (live; December 23, 2026 is a Wednesday). The list showed a UTC clock time the person had to convert.

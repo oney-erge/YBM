@@ -604,6 +604,30 @@ async def test_writing_over_an_existing_file_says_it_was_not_changed_and_how_to_
     assert "NOT changed" not in replaced.output["summary"]
 
 
+@pytest.mark.asyncio
+async def test_text_is_never_written_over_a_workbook_or_any_file_that_is_not_text(tmp_path) -> None:
+    """Live (challenge e2): `expenses.xlsx` (1.5 KB) was overwritten with 95 bytes of plain text, and the answer said a row had been added."""
+    workbook = tmp_path / "expenses.xlsx"
+    workbook.write_bytes(b"PK\x03\x04" + b"\x00" * 64)  # a zip container, as every .xlsx is
+    unnamed = tmp_path / "data"  # no extension, but its bytes are not text
+    unnamed.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    over = await adapter.execute(_request(tmp_path, "write_text_file", path=str(workbook), content="A4=2026-11", overwrite=True))
+    appended = await adapter.execute(_request(tmp_path, "write_text_file", path=str(workbook), content="A4=2026-11", append=True))
+    fresh = await adapter.execute(_request(tmp_path, "write_text_file", path=str(tmp_path / "new.docx"), content="hello"))
+    sniffed = await adapter.execute(_request(tmp_path, "write_text_file", path=str(unnamed), content="x", overwrite=True))
+
+    for result in (over, appended, fresh, sniffed):
+        assert result.status == ToolResultStatus.FAILED and "Nothing was changed" in (result.error_message or "")
+    assert "openpyxl" in (over.error_message or "")
+    assert workbook.read_bytes().startswith(b"PK\x03\x04") and unnamed.read_bytes().startswith(b"\x89PNG")  # untouched
+    assert not (tmp_path / "new.docx").exists()
+
+    plain = await adapter.execute(_request(tmp_path, "write_text_file", path=str(tmp_path / "notes.txt"), content="fine"))
+    assert plain.status == ToolResultStatus.SUCCEEDED and (tmp_path / "notes.txt").read_text(encoding="utf-8") == "fine"
+
+
 # ---- read_file keeps the lines of the file ---------------------------------------------------------------------------
 # Live: a CSV came back as "name,score Ana,71 Ben,88 Cleo,93 ..." on one line, the scripts the model wrote could not parse it, and
 # the task ran out of steps asking the user to paste the file.
