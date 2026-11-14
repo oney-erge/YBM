@@ -7,6 +7,14 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Plans for goals too big for one task (`plans/`, `tools/plan_manage.py`, `plans.enabled`): the Operator drafts steps that each have an
+  owner (the assistant, the user, or the assistant once the user gives it something), the user starts the plan from a card with Start and
+  Cancel buttons, and each step then runs as an ordinary task or asks the user to do it, one at a time, with Done and Skip buttons.
+  Plans are stored on their own and survive restarts; Pause, Continue and Cancel work from the card; `/plan` shows it; and a plan open in
+  the chat is named in the prompt of a task there. A step that waits for the user does not take the next message they send and does not
+  expire after a day. The "Plan a project" starter skill tells the Operator how to draft one.
+- A question can offer quick answers: `clarifying_options` on a clarifying task become buttons under it, and a tap answers exactly as typing
+  the words does (`channels/quick_answers.py`).
 - One index of everything the assistant can do, could do with the user's help, or cannot do (`abilities/`): built-in tools, MCP tools,
   skills, kept scripts, saved workflows, installed coding agents, and known gaps, as one kind of record with a state (`ready`, `disabled`,
   `installable`, `needs_access`, `unavailable`) and what it would take to make it ready. Tools say what they are for next to their own

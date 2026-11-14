@@ -31,6 +31,7 @@ from agent_control.orchestration.check_entries import (  # noqa: F401 - re-expor
     CHECK_ENTRY_STUCK,
 )
 from agent_control.orchestration.request_facts import RequestFacts, own_words
+from agent_control.plans.runner import PlanRunner
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.fulfillment import (
     deliverable_evidence,
@@ -343,9 +344,13 @@ class TaskWorker:
         persona_config: object | None = None,
         skills_config: object | None = None,
         runtime_refresh: Callable[["TaskWorker"], None] | None = None,
-        ability_notes: Callable[[str], Awaitable[str]] | None = None,
+        ability_notes: Callable[[str, str | None], Awaitable[str]] | None = None,
+        plan_runner: PlanRunner | None = None,
     ) -> None:
-        # What bears on a request that the Operator cannot already see (abilities/context.py), as prompt text; "" for most.
+        # Moves started plans forward on every pass (plans/runner.py); None when plans are off.
+        self.plan_runner = plan_runner
+        # What bears on a request that the Operator cannot already see (abilities/context.py, plans/context.py), as prompt text, given
+        # the request and the chat; "" for most.
         self.ability_notes = ability_notes
         self.repositories = repositories
         self.audit = audit
@@ -430,6 +435,11 @@ class TaskWorker:
                 self.runtime_refresh(self)
             except Exception:  # noqa: BLE001 - a bad config edit must never stop the worker
                 logger.exception("worker_runtime_refresh_failed")
+        if self.plan_runner is not None:
+            try:
+                await self.plan_runner.tick()
+            except Exception:  # noqa: BLE001 - a plan's trouble must never stop the worker taking tasks
+                logger.warning("plan_runner_tick_failed", exc_info=True)
         # A claim can expire after startup. Reconcile it before another worker
         # can claim a running task with an uncertain in-flight operation.
         reconcile_orphaned_tasks(self.repositories, self.audit, expired_claims_only=True)
@@ -2877,7 +2887,7 @@ class TaskWorker:
         if self.ability_notes is None or "ability_notes" in task.metadata:
             return task
         try:
-            notes = await self.ability_notes(_users_own_words(task))
+            notes = await self.ability_notes(_users_own_words(task), task.conversation_id)
         except Exception:  # noqa: BLE001 - see above
             logger.warning("ability notes failed; the task goes on without them", exc_info=True)
             notes = ""

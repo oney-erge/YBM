@@ -200,6 +200,26 @@ prompt, is not broken by a new tool line; `config.example.yaml` turns it on. The
 request instead of by a pattern. A rule that is a fact about the world belongs here as a record; one about a tool's contract belongs in the
 tool; one about checking an answer belongs in `answer_checks.py`; one about a procedure belongs in a skill.
 
+### Plans: goals too big for one task
+
+A task runs the Operator loop for twelve steps and ends. "Build me a small drone with a language model in it" is a project: some steps the
+assistant does (research, a parts list, the code), some only the user can do (buy, assemble, test), some need something from the user first
+(an account, a decision). `plans/` gives that a shape that survives restarts and waits for people.
+
+| Module | What it is |
+|---|---|
+| `plans/model.py` | `Plan` and `PlanStep`: a goal, and steps in order, each with an owner (`ybm`, `user`, `access`), what it needs, what it depends on, and where it stands. A plan is proposed, active, paused, done or cancelled. |
+| `storage/repositories.py` `PlanRepository` | Plans and steps in two tables; `claim_step` moves a pending step to running for exactly one of several workers. |
+| `tools/plan_manage.py` | `plan.manage`: the Operator drafts a plan (`create`), looks at it (`show`), changes it as the user says (`add_step`, `update_step`), and starts, pauses or cancels it (`set_status`). It checks that the plan is a plan (1 to 20 steps, owners, dependencies that point backwards) and never runs a step. |
+| `plans/runner.py` | Moves started plans forward on every worker pass. A step of the assistant's becomes an ordinary task (same loop, tools, approvals, checks); a step of the user's becomes a question with its own buttons. It keeps no state: each pass reads the database, so a restart or two workers cannot lose or repeat a step. One step at a time. |
+| `plans/card.py` | The plan as a message with the buttons that fit where it stands (Start and Cancel; Pause and Cancel; Continue and Cancel). The card goes under the answer of the task that drafted or changed a plan, and is redrawn after a tap. |
+| `plans/context.py` | When a plan is open in a chat, a few lines in the prompt of a task in that chat say so, so "how is it going" and "change step 3" mean that plan. |
+
+A step waiting on the user is a clarifying task that does not take whatever they say next: it is answered by its buttons, or by typing the
+words they offer ("done", "skip"), and it does not expire after a day the way a question about one task does. The skill `Plan a project`
+(`skills/starter/`) tells the Operator how to draft one: ask one question first when the goal is vague, give every step an owner, never plan
+for the assistant to pay.
+
 ### Logins, files and voice
 
 **Logins for websites** (`accounts.py`). A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`. The browser

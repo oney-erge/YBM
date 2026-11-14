@@ -270,6 +270,12 @@ limits:
 abilities:
   enabled: true
 
+# Plans for goals too big for one task ("build me a small drone"): the Operator drafts steps that each have an owner (the assistant,
+# you, or the assistant once you give it something), you tap Start, and each step runs as a task or asks you to do it. Needs a plan
+# skill to draft well: install "Plan a project" from the starter skills.
+plans:
+  enabled: true
+
 # The Operator loop (observe -> decide -> act) is the sole execution path.
 operator:
   # Hard ceiling on REAL tool calls per task - the only backstop against a

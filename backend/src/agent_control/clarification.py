@@ -12,6 +12,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from agent_control.channels.quick_answers import clarifying_options
+from agent_control.plans.runner import is_skip
 from agent_control.schemas import AuditEventType, TaskRecord, TaskStatus, utc_now
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
@@ -55,6 +57,12 @@ def objective_after_answer(task: TaskRecord, answer: str) -> str:
 class ClarificationResumeResult:
     task: TaskRecord
     cancelled: bool
+    #: The question was a step of a plan (plans/runner.py), answered or skipped, not a task that goes on working.
+    plan_step: bool = False
+
+
+def is_plan_step(task: TaskRecord) -> bool:
+    return bool(task.metadata.get("plan_step_id"))
 
 
 def find_clarifying_task(
@@ -71,7 +79,10 @@ def find_clarifying_task(
         (
             candidate
             for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=20)
-            if candidate.updated_at >= cutoff
+            # A step of a plan that waits for the user is not an open question for whatever they say next: it waits for days, and is
+            # answered by its own buttons or by the words it offered (find_plan_step_answer), so it never takes an unrelated message.
+            if not is_plan_step(candidate)
+            and candidate.updated_at >= cutoff
             and (
                 (conversation_id is not None and candidate.conversation_id == conversation_id)
                 or (chat_id is not None and str(candidate.metadata.get("source_chat_id")) == str(chat_id))
@@ -97,7 +108,7 @@ def expire_stale_clarifications(
     cutoff = (now or utc_now()) - max_age
     expired: list[TaskRecord] = []
     for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=200):
-        if candidate.updated_at >= cutoff:
+        if candidate.updated_at >= cutoff or is_plan_step(candidate):
             continue
         expired.append(repositories.tasks.update_status(candidate.id, TaskStatus.CANCELLED))
         audit.append(
@@ -113,6 +124,28 @@ def expire_stale_clarifications(
     return expired
 
 
+def find_plan_step_answer(
+    repositories: Repositories, *, conversation_id: str | None, chat_id: str | None, text: str
+) -> TaskRecord | None:
+    """The open step of a plan in this chat that `text` answers: exactly one of the words its buttons offer, or "skip".
+
+    A step waits for the user for as long as the thing it asks for takes, so it cannot take whatever they say next as its answer the way a
+    question about one task does. What it takes is what a tap on its buttons would have sent.
+    """
+    wanted = " ".join((text or "").lower().split())
+    if not wanted:
+        return None
+    for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=50):
+        if not is_plan_step(candidate):
+            continue
+        same_chat = (conversation_id is not None and candidate.conversation_id == conversation_id) or (
+            chat_id is not None and str(candidate.metadata.get("source_chat_id")) == str(chat_id)
+        )
+        if same_chat and (is_skip(wanted) or wanted in {option.lower() for option in clarifying_options(candidate)}):
+            return candidate
+    return None
+
+
 def resume_clarifying_task(
     repositories: Repositories,
     audit: AuditLogger,
@@ -125,6 +158,8 @@ def resume_clarifying_task(
     correlation_id: str | None = None,
 ) -> ClarificationResumeResult:
     """Route a reply to the task waiting on a question instead of spawning a new task."""
+    if is_plan_step(task):
+        return _answer_plan_step(repositories, audit, task, text=text, actor=actor, correlation_id=correlation_id)
     if text.lower() in CANCEL_WORDS:
         repositories.tasks.update_status(task.id, TaskStatus.CANCELLED)
         audit.append(
@@ -177,3 +212,25 @@ def resume_clarifying_task(
         payload={"reason": "clarification_answered", "answer": text[:400], "status": TaskStatus.RECEIVED.value},
     )
     return ClarificationResumeResult(task=updated, cancelled=False)
+
+
+def _answer_plan_step(
+    repositories: Repositories, audit: AuditLogger, task: TaskRecord, *, text: str, actor: str, correlation_id: str | None
+) -> ClarificationResumeResult:
+    """The user's answer to a step of a plan that is theirs: skip leaves it out, anything else is that step done.
+
+    The task ends here (nothing is left for the Operator to do with it) and the plan runner reads how it ended on its next pass: completed is
+    a step done, with the answer kept as its result, and cancelled is a step skipped.
+    """
+    skipped = is_skip(text) or text.lower() in CANCEL_WORDS
+    if skipped:
+        repositories.tasks.update_status(task.id, TaskStatus.CANCELLED)
+    else:
+        metadata = {**task.metadata, "plan_step_answer": text, "synthesized_answer": text}
+        metadata.pop("clarifying_question", None)
+        repositories.tasks.update_metadata(task.id, metadata, TaskStatus.COMPLETED)
+    audit.append(
+        AuditEventType.TASK_STATE_CHANGED, actor=actor, task_id=task.id, correlation_id=correlation_id,
+        payload={"reason": "plan_step_skipped" if skipped else "plan_step_answered", "answer": text[:400]},
+    )
+    return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=skipped, plan_step=True)
