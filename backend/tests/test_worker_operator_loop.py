@@ -17,30 +17,13 @@ from agent_control.config import ApprovalPolicyConfig, AppSettings, CapabilityPo
 from agent_control.orchestration import StaticToolAdapter, TaskWorker, ToolExecutor
 from agent_control.orchestration.auditor import RAW_OUTPUT_CHARS, AuditResult
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
-from agent_control.orchestration.worker import (
-    CHECK_ENTRY_FULFILLMENT,
-    _answer_from_results,
-    _canonical_operator_tool_call,
-    _coding_agent_input_with_task_defaults,
-    _document_summary_call,
-    _coding_agent_input_with_explicit_workspace,
-    _effective_operator_risk,
-    _file_in_named_folder,
-    _filesystem_search_input_with_content_intent,
-    _ground_operator_final_answer,
-    _clarification_recovery_reason,
-    _apply_manifest_from_plan,
-    _next_replay_decision,
-    _operator_audit_evidence,
-    _ordered_artifact_delivery_call,
-    _required_named_coding_agent_call,
-    _satisfied_task_does_not_need_clarification,
-    _schedule_id_from_this_task,
-    _schedule_objective_with_request_urls,
-    _stale_read_recovery_call,
-    _unsupported_write_claim,
-    build_replay_plan,
-)
+from agent_control.orchestration.check_entries import CHECK_ENTRY_FULFILLMENT
+from agent_control.orchestration.call_rewrites import _canonical_operator_tool_call, _coding_agent_input_with_task_defaults, _document_summary_call, _coding_agent_input_with_explicit_workspace, _file_in_named_folder, _filesystem_search_input_with_content_intent, _apply_manifest_from_plan, _ordered_artifact_delivery_call, _required_named_coding_agent_call, _schedule_id_from_this_task, _schedule_objective_with_request_urls, _stale_read_recovery_call
+from agent_control.orchestration.task_record import answer_from_results, effective_operator_risk, operator_audit_evidence
+from agent_control.orchestration.grounding import ground_operator_final_answer
+from agent_control.orchestration.asking import clarification_recovery_reason, satisfied_task_does_not_need_clarification
+from agent_control.orchestration.replay import next_replay_decision, build_replay_plan
+from agent_control.orchestration.claims import unsupported_write_claim
 from agent_control.policy import PolicyEngine
 from agent_control.recovery import RetryPolicy
 from agent_control.schemas import (
@@ -399,10 +382,10 @@ def test_ground_operator_final_answer_preserves_read_file_identity() -> None:
         "output_summary": "career evidence",
     }]
 
-    grounded = _ground_operator_final_answer("career evidence", history)
+    grounded = ground_operator_final_answer("career evidence", history)
 
     assert grounded == "career evidence\n\nSource file: C:\\evidence\\resume-notes.txt"
-    assert _ground_operator_final_answer("Read resume-notes.txt: career evidence", history) == (
+    assert ground_operator_final_answer("Read resume-notes.txt: career evidence", history) == (
         "Read resume-notes.txt: career evidence"
     )
 
@@ -1550,14 +1533,14 @@ def test_completed_typed_work_rejects_optional_clarification() -> None:
         metadata={"adapter_dir": "C:/cache/example", "operator_history": history},
     )
 
-    assert _satisfied_task_does_not_need_clarification(task, history)
+    assert satisfied_task_does_not_need_clarification(task, history)
 
 
 def test_untyped_request_can_still_ask_for_required_user_input() -> None:
     history = [{"tool_name": "memory.search", "status": "succeeded"}]
     task = TaskRecord(objective="Help me with it.", metadata={"operator_history": history})
 
-    assert not _satisfied_task_does_not_need_clarification(task, history)
+    assert not satisfied_task_does_not_need_clarification(task, history)
 
 
 def test_known_written_file_rejects_delivery_clarification() -> None:
@@ -1573,7 +1556,7 @@ def test_known_written_file_rejects_delivery_clarification() -> None:
         metadata={"operator_history": history},
     )
 
-    reason = _clarification_recovery_reason(task, history)
+    reason = clarification_recovery_reason(task, history)
 
     assert reason is not None
     assert "C:/output/brief.md" in reason
@@ -1660,7 +1643,7 @@ def test_named_cache_only_adapter_rejects_premature_clarification() -> None:
         },
     )
 
-    reason = _clarification_recovery_reason(task, [])
+    reason = clarification_recovery_reason(task, [])
 
     assert reason is not None
     assert "scaffold" in reason
@@ -1672,7 +1655,7 @@ def test_multi_tool_audit_evidence_includes_every_observed_outcome() -> None:
         "status": "succeeded",
         "output_summary": "Delivered report.md to Telegram.",
     }
-    evidence = _operator_audit_evidence(
+    evidence = operator_audit_evidence(
         [
             {
                 "tool_name": "filesystem.manage",
@@ -1715,7 +1698,7 @@ def test_a_long_input_does_not_hide_a_later_step_from_the_auditor() -> None:
         "input": {"operation": "apply_manifest", "root": folder, "manifest": manifest},
         "output_summary": "Moved 24 file(s); changed 24 path(s).",
     }
-    evidence = _operator_audit_evidence(
+    evidence = operator_audit_evidence(
         [
             {"tool_name": "filesystem.manage", "status": "succeeded",
              "input": {"operation": "organize_plan", "root": "downloads"},
@@ -1843,7 +1826,7 @@ def test_operator_risk_normalizes_conservative_overstatement_to_runtime_definiti
         operation_risks={"create": RiskLevel.MEDIUM},
     )
 
-    risk = _effective_operator_risk(definition, {"operation": "create"}, RiskLevel.HIGH)
+    risk = effective_operator_risk(definition, {"operation": "create"}, RiskLevel.HIGH)
 
     assert risk == RiskLevel.MEDIUM
 
@@ -2184,18 +2167,18 @@ def test_write_claim_without_any_successful_write_is_rejected() -> None:
     answer = "Scaffolded the extension. The following files were created: package.json, extension.js"
     history = [{"tool_name": "filesystem.manage", "status": "failed", "input": {"operation": "list_directory"}}]
 
-    assert _unsupported_write_claim(answer, history, {}) is not None
+    assert unsupported_write_claim(answer, history, {}) is not None
 
 
 def test_write_claim_is_accepted_on_real_evidence() -> None:
     answer = "The following files were created: package.json"
     wrote = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "write_text_file"}}]
 
-    assert _unsupported_write_claim(answer, wrote, {}) is None
+    assert unsupported_write_claim(answer, wrote, {}) is None
     # Merely preparing a workspace is not write evidence for the requested
     # project. A concrete produced path is.
-    assert _unsupported_write_claim(answer, [], {"workspace_dir": "/tmp/ws"}) is not None
-    assert _unsupported_write_claim(answer, [], {"changed_files": ["package.json"]}) is None
+    assert unsupported_write_claim(answer, [], {"workspace_dir": "/tmp/ws"}) is not None
+    assert unsupported_write_claim(answer, [], {"changed_files": ["package.json"]}) is None
 
 
 def test_write_claim_must_match_the_files_actually_written() -> None:
@@ -2208,13 +2191,13 @@ def test_write_claim_must_match_the_files_actually_written() -> None:
     answer = "The following files were created: package.json and extension.ts"
 
     unrelated = {"changed_files": ["notes.txt"]}
-    assert _unsupported_write_claim(answer, [], unrelated) is not None
+    assert unsupported_write_claim(answer, [], unrelated) is not None
 
     matching = {"changed_files": ["/ws/package.json", "/ws/extension.ts"]}
-    assert _unsupported_write_claim(answer, [], matching) is None
+    assert unsupported_write_claim(answer, [], matching) is None
 
     # Partial evidence is enough - the operator named one file it really wrote.
-    assert _unsupported_write_claim(answer, [], {"changed_files": ["package.json"]}) is None
+    assert unsupported_write_claim(answer, [], {"changed_files": ["package.json"]}) is None
 
 
 def test_unspecific_write_claim_passes_on_any_recorded_write() -> None:
@@ -2222,7 +2205,7 @@ def test_unspecific_write_claim_passes_on_any_recorded_write() -> None:
     all that can reasonably be required."""
     wrote = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "write_text_file"}}]
 
-    assert _unsupported_write_claim("I created the files you asked for.", wrote, {}) is None
+    assert unsupported_write_claim("I created the files you asked for.", wrote, {}) is None
 
 
 def test_honest_report_of_a_failed_write_is_not_treated_as_a_claim() -> None:
@@ -2235,7 +2218,7 @@ def test_honest_report_of_a_failed_write_is_not_treated_as_a_claim() -> None:
         "No files were created because filesystem.manage rejected the operation.",
         "I was unable to write the README file.",
     ):
-        assert _unsupported_write_claim(honest, history, {}) is None, honest
+        assert unsupported_write_claim(honest, history, {}) is None, honest
 
 
 def _planned(history: list[dict], manifest: list[dict]) -> TaskRecord:
@@ -2316,15 +2299,15 @@ def test_claim_that_a_folder_was_organized_needs_a_real_move() -> None:
         "I organized your Downloads folder into Documents, Images and Archives.",
         "Moved the PDFs into a Documents folder.",
     ):
-        assert _unsupported_write_claim(claim, looked, {}) == "expected_file_organization_missing", claim
+        assert unsupported_write_claim(claim, looked, {}) == "expected_file_organization_missing", claim
 
     moved = [*looked, {"tool_name": "filesystem.manage", "status": "succeeded",
                        "input": {"operation": "apply_manifest", "manifest": []}}]
-    assert _unsupported_write_claim("The Downloads folder has been organized by type.", moved, {}) is None
-    assert _unsupported_write_claim("I organized the files.", [], {"moved_files": ["a.pdf"]}) is None
+    assert unsupported_write_claim("The Downloads folder has been organized by type.", moved, {}) is None
+    assert unsupported_write_claim("I organized the files.", [], {"moved_files": ["a.pdf"]}) is None
     dry = [{"tool_name": "filesystem.manage", "status": "succeeded",
             "input": {"operation": "apply_manifest", "dry_run": True}}]
-    assert _unsupported_write_claim("The files have been moved.", dry, {}) is not None
+    assert unsupported_write_claim("The files have been moved.", dry, {}) is not None
 
 
 def test_a_plan_or_a_state_is_not_a_move_claim() -> None:
@@ -2336,13 +2319,13 @@ def test_a_plan_or_a_state_is_not_a_move_claim() -> None:
         "Here is a plan: the files would be grouped into Documents, Images and Archives.",
         "The folder contains 24 files; the newest is q3-report.pdf.",
     ):
-        assert _unsupported_write_claim(answer, looked, {}) is None, answer
+        assert unsupported_write_claim(answer, looked, {}) is None, answer
 
 
 def test_answer_that_claims_no_write_is_ignored() -> None:
     history = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "read_file"}}]
 
-    assert _unsupported_write_claim("The folder contains three CSV files.", history, {}) is None
+    assert unsupported_write_claim("The folder contains three CSV files.", history, {}) is None
 
 
 @pytest.mark.asyncio
@@ -2600,7 +2583,7 @@ async def test_a_grounded_answer_the_auditor_twice_turned_down_is_delivered_with
 
 
 def test_a_request_to_change_a_file_that_exists_overwrites_it(tmp_path) -> None:
-    from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as enrich
+    from agent_control.orchestration.call_rewrites import _filesystem_overwrite_when_asked_to_change as enrich
     from agent_control.schemas import TaskRecord
 
     existing = tmp_path / "greeting.txt"
@@ -3194,7 +3177,7 @@ def test_build_replay_plan_excludes_delegate_and_batch_entries() -> None:
     assert plan == [{"tool_name": "filesystem.manage", "tool_input": {"path": "solo"}}]
 
 
-# ---- docs/ROADMAP.md "reusable verified workflows": _next_replay_decision -
+# ---- docs/ROADMAP.md "reusable verified workflows": next_replay_decision -
 
 def _replay_plan() -> list[dict]:
     return [
@@ -3207,7 +3190,7 @@ def _tool_defs(*definitions: ToolDefinition) -> dict[str, ToolDefinition]:
     return {definition.name: definition for definition in definitions}
 
 
-# A consequential write - _in_flight_is_ambiguous's own test says a timeout
+# A consequential write - in_flight_is_ambiguous's own test says a timeout
 # on this one can't be assumed safe to reissue.
 _WRITE_TOOL = ToolDefinition(
     name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, enabled=True, description=""
@@ -3218,7 +3201,7 @@ _READ_ONLY_TOOL = ToolDefinition(name="web.search", capability=Capability.LLM_GE
 
 
 def test_next_replay_decision_issues_the_first_step_from_an_empty_history() -> None:
-    decision, metadata = _next_replay_decision(_replay_plan(), [], {}, _tool_defs(_WRITE_TOOL))
+    decision, metadata = next_replay_decision(_replay_plan(), [], {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.CALL_TOOL
     assert decision.tool_name == "filesystem.manage"
@@ -3230,7 +3213,7 @@ def test_next_replay_decision_issues_the_first_step_from_an_empty_history() -> N
 def test_next_replay_decision_advances_after_a_succeeded_step() -> None:
     history = [{"tool_name": "filesystem.manage", "status": "succeeded"}]
 
-    decision, _metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
+    decision, _metadata = next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.CALL_TOOL
     assert decision.tool_input == {"operation": "move", "path": "b"}
@@ -3242,7 +3225,7 @@ def test_next_replay_decision_completes_once_every_step_succeeded() -> None:
         {"tool_name": "filesystem.manage", "status": "succeeded"},
     ]
 
-    decision, _metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
+    decision, _metadata = next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.DONE
 
@@ -3253,7 +3236,7 @@ def test_next_replay_decision_blocks_immediately_on_a_failed_step() -> None:
     which step and why."""
     history = [{"tool_name": "filesystem.manage", "status": "failed", "error": "disk full"}]
 
-    decision, _metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
+    decision, _metadata = next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.BLOCKED
     assert "1/2" in decision.reason
@@ -3269,7 +3252,7 @@ def test_next_replay_decision_reissues_a_timed_out_read_instead_of_advancing() -
     ]
     history = [{"tool_name": "web.search", "status": "timeout", "error": "no response"}]
 
-    decision, metadata = _next_replay_decision(plan, history, {}, _tool_defs(_READ_ONLY_TOOL))
+    decision, metadata = next_replay_decision(plan, history, {}, _tool_defs(_READ_ONLY_TOOL))
 
     # Reissues step 1 (query "a") again, not step 2 - a timeout is not a
     # confirmed outcome for that step.
@@ -3282,7 +3265,7 @@ def test_next_replay_decision_gives_up_after_the_attempt_cap_on_repeated_read_ti
     plan = [{"tool_name": "web.search", "tool_input": {"query": "a"}}]
     history = [{"tool_name": "web.search", "status": "timeout", "error": "no response"}]
 
-    decision, metadata = _next_replay_decision(plan, history, {"replay_step_attempts": 3}, _tool_defs(_READ_ONLY_TOOL))
+    decision, metadata = next_replay_decision(plan, history, {"replay_step_attempts": 3}, _tool_defs(_READ_ONLY_TOOL))
 
     assert decision.action == OperatorAction.BLOCKED
     assert "3 attempt(s)" in decision.reason
@@ -3294,7 +3277,7 @@ def test_next_replay_decision_resets_the_attempt_counter_once_a_step_finally_suc
         {"tool_name": "filesystem.manage", "status": "succeeded"},  # step 1, after some earlier timeouts
     ]
 
-    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 2}, _tool_defs(_WRITE_TOOL))
+    decision, metadata = next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 2}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.CALL_TOOL
     assert decision.tool_input == {"operation": "move", "path": "b"}
@@ -3310,7 +3293,7 @@ def test_next_replay_decision_blocks_instead_of_reissuing_a_timed_out_write() ->
     timeout, not reissue a few times first."""
     history = [{"tool_name": "filesystem.manage", "status": "timeout", "error": "no response"}]
 
-    decision, metadata = _next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
+    decision, metadata = next_replay_decision(_replay_plan(), history, {}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.BLOCKED
     assert "consequential write" in decision.reason
@@ -3322,12 +3305,12 @@ def test_next_replay_decision_blocks_instead_of_reissuing_a_timed_out_write() ->
 def test_next_replay_decision_treats_an_unregistered_tool_as_ambiguous_on_timeout() -> None:
     """A tool no longer in the registry (removed/disabled since the source
     task ran) is treated as high-risk by default, the same fail-safe
-    direction _in_flight_is_ambiguous already takes for an unknown
+    direction in_flight_is_ambiguous already takes for an unknown
     capability - never assume a vanished tool was safe."""
     plan = [{"tool_name": "some.removed.tool", "tool_input": {}}]
     history = [{"tool_name": "some.removed.tool", "status": "timeout", "error": "no response"}]
 
-    decision, _metadata = _next_replay_decision(plan, history, {}, {})
+    decision, _metadata = next_replay_decision(plan, history, {}, {})
 
     assert decision.action == OperatorAction.BLOCKED
     assert "consequential write" in decision.reason
@@ -3339,7 +3322,7 @@ def test_next_replay_decision_still_gives_up_on_rate_limits_after_the_attempt_ca
     does, not the ambiguity check that only applies to timeout."""
     history = [{"tool_name": "filesystem.manage", "status": "rate_limited", "error": "429"}]
 
-    decision, metadata = _next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 3}, _tool_defs(_WRITE_TOOL))
+    decision, metadata = next_replay_decision(_replay_plan(), history, {"replay_step_attempts": 3}, _tool_defs(_WRITE_TOOL))
 
     assert decision.action == OperatorAction.BLOCKED
     assert "3 attempt(s)" in decision.reason
@@ -3349,7 +3332,7 @@ def test_next_replay_decision_still_gives_up_on_rate_limits_after_the_attempt_ca
 @pytest.mark.asyncio
 async def test_replay_plan_reissues_every_step_through_the_real_approval_and_verify_pipeline(tmp_path) -> None:
     """End to end through TaskWorker: a replay task with no operator/LLM
-    configured at all still completes, because _next_replay_decision
+    configured at all still completes, because next_replay_decision
     replaces decide() entirely - approval, dispatch, and history recording
     are the exact same code a live task uses.
     """
@@ -3659,14 +3642,14 @@ def test_the_same_question_again_is_rejected_with_the_answer() -> None:
         "Or is there another file you intended?", "Please confirm if this is correct or provide clarification."
     )
 
-    reason = _clarification_recovery_reason(_answered_task(), [], asked_again)
+    reason = clarification_recovery_reason(_answered_task(), [], asked_again)
 
     assert reason is not None
     assert "already asked" in reason and "Yes, go ahead." in reason
 
 
 def test_a_new_question_after_an_answer_can_still_be_asked() -> None:
-    assert _clarification_recovery_reason(_answered_task(), [], "Which email address should the summary go to?") is None
+    assert clarification_recovery_reason(_answered_task(), [], "Which email address should the summary go to?") is None
 
 
 def _read(path: Path, operation: str = "summarize_pdf") -> dict:
@@ -3677,7 +3660,7 @@ def test_the_answer_names_the_file_that_was_read_not_the_made_up_one(tmp_path) -
     folder = _folder_with(tmp_path, "agent-control-sample.pdf")
     real, made_up = folder / "agent-control-sample.pdf", folder / "AgentControlE2E.pdf"
 
-    answer = _ground_operator_final_answer(f"The PDF located at {made_up} is about desktop automation.", [_read(real)])
+    answer = ground_operator_final_answer(f"The PDF located at {made_up} is about desktop automation.", [_read(real)])
 
     assert answer == f"The PDF located at {real} is about desktop automation."
 
@@ -3690,7 +3673,7 @@ def test_answer_file_correction_handles_spaces_in_directory_and_filename(tmp_pat
     guessed = folder / "invented report.pdf"
     original = f'Read "{guessed}" for the summary.'
 
-    assert _ground_operator_final_answer(original, [_read(real)]) == f'Read "{real}" for the summary.'
+    assert ground_operator_final_answer(original, [_read(real)]) == f'Read "{real}" for the summary.'
 
 
 @pytest.mark.parametrize("named", ["other.pdf", "notes.txt", "agent-control-sample.pdf"])
@@ -3698,7 +3681,7 @@ def test_a_path_that_exists_or_is_another_kind_of_file_is_kept(tmp_path, named) 
     folder = _folder_with(tmp_path, "agent-control-sample.pdf", "other.pdf")
     original = f"Compare it with {folder / named}."
 
-    assert _ground_operator_final_answer(original, [_read(folder / "agent-control-sample.pdf")]) == original
+    assert ground_operator_final_answer(original, [_read(folder / "agent-control-sample.pdf")]) == original
 
 
 @pytest.mark.asyncio
@@ -3764,8 +3747,8 @@ def test_the_finished_answer_lists_what_changed_or_the_last_read() -> None:
                "output_summary": "Created schedule s1"}
     read = {"tool_name": "http.request", "status": "succeeded", "input": {"url": "https://x"}, "output_summary": "Not Found"}
 
-    assert _answer_from_results([created, read], None) == "Done:\n- Created schedule s1"
-    assert _answer_from_results([read], "Which page?") == "Done:\n- Not Found\n\nNot settled: Which page?"
+    assert answer_from_results([created, read], None) == "Done:\n- Created schedule s1"
+    assert answer_from_results([read], "Which page?") == "Done:\n- Not Found\n\nNot settled: Which page?"
 
 
 def test_a_scheduled_job_keeps_the_url_the_user_gave() -> None:
@@ -3829,7 +3812,7 @@ async def test_an_answer_now_offer_spent_on_an_already_answered_question_is_offe
 
 
 def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder(tmp_path) -> None:
-    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+    from agent_control.orchestration.call_rewrites import _filesystem_path_relative_to_a_listed_root as complete
 
     folder = tmp_path / "Desktop"
     (folder / "resumes").mkdir(parents=True)
@@ -3855,7 +3838,7 @@ def test_a_read_by_the_path_a_listing_showed_is_completed_with_the_listed_folder
 
 
 def test_the_document_and_delivery_tools_get_the_same_completion(tmp_path) -> None:
-    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+    from agent_control.orchestration.call_rewrites import _filesystem_path_relative_to_a_listed_root as complete
 
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "memo.pdf").write_bytes(b"%PDF-1.4")
@@ -3900,7 +3883,7 @@ async def test_a_screenshot_that_was_only_taken_is_not_done_even_when_the_audito
 
 def test_a_path_with_the_folder_alias_first_is_completed_for_the_document_tool(tmp_path) -> None:
     # Live: summarize_pdf("desktop/AgentControlE2E/agent-control-sample.pdf") was looked for under the program's own folder.
-    from agent_control.orchestration.worker import _filesystem_path_relative_to_a_listed_root as complete
+    from agent_control.orchestration.call_rewrites import _filesystem_path_relative_to_a_listed_root as complete
 
     (tmp_path / "AgentControlE2E").mkdir()
     (tmp_path / "AgentControlE2E" / "sample.pdf").write_bytes(b"%PDF-1.4")
@@ -3978,24 +3961,24 @@ async def test_a_request_to_ask_first_keeps_its_question_even_after_a_missing_fi
 
 
 def test_only_a_failure_that_says_the_target_is_missing_turns_a_question_down(tmp_path) -> None:
-    from agent_control.orchestration.worker import _named_target_not_found
+    from agent_control.orchestration.asking import named_target_not_found
 
     task = TaskRecord(objective="Open the report", metadata={})
 
     def failed(error: str) -> list[dict]:
         return [{"tool_name": "filesystem.manage", "status": "failed", "error": error}]
 
-    assert _named_target_not_found(task, failed("filesystem operation failed: file does not exist: C:/a.txt")) is not None
-    assert _named_target_not_found(task, failed("document file does not exist: C:/a.pdf")) is not None
-    assert _named_target_not_found(task, failed("no deliverable artifact or file path was found. Pass `path`")) is not None
-    assert _named_target_not_found(task, failed("invalid input for filesystem.manage: path Field required")) is None
-    assert _named_target_not_found(task, failed("HTTP host is not allowlisted: 127.0.0.1")) is None
-    assert _named_target_not_found(task, [{"tool_name": "filesystem.manage", "status": "succeeded", "error": None}]) is None
-    assert _named_target_not_found(task, []) is None
+    assert named_target_not_found(task, failed("filesystem operation failed: file does not exist: C:/a.txt")) is not None
+    assert named_target_not_found(task, failed("document file does not exist: C:/a.pdf")) is not None
+    assert named_target_not_found(task, failed("no deliverable artifact or file path was found. Pass `path`")) is not None
+    assert named_target_not_found(task, failed("invalid input for filesystem.manage: path Field required")) is None
+    assert named_target_not_found(task, failed("HTTP host is not allowlisted: 127.0.0.1")) is None
+    assert named_target_not_found(task, [{"tool_name": "filesystem.manage", "status": "succeeded", "error": None}]) is None
+    assert named_target_not_found(task, []) is None
     # a later step that worked, or a check entry after the failure, decides: only the last real step counts
     both = failed("file does not exist") + [{"tool_name": "filesystem.manage", "status": "succeeded", "output_summary": "found it"}]
-    assert _named_target_not_found(task, both) is None
-    assert _named_target_not_found(task, failed("file does not exist") + [{"tool_name": "_clarification_check", "status": "clarification_gap"}]) is not None
+    assert named_target_not_found(task, both) is None
+    assert named_target_not_found(task, failed("file does not exist") + [{"tool_name": "_clarification_check", "status": "clarification_gap"}]) is not None
 
 
 # ---- a move or rename made to look like a delete ---------------------------------------------------------------------------
@@ -4004,7 +3987,7 @@ def test_only_a_failure_that_says_the_target_is_missing_turns_a_question_down(tm
 
 
 def test_only_a_request_that_just_asks_to_delete_makes_a_move_a_simulated_delete() -> None:
-    from agent_control.orchestration.worker import _is_simulated_delete
+    from agent_control.orchestration.call_rewrites import _is_simulated_delete
 
     manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
     for text in ("Delete all the files in the junk folder.", "Please erase everything in C:/junk", "Get rid of the old logs", "wipe the temp folder"):
@@ -4054,7 +4037,7 @@ ROUND = (
 
 
 def test_the_delete_guard_is_not_switched_off_by_the_models_own_question() -> None:
-    from agent_control.orchestration.worker import _is_simulated_delete
+    from agent_control.orchestration.call_rewrites import _is_simulated_delete
 
     manifest = {"operation": "apply_manifest", "root": "C:/junk", "manifest": []}
     task = TaskRecord(objective=ROUND, metadata={"original_message_text": "Delete everything in C:/junk."})
@@ -4067,7 +4050,7 @@ def test_the_delete_guard_is_not_switched_off_by_the_models_own_question() -> No
 
 
 def test_the_overwrite_rule_does_not_act_on_words_the_model_added(tmp_path) -> None:
-    from agent_control.orchestration.worker import _filesystem_overwrite_when_asked_to_change as enrich
+    from agent_control.orchestration.call_rewrites import _filesystem_overwrite_when_asked_to_change as enrich
 
     existing = tmp_path / "greeting.txt"
     existing.write_text("hello", encoding="utf-8")
@@ -4088,12 +4071,12 @@ def test_a_finished_replay_shows_what_the_last_step_found() -> None:
         "output_summary": "13 games are installed through Steam (about 170 GB in all).",
     }]
     plan = _replay_plan()[:1]
-    decision, _metadata = _next_replay_decision(plan, history, {}, _tool_defs(_WRITE_TOOL))
+    decision, _metadata = next_replay_decision(plan, history, {}, _tool_defs(_WRITE_TOOL))
     assert decision.action == OperatorAction.DONE
     assert decision.final_answer == "Replayed 1/1 step(s) successfully.\n\n13 games are installed through Steam (about 170 GB in all)."
 
 
 def test_a_finished_replay_with_no_output_keeps_the_short_answer() -> None:
     history = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "move", "path": "a"}}]
-    decision, _metadata = _next_replay_decision(_replay_plan()[:1], history, {}, _tool_defs(_WRITE_TOOL))
+    decision, _metadata = next_replay_decision(_replay_plan()[:1], history, {}, _tool_defs(_WRITE_TOOL))
     assert decision.final_answer == "Replayed 1/1 step(s) successfully."

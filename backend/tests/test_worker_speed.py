@@ -8,7 +8,7 @@ import pytest
 
 from agent_control.cli import WORKER_POLL_SECONDS
 from agent_control.orchestration import TaskWorker
-from agent_control.orchestration.worker import _only_receipted_writes
+from agent_control.orchestration.task_record import only_receipted_writes
 from agent_control.schemas import TaskRecord, TaskStatus
 from helpers import make_repos
 
@@ -18,21 +18,21 @@ def _step(tool: str, operation: str, status: str = "succeeded") -> dict:
 
 
 def test_an_answer_that_only_reports_writes_and_sends_is_not_audited():
-    assert _only_receipted_writes([_step("filesystem.manage", "write_text_file")] * 3)
-    assert _only_receipted_writes([_step("filesystem.manage", "apply_manifest")])
-    assert _only_receipted_writes([_step("document.manage", "create_presentation"), _step("artifact.deliver", "send_file")])
+    assert only_receipted_writes([_step("filesystem.manage", "write_text_file")] * 3)
+    assert only_receipted_writes([_step("filesystem.manage", "apply_manifest")])
+    assert only_receipted_writes([_step("document.manage", "create_presentation"), _step("artifact.deliver", "send_file")])
 
 
 def test_anything_that_reads_runs_a_script_browses_or_failed_keeps_the_audit():
     write = _step("filesystem.manage", "write_text_file")
-    assert not _only_receipted_writes([])
-    assert not _only_receipted_writes([_step("filesystem.manage", "inspect_folder"), write])
-    assert not _only_receipted_writes([write, _step("filesystem.manage", "read_file")])
-    assert not _only_receipted_writes([write, _step("code.interpreter", "run_python")])
-    assert not _only_receipted_writes([write, _step("browser.control", "fill_form")])
-    assert not _only_receipted_writes([write, _step("filesystem.manage", "write_text_file", status="failed")])
-    assert not _only_receipted_writes([write, _step("filesystem.manage", "write_text_file", status="already_done")])
-    assert not _only_receipted_writes([{"tool_name": "filesystem.manage", "input": None, "status": "succeeded"}])
+    assert not only_receipted_writes([])
+    assert not only_receipted_writes([_step("filesystem.manage", "inspect_folder"), write])
+    assert not only_receipted_writes([write, _step("filesystem.manage", "read_file")])
+    assert not only_receipted_writes([write, _step("code.interpreter", "run_python")])
+    assert not only_receipted_writes([write, _step("browser.control", "fill_form")])
+    assert not only_receipted_writes([write, _step("filesystem.manage", "write_text_file", status="failed")])
+    assert not only_receipted_writes([write, _step("filesystem.manage", "write_text_file", status="already_done")])
+    assert not only_receipted_writes([{"tool_name": "filesystem.manage", "input": None, "status": "succeeded"}])
 
 
 def test_an_idle_worker_looks_for_work_every_second_not_every_three():

@@ -8,7 +8,7 @@ text they came from. This module is that one place. It holds every pattern that 
 words itself.
 
 Behaviour is exactly what each guard did before: a fact is read from the same text with the same pattern. Where a fact should one day
-be settled by the decision model instead of by words (see `orchestration/intent_model.py`), this is the only place that changes.
+be settled by the decision model instead of by words, this is the only place that changes.
 """
 
 from __future__ import annotations

@@ -751,7 +751,7 @@ def _ordered_artifact_delivery_call(
         return tool_name, tool_input
     if not delivery_missing:
         return tool_name, tool_input
-    output_path = _known_written_file_path(task, history)
+    output_path = known_written_file_path(task, history)
     if not output_path or delivery_definition is None:
         return tool_name, tool_input
     if "send_file" not in delivery_operations:
@@ -789,7 +789,7 @@ def _is_simulated_delete(task: TaskRecord, tool_name: str | None, tool_input: di
     return RequestFacts.from_task(task).only_deletes
 
 
-def _known_written_file_path(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
+def known_written_file_path(task: TaskRecord, history: list[dict[str, Any]]) -> str | None:
     for entry in reversed(history):
         if not isinstance(entry, dict) or entry.get("status") != ToolResultStatus.SUCCEEDED.value:
             continue

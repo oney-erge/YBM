@@ -463,7 +463,7 @@ def test_reconcile_orphaned_tasks_returns_zero_when_nothing_to_do(tmp_path) -> N
 
 def test_tool_output_text_grounds_auditor_in_code_interpreter_file_content() -> None:
     """Regression guard (docs/archive/HISTORY.md Part 3 W1): before code.interpreter
-    added file_previews to its terminal_output, `_tool_output_text()` - the
+    added file_previews to its terminal_output, `tool_output_text()` - the
     function that feeds `last_tool_output_text`, which is exactly what the
     Auditor's raw_output argument is built from (see worker.py's audit gate
     right before a `done` decision is accepted) - only ever saw file NAMES
@@ -474,7 +474,7 @@ def test_tool_output_text_grounds_auditor_in_code_interpreter_file_content() -> 
     ToolCallResult shaped exactly like code.interpreter's real output and
     confirm the file's content text makes it into what the Auditor sees.
     """
-    from agent_control.orchestration.worker import _tool_output_text
+    from agent_control.orchestration.task_record import tool_output_text
     from agent_control.schemas import ToolCallResult, ToolResultStatus
 
     result = ToolCallResult(
@@ -504,7 +504,7 @@ def test_tool_output_text_grounds_auditor_in_code_interpreter_file_content() -> 
         },
     )
 
-    raw_output = _tool_output_text(result)
+    raw_output = tool_output_text(result)
 
     assert "Content of answer.json:" in raw_output
     assert '"total": 16' in raw_output

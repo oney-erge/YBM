@@ -57,7 +57,7 @@ from agent_control.llm import hardware as llm_hardware
 from agent_control.llm.providers import build_provider_for_profile
 from agent_control.observation.artifacts import ArtifactService
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
-from agent_control.orchestration.worker import build_replay_plan
+from agent_control.orchestration.replay import build_replay_plan
 from agent_control.orchestration.workflows import instantiate_plan, parameterize_plan, replay_plan_gaps
 from agent_control.scheduler import next_run_after, validate_schedule
 from agent_control.folder_triggers import snapshot as folder_snapshot, validate_watch_folder
@@ -1576,7 +1576,7 @@ def create_admin_router(
         the LLM to redo the objective from scratch, a literal replay of the
         exact sequence that worked, through the identical approval/
         verification pipeline a live task uses
-        (orchestration/worker.py's _next_replay_decision). Authority does
+        (orchestration/worker.py's next_replay_decision). Authority does
         not carry over: a step that needed approval the first time needs
         it again, and grants never outlive their own task.
         """

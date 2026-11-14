@@ -293,7 +293,7 @@ async def test_an_html_response_carries_its_exact_title_in_the_summary_and_a_jso
 
 
 def test_the_model_is_shown_the_readable_part_of_an_html_page_before_its_source():
-    from agent_control.orchestration.worker import _tool_output_text
+    from agent_control.orchestration.task_record import tool_output_text
     from agent_control.schemas import ToolCallResult
 
     head = "<script>" + "x" * 5000 + "</script>"
@@ -303,11 +303,11 @@ def test_the_model_is_shown_the_readable_part_of_an_html_page_before_its_source(
         "operation": "request", "status_code": 200, "json": None, "text": markup, "page_title": title,
         "summary": f'HTTP GET https://x/ returned 200. The page title is exactly: "{title}". The page text starts: {readable}',
     }
-    shown = _tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=output))
+    shown = tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=output))
     assert shown.startswith('HTTP GET https://x/ returned 200. The page title is exactly: "Welcome to Python.org"')
     assert shown.index("--- page source ---") < shown.index("<script>") and shown.endswith(markup)
     plain = {"operation": "request", "status_code": 200, "json": None, "text": "plain words", "page_title": None, "summary": "HTTP GET x returned 200."}
-    assert _tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=plain)) == "plain words"
+    assert tool_output_text(ToolCallResult(request_id="r", status=ToolResultStatus.SUCCEEDED, output=plain)) == "plain words"
 
 
 # --- reads follow redirects, one checked hop at a time ----------------------------------------------------------------------------------------

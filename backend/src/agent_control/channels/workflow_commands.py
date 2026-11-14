@@ -82,7 +82,7 @@ def _last_finished_task(repositories: Repositories, conversation_id: str | None)
 
 
 def _save(repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str | None, name: str) -> OutboundMessage:
-    from agent_control.orchestration.worker import build_replay_plan
+    from agent_control.orchestration.replay import build_replay_plan
     from agent_control.orchestration.workflows import replay_plan_gaps
 
     source = _last_finished_task(repositories, conversation_id)

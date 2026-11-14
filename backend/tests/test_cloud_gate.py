@@ -10,7 +10,7 @@ from agent_control.clarification import resume_clarifying_task
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, hosted_allowed, is_allowed, is_hosted, is_yes
 from agent_control.llm.providers import ChainLLMProvider, FailoverLLMProvider, _ChainEntry
 from agent_control.orchestration import StaticToolAdapter, TaskWorker
-from agent_control.orchestration.worker import _coding_agent_requested
+from agent_control.orchestration.call_rewrites import _coding_agent_requested
 from agent_control.schemas import OperatorAction, OperatorDecision, TaskStatus, utc_now
 from helpers import make_repos
 

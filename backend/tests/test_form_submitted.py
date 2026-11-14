@@ -81,12 +81,12 @@ def test_the_gap_tells_the_model_what_to_do():
 
 # ---- a repeated step is told what is still missing ----------------------------------------
 
-from agent_control.orchestration.worker import _repeat_stop_message, _with_what_is_missing  # noqa: E402
+from agent_control.orchestration.repeats import repeat_stop_message, with_what_is_missing  # noqa: E402
 
 
 def test_a_repeated_fill_is_told_the_form_still_has_to_be_submitted():
     task = _task(SIGN_UP, [OPEN, _step("fill_form", fields={"Name": "Oney"})])
-    text = _with_what_is_missing(task, task.metadata["operator_history"], "Not run again: this exact call already succeeded at step 2.")
+    text = with_what_is_missing(task, task.metadata["operator_history"], "Not run again: this exact call already succeeded at step 2.")
     assert text.startswith("Not run again:")
     assert "Still missing for the request:" in text and "operation=click" in text
 
@@ -94,12 +94,12 @@ def test_a_repeated_fill_is_told_the_form_still_has_to_be_submitted():
 def test_a_repeat_with_nothing_missing_is_unchanged():
     task = _task("What is the capital of France?", [])
     summary = "Not run again: this exact call already succeeded at step 1."
-    assert _with_what_is_missing(task, [], summary) == summary
+    assert with_what_is_missing(task, [], summary) == summary
 
 
 def test_the_stop_message_is_in_words_and_says_what_was_left():
     task = _task(SIGN_UP, [OPEN, _step("fill_form", fields={"Name": "Oney"})])
-    text = _repeat_stop_message(task, task.metadata["operator_history"], "browser.control", {"operation": "fill_form"})
+    text = repeat_stop_message(task, task.metadata["operator_history"], "browser.control", {"operation": "fill_form"})
     assert text.startswith("I got stuck repeating a step that had already worked (filling in a form)")
     assert text.endswith("The form was filled in but never submitted, so the sign-up is not done.")
     assert "browser.control" not in text and "operation=" not in text

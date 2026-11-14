@@ -18,7 +18,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from agent_control.orchestration.worker import CHECK_ENTRY_NAMES
+from agent_control.orchestration.check_entries import CHECK_ENTRY_NAMES
 
 _PLACEHOLDER_RE = re.compile(r"^\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}$")
 VAULT_PLACEHOLDERS = frozenset({"new_password", "saved_password", "saved_username"})

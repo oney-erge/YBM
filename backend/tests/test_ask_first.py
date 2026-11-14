@@ -6,11 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from agent_control.orchestration.worker import (
-    _clarification_recovery_reason,
-    _satisfied_task_does_not_need_clarification,
-    _user_asked_to_be_asked_first,
-)
+from agent_control.orchestration.asking import clarification_recovery_reason, satisfied_task_does_not_need_clarification, user_asked_to_be_asked_first
 from helpers import make_repos
 
 READ = [{
@@ -40,7 +36,7 @@ def test_requests_that_say_to_ask_first_are_recognised(text) -> None:
         metadata: dict = {}
         objective = text
 
-    assert _user_asked_to_be_asked_first(Task()) is True
+    assert user_asked_to_be_asked_first(Task()) is True
 
 
 @pytest.mark.parametrize("text", [
@@ -54,19 +50,19 @@ def test_ordinary_requests_are_not(text) -> None:
         metadata: dict = {}
         objective = text
 
-    assert _user_asked_to_be_asked_first(Task()) is False
+    assert user_asked_to_be_asked_first(Task()) is False
 
 
 def test_the_already_satisfied_guard_stands_down_for_an_ask_first_request(tmp_path, monkeypatch) -> None:
     # Live: the request's inferred postcondition counted as met once the file was read.
     monkeypatch.setattr(
-        "agent_control.orchestration.worker.validate_fulfillment",
+        "agent_control.orchestration.asking.validate_fulfillment",
         lambda task: SimpleNamespace(expected=True, ok=True, missing=(), first_gap=None),
     )
     plain = _task(tmp_path / "a", "Rewrite C:/x/retention-policy.md so it says 30 days instead of 400.")
     asked = _task(tmp_path / "b", "Rewrite C:/x/retention-policy.md so it says 30 days instead of 400. Ask me before changing anything on disk.")
 
-    assert _satisfied_task_does_not_need_clarification(plain, READ) is True   # the old behavior, kept for ordinary requests
-    assert _satisfied_task_does_not_need_clarification(asked, READ) is False  # the question is the work
-    assert _clarification_recovery_reason(plain, READ, "Shall I change it?") is not None
-    assert _clarification_recovery_reason(asked, READ, "Shall I change the retention line?") is None
+    assert satisfied_task_does_not_need_clarification(plain, READ) is True   # the old behavior, kept for ordinary requests
+    assert satisfied_task_does_not_need_clarification(asked, READ) is False  # the question is the work
+    assert clarification_recovery_reason(plain, READ, "Shall I change it?") is not None
+    assert clarification_recovery_reason(asked, READ, "Shall I change the retention line?") is None

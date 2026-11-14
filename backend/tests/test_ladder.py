@@ -16,7 +16,8 @@ from agent_control.orchestration.ladder import (
     proven_absent,
     write_receipt_gap,
 )
-from agent_control.orchestration.worker import CHECK_ENTRY_STRATEGY, _claude_code_decision
+from agent_control.orchestration.check_entries import CHECK_ENTRY_STRATEGY
+from agent_control.orchestration.task_record import claude_code_decision
 from agent_control.policy import PolicyEngine
 from agent_control.schemas import Capability, OperatorAction, OperatorDecision, RiskLevel, TaskStatus
 from agent_control.tools.spec import ToolDefinition
@@ -339,7 +340,7 @@ def test_the_hand_off_text_is_bounded_and_plain():
     task = TaskRecord(objective="x", metadata={"original_message_text": "Find my annual thing"})
     history = [{"tool_name": "system.inventory", "input": {"operation": "find_files"}, "status": "succeeded", "output_summary": "n" * 1000}
                for _ in range(30)]
-    objective = _claude_code_decision(task, history).tool_input["objective"]
+    objective = claude_code_decision(task, history).tool_input["objective"]
     assert objective.count("- system.inventory:find_files") == 10 and len(objective) < 3000
 
 
@@ -442,7 +443,7 @@ async def test_a_question_asked_after_a_web_search_that_found_nothing_usable_is_
 
 # --- a persona update replaces the whole document: not before it has been read ---------------------------------------------------
 
-from agent_control.orchestration.worker import _coding_agent_requested, _is_blind_persona_replace  # noqa: E402
+from agent_control.orchestration.call_rewrites import _coding_agent_requested, _is_blind_persona_replace  # noqa: E402
 
 
 def test_a_persona_update_without_reading_the_persona_first_is_refused():
