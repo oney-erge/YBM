@@ -16,6 +16,7 @@ import secrets
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+import threading
 import time
 import re
 
@@ -687,6 +688,51 @@ LLM_PRESETS: dict[str, dict[str, Any]] = {
 }
 
 
+#: How long an answer to "is the default model usable" is trusted before it is checked again in the background.
+_LLM_CHECK_TTL_SECONDS = 30.0
+_llm_checks: dict[tuple, tuple[float, bool]] = {}
+_llm_checks_refreshing: set[tuple] = set()
+_llm_checks_lock = threading.Lock()
+
+
+def _llm_configured(loaded: AppSettings) -> bool:
+    """Whether the default model answers, without making every page of the console wait for the answer.
+
+    Asking is a request to the model server, and a server whose own health check looks at a second service that is not running takes
+    four seconds to answer. The console asked on every page load (through /api/bootstrap, before anything is drawn), so every page of
+    it waited four seconds. The first answer is waited for; after that the last answer is used at once and refreshed in the background
+    when it is older than half a minute.
+    """
+    profile = loaded.llm.profiles.get(loaded.llm.default_profile)
+    base_url = str(getattr(profile, "base_url", "") or "")
+    if not any(host in base_url for host in ("127.0.0.1", "localhost", "host.docker.internal")):
+        return bool(check_llm_configured(loaded))  # a hosted profile is only a look at a key: nothing to wait for, nothing to cache
+    key = (check_llm_configured, loaded.llm.default_profile, base_url)
+    now = time.monotonic()
+    with _llm_checks_lock:
+        cached = _llm_checks.get(key)
+        refresh = cached is not None and now - cached[0] > _LLM_CHECK_TTL_SECONDS and key not in _llm_checks_refreshing
+        if refresh:
+            _llm_checks_refreshing.add(key)
+    if cached is None:
+        value = bool(check_llm_configured(loaded))
+        with _llm_checks_lock:
+            _llm_checks[key] = (time.monotonic(), value)
+        return value
+    if refresh:
+        def renew() -> None:
+            try:
+                value = bool(check_llm_configured(loaded))
+            except Exception:  # noqa: BLE001 - keep the last answer if the check itself fails
+                value = cached[1]
+            with _llm_checks_lock:
+                _llm_checks[key] = (time.monotonic(), value)
+                _llm_checks_refreshing.discard(key)
+
+        threading.Thread(target=renew, name="llm-check", daemon=True).start()
+    return cached[1]
+
+
 def create_admin_router(
     settings_loader: SettingsLoader,
     repositories_loader: RepositoriesLoader,
@@ -749,7 +795,7 @@ def create_admin_router(
                 status_code=403,
                 detail="admin API refused: cross-origin request (Origin header does not match Host)",
             )
-        llm_configured = check_llm_configured(loaded)
+        llm_configured = _llm_configured(loaded)
         expected = read_env_value(loaded.server.admin_token_env)
         return {
             "token_required": bool(expected),
