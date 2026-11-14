@@ -21,6 +21,10 @@ DEFAULT_PATTERNS = (
 
 PLACEHOLDER = "***"
 
+#: What a form field says when the browser tool is to type a password from the vault (accounts.py). It is not a secret, and masking it
+#: would lose what the model asked for: a saved workflow would type "***" into the page.
+_VAULT_PLACEHOLDER = re.compile(r"\{\{\s*(?:new_password|saved_password|saved_username)\s*\}\}")
+
 # Key-name matching only sees a credential when it is the *value of its own
 # field*. A credential read out of a user's file arrives as one free-text blob
 # under an innocuous key like "summary", and it was never in YBM's vault, so
@@ -113,6 +117,8 @@ def redact_payload(
 
     def redact(inner: Any, key: str | None = None) -> Any:
         if key and any(pattern in key.lower() for pattern in lowered_patterns):
+            if isinstance(inner, str) and _VAULT_PLACEHOLDER.fullmatch(inner.strip()):
+                return inner
             return PLACEHOLDER
         if isinstance(inner, dict):
             return {item_key: redact(item_value, item_key) for item_key, item_value in inner.items()}

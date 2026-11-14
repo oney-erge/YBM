@@ -21,6 +21,7 @@ from typing import Any
 from agent_control.orchestration.worker import CHECK_ENTRY_NAMES
 
 _PLACEHOLDER_RE = re.compile(r"^\{\{([a-zA-Z_][a-zA-Z0-9_]*)\}\}$")
+VAULT_PLACEHOLDERS = frozenset({"new_password", "saved_password", "saved_username"})
 
 
 def replay_plan_gaps(history: list[dict[str, Any]]) -> list[str]:
@@ -105,6 +106,8 @@ def instantiate_plan(plan_template: list[dict[str, Any]], values: dict[str, str]
         if not match:
             return value
         name = match.group(1)
+        if name in VAULT_PLACEHOLDERS:
+            return value  # the browser tool types these from the vault (accounts.py); they are not parameters
         if name not in values:
             missing.add(name)
             return value

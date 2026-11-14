@@ -54,6 +54,13 @@ DOCUMENT_UNDERSTANDING = re.compile(
     r"\b(?:summar\w*|explain\w*|overview|gist|main points|what\b[^.?!\n]{0,40}\babout)\b", re.IGNORECASE
 )
 URL = re.compile(r"https?://[^\s<>\"')\]]+")
+#: Make an account on a website ("create an account", "sign me up", "register").
+NEW_ACCOUNT = re.compile(
+    r"\b(?:create|make|open|set\s*up|start|register|get)\b[^.?!\n]{0,40}\b(?:an?\s+)?(?:new\s+)?(?:account|login|profile)\b|\bsign\s*(?:me\s*|us\s*)?up\b|\bregister\b",
+    re.IGNORECASE,
+)
+#: Log in to a website.
+LOG_IN = re.compile(r"\b(?:log\s*(?:me\s*)?in|sign\s*(?:me\s*)?in|login)\b", re.IGNORECASE)
 _PROVIDERS = (
     ("codex", re.compile(r"\bcodex\b")),
     ("claude_code", re.compile(r"\bclaude(?:\s+code)?\b")),
@@ -103,6 +110,14 @@ class RequestFacts:
     @property
     def asks_to_understand_a_document(self) -> bool:
         return bool(DOCUMENT_UNDERSTANDING.search(self.own))
+
+    @property
+    def wants_a_new_account(self) -> bool:
+        return bool(NEW_ACCOUNT.search(URL.sub(" ", self.own)))  # "/signup" in an address is not a request to sign up
+
+    @property
+    def wants_to_log_in(self) -> bool:
+        return bool(LOG_IN.search(URL.sub(" ", self.own)))
 
     @property
     def urls(self) -> tuple[str, ...]:

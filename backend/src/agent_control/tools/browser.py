@@ -20,7 +20,8 @@ try:
 except ImportError:  # pragma: no cover - exercised only when optional dependency is missing.
     websocket = None
 
-from agent_control.config import BrowserAdapterConfig
+from agent_control.accounts import AccountVault, host_of
+from agent_control.config import BrowserAdapterConfig, SecretVaultConfig
 from agent_control.schemas import Capability, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools.contracts import (
     BrowserCheckPageUpdateInput,
@@ -57,8 +58,11 @@ logger = logging.getLogger(__name__)
 class BrowserAdapter:
     """Chrome DevTools Protocol adapter for local browser open, search, inspect, and control."""
 
-    def __init__(self, config: BrowserAdapterConfig) -> None:
+    def __init__(self, config: BrowserAdapterConfig, secrets: SecretVaultConfig | None = None) -> None:
         self.config = config
+        # Passwords YBM makes for sites live in the vault; a form field may say {{new_password}} (accounts.py) and the value is put in
+        # here, after the request was recorded, so the model and the logs only ever see the placeholder.
+        self._accounts = AccountVault(secrets) if secrets is not None else None
 
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
         if not self.config.enabled:
@@ -293,9 +297,12 @@ class BrowserAdapter:
         fields = input_payload.get("fields") if isinstance(input_payload.get("fields"), dict) else {}
         if not fields:
             raise ValueError("fields are required for browser fill_form")
+        values = {str(key): str(value) for key, value in fields.items()}
+        if self._accounts is not None:
+            values = self._accounts.resolve_fields(values, host=host_of(target.url), task_id=request.task_id, url=target.url)
         filled = client.fill_form(
             target,
-            {str(key): str(value) for key, value in fields.items()},
+            values,
             submit=bool(input_payload.get("submit", False)),
             submit_selector=input_payload.get("submit_selector"),
         )
@@ -937,9 +944,29 @@ def _fill_form_script(fields: dict[str, str], *, submit: bool, submit_selector: 
   }};
   const filled = [];
   const nodes = Array.from(document.querySelectorAll('input, textarea, select, [contenteditable="true"], [role="textbox"]'));
+  const yes = ['true', 'yes', 'on', '1', 'checked', 'tick', 'agree', 'accept'];
   for (const [key, value] of Object.entries(fields)) {{
     const node = nodes.find((item) => matches(item, key));
     if (!node) continue;
+    if (node.tagName === 'INPUT' && (node.type === 'checkbox' || node.type === 'radio')) {{
+      // A box is ticked or cleared by clicking it, so the page's own handlers and validation run; typing a value into it did nothing.
+      const want = yes.includes(normalize(String(value)));
+      if (node.checked !== want && (want || node.type === 'checkbox')) node.click();
+      filled.push(key);
+      continue;
+    }}
+    if (node.tagName === 'SELECT') {{
+      const wanted = normalize(value);
+      const option = Array.from(node.options).find((o) => normalize(o.value) === wanted || normalize(o.text) === wanted)
+        || Array.from(node.options).find((o) => normalize(o.text).includes(wanted));
+      if (option) {{
+        node.value = option.value;
+        node.dispatchEvent(new Event('input', {{ bubbles: true }}));
+        node.dispatchEvent(new Event('change', {{ bubbles: true }}));
+        filled.push(key);
+      }}
+      continue;
+    }}
     node.focus();
     setNativeValue(node, value);
     node.dispatchEvent(new InputEvent('input', {{ bubbles: true, inputType: 'insertText', data: value }}));
@@ -1120,6 +1147,6 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
     )
     if settings.adapters.browser.enabled:
-        browser = BrowserAdapter(settings.adapters.browser)
+        browser = BrowserAdapter(settings.adapters.browser, settings.secrets)
         adapters["browser.open"] = browser
         adapters["browser.control"] = browser
