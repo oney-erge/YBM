@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import PureWindowsPath
 from typing import Any
 
+from agent_control.orchestration.request_facts import RequestFacts
 from agent_control.tools.filesystem_manage import SEARCH_STOPPED_MARK
 from agent_control.tools.system_inventory import NOT_ANYWHERE_MARK
 
@@ -189,6 +190,80 @@ TRY_CODE_TEXT = (
 )
 
 
+# --- web forms: passwords, boxes, CAPTCHAs, confirmation emails ----------------------------------------------------------------------
+
+BROWSER_TOOLS = frozenset({"browser.open", "browser.control"})
+_PASSWORD_FIELD = re.compile(r"\bpassword\b", re.IGNORECASE)
+_TERMS_BOX = re.compile(r"\b(?:terms|privacy policy|agree to|i accept|accept the)\b", re.IGNORECASE)
+_CAPTCHA = re.compile(r"captcha|not a robot|verify (?:that )?you(?:'re| are) (?:a )?(?:human|person)|are you (?:a )?human|security check", re.IGNORECASE)
+_EMAIL_CONFIRMATION = re.compile(
+    r"(?:confirm|verify)\w*\s+(?:your\s+)?(?:e-?mail|address|account)|check your (?:e-?mail|inbox)|(?:sent|emailed)\b[^.\n]{0,60}(?:link|e-?mail)|"
+    r"activation (?:link|e-?mail)|confirmation (?:link|e-?mail)",
+    re.IGNORECASE,
+)
+
+PASSWORD_TEXT = (
+    "This page asks for a password. Do not make one up, and do not write it in a file or in your answer. Fill every password field "
+    "(the one that asks for it and the one that asks it again) with the value {{new_password}}: YBM makes a long random password, keeps "
+    "it in its encrypted vault for this site, types it in, and never shows it to you. When you answer, say the account was made and "
+    "that the password is saved in YBM's vault; the user can say 'show my <site> password' to see it."
+)
+LOGIN_TEXT = (
+    "This page asks for a login. If the user has an account here that YBM made, fill the username field with {{saved_username}} and "
+    "the password field with {{saved_password}}: the vault types the saved values and you never see the password. If you get 'no login "
+    "is saved', say so and ask the user for the login (action ask_user)."
+)
+TERMS_TEXT = (
+    "The form has a box about agreeing to terms. The user asked for this account, so tick it: use the box's label as the key and true as "
+    "the value (for example \"I agree to the terms of service\": \"true\"), and say in your answer that you did."
+)
+CAPTCHA_TEXT = (
+    "This page asks to prove that you are a person. Do not try to get around it. Send the user a screenshot of the page (artifact.deliver, "
+    "operation send_screenshot), then ask them one short question: that they solve it in the browser window that is open, and tell you when "
+    "it is done (action ask_user). Carry on from there when they answer."
+)
+EMAIL_CONFIRMATION_TEXT = (
+    "The site says it sent an email to confirm the address. You cannot read the user's mail. Finish now (action done): say the account is made "
+    "but not active until the user opens that email and clicks the link, and that the password is saved in YBM's vault."
+)
+
+
+def _browser_page(step: dict[str, Any]) -> str | None:
+    """What the page said, when the last step was the browser and it worked."""
+    if step.get("tool_name") not in BROWSER_TOOLS or str(step.get("status") or "") != "succeeded":
+        return None
+    return str(step.get("output_summary") or "")
+
+
+def _typed_a_placeholder(steps: list[dict[str, Any]]) -> bool:
+    for step in steps:
+        tool_input = step.get("input")
+        fields = tool_input.get("fields") if isinstance(tool_input, dict) else None
+        if isinstance(fields, dict) and any("{{" in str(value) and "password" in str(value) for value in fields.values()):
+            return True
+    return False
+
+
+def form_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
+    """What the page in front of the model asks for, when the request is to make an account or to log in. Each is said once."""
+    page = _browser_page(steps[-1])
+    if page is None:
+        return None
+    facts = RequestFacts.from_text(request)
+    if _CAPTCHA.search(page) and "captcha" not in given:
+        return Hint("captcha", CAPTCHA_TEXT)
+    if facts.wants_a_new_account and _EMAIL_CONFIRMATION.search(page) and _typed_a_placeholder(steps) and "email_confirmation" not in given:
+        return Hint("email_confirmation", EMAIL_CONFIRMATION_TEXT)
+    if _PASSWORD_FIELD.search(page) and not _typed_a_placeholder(steps):
+        if facts.wants_a_new_account and "password" not in given:
+            return Hint("password", PASSWORD_TEXT)
+        if facts.wants_to_log_in and not facts.wants_a_new_account and "login" not in given:
+            return Hint("login", LOGIN_TEXT)
+    if facts.wants_a_new_account and _TERMS_BOX.search(page) and "terms" not in given:
+        return Hint("terms", TERMS_TEXT)
+    return None
+
+
 def next_hint(
     request: str,
     steps: list[dict[str, Any]],
@@ -201,6 +276,9 @@ def next_hint(
     if not steps:
         return None
     last = steps[-1]
+    form = form_hint(request, steps, given)
+    if form is not None:
+        return form
     absent = proven_absent(request, steps)
     if absent and "absent" not in given:
         return Hint(

@@ -9,6 +9,17 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Accounts on websites. A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`: the browser tool makes a long
+  random password for the site (the same one for "Password" and "Confirm password"), keeps it with the username in the encrypted secret
+  vault, and types it into the page, so the model, the logs, the approvals and the chat never see it. When the request is to make an
+  account or log in and the page has a password field, the task's history says so once (`orchestration/ladder.py`, `form_hint`), and
+  likewise for a box about agreeing to terms, a CAPTCHA (send the user a screenshot and ask them to solve it, never get around it) and
+  a "we sent you a confirmation email" page (finish honestly: the account is not active until the user clicks the link). In Telegram,
+  "show my <site> password", "which accounts did you make?" and "forget my <site> login" read, list and remove the saved logins; showing
+  one is recorded in the audit trail (the site, never the value). Vault placeholders are not masked by redaction and are not parameters
+  of a saved workflow.
+- The browser's form fill ticks and clears check boxes and radio buttons (by clicking them, so the page's own handlers run; it used to type a
+  value into them, so a terms box stayed unticked) and chooses a drop-down option by its text or value.
 - The offer to hand a task to Claude Code (made when the local model has failed repeatedly and Claude Code is set up) comes with
   Yes and No buttons in Telegram. A tap answers the question exactly as typing does, once, and only while the question is open. "No"
   sends "No thanks", because a bare "no" is one of the words that cancel a task and declining should end the task with what was

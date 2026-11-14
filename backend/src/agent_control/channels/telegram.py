@@ -22,6 +22,7 @@ from agent_control.channels.memory import ConversationMemoryService, detect_reme
 from agent_control.llm.warmup import warm_up
 from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
+from agent_control.channels.account_commands import account_command_reply
 from agent_control.channels.undo_command import undo_command_reply
 from agent_control.channels.chat_commands import chat_command_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
@@ -554,6 +555,9 @@ class TelegramIntakeService:
                 undo_reply = undo_command_reply(self.repositories, self.audit, inbound, conversation_id)
                 if undo_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=undo_reply)
+                account_reply = account_command_reply(self.settings.secrets if self.settings is not None else None, self.audit, inbound)
+                if account_reply is not None:
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=account_reply)
                 workflow_reply = workflow_command_reply(self.repositories, self.audit, inbound, conversation_id)
                 if workflow_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=workflow_reply)
