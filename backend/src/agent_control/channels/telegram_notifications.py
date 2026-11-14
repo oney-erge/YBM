@@ -26,6 +26,20 @@ def _approval_inline_keyboard(approval_id: str) -> dict[str, Any]:
     }
 
 
+def _stop_keyboard(task_id: str) -> dict[str, Any]:
+    """Under the progress line: one tap stops the task (an edit must carry the keyboard again, or Telegram removes it)."""
+    return {"inline_keyboard": [[{"text": "Stop", "callback_data": f"task:{task_id}:cancel"}]]}
+
+
+def _undo_keyboard(task: TaskRecord) -> dict[str, Any] | None:
+    """Under the answer to a move or rename: put the files back. Not offered once it was undone or when nothing was recorded."""
+    if task.status != TaskStatus.COMPLETED or not task.metadata.get("undo_moves") or task.metadata.get("undo_task_id"):
+        return None
+    if task.metadata.get("undo_of_task_id"):
+        return None  # the answer to an undo is not itself undoable
+    return {"inline_keyboard": [[{"text": "Undo", "callback_data": f"undo:{task.id}"}]]}
+
+
 def _claude_code_offer_keyboard(task: TaskRecord) -> dict[str, Any] | None:
     """Yes / No under the question "shall I hand this to Claude Code?", so answering it is one tap (typing still works).
 
@@ -77,7 +91,7 @@ class TelegramTaskNotifier:
             await self._edit_progress(chat_id, anchor, task.id, message_text)
             return
 
-        reply_markup = self._pending_approval_keyboard(task) or _claude_code_offer_keyboard(task)
+        reply_markup = self._pending_approval_keyboard(task) or _claude_code_offer_keyboard(task) or _undo_keyboard(task)
         await self.client.send_message(chat_id, message_text, reply_markup=reply_markup)
         if anchor and task.status in _FINISHED_STATUSES:
             # The answer is its own message (so the phone buzzes); the progress bubble has done its job.
@@ -107,7 +121,7 @@ class TelegramTaskNotifier:
         if last is not None and (last[1] == text or now - last[0] < PROGRESS_EDIT_INTERVAL_SECONDS):
             return
         try:
-            await self.client.edit_message_text(chat_id, anchor, text)
+            await self.client.edit_message_text(chat_id, anchor, text, reply_markup=_stop_keyboard(task_id))
         except Exception:  # noqa: BLE001 - a missed progress line is not worth failing a task over
             return
         self._progress_shown[task_id] = (now, text)
