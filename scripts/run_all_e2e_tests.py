@@ -1086,6 +1086,16 @@ def _diagnose_turn(
         if leaked:
             return False, f"reply leaked forbidden content: {leaked}"
 
+    # Terms the final answer must not name, as opposed to anything the user was sent on the way: an approval prompt that lists every file the
+    # task is about to look at names the files the answer must leave out (challenge d1: "which photos are blurry" lists all six to ask
+    # permission to look at them, and then, correctly, names three).
+    answer_excluded = reply_terms("answer_excludes_all")
+    if answer_excluded:
+        final_answer = f"{turn.synth_answer or ''}\n{turn.bot_reply_text or ''}".lower()
+        named = [needle for needle in answer_excluded if needle.lower() in final_answer]
+        if named:
+            return False, f"the answer names what it should leave out: {named}"
+
     # What the answer says it did must be something the record shows (orchestration/claims.py: the same check the product runs on its own
     # answers). Cases of the challenge and verdict suites set "claims": true.
     if case.get("claims"):
