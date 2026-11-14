@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A question the Operator asks can offer its choices as buttons: `ask_user` takes `options` (up to four short answers) and the Telegram card shows them
+  as the quick answers it already showed for a plan step and the planner's question. Before, only those two could; "which of the files I found?"
+  was a free-text question. A later question without choices is not given an earlier one's buttons. The operator prompt and the strict reply
+  schema describe the field; the scenario fixtures were rekeyed with `ybm scenario rekey --all`.
 - Gaming mode: say "I'm about to play a game", "gaming mode" or "free up the GPU" in Telegram and the assistant unloads the model at once
   (LocalDeploy `/models/free`, which now also stops the llama.cpp server) and loads nothing again until you say "I'm done gaming": the worker
   claims no task, the warm-up request is not sent, and a message that needs the model gets one reply that it waits and is listed when you come
