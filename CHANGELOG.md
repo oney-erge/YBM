@@ -9,6 +9,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- In a form that makes an account, a password field the model filled with text the user never wrote gets the vault's `{{new_password}}`
+  instead (a call rewrite, in the order of `call_policy.REWRITES`), so a made-up guessable password never reaches the page, a file or the
+  chat. A password the user gave in their own words is left alone.
 - The console's secret vault card shows the logins YBM made for websites with a **Show** button (the password is never in the list; Show asks
   the backend, displays it for 20 seconds, and the audit trail records which site was shown, never the value). The task list shows what
   the person actually said, not the concierge's rewording of it, with the channel ("Telegram") and a microphone for a voice note.
@@ -261,6 +264,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- "Which task do you mean?" picked the older of two tasks made within one clock tick (about 15 ms on Windows): `max()` keeps the first of equals
+  and the list is oldest first. It showed as a test that failed one run in six; the newest now wins a tie.
 - On a phone the console's bottom navigation had six items in a five-column grid, so Settings dropped onto a second row.
 - Every page of the admin console waited about four seconds before drawing anything. The console asks "is the default model usable" on each page
   load, the model server's health check took four seconds because it looks at a second service that was not running, and nothing was shown

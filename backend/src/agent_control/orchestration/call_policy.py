@@ -40,6 +40,7 @@ from agent_control.orchestration.call_rewrites import (
     _required_named_coding_agent_call,
     _schedule_id_from_this_task,
     _schedule_objective_with_request_urls,
+    _new_account_password_from_the_vault,
     _stale_read_recovery_call,
 )
 from agent_control.orchestration.request_facts import own_words
@@ -94,6 +95,7 @@ REWRITES: tuple[tuple[str, Rewrite], ...] = (
     ("a read of a file changed since it was read", lambda task, name, i, history, defs: _stale_read_recovery_call(task, name, i, history)),
     ("coding agent defaults for this task", _only_input(_coding_agent_input_with_task_defaults)),
     ("coding agent in the workspace the user named", _only_input(_coding_agent_input_with_explicit_workspace)),
+    ("a made-up password for a new account becomes the vault's", _only_input(_new_account_password_from_the_vault)),
 )
 
 
