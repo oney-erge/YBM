@@ -7,6 +7,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A look at a picture gives the vision model the whole GPU and gives it back (`vision.swap_models`, on by default): LocalDeploy is asked to free the GPU
+  first (it stops the main model) and to unload the vision model after, so the main model loads once into free memory at the next step. On an 8 GB
+  GPU the two evicted each other: in the first challenge run a screen description took 9 minutes, a scanned invoice 11, and a photo sent meanwhile
+  waited more than three minutes to be taken up. Needs the LocalDeploy whose `/models/free` also stops llama.cpp; with an older one the look goes
+  ahead as before.
 - `image.describe` reads a scanned PDF (a PDF whose pages are only pictures, as a scanner makes it): the picture of each of the first three pages is read
   out of the file and looked at in turn, and the answer says which page said what. The first challenge run asked for the total on a scanned invoice; the
   assistant tried the document tools, then asked the vision model about the PDF itself ten times, which it refused, and was cancelled at 11 minutes. A PDF
