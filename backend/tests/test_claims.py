@@ -92,3 +92,13 @@ def test_the_answer_goes_back_once_with_what_is_missing() -> None:
     again = answer_checks.check_answer(_answer("I deleted the old files.", [pushed.entry]))
     assert again is None  # said once; the next `done` goes on to the Auditor
     assert answer_checks.check_answer(_answer("Nothing was deleted; I can only list them.")) is None
+
+
+def test_a_plan_card_lists_what_will_be_done_and_is_not_a_claim_that_it_was() -> None:
+    card = (
+        "Plan: I'm moving on December 20.\nI will create a checklist.\n"
+        "[ ] 1. Create a new workspace folder structure for the move\n[ ] 2. Move the PDFs into a folder called papers\n"
+        "Start it when you are ready, or tell me what to change."
+    )
+    assert unbacked_claims(card, []) == []
+    assert _kinds("I created the file notes.txt and moved the photos into folders.") == ["moved"]  # an answer that says it did is still checked

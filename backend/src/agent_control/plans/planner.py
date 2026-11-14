@@ -9,6 +9,7 @@ are on) and what it cannot (known gaps, such as paying); the result is checked l
 
 from __future__ import annotations
 
+from datetime import date
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -25,7 +26,9 @@ Rules:
 - The assistant never pays and never places an order. Plan it as two steps: the assistant makes the shopping list with links, then the user buys.
 - `summary`: one or two sentences: what done looks like, and the assumptions you made, so the user can correct the plan.
 - `depends_on`: positions of earlier steps that must be done first. Leave it empty when a step simply follows the one before it.
-- Use only what the assistant can do. If a step needs something it cannot do, make it a user step."""
+- Use only what the assistant can do. If a step needs something it cannot do, make it a user step.
+- The steps are about the goal in the real world. Do not invent chores on the computer (making folders, files or spreadsheets) unless the goal is about the computer.
+- A goal with a date (a move on December 20, a party on January 10): work backwards from it. Start each step's title with when it is due, as a date or as "N days before" ("Dec 6: Book the movers", "2 weeks before: Order the invitations"), and order the steps by that date."""
 
 MAY_ASK = (
     "If you cannot tell what the goal is at all (not just a detail), do not write steps: set `question` to ONE short question and `options` to "
@@ -68,8 +71,8 @@ def can_do_text(catalog: Any) -> str:
     return "\n".join(lines)
 
 
-def user_prompt(goal: str, context: str, can_do: str, *, may_ask: bool) -> str:
-    parts = [f"Goal: {goal.strip()}"]
+def user_prompt(goal: str, context: str, can_do: str, *, may_ask: bool, today: date | None = None) -> str:
+    parts = [f"Today is {(today or date.today()).strftime('%A, %B %d, %Y')}.", f"Goal: {goal.strip()}"]
     if context.strip():
         parts.append(f"What the user has said:\n{context.strip()[:2500]}")
     if can_do.strip():

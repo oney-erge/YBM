@@ -236,6 +236,7 @@ _PAID = re.compile(
 )
 #: The kinds that are about the world beyond a file on disk; the checks that already read file writes and moves leave these to this module.
 WORLD_CLAIMS = frozenset({"deleted", "sent_elsewhere", "installed", "paid"})
+_PLAN_CARD = re.compile(r"^\[ \] \d+\. ", re.MULTILINE)
 _CLAIM_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("deleted", _DELETED),
     ("sent_elsewhere", _SENT_ELSEWHERE),
@@ -292,7 +293,8 @@ def unbacked_claims(answer: str | None, history: list[dict[str, Any]], metadata:
     if not answer:
         return []
     found: list[Claim] = []
-    reason = unsupported_write_claim(answer, history, metadata)
+    # A plan card lists what will be done ("[ ] 1. Create a folder ..."): a plan, not a claim that it was.
+    reason = None if _PLAN_CARD.search(answer) else unsupported_write_claim(answer, history, metadata)
     if reason:
         kind = "moved" if reason == "expected_file_organization_missing" else "created"
         found.append(Claim(kind, reason[:120]))
