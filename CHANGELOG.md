@@ -7,6 +7,13 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Two starter skills the Operator is shown, because a tool description was not enough: on the rerun the Operator did not pick `ability.search` overview for "what can't you do?" or
+  `system.inventory` hardware for "run a 70B model on my laptop", and asked the user what to explain and which model instead. `skills/starter/know-yourself.md` (answer a question
+  about the assistant from the overview, never from memory, never by asking what the user means) and `skills/starter/check-this-computer.md` (read the hardware first, say what fits and
+  what to use instead). Each has a `when:` question measured on the running decision model: about the assistant, 10 of 10 phrasings at 0.5 or more and ordinary messages at most 0.4;
+  about the computer, 9 of 10 at 0.7 or more (the other 0.60), ordinary messages at most 0.37, and none of 178 e2e messages at 0.4.
+- A skill can say `ask: always` (`Ability.ask_always`): its question is asked for every request, whatever words the request shares, like a skill that routes to the planner. "What can't
+  you do?" shares no content word with the skill that answers it, so by words alone it was never shown to the Operator.
 - A preference line that copied the output format is replaced by the person's own words (`persona_learning.py`). The model that extracts the line is asked for structured
   output and sometimes writes that instruction into the field: "From now on keep your answers very short." was offered back as "Keep answers very short and return only valid JSON."
   (challenge c6). When the line mentions JSON and the message does not, the message is the line; one too long to be a line is not offered.

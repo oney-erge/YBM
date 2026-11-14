@@ -74,6 +74,9 @@ class Ability:
     #: Where a request this ability is confirmed for goes: "plan" hands it to the planner (plans/stage.py) instead of the Operator loop.
     #: Set by a skill's `route:` line; empty for everything else.
     route: str = ""
+    #: Asked about for every request, whatever words it shares. Set by a skill's `ask: always` line, for a skill whose question is about the kind of
+    #: request rather than its subject ("what can't you do?" shares no content word with anything that answers it).
+    ask_always: bool = False
     #: Where the record came from, for the console ("registry", "mcp catalog", "skills folder", "localdeploy").
     source: str = ""
 

@@ -165,6 +165,7 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         when_at = 0.0
     route = str(frontmatter.get("route") or "").strip()
+    ask_always = str(frontmatter.get("ask") or "").strip().lower() == "always"
     declared_tools = frontmatter.get("tools")
     tools_declared = isinstance(declared_tools, list) and all(isinstance(t, str) for t in declared_tools)
     body_text = body.strip()
@@ -175,6 +176,7 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
         "when": when,
         "when_at": when_at,
         "route": route,
+        "ask_always": ask_always,
         "tools": sorted({t.strip() for t in declared_tools if t.strip()}) if tools_declared else [],
         "tools_declared": tools_declared,
         "body": body_text,

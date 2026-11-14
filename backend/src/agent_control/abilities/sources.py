@@ -132,6 +132,7 @@ def skill_abilities(settings: AppSettings) -> list[Ability]:
                 confirm=str(skill.get("when") or ""),
                 confirm_at=float(skill.get("when_at") or SKILL_CONFIRM_AT),
                 route=str(skill.get("route") or ""),
+                ask_always=bool(skill.get("ask_always")),
                 source="skills folder",
             )
         )
