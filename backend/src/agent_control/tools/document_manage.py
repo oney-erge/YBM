@@ -633,4 +633,5 @@ def _document_roots(settings: AppSettings) -> list[str]:
         settings.storage.artifact_dir,
         settings.adapters.workspace.root_dir,
         *settings.adapters.computer_use.allowed_roots,
+        settings.channels.telegram.inbox_dir,  # photos and files the user sent to the bot
     ]

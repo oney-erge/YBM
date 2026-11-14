@@ -16,6 +16,11 @@ channels:
     allowed_user_ids: []
     allowed_chat_ids: []
     polling: true
+    # A voice note is transcribed and what was heard is sent back first ("I heard: ...").
+    echo_voice_transcript: true
+    # Photos and files sent to the bot are saved here, one folder per day (up to 20 MB each).
+    inbox_dir: ".agent_control/inbox"
+    max_file_mb: 20
   whatsapp:
     enabled: false
     # E.164-style numbers without the leading "+", e.g. "15551234567" -

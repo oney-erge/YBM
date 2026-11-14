@@ -58,6 +58,11 @@ class TelegramConfig(StrictBaseModel):
     allowed_user_ids: list[int] = Field(default_factory=list)
     allowed_chat_ids: list[int] = Field(default_factory=list)
     polling: bool = True
+    # A voice note is transcribed and what was heard is sent back first ("I heard: ..."), so a mishearing is seen before it is acted on.
+    echo_voice_transcript: bool = True
+    # Photos and files sent to the bot are saved here (one folder per day) and the task is told where. The Bot API serves files up to 20 MB.
+    inbox_dir: str = ".agent_control/inbox"
+    max_file_mb: int = Field(default=20, ge=1, le=20)
 
 
 class WhatsAppConfig(StrictBaseModel):

@@ -318,6 +318,9 @@ async def poll_telegram() -> None:
         memory_service=memory_service,
     )
     runner = TelegramPollingRunner(client, service)
+    warm_stt = getattr(service.stt, "warm", None)
+    if warm_stt is not None:
+        asyncio.ensure_future(warm_stt())  # the speech model loads while the poller starts, not on the first voice note
     model_reloader = IntakeModelReloader(
         service, lambda: _intake_parts(repositories), audit, actor="telegram_polling"
     )

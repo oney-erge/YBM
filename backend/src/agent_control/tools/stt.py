@@ -179,6 +179,13 @@ class FasterWhisperSTTAdapter:
             },
         )
 
+    async def warm(self) -> None:
+        """Load the speech model now, so the first voice note does not wait for it (several seconds). Never raises."""
+        try:
+            await asyncio.to_thread(self._get_model)
+        except Exception:  # noqa: BLE001 - a model that cannot load is reported when a voice note needs it
+            pass
+
     def _get_model(self) -> Any:
         if self._model is not None:
             return self._model
