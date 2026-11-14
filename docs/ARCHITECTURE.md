@@ -213,6 +213,7 @@ assistant does (research, a parts list, the code), some only the user can do (bu
 | `tools/plan_manage.py` | `plan.manage`: the Operator drafts a plan (`create`), looks at it (`show`), changes it as the user says (`add_step`, `update_step`), and starts, pauses or cancels it (`set_status`). It checks that the plan is a plan (1 to 20 steps, owners, dependencies that point backwards) and never runs a step. |
 | `plans/runner.py` | Moves started plans forward on every worker pass. A step of the assistant's becomes an ordinary task (same loop, tools, approvals, checks); a step of the user's becomes a question with its own buttons. It keeps no state: each pass reads the database, so a restart or two workers cannot lose or repeat a step. One step at a time. |
 | `plans/card.py` | The plan as a message with the buttons that fit where it stands (Start and Cancel; Pause and Cancel; Continue and Cancel). The card goes under the answer of the task that drafted or changed a plan, and is redrawn after a tap. |
+| `plans/planner.py`, `plans/stage.py` | The planner: one model call with its own instructions that drafts the steps (with owners) from what the user said and from what the assistant can and cannot do, or asks the one question it cannot do without, once, with options that become buttons. A skill that says `route: plan` (and a yes/no question for `when:`) sends a request it is confirmed for to the planner before the Operator's first step: the worker completes the task with the plan (its card shows in the chat) or makes it a clarifying task. A planner that fails leaves the request to the Operator, which can call the same planner through `plan.manage create`. |
 | `plans/context.py` | When a plan is open in a chat, a few lines in the prompt of a task in that chat say so, so "how is it going" and "change step 3" mean that plan. |
 
 A step waiting on the user is a clarifying task that does not take whatever they say next: it is answered by its buttons, or by typing the
@@ -241,6 +242,21 @@ task came from as a short card with **Keep** and **Not now** (or **Remember** an
 console's accept. Nothing is installed without it, a proposal nobody answers stays in the queue, and a kept skill is found by the ability
 index (`abilities/sources.py`) and listed in the Operator's prompt like any skill. Scripts kept as helpers need no review: they are the script
 that already ran.
+
+### Where the structure stands, and what is not moved into it yet
+
+The shape this work is aiming at: every capability is one kind of record in one index (`abilities/`); a request is classified by the decision model
+first and the language model second; a request that is a project becomes a plan with owners instead of a task (`plans/`); what the assistant
+cannot do is data it can find and say honestly, and what it could do with the user's approval (looking at a picture) is a tool that asks; and
+what it learns is offered in the chat and kept only on a tap (`learning_cards.py`, `preference_watch.py`).
+
+What is still the old layout, on purpose and in the open: the operator's rule layer (`orchestration/ladder.py` hints, `call_rewrites.py`,
+`request_facts.py`, the keyword-triggered completion checks in `fulfillment.py`) is a few dozen rules, each of which fixed a real failure. One of
+them (the rule about paying for an order) has moved into the index as data. The others belong in one of four homes: a tool's contract (its
+description and examples, for a rule about how to call it), the answer checks (a rule about verifying an answer), a record in the index (a fact
+about the world), or a skill (a procedure). Moving a rule changes the Operator's prompt, which the recorded scenario fixtures are keyed on, so
+each move is made with the fixtures re-recorded and the frozen suites re-run, not in bulk. The code defaults for `abilities.enabled`,
+`plans.enabled` and `vision.enabled` stay off for the same reason, until the fixtures are re-recorded with them on.
 
 ### Logins, files and voice
 
