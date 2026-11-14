@@ -1,6 +1,8 @@
 ---
 name: Plan a project
 description: turn a big goal (build a robot, set up a home server, plan a trip, launch a site) into a plan the user can start; ask what they want first when the goal is vague
+tools:
+  - plan.manage
 ---
 Use this when the request is a goal that takes days or many separate steps, or that includes things only the user can do (buying,
 building, deciding, signing). A one-step request is a task, not a plan.
