@@ -21,17 +21,21 @@ from agent_control.persona_learning import (
 
 
 class StubProvider:
+    """Answers the way the model is asked to: a verdict and a line. "NONE" stands for no preference."""
+
     def __init__(self, reply: str) -> None:
         self.reply = reply
         self.calls = 0
 
-    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+    async def generate_structured(self, system_prompt: str, user_prompt: str, schema, **kwargs):
         self.calls += 1
-        return self.reply
+        if self.reply.upper() == "NONE":
+            return schema(states_a_lasting_preference=False, preference="")
+        return schema(states_a_lasting_preference=True, preference=self.reply)
 
 
 class ExplodingProvider:
-    async def generate_text(self, system_prompt: str, user_prompt: str) -> str:
+    async def generate_structured(self, system_prompt: str, user_prompt: str, schema, **kwargs):
         raise RuntimeError("model down")
 
 
@@ -126,3 +130,16 @@ def test_a_decision_cannot_be_applied_twice(tmp_path) -> None:
     store.decide(suggestion.id, accept=True)
 
     assert SuggestionStore.load(config).decide(suggestion.id, accept=True) is None
+
+
+@pytest.mark.asyncio
+async def test_a_verdict_of_no_preference_wins_over_a_line_the_model_wrote_anyway(tmp_path) -> None:
+    """The 9B model answered the question in the message instead of extracting from it; only an explicit yes counts."""
+    config = _config(tmp_path)
+
+    class Chatty:
+        async def generate_structured(self, system_prompt, user_prompt, schema, **kwargs):
+            return schema(states_a_lasting_preference=False, preference="The product of 12 and 12 is 144.")
+
+    assert await propose_from_message(Chatty(), config, "What is 12 times 12?") is None
+    assert SuggestionStore.load(config).pending() == []

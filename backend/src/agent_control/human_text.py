@@ -359,5 +359,8 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
         return f"Start {name}" + (f" on: {prompt[:100]}" if prompt else "")
     if tool == "code.interpreter":
         return "Run a short Python script"
+    if tool == "image.describe":
+        name = str(data.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1] or "a picture"
+        return f"Load a vision model to look at {name} (about 3 GB of GPU memory; the picture stays on this computer)"
     phrase = progress_phrase(tool, operation, data)
     return phrase[:1].upper() + phrase[1:]

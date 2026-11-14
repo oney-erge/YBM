@@ -54,6 +54,9 @@ def test_without_a_pending_call_the_old_preview_is_still_shown():
 def test_other_actions_read_as_sentences():
     assert describe_action("browser.open", {"url": "http://127.0.0.1:8899/"}) == "Open http://127.0.0.1:8899/"
     assert describe_action("code.interpreter", {"code": "print(1)"}) == "Run a short Python script"
+    assert describe_action("image.describe", {"path": "C:\inbox\2026-11-14\invoice.jpg"}) == (
+        "Load a vision model to look at invoice.jpg (about 3 GB of GPU memory; the picture stays on this computer)"
+    )
     assert describe_action("coding.agent", {"provider": "claude_code", "prompt": "write primes"}) == "Start Claude Code on: write primes"
     assert describe_action("schedule.manage", {"operation": "create", "objective": "check the inbox"}) == "Set up a reminder: check the inbox"
     assert describe_action("filesystem.manage", {"operation": "apply_manifest", "moves": [1, 2, 3]}) == "Move or rename 3 file(s)"
