@@ -17,7 +17,7 @@ What is shown says what exists and what it would take. The model still chooses.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 
 import structlog
 
@@ -47,12 +47,17 @@ Confirmer = Callable[[str, dict[str, str]], Awaitable[dict[str, float]]]
 
 
 async def relevant(
-    index: AbilityIndex, request: str, *, confirm: Confirmer | None = None, limit: int = MAX_SHOWN
+    index: AbilityIndex, request: str, *, confirm: Confirmer | None = None, limit: int = MAX_SHOWN, shortlist: float | None = None
 ) -> list[Ability]:
+    """`shortlist` replaces the score a record needs to be asked about: an index of a few records scores low across the board, so a caller
+    that searches only those, and lets the question decide, passes a score just above zero."""
     candidates = [
         (ability, score)
         for ability, score in index.search(request, limit=limit * 6)
-        if score >= (INSTALLABLE_SHORTLIST_SCORE if ability.state == AbilityState.INSTALLABLE and ability.confirm else SHORTLIST_SCORE)
+        if score >= (
+            shortlist if shortlist is not None
+            else INSTALLABLE_SHORTLIST_SCORE if ability.state == AbilityState.INSTALLABLE and ability.confirm else SHORTLIST_SCORE
+        )
         and (ability.kind not in _ALREADY_LISTED or (ability.kind in _PUSHED_WHEN_CONFIRMED and ability.confirm))
         and not (ability.kind == AbilityKind.AGENT and ability.state == AbilityState.READY)
     ]
@@ -101,3 +106,16 @@ def render(abilities: list[Ability]) -> str:
         elif ability.call:
             lines.append(f"  use: {ability.call}")
     return "\n".join(lines)
+
+
+async def asks_for_what_could_be_set_up(abilities: Iterable[Ability], request: str, *, confirm: Confirmer | None) -> bool:
+    """Whether a message that was taken for chat asks for something that could be set up (a voice, speech recognition, a tool).
+
+    "Read that to me out loud" is chat to a classifier, and a chat reply knows nothing of recipes: it said "I cannot speak" and offered nothing,
+    though a local voice is a 120 MB download away. A message the same search and the same yes/no question find an installable capability for is
+    a task instead, so the Operator is told what could be set up and can get it. No decision model, no answer.
+    """
+    installable = [ability for ability in abilities if ability.state == AbilityState.INSTALLABLE]
+    if not installable or confirm is None:
+        return False
+    return bool(await relevant(AbilityIndex(installable), request, confirm=confirm, shortlist=0.01))
