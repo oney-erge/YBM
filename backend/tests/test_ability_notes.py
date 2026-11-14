@@ -146,7 +146,7 @@ async def test_the_worker_works_out_the_notes_once_and_keeps_them_with_the_task(
     repos, audit = make_repos(tmp_path)
     calls = []
 
-    async def notes(request: str) -> str:
+    async def notes(request: str, conversation_id: str | None) -> str:
         calls.append(request)
         return "\n\n## What bears on this request\n- order and pay"
 
@@ -162,7 +162,7 @@ async def test_the_worker_works_out_the_notes_once_and_keeps_them_with_the_task(
 async def test_notes_that_fail_leave_the_task_without_them_and_a_worker_without_the_option_is_unchanged(tmp_path):
     repos, audit = make_repos(tmp_path)
 
-    async def broken(request: str) -> str:
+    async def broken(request: str, conversation_id: str | None) -> str:
         raise RuntimeError("index unreadable")
 
     task = repos.tasks.create("Anything.")

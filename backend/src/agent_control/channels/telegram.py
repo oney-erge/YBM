@@ -26,6 +26,10 @@ from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
 from agent_control.channels.account_commands import account_command_reply
 from agent_control.channels.undo_command import start_undo, undo_command_reply
+from agent_control.channels.quick_answers import clarifying_options
+from agent_control.plans.card import card_keyboard, card_text
+from agent_control.plans.model import PlanStatus
+from agent_control.plans.runner import cancel_plan, pause_plan
 from agent_control.channels.chat_commands import chat_command_reply
 from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
@@ -266,7 +270,9 @@ class TelegramBotApi:
 
 
 #: Menu shortcuts that mean a sentence the chat already understands.
-_COMMANDS_THAT_ARE_SAYINGS = {"undo": "undo that", "passwords": "which accounts did you make", "logins": "which accounts did you make"}
+_COMMANDS_THAT_ARE_SAYINGS = {
+    "undo": "undo that", "passwords": "which accounts did you make", "logins": "which accounts did you make", "plan": "show my plan",
+}
 
 #: What the "/" menu offers (command, description). Shown by Telegram next to the text box.
 BOT_COMMANDS: list[tuple[str, str]] = [
@@ -277,6 +283,8 @@ BOT_COMMANDS: list[tuple[str, str]] = [
     ("passwords", "Logins I made for you"),
     ("screenshot", "Show your screen"),
 ]
+#: Added to the menu when plans are on (`plans.enabled`).
+PLAN_COMMANDS: list[tuple[str, str]] = [("plan", "Show the plan we are working on")]
 
 
 def _safe_telegram_http_error(method: str, exc: httpx.HTTPError) -> RuntimeError:
@@ -492,6 +500,10 @@ class TelegramAdapter:
             return {"kind": "task", "task_id": parts[1], "action": parts[2]}
         if len(parts) == 3 and parts[0] == "answer" and parts[2] in {"yes", "no"}:
             return {"kind": "answer", "task_id": parts[1], "answer": parts[2]}
+        if len(parts) == 3 and parts[0] == "answer" and parts[2][:1] == "o" and parts[2][1:].isdigit():
+            return {"kind": "answer", "task_id": parts[1], "option": int(parts[2][1:])}
+        if len(parts) == 3 and parts[0] == "plan" and parts[2] in {"start", "resume", "pause", "cancel"}:
+            return {"kind": "plan", "plan_id": parts[1], "action": parts[2]}
         if len(parts) == 2 and parts[0] == "undo":
             return {"kind": "undo", "task_id": parts[1]}
         return {"kind": "unknown", "data": data}
@@ -551,6 +563,8 @@ class TelegramIntakeService:
         # Updates are handled one at a time by the polling loop, so this never
         # spans two presses.
         self._callback_ack: str | None = None
+        # (chat id, message id, text, keyboard) to show again once a button has been handled: the plan card after a tap.
+        self._callback_edit: tuple[str, Any, str, dict[str, Any] | None] | None = None
 
     def handle_update(self, update: dict[str, Any]) -> ChannelUpdateResult:
         try:
@@ -659,6 +673,7 @@ class TelegramIntakeService:
 
         if result.command:
             self._callback_ack = None
+            self._callback_edit = None
             signal = self._apply_command(result.command)
             outbound = self._command_response(result.command, signal)
             if result.command.type == "telegram.callback" and self.bot_api:
@@ -677,6 +692,12 @@ class TelegramIntakeService:
                         # wrote it); this only stops the button's loading spinner,
                         # so a failure here shouldn't surface as a handling error.
                         logger.warning("failed to answer Telegram callback query", exc_info=True)
+                if self._callback_edit is not None:
+                    chat_id, message_id, text, keyboard = self._callback_edit
+                    try:
+                        await self.bot_api.edit_message_text(chat_id, message_id, text, reply_markup=keyboard)
+                    except Exception:  # noqa: BLE001 - the tap was handled; a card that is not redrawn is not worth an error
+                        logger.debug("failed to redraw the plan card", exc_info=True)
             return ChannelUpdateResult(
                 authorized=True,
                 inbound_message=result.inbound_message,
@@ -1053,8 +1074,53 @@ class TelegramIntakeService:
             self._start_undo_from_button(payload, actor)
             return None
         if payload.get("kind") == "answer":
-            self._answer_offer(payload, actor)
+            if "option" in payload:
+                self._answer_option(payload, actor)
+            else:
+                self._answer_offer(payload, actor)
+        if payload.get("kind") == "plan":
+            self._plan_button(payload, actor)
         return None
+
+    def _answer_option(self, payload: dict[str, Any], actor: str) -> None:
+        """A quick-answer button under a question: the same as typing its words, once, and only while the question is open."""
+        task = self.repositories.tasks.get(str(payload.get("task_id") or ""))
+        options = clarifying_options(task) if task is not None else []
+        index = int(payload.get("option", -1))
+        if task is None or task.status != TaskStatus.CLARIFYING or not 0 <= index < len(options):
+            self._callback_ack = "That question was already answered."
+            return
+        resume_clarifying_task(
+            self.repositories, self.audit, task, text=options[index],
+            actor=actor, message_id=str(payload.get("callback_query_id") or "button"), received_at=utc_now(),
+        )
+        self._callback_ack = f"Okay: {options[index]}"[:190]
+
+    def _plan_button(self, payload: dict[str, Any], actor: str) -> None:
+        """Start, pause, continue or cancel a plan from its card, and show the card again as it now stands."""
+        plan = self.repositories.plans.get(str(payload.get("plan_id") or ""))
+        if plan is None:
+            self._callback_ack = "I cannot find that plan any more."
+            return
+        action = str(payload.get("action"))
+        if action in ("start", "resume"):
+            if plan.status in (PlanStatus.PROPOSED, PlanStatus.PAUSED):
+                self.repositories.plans.set_status(plan.id, PlanStatus.ACTIVE)  # the worker starts the next step within a second
+                self._callback_ack = "Starting." if action == "start" else "Carrying on."
+            else:
+                self._callback_ack = f"The plan is {plan.status.value}."
+        elif action == "pause":
+            pause_plan(self.repositories, self.audit, plan.id)
+            self._callback_ack = "Paused after the step in progress."
+        else:
+            cancel_plan(self.repositories, self.audit, plan.id)
+            self._callback_ack = "Plan cancelled."
+        self.audit.append(AuditEventType.TASK_STATE_CHANGED, actor=actor, task_id=plan.source_task_id,
+                          payload={"reason": f"plan_{action}_button", "plan_id": plan.id})
+        raw = (payload.get("raw") or {}).get("callback_query", {}).get("message") or {}
+        updated = self.repositories.plans.get(plan.id)
+        if updated is not None and raw.get("message_id") and (raw.get("chat") or {}).get("id") is not None:
+            self._callback_edit = (str(raw["chat"]["id"]), raw["message_id"], card_text(updated), card_keyboard(updated))
 
     def _start_undo_from_button(self, payload: dict[str, Any], actor: str) -> None:
         """The Undo button under the answer to a move: the same as saying "undo that" about that task."""

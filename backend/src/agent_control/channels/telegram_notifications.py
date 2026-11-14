@@ -6,11 +6,13 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 from pathlib import Path
 
+from agent_control.channels.quick_answers import clarifying_options
 from agent_control.channels.task_notify import format_task_message
+from agent_control.plans.card import card_keyboard, card_text
 from agent_control.text import trim_text as _trim
 from agent_control.channels.telegram import TelegramBotApi
 from agent_control.schemas import ApprovalStatus, ChannelType, TaskRecord, TaskStatus, channel_chat_id
-from agent_control.storage.repositories import ApprovalRepository
+from agent_control.storage.repositories import ApprovalRepository, PlanRepository
 
 
 def _approval_inline_keyboard(approval_id: str) -> dict[str, Any]:
@@ -57,6 +59,14 @@ def _claude_code_offer_keyboard(task: TaskRecord) -> dict[str, Any] | None:
     }
 
 
+def _options_keyboard(task: TaskRecord) -> dict[str, Any] | None:
+    """One button per quick answer under a question. A tap answers exactly as typing the words does (and the typed reply still works)."""
+    options = clarifying_options(task)
+    if not options:
+        return None
+    return {"inline_keyboard": [[{"text": text, "callback_data": f"answer:{task.id}:o{index}"}] for index, text in enumerate(options)]}
+
+
 #: Telegram allows an edit about once a second per chat; two seconds keeps well inside that and is
 #: still quicker than anyone reads.
 PROGRESS_EDIT_INTERVAL_SECONDS = 2.0
@@ -67,10 +77,12 @@ _FINISHED_STATUSES = {TaskStatus.COMPLETED, TaskStatus.BLOCKED, TaskStatus.FAILE
 class TelegramTaskNotifier:
     def __init__(
         self, client: TelegramBotApi, approvals: ApprovalRepository | None = None,
-        clock: Callable[[], float] = time.monotonic,
+        clock: Callable[[], float] = time.monotonic, plans: PlanRepository | None = None,
     ) -> None:
         self.client = client
         self._clock = clock
+        # Optional: lets the answer that drafted a plan carry the plan, with its Start and Cancel buttons.
+        self.plans = plans
         # Optional: lets an AWAITING_APPROVAL notification carry a real
         # Approve/Reject inline keyboard instead of only the plain-text
         # "reply 'approve'" instruction. None (e.g. in tests) just skips it.
@@ -91,7 +103,12 @@ class TelegramTaskNotifier:
             await self._edit_progress(chat_id, anchor, task.id, message_text)
             return
 
-        reply_markup = self._pending_approval_keyboard(task) or _claude_code_offer_keyboard(task) or _undo_keyboard(task)
+        reply_markup = (
+            self._pending_approval_keyboard(task) or _claude_code_offer_keyboard(task) or _options_keyboard(task) or _undo_keyboard(task)
+        )
+        card = self._plan_card(task)
+        if card is not None:
+            message_text, reply_markup = card
         await self.client.send_message(chat_id, message_text, reply_markup=reply_markup)
         if anchor and task.status in _FINISHED_STATUSES:
             # The answer is its own message (so the phone buzzes); the progress bubble has done its job.
@@ -114,6 +131,20 @@ class TelegramTaskNotifier:
                     f"Local file: {screenshot_path}\n"
                     f"Error: {_trim(str(exc), 600)}",
                 )
+
+    def _plan_card(self, task: TaskRecord) -> tuple[str, dict[str, Any] | None] | None:
+        """The plan this task drafted, as the message under its answer: the steps (whatever the model wrote around them) and the buttons."""
+        plan_id = task.metadata.get("plan_card")
+        if self.plans is None or task.status != TaskStatus.COMPLETED or not plan_id:
+            return None
+        plan = self.plans.get(str(plan_id))
+        return (card_text(plan), card_keyboard(plan)) if plan is not None else None
+
+    async def say(self, routing: dict[str, str], text: str) -> None:
+        """A line to the chat a plan belongs to, outside any task: "Step 2 of 5: ...", "The plan is finished"."""
+        chat_id = routing.get("source_chat_id")
+        if chat_id and routing.get("source_channel", ChannelType.TELEGRAM.value) == ChannelType.TELEGRAM.value:
+            await self.client.send_message(chat_id, text)
 
     async def _edit_progress(self, chat_id: str, anchor: Any, task_id: str, text: str) -> None:
         now = self._clock()

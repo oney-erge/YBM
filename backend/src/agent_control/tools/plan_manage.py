@@ -62,6 +62,10 @@ class PlanManageAdapter:
             plan, text = handler(request, task)
         except ValueError as exc:
             return failed_result(request, str(exc))
+        if task is not None and plan.status in _OPEN:
+            # Whatever the Operator did to a plan that has not ended, the plan goes under this task's answer as a card with the buttons that
+            # fit where it stands, in whatever words the model wraps it in. A plan the model only mentioned never gets a card.
+            self.repositories.tasks.update_metadata(task.id, {**(self.repositories.tasks.get(task.id) or task).metadata, "plan_card": plan.id})
         output: dict[str, Any] = {
             "operation": operation, "summary": text.splitlines()[0][:200], "plan_id": plan.id,
             "plan": {"id": plan.id, "status": plan.status.value, "goal": plan.goal, "steps": len(plan.steps)},
@@ -81,9 +85,6 @@ class PlanManageAdapter:
                 source_task_id=request.task_id, routing=routing_of(task) if task else {}, steps=steps,
             )
         )
-        if task is not None:
-            # The plan card (its Start and Cancel buttons) goes under this task's answer, whatever words the model wraps it in.
-            self.repositories.tasks.update_metadata(task.id, {**task.metadata, "plan_card": plan.id})
         audit_plan(self.audit, plan, "plan_proposed")
         return plan, (
             f"Plan drafted and saved (not started).\n{render_plan(plan)}\n"

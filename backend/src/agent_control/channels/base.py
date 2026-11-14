@@ -36,7 +36,12 @@ from typing import Any, Protocol
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
 from agent_control.channels.memory import memory_context
 from agent_control.channels.responder import ChatResponder, gateway_context
-from agent_control.clarification import expire_stale_clarifications, find_clarifying_task, resume_clarifying_task
+from agent_control.clarification import (
+    expire_stale_clarifications,
+    find_clarifying_task,
+    find_plan_step_answer,
+    resume_clarifying_task,
+)
 from agent_control.config import AppSettings
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
@@ -174,7 +179,9 @@ def resume_clarifying_reply(
     if not text:
         return None
     expire_stale_clarifications(repositories, audit)
-    task = find_clarifying_task(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id)
+    task = find_plan_step_answer(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text) or find_clarifying_task(
+        repositories, conversation_id=conversation_id, chat_id=inbound.chat_id
+    )
     if task is None:
         return None
     result = resume_clarifying_task(
@@ -182,6 +189,8 @@ def resume_clarifying_reply(
         text=text, actor=f"{inbound.channel.value}:user:{inbound.sender_id}",
         message_id=inbound.id, received_at=inbound.received_at, correlation_id=inbound.correlation_id,
     )
+    if result.plan_step:
+        return _reply(inbound, "Okay, I'll leave that step out." if result.cancelled else "Noted. On to the next step.")
     if result.cancelled:
         return _reply(inbound, f"Cancelled: {result.task.objective[:200]}")
     return _reply(inbound, "Got it - resuming the task with your answer.")

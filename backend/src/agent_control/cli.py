@@ -19,6 +19,7 @@ from agent_control.db_tools import db_clean, db_inspect, db_reset
 from agent_control.logging_setup import configure_logging
 from agent_control.channels.telegram import (
     BOT_COMMANDS,
+    PLAN_COMMANDS,
     TelegramAdapter,
     TelegramBotApi,
     TelegramIntakeService,
@@ -48,7 +49,10 @@ from agent_control.recovery import RetryPolicy
 from agent_control.heartbeat import run_heartbeat_forever
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
+from agent_control.plans.context import open_plan_note
+from agent_control.plans.runner import PlanRunner
 from agent_control.storage import ApprovalRepository, AuditLogger, Database, Repositories
+from agent_control.storage.repositories import PlanRepository
 from agent_control.tools.call_schema import CachedOperatorSchema
 from agent_control.tools.registry import build_tool_registry
 from agent_control.tools.stt import build_stt_adapter
@@ -321,7 +325,8 @@ async def poll_telegram() -> None:
     )
     runner = TelegramPollingRunner(client, service)
     try:
-        await client.set_my_commands(BOT_COMMANDS)  # the "/" menu: status, tasks, stop, undo, passwords, screenshot
+        # the "/" menu: status, tasks, stop, undo, passwords, screenshot, and plan when plans are on
+        await client.set_my_commands(BOT_COMMANDS + (PLAN_COMMANDS if settings.plans.enabled else []))
     except Exception:  # noqa: BLE001 - a missing menu is not worth a poller that does not start
         pass
     warm_stt = getattr(service.stt, "warm", None)
@@ -451,6 +456,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         audit_logger=audit,
         telegram_client=_telegram_client(settings, audit),
     )
+    notification_sink = RoutingNotificationSink(settings, audit, approvals=repositories.approvals, plans=repositories.plans)
     major_provider = build_major_llm_provider(settings)
     operator_provider = build_role_llm_provider(settings, "operator") or provider
     auditor_provider = build_role_llm_provider(settings, "auditor") or provider
@@ -466,7 +472,12 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "retry_policy": RetryPolicy(settings.limits),
         "config_context": _worker_config_context(registry, settings),
         "config_context_factory": lambda registry=registry, settings=settings: _worker_config_context(registry, settings),
-        "notification_sink": RoutingNotificationSink(settings, audit, approvals=repositories.approvals),
+        "notification_sink": notification_sink,
+        "plan_runner": (
+            PlanRunner(repositories, audit, say=notification_sink.say, announce=notification_sink.notify)
+            if settings.plans.enabled
+            else None
+        ),
         "task_budget_seconds": float(settings.limits.task_budget_seconds),
         "operator": (
             OperatorLoopService(
@@ -486,7 +497,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "plan_parts": settings.operator.plan_parts,
         "voice_pass": settings.operator.voice_pass,
         "heartbeat_seconds": settings.operator.heartbeat_seconds,
-        "ability_notes": _ability_notes(registry, settings),
+        "ability_notes": _task_notes(registry, settings, repositories),
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
         "auditor": AuditorService(auditor_provider) if auditor_provider else None,
@@ -496,15 +507,21 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
     }
 
 
-def _ability_notes(registry, settings: AppSettings) -> Callable[[str], Awaitable[str]] | None:
-    """The function that says what bears on a request and is not in the Operator's tool list (abilities/context.py), or None when off."""
+def _task_notes(registry, settings: AppSettings, repositories: Repositories) -> Callable[[str, str | None], Awaitable[str]] | None:
+    """What to tell the Operator before a task's first step beyond its tool list: what bears on the request (abilities/context.py) and the
+    plan open in the chat (plans/context.py). None when both are off."""
     catalog = registry.abilities
-    if catalog is None:
+    if catalog is None and not settings.plans.enabled:
         return None
     client = DecisionModelClient(settings.decision) if settings.decision.mode != "off" else None
 
-    async def notes(request: str) -> str:
-        return render_notes(await relevant(catalog.index(), request, confirm=client.yes_no if client else None))
+    async def notes(request: str, conversation_id: str | None) -> str:
+        text = ""
+        if catalog is not None:
+            text += render_notes(await relevant(catalog.index(), request, confirm=client.yes_no if client else None))
+        if settings.plans.enabled:
+            text += open_plan_note(repositories.plans, conversation_id)
+        return text
 
     return notes
 
@@ -680,13 +697,13 @@ async def _handle_coding_session_completion(
 
 
 def _telegram_notifier(
-    settings, audit: AuditLogger | None = None, approvals: ApprovalRepository | None = None
+    settings, audit: AuditLogger | None = None, approvals: ApprovalRepository | None = None, plans: PlanRepository | None = None
 ) -> TelegramTaskNotifier | None:
     if not settings.channels.telegram.enabled:
         return None
     try:
         client = _telegram_client(settings, audit)
-        return TelegramTaskNotifier(client, approvals=approvals) if client else None
+        return TelegramTaskNotifier(client, approvals=approvals, plans=plans) if client else None
     except RuntimeError:
         return None
 
@@ -725,16 +742,32 @@ class RoutingNotificationSink:
     audited (below), not the "nothing to notify" case itself.
     """
 
-    def __init__(self, settings: AppSettings, audit: AuditLogger, approvals: ApprovalRepository | None = None) -> None:
+    def __init__(
+        self, settings: AppSettings, audit: AuditLogger, approvals: ApprovalRepository | None = None,
+        plans: PlanRepository | None = None,
+    ) -> None:
         self.settings = settings
         self.audit = audit
         self.approvals = approvals
+        self.plans = plans
+
+    async def say(self, routing: dict[str, str], text: str) -> None:
+        """A line to the chat a plan belongs to, outside any task. Best effort, like every notification."""
+        if routing.get("source_channel", ChannelType.TELEGRAM.value) != ChannelType.TELEGRAM.value:
+            return
+        notifier = _telegram_notifier(self.settings, self.audit, approvals=self.approvals, plans=self.plans)
+        if notifier is None:
+            return
+        try:
+            await notifier.say(routing, text)
+        except Exception as exc:  # noqa: BLE001
+            self.audit.append(AuditEventType.ERROR, actor="notifier", payload={"error": "say_failed", "reason": str(exc)})
 
     async def notify(self, task: TaskRecord) -> None:
         source_channel = task.metadata.get("source_channel") or ChannelType.TELEGRAM.value
         sink: TaskNotificationSink | None = None
         if source_channel == ChannelType.TELEGRAM.value:
-            sink = _telegram_notifier(self.settings, self.audit, approvals=self.approvals)
+            sink = _telegram_notifier(self.settings, self.audit, approvals=self.approvals, plans=self.plans)
         elif source_channel == ChannelType.WHATSAPP.value:
             sink = _whatsapp_notifier()
         if sink is None:
