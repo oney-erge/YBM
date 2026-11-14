@@ -158,6 +158,13 @@ Telegram adds real channel intake. You need a BotFather token and your Telegram 
 4. Send `what tasks are running right now?` to your bot, then `/tasks`.
 5. Confirm the reply comes back in the same chat and **Tasks** shows the task completing.
 
+**Gaming mode.** The model that runs the assistant sits in the video memory of the machine you may also play on. Tell it so in the chat
+("I'm about to play a game", "gaming mode", "free up the GPU") and it unloads the model at once (through LocalDeploy) and loads nothing
+again, not for a message, not to warm up, not for a scheduled job, until you say you are done ("I'm done gaming", "gaming mode off").
+Messages you send meanwhile get one reply saying it is waiting, and are listed when you come back so nothing is silently dropped. It only
+ever turns on because you said so. A task that is running is finished first. Needs a LocalDeploy whose `/models/free` also stops the
+llama.cpp server (LocalDeploy pull request 98); with an older one the assistant says the language model is still running.
+
 ## If something stalls
 
 Commands here use the `ybm` CLI; [INSTALL.md](INSTALL.md#runtime-interfaces) gives the exact path or

@@ -188,6 +188,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         plan_runner: PlanRunner | None = None,
         plan_stage: Callable[[TaskRecord], Awaitable[StageOutcome]] | None = None,
         fact_checks: Callable[[str, tuple[str, ...]], Awaitable[dict[str, bool]]] | None = None,
+        gpu_hold: Callable[[], bool] | None = None,
     ) -> None:
         # Moves started plans forward on every pass (plans/runner.py); None when plans are off.
         self.plan_runner = plan_runner
@@ -199,6 +200,9 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         # Asks the decision model, once, which of the request's pattern-matched facts it agrees with (request_facts.FACT_QUESTIONS); None
         # when the model is off, and then a fact is the pattern's word alone.
         self.fact_checks = fact_checks
+        # True while the person has said they are gaming (gaming.py): no task is started and no model is loaded until they say they are done.
+        # The callable also frees the GPU, once, the first time the worker is idle with it on.
+        self.gpu_hold = gpu_hold
         self.repositories = repositories
         self.audit = audit
         self.executor = executor
@@ -290,6 +294,8 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         # A claim can expire after startup. Reconcile it before another worker
         # can claim a running task with an uncertain in-flight operation.
         reconcile_orphaned_tasks(self.repositories, self.audit, expired_claims_only=True)
+        if self.gpu_hold is not None and self.gpu_hold():
+            return None
         claim_expiry = int(self.task_budget_seconds) + 120
         task = self.repositories.tasks.claim_next(
             WORKABLE_STATUSES,

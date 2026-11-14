@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Gaming mode: say "I'm about to play a game", "gaming mode" or "free up the GPU" in Telegram and the assistant unloads the model at once
+  (LocalDeploy `/models/free`, which now also stops the llama.cpp server) and loads nothing again until you say "I'm done gaming": the worker
+  claims no task, the warm-up request is not sent, and a message that needs the model gets one reply that it waits and is listed when you come
+  back. A task that is running is finished first. It only turns on because you said so (`gaming.py`, `channels/gaming_command.py`).
 - Schedules can name days of the week and a time of day: "every Monday at 9am", "every weekday at 8:30", "daily at 7am" become
   `every monday at 09:00`, `every weekday at 08:30`, `daily at 07:00` (`cadence.py`; the scheduler, `schedule.manage` and the workflow automation
   form all take them). Before, any such request was turned into "daily" at whatever time it was made, with the days and the time left in the
