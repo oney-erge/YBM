@@ -754,6 +754,20 @@ class PlansConfig(StrictBaseModel):
     enabled: bool = False
 
 
+class VisionConfig(StrictBaseModel):
+    """Looking at pictures with a local vision model through LocalDeploy (tools/image_describe.py).
+
+    Off in the code's defaults for the same reason as `abilities.enabled` (a new tool line changes the Operator's prompt, which recorded
+    scenario fixtures are keyed on); the shipped config turns it on. Each use asks the user first.
+    """
+
+    enabled: bool = False
+    # A LocalDeploy profile that supports vision. Empty: the smallest one LocalDeploy lists.
+    profile: str = ""
+    # When LocalDeploy answers that Ollama is not running, start `ollama serve` once as part of loading the model the user just approved.
+    start_ollama: bool = True
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENT_",
@@ -784,6 +798,7 @@ class AppSettings(BaseSettings):
     operator: OperatorConfig = Field(default_factory=OperatorConfig)
     abilities: AbilitiesConfig = Field(default_factory=AbilitiesConfig)
     plans: PlansConfig = Field(default_factory=PlansConfig)
+    vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @classmethod
     def settings_customise_sources(

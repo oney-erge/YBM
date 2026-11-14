@@ -361,6 +361,13 @@ class PlanManageInput(ToolInputModel):
         return self
 
 
+class ImageDescribeInput(ToolInputModel):
+    operation: Literal["describe"] = "describe"
+    path: str
+    # What to look for ("what does the error say?", "is there a person in it?"). Omitted: describe the picture and quote its text.
+    question: str | None = None
+
+
 class TaskStatusInput(ToolInputModel):
     operation: Literal["status"] = "status"
     limit: int = Field(default=10, ge=1, le=50)
@@ -1109,6 +1116,14 @@ class PlanManageOutput(ToolOutputModel):
     summary: str = Field(min_length=1)
     plan_id: str | None = None
     plan: dict[str, Any] | None = None
+
+
+class ImageDescribeOutput(ToolOutputModel):
+    operation: Literal["describe"] = "describe"
+    summary: str = Field(min_length=1)
+    description: str = ""
+    model: str | None = None
+    file: str | None = None
 
 
 class SkillsOutput(ToolOutputModel):

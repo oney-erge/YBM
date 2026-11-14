@@ -276,6 +276,13 @@ abilities:
 plans:
   enabled: true
 
+# Looking at pictures (a photo you send, a screenshot) with a local vision model through LocalDeploy. The assistant's own model reads
+# text only. Each use asks you first, because it loads a model of about 3 GB. Nothing leaves this computer.
+vision:
+  enabled: true
+  # profile: "qwen3vl_4b_ollama"   # a LocalDeploy profile that supports vision; omit for the smallest one it lists
+  start_ollama: true           # start `ollama serve` once if LocalDeploy says Ollama is not running
+
 # The Operator loop (observe -> decide -> act) is the sole execution path.
 operator:
   # Hard ceiling on REAL tool calls per task - the only backstop against a

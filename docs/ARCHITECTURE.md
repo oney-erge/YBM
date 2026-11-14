@@ -220,6 +220,17 @@ words they offer ("done", "skip"), and it does not expire after a day the way a 
 (`skills/starter/`) tells the Operator how to draft one: ask one question first when the goal is vague, give every step an owner, never plan
 for the assistant to pay.
 
+### Looking at pictures
+
+The model that runs the assistant locally reads text only, so a photo sent in Telegram was answered with "a JPEG, 8 KB". `image.describe`
+(`tools/image_describe.py`) asks a vision model instead, through LocalDeploy (`POST /v1/chat/completions` with the picture as an image URL, the
+same call `OpenAICompatibleProvider.generate_multimodal_text` already makes): the model is found in LocalDeploy (the smallest vision profile
+it lists, or `vision.profile`), not named in code. Qwen3-VL 4B reads "INVOICE 1234 TOTAL 56.78 USD" off a test picture in about 3 seconds once
+it is loaded and 17 seconds when it is not. It is a different model from the assistant's, and it takes a few gigabytes of an 8 GB GPU, so
+each use is an approval the user sees ("Load a vision model ... to look at invoice.png. The picture stays on this computer") and can allow
+for the task. If LocalDeploy answers that Ollama is not running, `vision.start_ollama` starts it once as part of loading the model the user
+just approved. The path is held to the folders the file tool may touch, the inbox included.
+
 ### Logins, files and voice
 
 **Logins for websites** (`accounts.py`). A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`. The browser
