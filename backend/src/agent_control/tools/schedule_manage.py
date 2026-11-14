@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent_control.scheduler import cadence_from_text, create_due_task, next_run_after, objective_from_schedule_text, schedule_to_output
+from agent_control.scheduler import cadence_from_text, create_due_task, next_run_after, normalize_cadence, objective_from_schedule_text, schedule_to_output
 from agent_control.schemas import (
     Capability,
     ChannelType,
@@ -61,7 +61,7 @@ class ScheduleManageAdapter:
         raw_objective = str(request.input.get("objective") or request.input.get("prompt") or "").strip()
         if not raw_objective:
             raise ValueError("objective is required")
-        cadence = str(request.input.get("cadence") or cadence_from_text(raw_objective))
+        cadence = normalize_cadence(str(request.input.get("cadence") or cadence_from_text(raw_objective)))
         objective = objective_from_schedule_text(raw_objective)
         timezone_name = str(request.input.get("timezone") or self.default_timezone)
         # A model that does not see its create succeeded asks again (one live run made the same
@@ -179,7 +179,10 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             provides=('remind', 'schedule', 'recurring', 'every', 'day', 'daily', 'weekly', 'cron', 'timer', 'alarm', 'later', 'tomorrow',),
             capability=Capability.SCHEDULE_MANAGE,
             enabled=enabled,
-            description="create, list, pause, resume, delete, or run recurring task schedules",
+            description=(
+                "create, list, pause, resume, delete, or run recurring task schedules; a cadence is daily, weekly, every N minutes/hours/days/weeks, "
+                "or days of the week and a time such as 'every monday at 09:00' or 'every weekday at 08:30'"
+            ),
             operations=("create", "list", "pause", "resume", "delete", "run_now"),
             input_schema=ScheduleManageInput,
             output_schema=ScheduleManageOutput,

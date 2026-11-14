@@ -8,6 +8,7 @@ from typing import Any
 from collections.abc import Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agent_control import cadence as calendar
 from agent_control.db_tools import retention_sweep
 from agent_control.config import AppSettings
 from agent_control.folder_triggers import poll_folder_watch
@@ -20,8 +21,14 @@ logger = logging.getLogger(__name__)
 
 def validate_schedule(cadence: str, timezone_name: str) -> None:
     """Reject unsupported automation input rather than silently choosing daily."""
-    if not re.fullmatch(r"(?:daily|weekly|every (?:day|week)|every [1-9]\d{0,3} (?:minutes?|hours?|days?|weeks?))", cadence.strip().lower()):
-        raise ValueError("Use daily, weekly, or every N minutes/hours/days/weeks (N: 1-9999).")
+    if not (
+        re.fullmatch(r"(?:daily|weekly|every (?:day|week)|every [1-9]\d{0,3} (?:minutes?|hours?|days?|weeks?))", cadence.strip().lower())
+        or calendar.is_calendar(cadence)
+    ):
+        raise ValueError(
+            "Use daily, weekly, every N minutes/hours/days/weeks (N: 1-9999), or days and a time such as 'every monday at 09:00', "
+            "'every weekday at 08:30' or 'daily at 07:00'."
+        )
     try:
         ZoneInfo(timezone_name)
     except (ZoneInfoNotFoundError, ValueError) as exc:
@@ -59,6 +66,8 @@ def next_run_after(cadence: str, after: datetime | None = None, timezone_name: s
     tz = _resolve_timezone(timezone_name)
     local = base.astimezone(tz)
 
+    if calendar.is_calendar(lowered):
+        return calendar.next_after(lowered, local, tz)
     if match := re.search(r"every\s+(\d+)\s+weeks?", lowered):
         return (local + timedelta(weeks=max(1, int(match.group(1))))).astimezone(timezone.utc)
     if match := re.search(r"every\s+(\d+)\s+days?", lowered):
@@ -68,8 +77,15 @@ def next_run_after(cadence: str, after: datetime | None = None, timezone_name: s
     return (local + timedelta(days=1)).astimezone(timezone.utc)
 
 
+def normalize_cadence(cadence: str) -> str:
+    """A cadence a model or a person wrote ("every Monday at 9am") in the form that is stored ("every monday at 09:00"); anything else as it was."""
+    return calendar.from_text(cadence) or cadence
+
+
 def cadence_from_text(text: str) -> str:
     lowered = text.lower()
+    if spoken := calendar.from_text(text):
+        return spoken
     if match := re.search(r"every\s+\d+\s+(?:minutes?|hours?|days?|weeks?)\b", lowered):
         return match.group(0)
     if "daily" in lowered or "every day" in lowered:
@@ -80,7 +96,8 @@ def cadence_from_text(text: str) -> str:
 
 
 def objective_from_schedule_text(text: str) -> str:
-    cleaned = re.sub(r"\b(set up|create|add|schedule|scheduled job|job|that runs|every day|daily|weekly)\b", " ", text, flags=re.IGNORECASE)
+    text = calendar.strip(text)
+    cleaned =re.sub(r"\b(set up|create|add|schedule|scheduled job|job|that runs|every day|daily|weekly)\b", " ", text, flags=re.IGNORECASE)
     cleaned = re.sub(r"every\s+\d+\s+(?:minutes?|hours?|days?|weeks?)\b", " ", cleaned, flags=re.IGNORECASE)
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" .,:")
     cleaned = re.sub(r"^(?:a\s+)?to\s+", "", cleaned, flags=re.IGNORECASE)

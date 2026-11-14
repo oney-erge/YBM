@@ -56,8 +56,11 @@ In Telegram you can do the same without the dashboard: after a task finishes, sa
 From a completed task's trace, choose **Save as workflow**. In **Agent -> Workflows**, choose
 **Automate**, fill any parameters, select a project if desired, and set a cadence and timezone.
 Supported cadences are `daily`, `weekly`, `every day`, `every week`, or `every N minutes/hours/days/weeks`
-with N from 1 to 9999. Use an IANA timezone such as `America/Chicago` or `UTC`. The first run is one
-interval from creation; a daily schedule keeps the local time across daylight-saving changes.
+with N from 1 to 9999, or days of the week and a time: `every monday at 09:00`, `every monday and thursday at 18:00`,
+`every weekday at 08:30`, `every weekend`, `daily at 07:00` (the Telegram chat and the schedule tool also take
+"every Monday at 9am" and store it in that form). Use an IANA timezone such as `America/Chicago` or `UTC`. The first
+run of an interval is one interval from creation; a schedule with days fires on the next matching day, and every
+daily or weekday schedule keeps its local time across daylight-saving changes.
 
 The Automations card shows the next due time, status, failure count, and a link to the last run and
 receipt. **Pause** stops future runs; **Resume** restarts the trigger and clears the failure streak
