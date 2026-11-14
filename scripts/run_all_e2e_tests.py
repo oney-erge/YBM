@@ -327,6 +327,28 @@ def cancel_task(task_id: str) -> bool:
         return False
 
 
+#: Statuses of a task that is still waiting for something or going: nothing a case leaves behind in one of them may reach the next case.
+_UNSETTLED_STATUSES = frozenset({"received", "interpreting", "clarifying", "planned", "awaiting_approval", "awaiting_external", "running", "paused", "retrying"})
+
+
+def cancel_leftover_tasks() -> int:
+    """Cancel every task a finished case left waiting, and say how many.
+
+    A request that installs something is retried as a new task (`ability.acquire`), and that task can ask its own question after the case's task
+    completed. The next case's first message was then taken as the answer to it ("Got it - resuming the task with your answer"), and that case
+    measured the wrong thing (the rerun of challenge c2 and c6).
+    """
+    try:
+        tasks = admin_get("/admin/api/tasks?limit=25").get("tasks") or []
+    except Exception:
+        return 0
+    cancelled = 0
+    for task in tasks:
+        if str(task.get("status") or "") in _UNSETTLED_STATUSES and cancel_task(str(task.get("id") or "")):
+            cancelled += 1
+    return cancelled
+
+
 async def _wait_for_status_notification(
     task_id: str,
     status: str,
@@ -1771,6 +1793,9 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
             stage.passed = True
             return stage
 
+        leftover = cancel_leftover_tasks()
+        if leftover:
+            print(f"    [cleanup] cancelled {leftover} task(s) the previous case left waiting")
         for spec in case.get("before") or []:
             note = _run_case_hook(spec, fixtures)
             stage.hook_notes.append(note)
