@@ -56,8 +56,11 @@ SEARCH_STOPPED_MARK = "I stopped looking after"
 class FilesystemManageAdapter:
     """Scoped filesystem inspection, search, and organization tool."""
 
-    def __init__(self, allowed_roots: list[str], provider: LLMProvider | None = None) -> None:
+    def __init__(self, allowed_roots: list[str], provider: LLMProvider | None = None, *, also_allowed: list[str] | None = None) -> None:
         self.allowed_roots = [_resolve_root(root) for root in allowed_roots]
+        # Folders that may be used without being listed among the configured roots (the inbox of files sent to the bot). They are not named
+        # in the refusal below, which the model reads and which recorded scenarios replay.
+        self._also_allowed = [_resolve_root(root) for root in (also_allowed or [])]
         self.provider = provider
 
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
@@ -581,7 +584,7 @@ class FilesystemManageAdapter:
         # Recover by detecting that pattern and rewriting to the real user's home.
         rewritten = _rewrite_placeholder_user_path(value)
         path = self._alias_path(rewritten).expanduser().resolve()
-        if not any(root == path or root in path.parents for root in self.allowed_roots):
+        if not any(root == path or root in path.parents for root in (*self.allowed_roots, *self._also_allowed)):
             allowed = ", ".join(str(root) for root in self.allowed_roots)
             raise ValueError(f"path is outside allowed roots: {path}; allowed roots: {allowed}")
         return path
@@ -1148,8 +1151,9 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     )
     if enabled:
         adapters["filesystem.manage"] = FilesystemManageAdapter(
-            # The inbox (files the user sent to the bot) is readable without anyone adding it to a list; it is not named in the
-            # catalog text, because the path is in the message that carries the file.
-            [*settings.adapters.computer_use.allowed_roots, settings.channels.telegram.inbox_dir],
+            # The inbox (files the user sent to the bot) is usable without anyone adding it to a list; it is not named in the
+            # catalog text or in a refusal, because the path is in the message that carries the file.
+            settings.adapters.computer_use.allowed_roots,
+            also_allowed=[settings.channels.telegram.inbox_dir],
             provider=deps.provider,  # type: ignore[arg-type]
         )

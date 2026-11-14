@@ -141,6 +141,34 @@ def decides_alone(config: DecisionConfig, opinion: DecisionOpinion) -> bool:
     return False
 
 
+#: Routes the concierge keeps even when the model is sure it is a task: the concierge extracts what they need (a provider and a folder,
+#: the setting to change) or writes the reply, and a wrong guess here costs more than the seconds saved.
+KEEP_WITH_CONCIERGE: frozenset[IntentRoute] = CONCIERGE_ONLY_ROUTES | {IntentRoute.CONFIGURATION, IntentRoute.DESKTOP_OBSERVE}
+_NOT_TASKS = {IntentRoute.CONVERSATION.value, IntentRoute.STATUS.value, IntentRoute.UNKNOWN.value}
+#: How much probability on the routes above is too much for a task to be settled without the concierge.
+_KEEP_MASS_LIMIT = 0.05
+
+
+def task_probability(opinion: DecisionOpinion) -> float:
+    """How likely it is that the message is a task at all, whatever tool it needs: the probability on every tool route added up."""
+    return sum(value for route, value in opinion.probabilities.items() if route not in _NOT_TASKS)
+
+
+def settles_as_a_task(config: DecisionConfig, opinion: DecisionOpinion) -> bool:
+    """Whether the model is sure enough this is a task, not chat or a status question, to skip the concierge though no single tool is sure."""
+    if not config.settle_tasks_alone or config.mode not in ("cascade", "decision"):
+        return False
+    if opinion.ability is not None and opinion.ability >= ABILITY_THRESHOLD:
+        return False
+    if opinion.route in KEEP_WITH_CONCIERGE or opinion.route in (IntentRoute.CONVERSATION, IntentRoute.STATUS):
+        return False
+    if config.mode == "cascade" and opinion.route not in config.cascade_routes:
+        return False  # `cascade` lists the routes it may decide; the same list applies here
+    if sum(opinion.probabilities.get(route.value, 0.0) for route in KEEP_WITH_CONCIERGE) >= _KEEP_MASS_LIMIT:
+        return False
+    return task_probability(opinion) >= config.task_bar
+
+
 def summarize_kinds(payloads: list[dict[str, Any]], *, bar: float = 0.95, minimum: int = 100) -> dict[str, Any]:
     """How the mid-task kind question compares with the concierge, and whether it has earned the right to take over.
 
@@ -348,6 +376,10 @@ class DecisionModelClassifier:
             decided = classification_from_opinion(text, opinion)
             self._record(message, text, opinion, error, used=True, classification=decided)
             return decided
+        if opinion is not None and settles_as_a_task(self.config, opinion):
+            decided = classification_as_a_task(text, opinion)
+            self._record(message, text, opinion, error, used=True, classification=decided, settled_by="task_probability")
+            return decided
         classification = await self._concierge(message, context)
         self._record(message, text, opinion, error, used=False, classification=classification)
         return classification
@@ -362,6 +394,7 @@ class DecisionModelClassifier:
         used: bool,
         classification: MessageClassification,
         busy: bool = False,
+        settled_by: str | None = None,
     ) -> None:
         if self.audit is None:
             return
@@ -375,6 +408,9 @@ class DecisionModelClassifier:
                 "text": text,
                 "mode": self.config.mode,
                 "used": used,
+                # "task_probability": sure it is a task, not which tool; the route is left open. None: the route itself decided, or not used.
+                "settled_by": settled_by if used else None,
+                "task_probability": round(task_probability(opinion), 4) if opinion else None,
                 # A task was running in this chat, so the concierge decided whatever the model said.
                 "chat_busy": busy,
                 "decision_route": opinion.route.value if opinion else None,
@@ -432,6 +468,23 @@ def classification_from_opinion(text: str, opinion: DecisionOpinion) -> MessageC
             route=opinion.route,
             objective=text,
             reasoning=f"The local decision model chose {opinion.route.value} with probability {opinion.confidence:.2f}.",
+        ),
+    )
+
+
+def classification_as_a_task(text: str, opinion: DecisionOpinion) -> MessageClassification:
+    """A task whose tool the model is not sure of: the route is left "unknown", as the concierge leaves it for most requests, which keeps
+    the operator's full tool list and the check before a first question about something no tool can do."""
+    return MessageClassification(
+        is_task=True,
+        task_type=TaskType.OTHER,
+        normalized_objective=text,
+        confidence=round(task_probability(opinion), 4),
+        reason=f"Local decision model: a task ({task_probability(opinion):.2f}), tool not settled (best: {opinion.route.value} {opinion.confidence:.2f}).",
+        intent=OrchestrationIntent(
+            route=IntentRoute.UNKNOWN,
+            objective=text,
+            reasoning=f"The local decision model is {task_probability(opinion):.2f} sure this is a task; the best single tool was {opinion.route.value}.",
         ),
     )
 
