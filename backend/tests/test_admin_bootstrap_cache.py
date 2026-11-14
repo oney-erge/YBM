@@ -36,7 +36,7 @@ def test_the_first_answer_is_waited_for_and_the_next_ones_are_instant(monkeypatc
     settings = _settings()
     started = time.monotonic()
     assert admin._llm_configured(settings) is True
-    assert time.monotonic() - started >= 0.2
+    assert time.monotonic() - started >= 0.15  # sleep(0.2) can return a clock tick early on Windows
     started = time.monotonic()
     for _ in range(20):
         assert admin._llm_configured(settings) is True

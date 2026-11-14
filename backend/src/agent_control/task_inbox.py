@@ -59,7 +59,9 @@ def find_steerable_task(
         if (conversation_id and task.conversation_id == conversation_id)
         or (chat_id and str(task.metadata.get("source_chat_id") or "") == str(chat_id))
     ]
-    return max(candidates, key=lambda task: task.created_at) if candidates else None
+    # The list is oldest first; reversed, a tie on created_at (two tasks made within one clock tick, about 15 ms on Windows) goes to the one
+    # made later, because max() keeps the first of equals.
+    return max(reversed(candidates), key=lambda task: task.created_at) if candidates else None
 
 
 def attach_note(

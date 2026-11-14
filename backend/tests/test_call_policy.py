@@ -14,7 +14,7 @@ def _task(text: str, **metadata) -> TaskRecord:
     return TaskRecord(objective=text, metadata={"original_message_text": text, **metadata})
 
 
-def test_the_rewrites_run_in_the_order_they_always_ran_in():
+def test_the_rewrites_run_in_this_order():
     assert [label for label, _ in REWRITES] == [
         "artifact delivery in order",
         "search by content when asked",
@@ -30,6 +30,7 @@ def test_the_rewrites_run_in_the_order_they_always_ran_in():
         "a read of a file changed since it was read",
         "coding agent defaults for this task",
         "coding agent in the workspace the user named",
+        "a made-up password for a new account becomes the vault's",
     ]
 
 

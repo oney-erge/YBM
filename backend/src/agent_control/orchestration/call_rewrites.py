@@ -17,7 +17,8 @@ import os
 from pathlib import Path
 import re
 from typing import Any
-from agent_control.orchestration.request_facts import RequestFacts
+from agent_control.accounts import PLACEHOLDER as _VAULT_PLACEHOLDER
+from agent_control.orchestration.request_facts import RequestFacts, own_words
 from agent_control.orchestration.fulfillment import (
     validate_fulfillment,
 )
@@ -332,6 +333,30 @@ def _filesystem_path_relative_to_a_listed_root(
 
 
 _LISTINGS_WITHOUT_DATES = frozenset({"describe_folder", "collect_folder_snapshot"})
+_PASSWORD_LABEL = re.compile(r"pass(?:word|wd|code)|\bpwd\b", re.IGNORECASE)
+
+
+def _new_account_password_from_the_vault(task: TaskRecord, tool_name: str | None, tool_input: dict[str, Any]) -> dict[str, Any]:
+    """A password the model made up for a new account becomes the vault's `{{new_password}}`.
+
+    A live request to create an account ended with the model's own guessable password written in the form and then in a file and in the
+    chat. The history says to use the placeholder (orchestration/ladder.py), and this is the same thing done when it did not: in a form
+    that makes an account, a password field filled with text the user never wrote gets a long random password from the vault instead, and
+    the model never learns it. A password the user gave in their own words is left alone.
+    """
+    if tool_name != "browser.control" or tool_input.get("operation") not in {"fill_form", "fill_form_step"}:
+        return tool_input
+    fields = tool_input.get("fields")
+    if not isinstance(fields, dict) or not RequestFacts.from_task(task).wants_a_new_account:
+        return tool_input
+    said = own_words(task)
+    swapped = {
+        key: "{{new_password}}"
+        for key, value in fields.items()
+        if _PASSWORD_LABEL.search(str(key)) and isinstance(value, str) and value.strip()
+        and not _VAULT_PLACEHOLDER.search(value) and value not in said
+    }
+    return {**tool_input, "fields": {**fields, **swapped}} if swapped else tool_input
 
 
 def _filesystem_listing_input_with_dates_intent(
