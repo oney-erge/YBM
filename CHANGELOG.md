@@ -253,6 +253,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Every page of the admin console waited about four seconds before drawing anything. The console asks "is the default model usable" on each page
+  load, the model server's health check took four seconds because it looks at a second service that was not running, and nothing was shown
+  until it answered. The first answer is waited for; after that the last answer is used at once and refreshed in the background every
+  half minute (hosted profiles, where the check is only a look at a key, are not cached).
 - Two gaps the fresh suite (heldout4) found. "Which file was changed most recently?" asked through `describe_folder` or
   `collect_folder_snapshot`, which list names and sizes but no dates, ended blocked: such a listing is now made with `inspect_folder` and
   dates, as the other listings already were. "Rename every .txt so it starts with old-" was planned with `organize_plan`, which only sorts
