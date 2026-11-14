@@ -65,8 +65,11 @@ async def relevant(
     # December 20. Plan it." and "Build me a robot." share one common word with it, which the shortlist above drops, and the first challenge
     # run showed what that cost: with no plan, the Operator asked a questionnaire for one and retried for ten minutes on the other. The yes/no
     # question, not the words, decides, and it is asked in the same single call as every other question.
+    # The same for a skill that says `ask: always` ("what can't you do?" shares no content word with the skill that answers it).
     listed = {ability.id for ability, _ in candidates}
-    candidates += [(ability, 0.0) for ability in index.all() if ability.route and ability.confirm and ability.id not in listed]
+    candidates += [
+        (ability, 0.0) for ability in index.all() if (ability.route or ability.ask_always) and ability.confirm and ability.id not in listed
+    ]
     unclear = [ability for ability, score in candidates if ability.confirm and (score < CLEAR_SCORE or ability.kind in _PUSHED_WHEN_CONFIRMED)]
     answers: dict[str, float] = {}
     if unclear and confirm is not None:

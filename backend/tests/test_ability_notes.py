@@ -230,6 +230,31 @@ async def test_a_skill_without_a_question_stays_in_the_list_the_prompt_already_h
 
 
 @pytest.mark.asyncio
+async def test_a_skill_that_says_ask_always_is_asked_about_whatever_words_the_request_shares(tmp_path):
+    """Live (rerun of challenge g2): "What can't you do?" shares no content word with the skill that answers it, so it was never put in front of the Operator."""
+    root = tmp_path / "skills"
+    root.mkdir()
+    (root / "self.md").write_text(
+        "---\nname: Say what this assistant can do\ndescription: answer questions about the assistant from its ability index\n"
+        "when: Is the user asking what this assistant can do or cannot do?\nask: always\n---\n1. Call ability.search overview.\n",
+        encoding="utf-8",
+    )
+    (root / "other.md").write_text(
+        "---\nname: Invoice totals\ndescription: add up invoices\nwhen: Does the user want invoice totals?\n---\nsteps\n", encoding="utf-8"
+    )
+    settings = AppSettings(_env_file=None, abilities={"enabled": True}, adapters={"skills": {"enabled": True, "root_dir": str(root)}})
+    index = build_index(build_tool_registry(settings, "http://127.0.0.1:8765"), settings)
+    records = {a.id: a for a in index.all() if a.kind.value == "skill"}
+    assert records["skill:say-what-this-assistant-can-do"].ask_always and not records["skill:invoice-totals"].ask_always
+
+    request = "Zzz qqq?"  # nothing in common with either skill
+    yes = _Confirmer({"skill:say-what-this-assistant-can-do": 0.9, "skill:invoice-totals": 0.9})
+    shown = [a.id for a in await relevant(index, request, confirm=yes) if a.kind.value == "skill"]
+    assert shown == ["skill:say-what-this-assistant-can-do"]
+    assert set(yes.asked[0][1]) == {"skill:say-what-this-assistant-can-do"}  # the other skill is still only asked about when its words reach it
+
+
+@pytest.mark.asyncio
 async def test_a_skill_that_routes_to_the_planner_is_asked_about_for_every_request(tmp_path):
     """The words of "I'm moving on December 20. Plan it." do not reach a skill about building a robot, and the planner is the right place for it."""
     root = tmp_path / "skills"
