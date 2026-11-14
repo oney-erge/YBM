@@ -1042,6 +1042,22 @@ export function deleteSecret(service: string, key: string) {
   })
 }
 
+// A login YBM made for a website (backend accounts.py). The password is only returned when the person presses the button.
+const AccountRevealResponseSchema = z.object({
+  host: z.string(),
+  username: z.string(),
+  password: z.string(),
+  created_at: z.string().nullable().optional(),
+})
+export type AccountLogin = z.infer<typeof AccountRevealResponseSchema>
+
+export function revealAccount(host: string) {
+  return apiFetch("/api/accounts/reveal", AccountRevealResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({ host }),
+  })
+}
+
 const SecretVaultInitResponseSchema = z.object({ key_env: z.string(), generated: z.boolean() })
 
 export function initSecretVault() {
