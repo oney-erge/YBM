@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -29,6 +31,7 @@ from agent_control.channels.workflow_commands import workflow_command_reply
 from agent_control.llm.classifier import MessageClassifier
 from agent_control.orchestration.signals import apply_task_signal, requeue_after_approval_decision
 from agent_control.schemas import (
+    Attachment,
     ApprovalRequest,
     ApprovalStatus,
     AuditEventType,
@@ -318,8 +321,23 @@ class TelegramAdapter:
             return ChannelUpdateResult(authorized=False, denial_reason="unauthorized")
 
         voice = message.get("voice")
-        kind = MessageKind.VOICE if voice else MessageKind.TEXT
+        photo = message.get("photo")
+        document = message.get("document")
+        kind = MessageKind.VOICE if voice else MessageKind.IMAGE if photo else MessageKind.DOCUMENT if document else MessageKind.TEXT
         attachments = []
+        if isinstance(photo, list) and photo:
+            # Telegram sends every size of a photo; the biggest one is the picture.
+            best = max((item for item in photo if isinstance(item, dict)), key=lambda item: (item.get("file_size") or 0, item.get("width") or 0), default=None)
+            if best and best.get("file_id"):
+                attachments.append(Attachment(
+                    kind=MessageKind.IMAGE, file_id=best.get("file_id"), file_name=f"photo_{message.get('message_id')}.jpg",
+                    mime_type="image/jpeg", size_bytes=best.get("file_size"),
+                ))
+        elif isinstance(document, dict) and document.get("file_id"):
+            attachments.append(Attachment(
+                kind=MessageKind.DOCUMENT, file_id=document.get("file_id"), file_name=document.get("file_name"),
+                mime_type=document.get("mime_type"), size_bytes=document.get("file_size"),
+            ))
         if voice:
             attachments.append(
                 VoiceAttachment(
@@ -503,9 +521,22 @@ class TelegramIntakeService:
                 result.inbound_message.chat_id,
             )
             inbound = result.inbound_message
+            if inbound.kind in (MessageKind.IMAGE, MessageKind.DOCUMENT):
+                try:
+                    inbound = await self._receive_files(inbound)
+                except Exception as exc:
+                    self.audit.append(
+                        AuditEventType.ERROR, actor=f"telegram:user:{inbound.sender_id}", correlation_id=inbound.correlation_id,
+                        payload={"error": "file_download_failed", "message_id": inbound.id, "reason": str(exc)},
+                    )
+                    return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=self._out(inbound.chat_id, str(exc)))
             if inbound.kind == MessageKind.VOICE and not inbound.text:
+                # Quiet signs of life first: the language model starts loading while the audio is transcribed, and "typing" shows.
+                self._start_warming()
+                await self._say_typing(inbound.chat_id)
                 try:
                     inbound = await self._transcribe_voice(inbound)
+                    await self._echo_heard(inbound)
                 except Exception as exc:
                     self.audit.append(
                         AuditEventType.ERROR,
@@ -534,9 +565,8 @@ class TelegramIntakeService:
                 status_answer = answer_status_question(self.repositories, inbound, conversation_id)
                 if status_answer is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
-            if inbound.text and self.settings is not None and getattr(self.settings.llm, "warm_on_message", False):
-                # Fire and forget: loads an idle local model while the message is routed (llm/warmup.py).
-                self._warming = asyncio.ensure_future(warm_up(self.settings))
+            if inbound.text:
+                self._start_warming()
             if inbound.text:
                 await self._update_conversation_memory(conversation_id, inbound.text)
             try:
@@ -607,6 +637,70 @@ class TelegramIntakeService:
             )
 
         return result
+
+    def _start_warming(self) -> None:
+        """Fire and forget: loads an idle local model while the message is routed (llm/warmup.py). Once per message."""
+        if self.settings is None or not getattr(self.settings.llm, "warm_on_message", False):
+            return
+        current = getattr(self, "_warming", None)
+        if current is not None and not current.done():
+            return
+        self._warming = asyncio.ensure_future(warm_up(self.settings))
+
+    async def _say_typing(self, chat_id: str) -> None:
+        if self.bot_api is None:
+            return
+        try:
+            await self.bot_api.send_chat_action(chat_id, "typing")
+        except Exception:  # noqa: BLE001 - a missing "typing" is not worth losing the message
+            pass
+
+    async def _echo_heard(self, inbound: InboundMessage) -> None:
+        """Say what the voice note was heard as, before anything is done with it."""
+        config = self.adapter.config
+        if self.bot_api is None or not getattr(config, "echo_voice_transcript", True) or not inbound.text:
+            return
+        try:
+            await self.bot_api.send_message(inbound.chat_id, f"I heard: {inbound.text}")
+        except Exception:  # noqa: BLE001 - the echo is a courtesy
+            pass
+
+    async def _receive_files(self, inbound: InboundMessage) -> InboundMessage:
+        """Save the photos and files a message carries into the inbox and tell the task where they are.
+
+        The task's text becomes the caption (if any) plus one line per file with its path, which is all the model and the tools need:
+        the inbox is readable by the file and document tools.
+        """
+        files = [item for item in inbound.attachments if item.kind in (MessageKind.IMAGE, MessageKind.DOCUMENT) and item.file_id]
+        if not files:
+            return inbound
+        if self.bot_api is None:
+            raise RuntimeError("I cannot take files here: the Telegram connection is not set up for downloads.")
+        config = self.adapter.config
+        limit = int(getattr(config, "max_file_mb", 20)) * 1024 * 1024
+        day_dir = Path(getattr(config, "inbox_dir", ".agent_control/inbox")).expanduser().resolve() / inbound.received_at.strftime("%Y-%m-%d")
+        saved: list[Path] = []
+        for item in files:
+            if item.size_bytes and item.size_bytes > limit:
+                raise RuntimeError(f"That file is {item.size_bytes // (1024 * 1024)} MB; Telegram only lets me take files up to {limit // (1024 * 1024)} MB.")
+            info = await self.bot_api.get_file(item.file_id or "")
+            remote = str(info.get("file_path") or "")
+            if not remote:
+                raise RuntimeError("Telegram would not give me that file. Try sending it again.")
+            data = await self.bot_api.download_file(remote)
+            name = re.sub(r"[^A-Za-z0-9._ -]+", "_", item.file_name or Path(remote).name).strip(" .") or "file"
+            day_dir.mkdir(parents=True, exist_ok=True)
+            target = day_dir / f"{inbound.received_at.strftime('%H%M%S')}_{name}"
+            counter = 1
+            while target.exists():
+                counter += 1
+                target = day_dir / f"{inbound.received_at.strftime('%H%M%S')}_{counter}_{name}"
+            target.write_bytes(data)
+            saved.append(target)
+        noun = "a picture" if all(item.kind == MessageKind.IMAGE for item in files) else "a file"
+        lines = "\n".join(f"[The user sent {noun}: {path}]" for path in saved)
+        text = f"{inbound.text}\n{lines}" if inbound.text else f"I am sending you {noun}.\n{lines}"
+        return inbound.model_copy(update={"text": text})
 
     async def _update_conversation_memory(self, conversation_id: str, text: str) -> None:
         await self.memory_service.update_from_user_message(conversation_id, text)

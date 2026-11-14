@@ -1148,6 +1148,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
     )
     if enabled:
         adapters["filesystem.manage"] = FilesystemManageAdapter(
-            settings.adapters.computer_use.allowed_roots,
+            # The inbox (files the user sent to the bot) is readable without anyone adding it to a list; it is not named in the
+            # catalog text, because the path is in the message that carries the file.
+            [*settings.adapters.computer_use.allowed_roots, settings.channels.telegram.inbox_dir],
             provider=deps.provider,  # type: ignore[arg-type]
         )

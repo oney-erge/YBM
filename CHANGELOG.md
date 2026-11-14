@@ -9,6 +9,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Telegram takes photos and files: they are saved in `.agent_control/inbox/<day>/` (up to 20 MB each; `channels.telegram.inbox_dir`,
+  `max_file_mb`) and the task is told where ("[The user sent a file: ...]" after the caption), so "summarize this", "put this in my
+  documents" or "what does this say" work on what was sent. The file and document tools can read the inbox without it being added to
+  a list of folders. A file that is too big or will not download is answered in words and no task is started.
 - Accounts on websites. A form field may say `{{new_password}}`, `{{saved_password}}` or `{{saved_username}}`: the browser tool makes a long
   random password for the site (the same one for "Password" and "Confirm password"), keeps it with the username in the encrypted secret
   vault, and types it into the page, so the model, the logs, the approvals and the chat never see it. When the request is to make an
@@ -174,6 +178,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Voice notes are quicker and clearer. The speech model loads when the Telegram poller starts, not on the first note (about 4 s); the
+  language model starts loading while the audio is transcribed, not after; "typing" shows at once; and what was heard is sent back
+  ("I heard: ...", `channels.telegram.echo_voice_transcript`) before anything is done with it, so a mishearing is seen first.
 - The operator's rules about the model's habits are three ordered lists in their own modules, not branches in the worker's tick (the worker lost about 780 lines, no behavior changed):
   `orchestration/request_facts.py` reads what a request says once, each fact from the text it always came from;
   `orchestration/call_policy.py` is what happens to a tool call before it runs (refusals, canonical form, fourteen labeled rewrites, in order);
