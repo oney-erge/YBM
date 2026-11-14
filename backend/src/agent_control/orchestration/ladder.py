@@ -244,6 +244,24 @@ def _typed_a_placeholder(steps: list[dict[str, Any]]) -> bool:
     return False
 
 
+RENAME_TEXT = (
+    "organize_plan only sorts files into folders (by type); it does not rename anything, so asking for it again will not help. To give "
+    "files new names call filesystem.manage with operation apply_manifest, the folder as root, and a manifest with one entry per file: "
+    "{\"source\": <the file's full path>, \"destination\": <the new full path in the same folder>, \"operation\": \"rename\"}. Take the file "
+    "names from the listing you already have, build every new name the way the request says, and apply them all in one call."
+)
+
+
+def rename_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
+    """A request to rename files, after a plan that only sorts them into folders."""
+    last = steps[-1]
+    if "rename" in given or (last.get("tool_name"), _operation(last)) != (FILESYSTEM_TOOL, "organize_plan"):
+        return None
+    if str(last.get("status") or "") != "succeeded" or not RequestFacts.from_text(request).renames:
+        return None
+    return Hint("rename", RENAME_TEXT)
+
+
 def form_hint(request: str, steps: list[dict[str, Any]], given: set[str]) -> Hint | None:
     """What the page in front of the model asks for, when the request is to make an account or to log in. Each is said once."""
     page = _browser_page(steps[-1])
@@ -276,7 +294,7 @@ def next_hint(
     if not steps:
         return None
     last = steps[-1]
-    form = form_hint(request, steps, given)
+    form = form_hint(request, steps, given) or rename_hint(request, steps, given)
     if form is not None:
         return form
     absent = proven_absent(request, steps)

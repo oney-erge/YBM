@@ -59,6 +59,8 @@ NEW_ACCOUNT = re.compile(
     r"\b(?:create|make|open|set\s*up|start|register|get)\b[^.?!\n]{0,40}\b(?:an?\s+)?(?:new\s+)?(?:account|login|profile)\b|\bsign\s*(?:me\s*|us\s*)?up\b|\bregister\b",
     re.IGNORECASE,
 )
+#: Give files new names ("rename every .txt so it starts with old-", "name them ...").
+RENAME = re.compile(r"\brename\b|\bnew names?\b|\bnames? (?:should )?(?:start|begin|end)s? with\b", re.IGNORECASE)
 #: Log in to a website.
 LOG_IN = re.compile(r"\b(?:log\s*(?:me\s*)?in|sign\s*(?:me\s*)?in|login)\b", re.IGNORECASE)
 _PROVIDERS = (
@@ -110,6 +112,10 @@ class RequestFacts:
     @property
     def asks_to_understand_a_document(self) -> bool:
         return bool(DOCUMENT_UNDERSTANDING.search(self.own))
+
+    @property
+    def renames(self) -> bool:
+        return bool(RENAME.search(URL.sub(" ", self.own)))
 
     @property
     def wants_a_new_account(self) -> bool:

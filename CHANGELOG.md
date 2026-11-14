@@ -240,6 +240,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Two gaps the fresh suite (heldout4) found. "Which file was changed most recently?" asked through `describe_folder` or
+  `collect_folder_snapshot`, which list names and sizes but no dates, ended blocked: such a listing is now made with `inspect_folder` and
+  dates, as the other listings already were. "Rename every .txt so it starts with old-" was planned with `organize_plan`, which only sorts
+  files into folders, and never renamed anything: after such a plan the task's history now says to use `apply_manifest` with a rename entry
+  per file.
 - A task that asked a question and got its answer runs its next tool call. Answering put the task back to `received`, the worker
   only moved a task to `running` the first time it started, and a call is admitted only for a `running` task (since the lifecycle
   controls), so the first call after an answer was never run and the worker asked the model again on every poll: a live run made
