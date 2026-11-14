@@ -259,6 +259,17 @@ words they offer ("done", "skip"), and it does not expire after a day the way a 
 (`skills/starter/`) tells the Operator how to draft one: ask one question first when the goal is vague, give every step an owner, never plan
 for the assistant to pay.
 
+### Gaming mode
+
+The person can say they are about to play (`channels/gaming_command.py`: "gaming mode", "I'm about to play a game", "free up the GPU") and the
+assistant frees the GPU and stays off it until they say they are done (`gaming.py`). The phrases are exact and answered without a model call,
+because asking a language model to free the GPU would load it first. The state is a file, since intake, worker and scheduler are separate
+processes. While it exists: the worker claims no task (`gpu_hold`, which also frees the GPU the first time it is idle, so a running task is
+finished first), the warm-up request is not sent (`llm/warmup.py`), and a message that needs the model gets one reply that it waits and is kept in
+a short list that is read back when gaming mode ends. Freeing is LocalDeploy's `POST /models/free`, which stops Ollama's models and the managed
+llama.cpp server; the reply says so in words when the language model is still running. Nothing watches for a game: it turns on only when
+the person says so.
+
 ### Looking at pictures
 
 The model that runs the assistant locally reads text only, so a photo sent in Telegram was answered with "a JPEG, 8 KB". `image.describe`
