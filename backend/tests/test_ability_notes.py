@@ -114,13 +114,28 @@ async def test_yes_no_questions_go_in_one_call_and_come_back_as_probabilities():
         import json
 
         seen.append(json.loads(request.content))
-        return httpx.Response(200, json={"answers": {"a": {"noul": 0.9}, "b": {"noul": "0.2"}, "c": {"choice": "x"}}})
+        return httpx.Response(200, json={"answers": {"q0": {"noul": 0.9}, "q1": {"noul": "0.2"}, "q2": {"choice": "x"}}})
 
     client = _client(handler)
     answers = await client.yes_no("hello", {"a": "Is it a?", "b": "Is it b?", "c": "Is it c?"})
     assert answers == {"a": 0.9, "b": 0.2}  # c was not a yes/no answer: absent, not "no"
-    assert len(seen) == 1 and seen[0]["questions"]["a"] == {"type": "noul", "instructions": "Is it a?"} and seen[0]["state"] == "hello"
+    assert len(seen) == 1 and seen[0]["questions"]["q0"] == {"type": "noul", "instructions": "Is it a?"} and seen[0]["state"] == "hello"
     assert await client.yes_no("hello", {}) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_name_localdeploy_would_refuse_is_sent_under_a_plain_one_and_answered_under_the_callers():
+    seen = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        import json
+
+        seen.append(json.loads(request.content)["questions"])
+        return httpx.Response(200, json={"answers": {"q0": {"noul": 0.9}, "q1": {"noul": 0.1}}})
+
+    answers = await _client(handler).yes_no("hello", {"gap:commerce.order": "Is it an order?", "skill:plan-a-project": "Is it a project?"})
+    assert answers == {"gap:commerce.order": 0.9, "skill:plan-a-project": 0.1}
+    assert all(name.replace("_", "").isalnum() for name in seen[0])  # what LocalDeploy accepts: letters, digits, _ . -
 
 
 @pytest.mark.asyncio
@@ -170,3 +185,45 @@ async def test_notes_that_fail_leave_the_task_without_them_and_a_worker_without_
     assert failed.metadata["ability_notes"] == ""
     plain = await TaskWorker(repos, audit)._with_ability_notes(task)
     assert "ability_notes" not in plain.metadata
+
+
+# --- a skill that says when it applies is put in front of the Operator, whole --------------------------------------------------------------------
+
+
+def _skills_index(tmp_path, *, when: str = "Is this a big goal with many steps?") -> AbilityIndex:
+    root = tmp_path / "skills"
+    root.mkdir(exist_ok=True)
+    frontmatter = f"when: {when}\n" if when else ""
+    (root / "plan.md").write_text(
+        f"---\nname: Plan a project\ndescription: turn a big goal such as building a robot into a plan\n{frontmatter}---\n1. Ask one question.\n2. Write the steps.\n",
+        encoding="utf-8",
+    )
+    (root / "report.md").write_text("---\nname: Weekly report\ndescription: write the weekly report\n---\nsteps\n", encoding="utf-8")
+    settings = AppSettings(_env_file=None, abilities={"enabled": True}, adapters={"skills": {"enabled": True, "root_dir": str(root)}})
+    return build_index(build_tool_registry(settings, "http://127.0.0.1:8765"), settings)
+
+
+@pytest.mark.asyncio
+async def test_a_skill_with_a_question_is_shown_whole_on_a_yes_and_never_on_words_alone(tmp_path):
+    index = _skills_index(tmp_path)
+    request = "I want you to build me a robot, a small drone, a plan for building a robot"
+    yes = _Confirmer({"skill:plan-a-project": 0.9})
+    shown = [a for a in await relevant(index, request, confirm=yes) if a.id == "skill:plan-a-project"]
+    assert len(shown) == 1 and yes.asked[0][1]["skill:plan-a-project"] == "Is this a big goal with many steps?"
+    text = render(shown)
+    assert "Follow this procedure, Plan a project:" in text and "1. Ask one question.\n2. Write the steps." in text
+    def skills(found):
+        return [a for a in found if a.kind.value == "skill"]
+
+    assert skills(await relevant(index, request, confirm=_Confirmer({"skill:plan-a-project": 0.2}))) == []
+    assert skills(await relevant(index, request, confirm=None)) == []  # a strong word match is not enough for a skill
+    assert skills(await relevant(index, request, confirm=_Confirmer(DecisionModelError("down")))) == []
+
+
+@pytest.mark.asyncio
+async def test_a_skill_without_a_question_stays_in_the_list_the_prompt_already_has(tmp_path):
+    index = _skills_index(tmp_path, when="")
+    confirmer = _Confirmer({"skill:plan-a-project": 0.99})
+    found = await relevant(index, "I want you to build me a robot, a plan for building a robot", confirm=confirmer)
+    assert [a for a in found if a.kind.value == "skill"] == []
+    assert all("skill:plan-a-project" not in questions for _, questions in confirmer.asked)

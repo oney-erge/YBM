@@ -221,7 +221,7 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS plans (
+    CREATE TABLE IF NOT EXISTS project_plans (
         id TEXT PRIMARY KEY,
         conversation_id TEXT,
         goal TEXT NOT NULL,
@@ -234,7 +234,7 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
-    CREATE TABLE IF NOT EXISTS plan_steps (
+    CREATE TABLE IF NOT EXISTS project_plan_steps (
         id TEXT PRIMARY KEY,
         plan_id TEXT NOT NULL,
         position INTEGER NOT NULL,
@@ -248,11 +248,11 @@ SCHEMA_STATEMENTS = [
         task_id TEXT,
         result TEXT NOT NULL,
         updated_at TEXT NOT NULL,
-        FOREIGN KEY(plan_id) REFERENCES plans(id) ON DELETE CASCADE
+        FOREIGN KEY(plan_id) REFERENCES project_plans(id) ON DELETE CASCADE
     )
     """,
-    "CREATE INDEX IF NOT EXISTS idx_plan_steps_plan ON plan_steps(plan_id, position)",
-    "CREATE INDEX IF NOT EXISTS idx_plan_steps_task ON plan_steps(task_id)",
+    "CREATE INDEX IF NOT EXISTS idx_project_plan_steps_plan ON project_plan_steps(plan_id, position)",
+    "CREATE INDEX IF NOT EXISTS idx_project_plan_steps_task ON project_plan_steps(task_id)",
 ]
 
 

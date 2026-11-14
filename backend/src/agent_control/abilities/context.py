@@ -34,6 +34,10 @@ MAX_SHOWN = 3
 #: Records of a kind the prompt already lists are not repeated, whatever their state: the tool catalog names every tool, on or off, the
 #: skills section every skill, and the MCP section the first MCP tools. A coding agent that is ready is the `coding.agent` tool.
 _ALREADY_LISTED = frozenset({AbilityKind.TOOL, AbilityKind.SKILL, AbilityKind.HELPER, AbilityKind.MCP_TOOL})
+#: A skill is only listed by name in the prompt, and a small model does not always go and read it. One that says when it applies (`when:` in
+#: its frontmatter) is put in front of the Operator, whole, when that question is answered yes for the request: never on words alone, because
+#: a skill about reports matches every request that mentions one.
+_PUSHED_WHEN_CONFIRMED = frozenset({AbilityKind.SKILL, AbilityKind.HELPER})
 
 #: Asks yes/no questions about one request and returns the probability of yes for each name answered. Raises when it cannot be reached.
 Confirmer = Callable[[str, dict[str, str]], Awaitable[dict[str, float]]]
@@ -44,12 +48,12 @@ async def relevant(
 ) -> list[Ability]:
     candidates = [
         (ability, score)
-        for ability, score in index.search(request, limit=limit * 4)
+        for ability, score in index.search(request, limit=limit * 6)
         if score >= SHORTLIST_SCORE
-        and ability.kind not in _ALREADY_LISTED
+        and (ability.kind not in _ALREADY_LISTED or (ability.kind in _PUSHED_WHEN_CONFIRMED and ability.confirm))
         and not (ability.kind == AbilityKind.AGENT and ability.state == AbilityState.READY)
     ]
-    unclear = [ability for ability, score in candidates if score < CLEAR_SCORE and ability.confirm]
+    unclear = [ability for ability, score in candidates if ability.confirm and (score < CLEAR_SCORE or ability.kind in _PUSHED_WHEN_CONFIRMED)]
     answers: dict[str, float] = {}
     if unclear and confirm is not None:
         try:
@@ -58,7 +62,8 @@ async def relevant(
             logger.info("abilities_confirm_unavailable", exc_info=True)
     shown = []
     for ability, score in candidates:
-        if score >= CLEAR_SCORE or (ability.confirm and answers.get(ability.id, 0.0) >= ability.confirm_at):
+        asked = ability.confirm and answers.get(ability.id, 0.0) >= ability.confirm_at
+        if asked or (score >= CLEAR_SCORE and ability.kind not in _PUSHED_WHEN_CONFIRMED):
             shown.append(ability)
         if len(shown) == limit:
             break
@@ -78,6 +83,9 @@ def render(abilities: list[Ability]) -> str:
             AbilityState.DISABLED: "switched off; the user can turn it on in Access",
             AbilityState.READY: "ready",
         }[ability.state]
+        if ability.kind in _PUSHED_WHEN_CONFIRMED:
+            lines.append(f"- Follow this procedure, {ability.name}: {ability.summary}\n{ability.detail}")
+            continue
         lines.append(f"- {ability.name} ({state}): {ability.summary}")
         if ability.guidance:
             lines.append(f"  {ability.guidance}")

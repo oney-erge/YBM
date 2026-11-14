@@ -157,6 +157,9 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
         return None
     description = str(frontmatter.get("description") or "").strip() or "(no description)"
     version = str(frontmatter.get("version") or "1").strip() or "1"
+    # An optional yes/no question about a request ("Is this a big goal with many steps?"). A skill that has one is put in front of the
+    # Operator when the question is answered yes for the request (abilities/context.py), instead of waiting to be found in the list.
+    when = str(frontmatter.get("when") or "").strip()
     declared_tools = frontmatter.get("tools")
     tools_declared = isinstance(declared_tools, list) and all(isinstance(t, str) for t in declared_tools)
     body_text = body.strip()
@@ -164,6 +167,7 @@ def _parse_skill_file(path: Path) -> dict[str, Any] | None:
         "name": name,
         "description": description,
         "version": version,
+        "when": when,
         "tools": sorted({t.strip() for t in declared_tools if t.strip()}) if tools_declared else [],
         "tools_declared": tools_declared,
         "body": body_text,

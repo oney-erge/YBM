@@ -207,7 +207,7 @@ async def test_a_step_claimed_by_a_process_that_stopped_before_its_task_existed_
     await runner.tick()
     assert repos.plans.get(plan.id).steps[0].status == StepStatus.RUNNING  # just claimed: another worker may be creating the task
     with repos.plans.database.connect() as connection:
-        connection.execute("UPDATE plan_steps SET updated_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (step.id,))
+        connection.execute("UPDATE project_plan_steps SET updated_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (step.id,))
     await runner.tick()
     plan = repos.plans.get(plan.id)
     assert plan.steps[0].status == StepStatus.RUNNING and plan.steps[0].task_id  # given back, then started again by the same pass
@@ -317,10 +317,28 @@ def test_retention_keeps_a_plan_that_has_not_ended_however_old_and_removes_one_t
     repos.plans.set_status(ended.id, PlanStatus.DONE)
     repos.plans.set_status(open_plan.id, PlanStatus.PAUSED)
     with repos.plans.database.connect() as connection:
-        connection.execute("UPDATE plans SET updated_at = '2000-01-01T00:00:00+00:00'")
+        connection.execute("UPDATE project_plans SET updated_at = '2000-01-01T00:00:00+00:00'")
         tables = {row["name"] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         _clean_tables(connection, tables, "2020-01-01T00:00:00+00:00")
     assert repos.plans.get(ended.id) is None and repos.plans.get(open_plan.id) is not None
     with repos.plans.database.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) AS n FROM plan_steps WHERE plan_id = ?", (ended.id,)).fetchone()["n"] == 0
-        assert connection.execute("SELECT COUNT(*) AS n FROM plan_steps WHERE plan_id = ?", (open_plan.id,)).fetchone()["n"] == 3
+        assert connection.execute("SELECT COUNT(*) AS n FROM project_plan_steps WHERE plan_id = ?", (ended.id,)).fetchone()["n"] == 0
+        assert connection.execute("SELECT COUNT(*) AS n FROM project_plan_steps WHERE plan_id = ?", (open_plan.id,)).fetchone()["n"] == 3
+
+
+def test_a_database_that_still_has_the_old_unused_plans_table_gets_plans_beside_it(tmp_path):
+    """An install from before plans/ has a `plans` table of another shape (the old plan-based path). Plans live in their own tables."""
+    from agent_control.storage import Database, Repositories
+
+    path = tmp_path / "old.db"
+    old = Database(f"sqlite:///{path}")
+    with old.connect() as connection:
+        connection.execute("CREATE TABLE plans (id TEXT PRIMARY KEY, task_id TEXT NOT NULL, steps_json TEXT NOT NULL)")
+        connection.execute("INSERT INTO plans VALUES ('plan_old', 'task_old', '[]')")
+    database = Database(f"sqlite:///{path}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    saved = repos.plans.create(_plan(_steps()))
+    assert repos.plans.get(saved.id).goal.startswith("Build a small drone") and repos.plans.list(statuses=[PlanStatus.PROPOSED])
+    with database.connect() as connection:
+        assert connection.execute("SELECT id FROM plans").fetchone()["id"] == "plan_old"  # left as it was
