@@ -307,6 +307,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A Word or Excel file that was made in the task's own folder says so, and how to put it where the person asked. Live 11/15, "save it in <folder>": the model made the file without a place, then needed four refused copies and three code runs
+  (2.5 minutes) to get it there. The tool's reply now ends "It is in the task's own folder. If the person named a folder for it, make it again with output_name set to the full path of the file in that folder; do not copy it." (nothing is added
+  when a place was given). The tool's schema in the prompt is unchanged.
 - A Word, Excel or PowerPoint file goes where the model was told to put it. Asked to "save it in <folder>", the model wrote the place as `output_path`, the tool only knew `output_name`, dropped the field without a word, made the file in the task's own
   folder and the answer said it was saved in the folder asked for (live 11/15: the named folder stayed empty). `output_path` is now read like `output_name`; a place outside the configured document roots is an error the model sees, not a silent move.
 - A Word document is never made with only its title. Live on 11/15 the model wrote the checklist as `lines` and the tool read only `content`, so a .docx holding just the title ("1 lines") was made and sent.
