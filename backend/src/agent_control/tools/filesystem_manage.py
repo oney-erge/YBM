@@ -111,16 +111,30 @@ class FilesystemManageAdapter:
         max_depth = int(request.input.get("max_depth") or 2)
         max_entries = int(request.input.get("max_entries") or 200)
         entries = []
+        not_opened: list[str] = []
+        stopped_at_limit = False
         for path in _walk_limited(root, max_depth=max_depth):
             if path == root:
                 continue
             entries.append(_entry(root, path))
+            if len(path.relative_to(root).parts) == max_depth and _has_children(path):
+                not_opened.append(str(path.relative_to(root)).replace("\\", "/"))
             if len(entries) >= max_entries:
+                stopped_at_limit = True
                 break
+        # What a listing leaves out is part of the answer. Asked for "the three largest files" in a folder whose biggest file sat three levels down, the
+        # model named three files of the two levels it was shown and called them the largest (sealed Verdict 2, fin2_d1).
+        notes = ""
+        if not_opened:
+            shown = ", ".join(not_opened[:8]) + (f" and {len(not_opened) - 8} more" if len(not_opened) > 8 else "")
+            notes += f" Not opened (deeper than max_depth {max_depth}): {shown}. Call again with a larger max_depth to see inside them before saying which file is largest or newest."
+        if stopped_at_limit:
+            notes += f" Stopped at {max_entries} items; there may be more."
         return {
             "root": str(root),
             "entries": entries,
-            "summary": f"Found {len(entries)} item(s) under {root}.",
+            "not_opened": not_opened,
+            "summary": f"Found {len(entries)} item(s) under {root}.{notes}",
         }
 
     def _search(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -701,6 +715,14 @@ def _ordered_children(root: Path, *, recursive: bool):
     """
     iterator = root.rglob("*") if recursive else root.iterdir()
     return sorted(iterator, key=lambda path: (str(path).casefold(), str(path)))
+
+
+def _has_children(path: Path) -> bool:
+    """A folder with something in it (a folder that cannot be opened counts as having something: it is not known to be empty)."""
+    try:
+        return path.is_dir() and not path.is_symlink() and next(path.iterdir(), None) is not None
+    except OSError:
+        return path.is_dir()
 
 
 def _walk_limited(root: Path, *, max_depth: int):
