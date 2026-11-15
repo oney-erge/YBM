@@ -301,6 +301,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The research skill loads again. Its sharper trigger sentence had a colon in it, which YAML reads as a second key; the file was skipped without a word, the research route never applied, and the 9B went to a web search that
+  is blocked here (live 11/15, the first request on the final code). A test now loads every file in `skills/starter` and fails if one is skipped.
 - A plan gets a day on every step more reliably, and research is the assistant's step. The first live house plan had a day on 1 step of 9 (and its research owned by the user, its needs a tool name); drafted again, the same goal had a day on
   every step. The day is now required in the schema the planner model is held to (a draft without one is still accepted in code), and the planner is told that finding things out (rules, prices, options, who could do the work) is
   the assistant's step and that `needs` is for the user's side only. Measured on the real 9B over 5 goals and 6 repeats of the house goal: a day on every step in all 11 drafts (was 2 of 4 for the house), research owned by the user in

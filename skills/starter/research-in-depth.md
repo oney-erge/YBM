@@ -1,7 +1,7 @@
 ---
 name: Research a topic in depth
 description: run a long research job (many web pages read one at a time, a cited report at the end) when the person wants a topic researched thoroughly, instead of answering from a few searches
-when: Is the user asking you to start researching a topic in depth (many sources, a report later)? It is not that if the message is about research already under way: how far it is, pausing it, stopping it, or its result.
+when: Is the user asking you to start researching a topic in depth (many sources, a report later)? It is not that if the message is about research already under way, such as how far it is, pausing it, stopping it, or its result.
 when_at: 0.55
 route: job
 tools:

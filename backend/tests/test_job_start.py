@@ -181,3 +181,19 @@ def test_the_operator_is_told_a_job_is_running_in_the_chat_and_that_a_message_ab
     assert open_job_note(repos.jobs, "other-chat") == ""  # another chat's job is not shown
     repos.jobs.save(job.id, status=JobStatus.DONE)
     assert open_job_note(repos.jobs, "42") == ""  # an ended job is not running
+
+
+def test_every_bundled_starter_skill_parses_and_the_research_skill_is_routed_to_the_job_stage() -> None:
+    """Found live 11/15: the research skill's new `when:` had a colon in it, which YAML reads as a second key. The file was skipped without a word, the route never
+    applied, and the 9B went to a web search that is blocked. Every file in skills/starter must load, with its question, and none may be dropped silently."""
+    from pathlib import Path
+
+    from agent_control.tools.skills import _load_skills
+
+    root = Path(__file__).resolve().parents[2] / "skills" / "starter"
+    files = sorted(root.glob("*.md"))
+    loaded = {skill["path"].replace("\\", "/").rsplit("/", 1)[-1] for skill in _load_skills(str(root))}
+    assert loaded == {path.name for path in files}, f"skipped without a word: {sorted({p.name for p in files} - loaded)}"
+    research = next(skill for skill in _load_skills(str(root)) if skill["name"] == "Research a topic in depth")
+    assert research["route"] == "job" and research["when_at"] == 0.55 and research["tools"] == ["job.manage"]
+    assert "already under way" in research["when"] and research["when"].startswith("Is the user asking you to start researching")
