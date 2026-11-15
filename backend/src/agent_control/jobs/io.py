@@ -38,10 +38,11 @@ class _Visible(html.parser.HTMLParser):
     """The title and the visible text of a page, one paragraph-ish run per line, without scripts, styles and navigation chrome."""
 
     _BLOCK = {"p", "div", "li", "br", "h1", "h2", "h3", "h4", "tr", "section", "article"}
-    _CHROME = {"nav", "footer", "header", "aside", "form"}
+    _CHROME = frozenset({"nav", "footer", "header", "aside", "form"})
 
-    def __init__(self) -> None:
+    def __init__(self, *, chrome: bool = True) -> None:
         super().__init__(convert_charrefs=True)
+        self._chrome = self._CHROME if chrome else frozenset()
         self.title = ""
         self.parts: list[str] = []
         self._in_title = False
@@ -50,7 +51,7 @@ class _Visible(html.parser.HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "title":
             self._in_title = True
-        elif tag in _SKIPPED_TAGS or tag in self._CHROME:
+        elif tag in _SKIPPED_TAGS or tag in self._chrome:
             self._skip += tag != "head"
         elif tag in self._BLOCK:
             self.parts.append("\n")
@@ -58,7 +59,7 @@ class _Visible(html.parser.HTMLParser):
     def handle_endtag(self, tag: str) -> None:
         if tag == "title":
             self._in_title = False
-        elif (tag in _SKIPPED_TAGS or tag in self._CHROME) and tag != "head" and self._skip:
+        elif (tag in _SKIPPED_TAGS or tag in self._chrome) and tag != "head" and self._skip:
             self._skip -= 1
 
     def handle_data(self, data: str) -> None:
@@ -68,8 +69,27 @@ class _Visible(html.parser.HTMLParser):
             self.parts.append(data.strip() + " ")
 
 
+#: A page whose reduced text is shorter than this is read again with only scripts and styles taken out, and that reading is used when it is much fuller (see `visible_text`).
+MIN_PAGE_TEXT = 500
+
+
 def visible_text(markup: str) -> Page:
-    parser = _Visible()
+    """The title and the words of a page. Navigation, footers and forms are left out, unless that leaves almost nothing.
+
+    Found live on 11/14: 16 of 36 pages of one research job read as empty, though each had its article in the HTML. A site that wraps its whole
+    page in a `<form>` (ASP.NET), or whose `<header>` or `<aside>` is never closed, put the article "inside" a part the reducer drops. The page is
+    then read again without dropping any part, and the fuller reading is used.
+    """
+    page = _reduce(markup, chrome=True)
+    if len(page.text) >= MIN_PAGE_TEXT:
+        return page
+    fuller = _reduce(markup, chrome=False)
+    # Three times as much, and enough to be a page: a short page with a menu stays without its menu.
+    return fuller if len(fuller.text) >= max(MIN_PAGE_TEXT, 3 * len(page.text)) else page
+
+
+def _reduce(markup: str, *, chrome: bool) -> Page:
+    parser = _Visible(chrome=chrome)
     try:
         parser.feed(markup)
         parser.close()

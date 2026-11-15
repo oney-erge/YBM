@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A research job reads the pages it finds. Live on 11/14, 16 of 36 pages of one job read as empty. Two causes, both fixed: the web read tool stopped at 100,000 characters, and a modern page spends
+  that much on scripts and styles before its article (`adapters.http_request.max_response_chars` now defaults to 400,000); and the reducer that keeps a page's words dropped navigation, footers and forms, so a
+  site that wraps its whole page in a `<form>`, or leaves a `<header>` open, read as nothing. A page whose reduced text is short is now read again without dropping any part, and the fuller reading is used when
+  it is much fuller. Of the 16 pages that failed, 11 now read; the rest are a blocked site (403), a dead link (404) and two pages that are all script.
 - A research job reaches the number of pages it was asked for. One search per question found 36 pages for a request of 100 (live 11/14: 7 questions of 8 results, less the pages two questions share). When the pages found are short of the limit, the
   questions are searched again in other words (one model call writes a different search for each), up to three rounds in all; a round that adds nothing, or a model that cannot rewrite the searches, ends the searching and the job reads what it has.
 - The second verdict suite (`e2e/verdict2_cases.json`, 20 cases `fin2_*`, frozen by hash, `--suite verdict2`): the exam for the finished assistant. It covers what the plan added

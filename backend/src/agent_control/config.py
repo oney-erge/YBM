@@ -375,7 +375,8 @@ class HttpRequestAdapterConfig(StrictBaseModel):
     # link-local or reserved addresses) is refused, and so is every other method unless the host is allowlisted. Off by default.
     allow_public_reads: bool = False
     timeout_seconds: int = Field(default=30, ge=1, le=300)
-    max_response_chars: int = Field(default=100000, ge=100, le=1000000)
+    # 400,000: a modern page spends the first 100,000 characters on scripts and styles in its head, and the article is behind them (research jobs read nothing from pages like that).
+    max_response_chars: int = Field(default=400000, ge=100, le=1000000)
     max_body_chars: int = Field(default=100000, ge=0, le=1000000)
     user_agent: str = "YBM-http-request/1.0"
 
