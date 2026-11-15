@@ -33,7 +33,7 @@ def job_line(job: Job) -> str:
         JobStatus.FAILED: f"Stopped after repeated errors. {research.progress_text(job.state)} 'Resume' tries again.",
         JobStatus.CANCELLED: "Stopped.",
     }[job.status]
-    return f"{job.id}: {job.goal[:100]}. {where}"
+    return f"{job.goal[:100]}. {where}"
 
 
 class JobManageAdapter:
@@ -70,7 +70,7 @@ class JobManageAdapter:
             raise ValueError("start_research requires a goal")
         open_jobs = self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED])
         if len(open_jobs) >= MAX_OPEN_JOBS:
-            raise ValueError(f"{len(open_jobs)} research jobs are already open in this chat ({open_jobs[0].id}); pause or stop one first, or wait for it to finish")
+            raise ValueError(f"{len(open_jobs)} researches are already open in this chat; pause or stop one first, or wait for it to finish")
         pages = int(request.input.get("max_pages") or self.config.default_pages)
         job = self.repositories.jobs.create(Job(kind="research", goal=goal, state=research.new_state(min(pages, self.config.max_pages)), routing=routing))
         self.audit.append(
@@ -85,31 +85,42 @@ class JobManageAdapter:
             ),
         }
 
-    def _status(self, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
+    def _named(self, request: ToolCallRequest, routing: dict[str, str]) -> Job | None:
+        """The job whose id was given, when it is one of this chat's. A model that is shown no job number writes one from somewhere else (a task id, an
+        earlier job's id cut short), and found live that a pause with such an id was refused as "no open research job" while one was running."""
         job_id = str(request.input.get("job_id") or "")
-        jobs = [job for job in [self.repositories.jobs.get(job_id)] if job] if job_id else self._mine(routing)[-5:]
+        job = self.repositories.jobs.get(job_id) if job_id else None
+        return job if job is not None and job.routing.get("source_chat_id") == routing.get("source_chat_id") else None
+
+    def _status(self, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
+        named = self._named(request, routing)
+        if named is not None:
+            jobs = [named]
+        else:
+            mine = self._mine(routing)
+            open_jobs = [job for job in mine if job.is_open]
+            jobs = open_jobs or mine[-1:]  # what is running, else the last one there was
         if not jobs:
-            return {"jobs": [], "summary": "There are no long jobs in this chat."}
+            return {"jobs": [], "summary": "There is no research in this chat."}
         return {"job_id": jobs[-1].id, "jobs": [{"id": job.id, "status": job.status.value} for job in jobs], "summary": "\n".join(job_line(job) for job in jobs)}
 
     def _control(self, operation: str, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
-        job_id = str(request.input.get("job_id") or "")
-        job = self.repositories.jobs.get(job_id) if job_id else next(iter(reversed(self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]))), None)
+        job = self._named(request, routing) or next(iter(reversed(self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]))), None)
         if job is None:
-            raise ValueError("there is no open research job to " + operation)
+            raise ValueError("there is no research running in this chat to " + operation)
         if operation == "pause":
             if job.status != JobStatus.RUNNING:
-                raise ValueError(f"job {job.id} is {job.status.value}, not running")
+                raise ValueError(f"the research is {job.status.value}, not running")
             pause_job(self.repositories, job)
             said = "Paused the research. Nothing more is read until 'resume'. What it has so far is kept."
         elif operation == "resume":
             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED):
-                raise ValueError(f"job {job.id} is {job.status.value}, not paused")
+                raise ValueError(f"the research is {job.status.value}, not paused")
             resume_job(self.repositories, job)
             said = f"Resumed the research. {research.progress_text(job.state)}"
         else:
             if not job.is_open and job.status != JobStatus.FAILED:
-                raise ValueError(f"job {job.id} already ended ({job.status.value})")
+                raise ValueError(f"the research already ended ({job.status.value})")
             cancel_job(self.repositories, job)
             said = f"Stopped the research. {research.progress_text(job.state)} Nothing more will be read."
         return {"job_id": job.id, "jobs": [{"id": job.id, "status": self.repositories.jobs.get(job.id).status.value}], "summary": said}

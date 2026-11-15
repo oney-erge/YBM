@@ -303,6 +303,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Pause, resume, stop and "how far along?" for research are made and answered in code. Live on 11/15, on the real bot: "Pause the research." called pause with a task id as the job id and was refused, was answered "already paused" while the
+  job ran, "Resume the research." was taken for the answer to a question about it, and "Stop it" was answered "has been stopped" about a job that was still running. A yes/no question cannot recognize these ("Pause the research." scored 0.09), so
+  while research is open in the chat every message is routed to the research stage, whose one model call says which of start, status, pause, resume, stop or something else it is (on the real 9B: 6 of 6 requests and 18 of 18 controls and
+  other messages); the call is made first and the answer is the tool's own sentence, or "I could not do that: ..." when it was refused. A job id the model made up no longer stops a control (the chat's open research is meant), and
+  nothing the tool says carries a job number any more.
 - The research skill loads again. Its sharper trigger sentence had a colon in it, which YAML reads as a second key; the file was skipped without a word, the research route never applied, and the 9B went to a web search that
   is blocked here (live 11/15, the first request on the final code). A test now loads every file in `skills/starter` and fails if one is skipped.
 - The assistant's own offer no longer counts as the user asking for Claude Code. Found by the second live research run: the assistant offered to hand a task to Claude Code, was answered "Pause the research."

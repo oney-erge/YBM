@@ -146,12 +146,15 @@ def test_a_started_job_does_the_reading_and_the_sending_the_request_asked_for_an
 
 
 @pytest.mark.asyncio
-async def test_a_message_about_research_already_running_is_not_a_start_and_the_operator_answers_it():
-    """Live 11/14: "How far along is the research?" started a second job whose goal was that sentence."""
-    status = _Provider(_Start(goal="", pages=None, new_research=False))
-    assert await start_research_call(status, "How far along is the research?") is None
-    assert (await start_research_call(_Provider(_Start(goal="g", pages=None, new_research=True)), REQUEST))["operation"] == "start_research"
-    assert "already under way" in status.asked[0][0] and "new_research" in status.asked[0][0]
+async def test_the_message_is_turned_into_the_call_it_asks_for_and_something_else_into_none():
+    """Live 11/14: "How far along is the research?" started a second job whose goal was that sentence; live 11/15: a pause was never made."""
+    status = _Provider(_Start(action="status"))
+    assert await start_research_call(status, "How far along is the research?") == {"operation": "status"}
+    for action in ("pause", "resume", "stop"):
+        assert await start_research_call(_Provider(_Start(action=action)), "whatever") == {"operation": action}
+    assert await start_research_call(_Provider(_Start(action="other")), "What is the weather?") is None
+    assert (await start_research_call(_Provider(_Start(action="start", goal="g")), REQUEST))["operation"] == "start_research"
+    assert "already under way" in status.asked[0][0] and '"pause", "resume" or "stop"' in status.asked[0][0]
 
 
 @pytest.mark.asyncio
@@ -202,17 +205,48 @@ def test_every_bundled_starter_skill_parses_and_the_research_skill_is_routed_to_
     assert "already under way" in research["when"] and research["when"].startswith("Is the user asking you to start researching")
 
 
-def test_a_started_job_is_told_to_the_person_in_code_without_a_job_number_and_only_when_it_really_started() -> None:
-    """Live 11/15: after the job started, the Operator kept calling the job tool with the id of an earlier job, offered Claude Code, and asked whether to wait or pause."""
-    from agent_control.orchestration.planning import _research_started, started_answer
+def test_what_the_call_did_is_told_to_the_person_in_code_without_a_job_number_and_a_failure_is_said_as_one() -> None:
+    """Live 11/15: after the job started the Operator went on calling the job tool with the id of an earlier job, offered Claude Code, and asked whether to wait or pause;
+    a pause was never made and "has been stopped" was said about a job that had not been stopped."""
+    from agent_control.orchestration.planning import _job_call_entry, job_answer, started_answer
 
     done = {"tool_name": "job.manage", "status": "succeeded", "input": {"operation": "start_research", "goal": "g"}, "output_summary": "Started the research on: g. It reads up to 10 pages, one at a time"}
-    assert _research_started([{"tool_name": "_fulfillment_check"}, done]) is done
-    for history in ([], [{**done, "status": "failed"}], [{**done, "input": {"operation": "status"}}], [{"tool_name": "web.search", "status": "succeeded"}]):
-        assert _research_started(history) is None
+    assert _job_call_entry([{"tool_name": "_fulfillment_check"}, done], "start_research") is done
+    for history in ([], [{"tool_name": "web.search", "status": "succeeded"}]):
+        assert _job_call_entry(history, "start_research") is None
+    assert _job_call_entry([done], "pause") is None
     said = started_answer(done)
     assert "up to 10 pages" in said and "job_" not in said and "pause or stop it" in said
     assert "I will read the pages one at a time" in started_answer({**done, "output_summary": "Started."})
+    assert job_answer(done) == said
+    paused = {"tool_name": "job.manage", "status": "succeeded", "input": {"operation": "pause"}, "output_summary": "Paused the research. Nothing more is read until 'resume'."}
+    assert job_answer(paused) == "Paused the research. Nothing more is read until 'resume'."
+    refused = {"tool_name": "job.manage", "status": "failed", "input": {"operation": "pause"}, "error": "there is no research running in this chat to pause."}
+    assert job_answer(refused) == "I could not do that: there is no research running in this chat to pause."
+    assert job_answer({**refused, "error": None}) == "I could not do that."
+
+
+@pytest.mark.asyncio
+async def test_a_pause_is_made_and_answered_in_code_and_a_refused_one_is_said_so_never_claimed(tmp_path):
+    """Live 11/15, "Pause the research.": the Operator called pause with a task id, said the job was "already paused", and later said "has been stopped" about a job that was still running."""
+    repos, audit = make_repos(tmp_path)
+
+    async def stage(task):
+        return {"operation": "pause"}
+
+    adapter = StaticToolAdapter({"summary": "Paused the research. Nothing more is read until 'resume'.", "answer": "ok"})
+    operator = QueueOperator([])
+    worker = TaskWorker(repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter, tool_name="job.manage"), operator=operator, job_stage=stage)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    task = repos.tasks.create("Pause the research.", conversation_id=conversation, metadata={**ROUTING, "original_message_text": "Pause the research.", "task_route": "job"})
+    for _ in range(4):
+        await worker.process_next()
+        if repos.tasks.get(task.id).status == TaskStatus.COMPLETED:
+            break
+    finished = repos.tasks.get(task.id)
+    assert [r.input["operation"] for r in adapter.requests] == ["pause"] and operator.calls == 0
+    assert finished.status == TaskStatus.COMPLETED and finished.metadata["job_forced_call"] == "pause"
+    assert str(finished.metadata.get("synthesized_answer")) == "Paused the research. Nothing more is read until 'resume'."
 
 
 def test_research_finished_in_the_last_week_is_told_to_the_operator_with_its_summary_and_where_its_report_is(tmp_path):
