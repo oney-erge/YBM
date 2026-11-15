@@ -112,8 +112,10 @@ def _clean_ddg_url(href: str) -> str:
 
 
 class WebSearchAdapter:
-    def __init__(self, config: WebSearchAdapterConfig) -> None:
+    def __init__(self, config: WebSearchAdapterConfig, browser_search: Any | None = None) -> None:
         self.config = config
+        # Searches through the assistant's own Chrome when DuckDuckGo refuses (jobs/io.make_browser_search): async (query, count) -> results.
+        self.browser_search = browser_search
 
     async def execute(self, request: ToolCallRequest) -> ToolCallResult:
         query = str(request.input.get("query") or "").strip()
@@ -128,7 +130,17 @@ class WebSearchAdapter:
             else:
                 results = await self._duckduckgo(query, limit)
         except Exception as exc:  # noqa: BLE001 - reported to the operator
-            return failed_result(request, f"web search failed: {exc}")
+            results = await self._in_chrome(query, limit) if self.config.provider == "duckduckgo" else []
+            if not results:
+                return failed_result(request, f"web search failed: {exc}")
+            return ToolCallResult(
+                request_id=request.id,
+                status=ToolResultStatus.SUCCEEDED,
+                output={
+                    "operation": "search", "query": query, "provider": "chrome", "results": results[:limit],
+                    "summary": f"{len(results[:limit])} result(s) for {query!r} via Chrome (DuckDuckGo refused the search).",
+                },
+            )
         return ToolCallResult(
             request_id=request.id,
             status=ToolResultStatus.SUCCEEDED,
@@ -144,6 +156,17 @@ class WebSearchAdapter:
                 ),
             },
         )
+
+    async def _in_chrome(self, query: str, limit: int) -> list[dict[str, str]]:
+        """The same search in the assistant's own Chrome. DuckDuckGo answers a connection it takes for a program with a human check (HTTP 202), on this
+        connection every time (found 11/14), so "search the web for X" found nothing and the assistant asked for a Brave key. A page rendered in a
+        browser is answered. Empty when there is no Chrome or it finds nothing; the caller then reports DuckDuckGo's refusal."""
+        if self.browser_search is None:
+            return []
+        try:
+            return [dict(item) for item in await self.browser_search(query, limit)]
+        except Exception:  # noqa: BLE001 - the original refusal is the better thing to report
+            return []
 
     async def _get(self, url: str, **kwargs: Any) -> httpx.Response:
         async with httpx.AsyncClient(
@@ -232,4 +255,6 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         )
     )
     if enabled:
-        adapters["web.search"] = WebSearchAdapter(config)
+        from agent_control.jobs.io import make_browser_search  # here, not at the top: jobs/ imports from tools/
+
+        adapters["web.search"] = WebSearchAdapter(config, make_browser_search(settings.adapters.browser))

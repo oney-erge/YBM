@@ -123,3 +123,53 @@ def test_tool_follows_the_network_capability() -> None:
     assert definition.enabled is True
     # docs/THREAT_MODEL.md: search results are external, uncontrolled content.
     assert definition.operation_content_trust == {"search": "untrusted_external"}
+
+
+def _blocked(monkeypatch) -> None:
+    import httpx
+
+    async def refused(self, url, **kwargs):
+        return httpx.Response(202, text="<html><body>Unfortunately, bots use DuckDuckGo too. anomaly-modal</body></html>")
+
+    monkeypatch.setattr(WebSearchAdapter, "_get", refused)
+
+
+def _search_request() -> ToolCallRequest:
+    return ToolCallRequest(task_id="t", tool_name="web.search", capability=Capability.NETWORK_HTTP, input={"operation": "search", "query": "raspberry pi 5 price"})
+
+
+@pytest.mark.asyncio
+async def test_a_search_duckduckgo_refuses_is_made_in_chrome_and_says_so(monkeypatch) -> None:
+    """Found live 11/14: on this connection every DuckDuckGo search is refused with a human check, so "search the web for X" found nothing at all."""
+    _blocked(monkeypatch)
+    asked = []
+
+    async def chrome(query, count):
+        asked.append((query, count))
+        return [{"title": "Raspberry Pi 5", "url": "https://shop.example/pi5", "snippet": "8 GB"}]
+
+    result = await WebSearchAdapter(WebSearchAdapterConfig(), chrome).execute(_search_request())
+    assert result.status == ToolResultStatus.SUCCEEDED and result.output["provider"] == "chrome"
+    assert result.output["results"][0]["url"] == "https://shop.example/pi5" and "via Chrome (DuckDuckGo refused the search)" in result.output["summary"]
+    assert asked == [("raspberry pi 5 price", 5)]
+
+
+@pytest.mark.asyncio
+async def test_when_chrome_cannot_help_the_refusal_is_what_is_reported_and_other_providers_do_not_use_chrome(monkeypatch) -> None:
+    _blocked(monkeypatch)
+
+    async def broken(query, count):
+        raise RuntimeError("Chrome DevTools is not available")
+
+    async def empty(query, count):
+        return []
+
+    for fallback in (None, broken, empty):
+        result = await WebSearchAdapter(WebSearchAdapterConfig(), fallback).execute(_search_request())
+        assert result.status == ToolResultStatus.FAILED and "human check" in (result.error_message or "") and "BRAVE_SEARCH_API_KEY" in (result.error_message or "")
+
+    async def chrome(query, count):
+        raise AssertionError("a Brave search that fails is not retried in Chrome")
+
+    result = await WebSearchAdapter(WebSearchAdapterConfig(provider="brave"), chrome).execute(_search_request())
+    assert result.status == ToolResultStatus.FAILED
