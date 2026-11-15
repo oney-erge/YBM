@@ -151,7 +151,11 @@ class DocumentManageAdapter:
     def _create_document(self, request: ToolCallRequest) -> dict[str, Any]:
         """A Word document from a title and lines of text, with no package to install: a .docx is a zip of a few XML files."""
         title = str(request.input.get("title") or request.input.get("objective") or "Document").strip()
-        content = str(request.input.get("content") or request.input.get("instructions") or "").strip()
+        lines = [str(line) for line in (request.input.get("lines") or [])]
+        content = str(request.input.get("content") or request.input.get("instructions") or "\n".join(lines)).strip()
+        if not content:
+            # Found live on 11/15: the model passed the text as "lines", which was dropped, and a Word file with only its title was made and sent.
+            raise ValueError("create_document needs the text of the document: 'content' (lines separated by newlines) or 'lines'. A document with only a title was not made.")
         output_path = self._output_path(request, request.input.get("output_name"), default_stem=_safe_stem(title), suffix=".docx")
         paragraphs = _document_paragraphs(title, content)
         _write_minimal_docx(output_path, paragraphs)

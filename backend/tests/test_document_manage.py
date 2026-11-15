@@ -300,3 +300,16 @@ async def test_no_total_for_a_column_that_is_not_all_numbers_and_the_inputs_are_
         DocumentManageInput(operation="create_spreadsheet", title="x")
     with pytest.raises(ValueError, match="create_document requires"):
         DocumentManageInput(operation="create_document")
+
+
+@pytest.mark.asyncio
+async def test_the_text_of_a_word_document_can_be_a_list_of_lines_and_a_document_with_only_a_title_is_refused(tmp_path) -> None:
+    """Live 11/15: the model wrote the checklist as "lines", the tool read only "content", and a Word file holding just its title was made and sent."""
+    from agent_control.tools.office_text import office_text
+
+    result, *_ = await _make(tmp_path, operation="create_document", title="Camping", lines=["# Gear", "- Tent", "- Stove", "Pack the night before."])
+    assert result.status.value == "succeeded" and result.output["paragraph_count"] == 5
+    text = office_text(Path(result.output["path"]))
+    assert "Gear" in text and "\u2022 Tent" in text and "Pack the night before." in text
+    empty, *_ = await _make(tmp_path, operation="create_document", title="Only a title")
+    assert empty.status.value == "failed" and "needs the text of the document" in (empty.error_message or "")

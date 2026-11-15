@@ -307,6 +307,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A Word document is never made with only its title. Live on 11/15 the model wrote the checklist as `lines` and the tool read only `content`, so a .docx holding just the title ("1 lines") was made and sent.
+  `create_document` now takes the text as `content` or as a list of `lines`, and refuses a call that has neither, saying what is missing, so the model tries again instead of sending an empty file.
 - Recorded scenario prompts no longer carry a file's modified time. A listing now shows when each file changed, which is the time a test made its files, so the recorded prompts of the folder scenarios stopped matching on every run;
   the time is taken out of the prompt before it is hashed (`testing/scripted_llm.py`), so recordings made before listings had dates still match.
 - A folder listing says what it did not open. `inspect_folder` stops at `max_depth` (2 by default) and at `max_entries`, and said nothing about it: asked for "the three largest files" in a folder whose biggest file was three levels down, the

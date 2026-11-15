@@ -191,6 +191,8 @@ class DocumentManageInput(ToolInputModel):
     # create_spreadsheet: the rows, each a list of cells (the first row is the header), and whether to add a "Total" row that sums the number columns.
     rows: list[list[str | int | float | None]] | None = Field(default=None, max_length=2000)
     total_row: bool = False
+    # create_document: the text as a list of lines, when it is easier than one string with newlines (a model often writes it that way).
+    lines: list[str] | None = Field(default=None, max_length=500)
 
     @model_validator(mode="after")
     def _require_inputs_per_operation(self) -> "DocumentManageInput":
