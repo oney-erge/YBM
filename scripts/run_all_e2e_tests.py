@@ -1456,6 +1456,7 @@ async def _run_turn(
     settled_statuses: set[str] | None = None,
     expects_task: bool | str = True,
     attachments: list[str] | None = None,
+    question_is_an_end: bool = False,
 ) -> TurnResult:
     """Send one message + poll the spawned task until terminal/timeout. All errors caught.
 
@@ -1556,6 +1557,7 @@ async def _run_turn(
         last_step = None
         last_replan = None
         clarification_sent_at = 0.0
+        resumed_after_reply = False
         ceiling, clipped = _turn_ceiling_seconds(max_seconds)
         if clipped:
             print(
@@ -1603,6 +1605,14 @@ async def _run_turn(
             # loudly so a pass here is never mistaken for an unprompted one.
             # A second question after that answer means the agent is not finishing. Waiting out the whole ceiling (about 11
             # minutes a case, three cases in one run) only delays the same failure, so the wait ends shortly after the reply.
+            if turn.clarification_sent and status != "clarifying":
+                resumed_after_reply = True
+            if status == "clarifying" and turn.clarification_sent and question_is_an_end and resumed_after_reply:
+                # The case lists "clarifying" among the ends it accepts: a second question, after the task went on with the reply, is one of them.
+                # Cancelling it here turned an accepted end into "cancelled" (h4_ask_before_moving: "ask me which folder first" is exactly a question).
+                print("    [clarify] asked again after the reply; the case accepts a question as the end")
+                reached_terminal = True
+                break
             if (
                 status == "clarifying"
                 and turn.clarification_sent
@@ -1823,6 +1833,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
                 settled_statuses={str(item) for item in case.get("settled_statuses") or []},
                 expects_task=expects_task_mode(case.get("expects_task", True)),
                 attachments=attachments or None,
+                question_is_an_end="clarifying" in ((case.get("assertions") or {}).get("final_status_in") or []),
             )
         stage.turns.append(initial)
         passed, reason = _diagnose_turn(case, initial, is_followup=False, fixtures=fixtures)
@@ -1846,6 +1857,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
                 resume_task_id=initial.task_id if fu.get("resume_task") else None,
                 settled_statuses={str(item) for item in fu.get("settled_statuses") or []},
                 expects_task=expects_task_mode(fu.get("expects_task", True)),
+                question_is_an_end="clarifying" in ((fu.get("assertions") or {}).get("final_status_in") or []),
             )
             stage.turns.append(fu_turn)
             fu_case = {**case, "assertions": fu.get("assertions", case.get("assertions") or {})}
