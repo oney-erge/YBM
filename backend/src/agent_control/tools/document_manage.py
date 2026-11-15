@@ -173,7 +173,7 @@ class DocumentManageAdapter:
             "artifact_id": artifact.id,
             "artifact_ids": [artifact.id],
             "paragraph_count": len(paragraphs),
-            "summary": f"Created the Word document {output_path.name} ({len(paragraphs)} lines): {output_path}. Send it to the person with artifact.deliver if they asked for the file.",
+            "summary": f"Created the Word document {output_path.name} ({len(paragraphs)} lines): {output_path}. Send it to the person with artifact.deliver if they asked for the file.{_placement_note(request)}",
         }
 
     def _create_spreadsheet(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -201,7 +201,7 @@ class DocumentManageAdapter:
             "artifact_ids": [artifact.id],
             "row_count": len(rows),
             "totals": totals,
-            "summary": f"Created the spreadsheet {output_path.name} with {len(rows)} rows.{said} Send it to the person with artifact.deliver if they asked for the file.",
+            "summary": f"Created the spreadsheet {output_path.name} with {len(rows)} rows.{said} Send it to the person with artifact.deliver if they asked for the file.{_placement_note(request)}",
         }
 
     def _compare_documents(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -351,6 +351,17 @@ class DocumentManageAdapter:
         if self.allowed_roots and not any(root == path or root in path.parents for root in self.allowed_roots):
             raise ValueError(f"path is outside configured document roots: {path}")
         return path
+
+
+def _placement_note(request: ToolCallRequest) -> str:
+    """Said to the model when it did not choose where the file goes: the file is in the task's own folder, and moving it later is the slow way.
+
+    Live 11/15, "save it in <folder>": the file was made in the task folder, then the model needed four failed copies and three code runs (2.5 minutes)
+    to get it where it was asked to be. One more call with output_name does it at once.
+    """
+    if request.input.get("output_name") or request.input.get("output_path"):
+        return ""
+    return " It is in the task's own folder. If the person named a folder for it, make it again with output_name set to the full path of the file in that folder; do not copy it."
 
 
 def _extract_text(path: Path) -> str:

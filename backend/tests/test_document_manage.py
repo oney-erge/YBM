@@ -302,6 +302,10 @@ async def test_no_total_for_a_column_that_is_not_all_numbers_and_the_inputs_are_
         DocumentManageInput(operation="create_document")
 
 
+def _summary_of(made) -> str:
+    return made[0].output["summary"]
+
+
 @pytest.mark.asyncio
 async def test_a_file_goes_where_the_model_said_whichever_field_it_used_and_outside_the_roots_is_an_error_not_a_silent_move(tmp_path) -> None:
     """Live 11/15: asked to save a Word file in a named folder, the model wrote "output_path"; the tool ignored it and the answer claimed the folder."""
@@ -310,6 +314,9 @@ async def test_a_file_goes_where_the_model_said_whichever_field_it_used_and_outs
     assert by_path.status.value == "succeeded" and Path(by_path.output["path"]) == wanted.resolve() and wanted.exists()
     by_name, *_ = await _make(tmp_path, operation="create_document", title="Trip", lines=["- Tent"], output_name=str(tmp_path / "other.docx"))
     assert Path(by_name.output["path"]) == (tmp_path / "other.docx").resolve()
+    assert "output_name" in _summary_of(await _make(tmp_path, operation="create_document", title="Trip", lines=["- Tent"]))  # not placed: told how to place it
+    assert "output_name" in _summary_of(await _make(tmp_path, operation="create_spreadsheet", title="Trip", rows=[["A"], [1]]))
+    assert "output_name" not in by_path.output["summary"] and "output_name" not in by_name.output["summary"]  # placed: nothing to add
     elsewhere, *_ = await _make(tmp_path, operation="create_document", title="Trip", lines=["- Tent"], output_path=str(tmp_path.parent / "outside" / "x.docx"))
     assert elsewhere.status.value == "failed" and "outside configured document roots" in (elsewhere.error_message or "")
 
