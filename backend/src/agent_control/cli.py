@@ -541,7 +541,7 @@ def _task_notes(
         if settings.plans.enabled:
             text += open_plan_note(repositories.plans, conversation_id)
         if settings.jobs.enabled:
-            text += open_job_note(repositories.jobs, repositories.conversations.external_id(conversation_id))
+            text += open_job_note(repositories.jobs, repositories.conversations.external_id(conversation_id), settings.jobs.reports_dir)
         return text, route
 
     return notes
