@@ -164,6 +164,21 @@ class GuardStage:
         })
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
 
+    def _refuse_unrequested_move(
+        self, task: TaskRecord, history: list[dict[str, Any]], tool_name: str | None, tool_input: dict[str, Any], step_id: str
+    ) -> TaskRecord:
+        """Not run: the request gives files other names and this call would also move them into folders."""
+        history.append({
+            "tool_name": tool_name, "input": tool_input, "status": ToolResultStatus.DENIED.value,
+            "error": (
+                "Not run: the request only asks for new names, and this call would move the files into other folders, which was not asked for. Rename them "
+                "where they are: filesystem.manage apply_manifest with the folder as root and one entry per file, operation rename, source the file, "
+                "destination the same folder with the new name."
+            ),
+            "step_id": step_id,
+        })
+        return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+
     def _refuse_call(self, task: TaskRecord, history: list[dict[str, Any]], vetted: call_policy.VettedCall, step_id: str) -> TaskRecord:
         """Record why a call was not run (call_policy.vet_call decided; this writes it down, because it owns the repositories)."""
         refusal = vetted.refusal
@@ -176,6 +191,8 @@ class GuardStage:
             return self._refuse_unrequested_coding_agent(task, history, vetted.tool_input, step_id)
         if refusal.kind == "simulated_delete":
             return self._refuse_simulated_delete(task, history, vetted.tool_name, vetted.tool_input, step_id)
+        if refusal.kind == "unrequested_move":
+            return self._refuse_unrequested_move(task, history, vetted.tool_name, vetted.tool_input, step_id)
         return self._refuse_blind_persona_replace(task, history, vetted.tool_input, step_id)
 
     def _refuse_ungrounded_path(
