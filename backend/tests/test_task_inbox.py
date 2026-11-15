@@ -157,3 +157,24 @@ def test_what_the_person_added_is_shown_to_the_model_as_their_words_not_as_one_m
     assert '2. THE PERSON ADDED, while you were working: "The Word one, not the PDF."' in shown
     assert "Your answer has to reflect it." in shown and "_user_note" not in shown
     assert "1. filesystem.manage (succeeded)" in shown  # the real step is shown as before
+
+
+def test_a_note_sent_while_a_step_runs_is_not_overwritten_by_the_step_saving_its_own_copy_of_the_history(tmp_path) -> None:
+    """Verdict 2 fin2_e1: "Find the tax letter", then "sorry, the one from the council". The assistant said "Noted" and answered about the other letter: the step saved its
+    copy of the history over the stored one, and the note was gone when the model next looked."""
+    repos, audit = make_repos(tmp_path)
+    conv = _conv(repos, "a")
+    task = repos.tasks.create("Find the tax letter", conversation_id=conv)
+    first = {"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "inspect_folder"}, "output_summary": "2 files"}
+    repos.tasks.update_metadata(task.id, {**task.metadata, "operator_history": [first]}, TaskStatus.RUNNING)
+    snapshot = list(repos.tasks.get(task.id).metadata["operator_history"])  # the step reads the history, then works for a while
+
+    attach_note(repos, audit, repos.tasks.get(task.id), text="Sorry, I meant the one from the council.", actor="user")  # the person writes meanwhile
+
+    second = {"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "read_file"}, "output_summary": "revenue letter"}
+    saved = repos.tasks.update_metadata(task.id, {**repos.tasks.get(task.id).metadata, "operator_history": [*snapshot, second]})  # the step saves its copy
+    history = saved.metadata["operator_history"]
+    assert [entry["tool_name"] for entry in history] == ["filesystem.manage", "filesystem.manage", NOTE_ENTRY_NAME]
+    assert "council" in history[-1]["output_summary"] and saved.metadata["user_note_count"] == 1
+    again = repos.tasks.update_metadata(task.id, {**saved.metadata, "operator_history": [*history]})  # saving it again does not add it twice
+    assert [entry["tool_name"] for entry in again.metadata["operator_history"]].count(NOTE_ENTRY_NAME) == 1
