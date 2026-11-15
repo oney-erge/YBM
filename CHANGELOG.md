@@ -303,6 +303,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Recorded scenario prompts no longer carry a file's modified time. A listing now shows when each file changed, which is the time a test made its files, so the recorded prompts of the folder scenarios stopped matching on every run;
+  the time is taken out of the prompt before it is hashed (`testing/scripted_llm.py`), so recordings made before listings had dates still match.
 - A folder listing says what it did not open. `inspect_folder` stops at `max_depth` (2 by default) and at `max_entries`, and said nothing about it: asked for "the three largest files" in a folder whose biggest file was three levels down, the
   assistant named the three biggest of what it had seen and called them the largest (sealed Verdict 2, fin2_d1). The first line of the result now names the folders that were not opened (those with something in them) and tells the model to call again with a
   larger depth before it says which file is largest or newest, and says when the entry limit stopped the listing.
