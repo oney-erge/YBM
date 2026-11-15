@@ -4109,7 +4109,13 @@ def test_a_budget_reached_answer_says_what_the_work_produced_before_naming_its_f
     answer = fulfilled_step_budget_answer(task, [found])
     assert "Top CPU: chrome.exe 41%" in answer and "Workspace:" not in answer and "Backend:" not in answer
     # nothing readable left: the old sentences, in the old order
-    assert fulfilled_step_budget_answer(task, [{**found, "output_summary": header}]).startswith("Completed the requested work in ")
+    # nothing readable left, and the folder is the task's own: no folder in the answer (challenge run 11/14: "reply leaked forbidden content: task_")
+    internal = fulfilled_step_budget_answer(task, [{**found, "output_summary": header}])
+    assert "task_" not in internal and "ran out of steps before I could put what it found into words" in internal
+    windows = TaskRecord(objective="x", metadata={"workspace_dir": "C:" + chr(92) + "for fun" + chr(92) + "YBM" + chr(92) + ".agent_control" + chr(92) + "code_interpreter" + chr(92) + "task_task_485cdd"})
+    assert "task_" not in fulfilled_step_budget_answer(windows, [{**found, "output_summary": header}])  # a Windows path, which is what the live run had
+    project = TaskRecord(objective="build an app", metadata={"workspace_dir": "C:/Users/me/Projects/calculator"})
+    assert fulfilled_step_budget_answer(project, [{**found, "output_summary": header}]) == "Completed the requested work in C:/Users/me/Projects/calculator."
     assert fulfilled_step_budget_answer(TaskRecord(objective="x", metadata={"schedule_id": "s1"}), [found]) == "Created the requested schedule (s1)."
     assert without_program_labels("Return code: 0\nhello") == "hello"
 
