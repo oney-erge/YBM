@@ -301,6 +301,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A plan gets a day on every step more reliably, and research is the assistant's step. The first live house plan had a day on 1 step of 9 (and its research owned by the user, its needs a tool name); drafted again, the same goal had a day on
+  every step. The day is now required in the schema the planner model is held to (a draft without one is still accepted in code), and the planner is told that finding things out (rules, prices, options, who could do the work) is
+  the assistant's step and that `needs` is for the user's side only. Measured on the real 9B over 5 goals and 6 repeats of the house goal: a day on every step in all 11 drafts (was 2 of 4 for the house), research owned by the user in
+  2 of 6 repeats and 0 of 5 other goals (was 2 to 3 steps).
 - "I noticed a procedure worth keeping" no longer arrives in the middle of someone's work. The learning card (keep this skill, remember this preference) is shown only when no other
   task of the chat is moving or waiting for an approval tap, and never after a step of a plan; otherwise the proposal waits in the queue (the console) as before.
 - A correction sent while the assistant is working reaches the answer. Live 11/14: "Find my resume", then "The Word one, not the PDF" six seconds in, and the answer listed both files. The person's
