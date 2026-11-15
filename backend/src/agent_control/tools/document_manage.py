@@ -64,6 +64,10 @@ class DocumentManageAdapter:
                 output = self._compare_documents(request)
             elif operation == "create_presentation":
                 output = self._create_presentation(request)
+            elif operation == "create_document":
+                output = self._create_document(request)
+            elif operation == "create_spreadsheet":
+                output = self._create_spreadsheet(request)
             elif operation == "update_presentation":
                 output = self._update_presentation(request)
             else:
@@ -142,6 +146,58 @@ class DocumentManageAdapter:
             "artifact_ids": [artifact.id],
             "slide_count": len(slides),
             "summary": f"Created PowerPoint presentation with {len(slides)} slide(s): {output_path}",
+        }
+
+    def _create_document(self, request: ToolCallRequest) -> dict[str, Any]:
+        """A Word document from a title and lines of text, with no package to install: a .docx is a zip of a few XML files."""
+        title = str(request.input.get("title") or request.input.get("objective") or "Document").strip()
+        content = str(request.input.get("content") or request.input.get("instructions") or "").strip()
+        output_path = self._output_path(request, request.input.get("output_name"), default_stem=_safe_stem(title), suffix=".docx")
+        paragraphs = _document_paragraphs(title, content)
+        _write_minimal_docx(output_path, paragraphs)
+        artifact = self.artifacts.create(
+            Artifact(
+                task_id=request.task_id,
+                type=ArtifactType.DOCUMENT,
+                uri=str(output_path),
+                content_preview=f"Word document: {title}",
+                metadata={"source": "document.manage", "operation": "create_document", "paragraph_count": len(paragraphs)},
+            )
+        )
+        return {
+            "path": str(output_path),
+            "artifact_id": artifact.id,
+            "artifact_ids": [artifact.id],
+            "paragraph_count": len(paragraphs),
+            "summary": f"Created the Word document {output_path.name} ({len(paragraphs)} lines): {output_path}. Send it to the person with artifact.deliver if they asked for the file.",
+        }
+
+    def _create_spreadsheet(self, request: ToolCallRequest) -> dict[str, Any]:
+        """A spreadsheet from rows, with a real SUM row when asked: the sums are worked out here, not by the model that wrote the rows."""
+        title = str(request.input.get("title") or request.input.get("objective") or "Spreadsheet").strip()
+        rows = [list(row) for row in (request.input.get("rows") or []) if row]
+        if not rows:
+            raise ValueError("create_spreadsheet requires rows")
+        total_row = bool(request.input.get("total_row"))
+        output_path = self._output_path(request, request.input.get("output_name"), default_stem=_safe_stem(title), suffix=".xlsx")
+        totals = _write_xlsx_table(output_path, title[:31] or "Sheet1", rows, total_row=total_row)
+        artifact = self.artifacts.create(
+            Artifact(
+                task_id=request.task_id,
+                type=ArtifactType.DOCUMENT,
+                uri=str(output_path),
+                content_preview=f"Spreadsheet: {title} ({len(rows)} rows)",
+                metadata={"source": "document.manage", "operation": "create_spreadsheet", "row_count": len(rows), "totals": totals},
+            )
+        )
+        said = f" The total row says {', '.join(f'{name} {value:g}' for name, value in totals.items())}." if totals else ""
+        return {
+            "path": str(output_path),
+            "artifact_id": artifact.id,
+            "artifact_ids": [artifact.id],
+            "row_count": len(rows),
+            "totals": totals,
+            "summary": f"Created the spreadsheet {output_path.name} with {len(rows)} rows.{said} Send it to the person with artifact.deliver if they asked for the file.",
         }
 
     def _compare_documents(self, request: ToolCallRequest) -> dict[str, Any]:
@@ -404,6 +460,110 @@ def _xlsx_column_name(index: int) -> str:
     return name
 
 
+_BULLET = re.compile(r"^\s*(?:[-*\u2022]|\[[ xX]?\]|\u2610)\s+")
+_NUMBER = re.compile(r"^-?\d+(?:[.,]\d+)?$")
+#: Characters Excel does not allow in a sheet name.
+_SHEET_NAME_BAD = re.compile(r"[\[\]:*?/\\]")
+
+
+def _document_paragraphs(title: str, content: str) -> list[tuple[str, str]]:
+    """(style, text) for a Word document: the title, then each line, a "# " line as a heading and a "- " or "[ ] " line as a bullet."""
+    paragraphs = [("title", title)]
+    for line in content.splitlines():
+        text = line.strip()
+        if not text:
+            continue
+        if text.startswith("#"):
+            paragraphs.append(("heading", text.lstrip("# ").strip()))
+        elif _BULLET.match(text):
+            paragraphs.append(("bullet", "\u2022 " + _BULLET.sub("", text, count=1).strip()))
+        else:
+            paragraphs.append(("body", text))
+    return paragraphs
+
+
+def _write_minimal_docx(path: Path, paragraphs: list[tuple[str, str]]) -> None:
+    """A dependency-free, openable Word file: a title, headings (bold) and lines."""
+    runs = {"title": ('<w:b/><w:sz w:val="40"/>'), "heading": ('<w:b/><w:sz w:val="28"/>'), "bullet": "", "body": ""}
+    body = []
+    for style, text in paragraphs:
+        clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]", "", text)
+        indent = '<w:pPr><w:ind w:left="360"/></w:pPr>' if style == "bullet" else ""
+        body.append(f'<w:p>{indent}<w:r><w:rPr>{runs[style]}</w:rPr><w:t xml:space="preserve">{xml_escape(clean)}</w:t></w:r></w:p>')
+    with ZipFile(path, "w", ZIP_DEFLATED) as docx:
+        docx.writestr("[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/></Types>""")
+        docx.writestr("_rels/.rels", """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>""")
+        docx.writestr("word/document.xml", f"""<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>{"".join(body)}<w:sectPr><w:pgSz w:w="11906" w:h="16838"/><w:pgMar w:top="1134" w:right="1134" w:bottom="1134" w:left="1134" w:header="708" w:footer="708" w:gutter="0"/></w:sectPr></w:body></w:document>""")
+
+
+def _as_number(value: Any) -> float | None:
+    """A cell that is a number: 566, 12.5, "120.50", "1,5" (a decimal comma only when there is no other comma), not "2026-03-15" or "EUR 12"."""
+    if isinstance(value, bool) or value is None:
+        return None
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip()
+    if _NUMBER.match(text):
+        return float(text.replace(",", "."))
+    return None
+
+
+def _write_xlsx_table(path: Path, sheet_name: str, rows: list[list[Any]], *, total_row: bool) -> dict[str, float]:
+    """A dependency-free workbook with number cells as numbers and, when asked, a "Total" row of real SUM formulas (with their values stored so any viewer shows them).
+
+    Returns the totals by column header. The first row is the header; a column is summed when every cell under the header is a number or empty and at least one is a number.
+    """
+    width = max(len(row) for row in rows)
+    rows = [[*row, *([None] * (width - len(row)))] for row in rows]
+    header, data = rows[0], rows[1:]
+    totals: dict[str, float] = {}
+    sums: dict[int, float] = {}
+    if total_row and data:
+        for column in range(width):
+            cells = [_as_number(row[column]) if row[column] not in (None, "") else 0.0 for row in data]
+            if all(cell is not None for cell in cells) and any(row[column] not in (None, "") for row in data):
+                sums[column] = float(sum(cell for cell in cells if cell is not None))
+                totals[str(header[column] or _xlsx_column_name(column + 1))] = sums[column]
+    sheet_rows = []
+    for row_index, row in enumerate(rows, 1):
+        cells = []
+        for column_index, value in enumerate(row, 1):
+            name = f"{_xlsx_column_name(column_index)}{row_index}"
+            number = _as_number(value) if row_index > 1 else None
+            if value is None or value == "":
+                continue
+            if number is not None:
+                cells.append(f'<c r="{name}"><v>{number:g}</v></c>' if abs(number) < 1e15 else f'<c r="{name}"><v>{number!r}</v></c>')
+            else:
+                clean = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]", "", str(value))
+                cells.append(f'<c r="{name}" t="inlineStr"><is><t xml:space="preserve">{xml_escape(clean)}</t></is></c>')
+        sheet_rows.append(f'<row r="{row_index}">{"".join(cells)}</row>')
+    if sums:
+        last = len(rows)
+        cells = [f'<c r="A{last + 1}" t="inlineStr"><is><t>Total</t></is></c>']
+        for column, value in sums.items():
+            letter = _xlsx_column_name(column + 1)
+            if column == 0:
+                continue
+            cells.append(f'<c r="{letter}{last + 1}"><f>SUM({letter}2:{letter}{last})</f><v>{value:g}</v></c>')
+        sheet_rows.append(f'<row r="{last + 1}">{"".join(cells)}</row>')
+    with ZipFile(path, "w", ZIP_DEFLATED) as xlsx:
+        xlsx.writestr("[Content_Types].xml", """<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/></Types>""")
+        xlsx.writestr("_rels/.rels", """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>""")
+        xlsx.writestr("xl/workbook.xml", f"""<?xml version="1.0" encoding="UTF-8"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="{xml_escape(_SHEET_NAME_BAD.sub("-", sheet_name))}" sheetId="1" r:id="rId1"/></sheets></workbook>""")
+        xlsx.writestr("xl/_rels/workbook.xml.rels", """<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>""")
+        xlsx.writestr("xl/worksheets/sheet1.xml", f"""<?xml version="1.0" encoding="UTF-8"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews><cols><col min="1" max="{width}" width="22" customWidth="1"/></cols><sheetData>{"".join(sheet_rows)}</sheetData></worksheet>""")
+    return totals
+
+
 def _slides_from_content(title: str, content: str) -> list[tuple[str, list[str]]]:
     bullets = [line.strip(" -*\t") for line in content.splitlines() if line.strip()]
     if not bullets and content:
@@ -541,6 +701,21 @@ def _verify_document_manage(request: ToolCallRequest, result: ToolCallResult) ->
             except Exception:
                 missing.append(f"could not verify comparison output: {path}")
         return ToolVerification(checked=2, verified=2 - len(missing), missing=missing)
+    if operation in {"create_document", "create_spreadsheet"}:
+        path = result.output.get("path")
+        if not isinstance(path, str) or not Path(path).is_file():
+            return ToolVerification(checked=1, verified=0, missing=[f"{operation.removeprefix('create_')} not found: {path}"])
+        try:
+            text = office_text(Path(path)) or ""
+        except Exception:
+            return ToolVerification(checked=1, verified=0, missing=[f"could not read as a valid Office file: {path}"])
+        if operation == "create_document":
+            title = str(request.input.get("title") or "").strip()
+            if title and title not in text:
+                return ToolVerification(checked=1, verified=0, missing=[f"the document does not contain its title: {path}"])
+        elif len([line for line in text.splitlines() if line.strip()]) < int(result.output.get("row_count") or 1):
+            return ToolVerification(checked=1, verified=0, missing=[f"the spreadsheet has fewer rows than were asked for: {path}"])
+        return ToolVerification(checked=1, verified=1, missing=[])
     if operation not in {"create_presentation", "update_presentation"}:
         return None
     path = result.output.get("path")
@@ -585,12 +760,15 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "summarize_pdf": Capability.FILESYSTEM_READ,
             },
             enabled=enabled,
-            description="inspect documents, compare evidence in documents, summarize PDFs, and create or revise PowerPoint files as task artifacts",
-            operations=("inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation"),
+            description=(
+                "inspect documents, compare evidence in documents, summarize PDFs, create a Word document (create_document: title and lines of text) or a "
+                "spreadsheet (create_spreadsheet: rows, the first the header, total_row for a Total row that is summed for you), and create or revise PowerPoint files, as task artifacts"
+            ),
+            operations=("inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation", "create_document", "create_spreadsheet"),
             input_schema=DocumentManageInput,
             output_schema=DocumentManageOutput,
             operation_output_schemas=same_output_schema(
-                ("inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation"),
+                ("inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation", "create_document", "create_spreadsheet"),
                 DocumentManageOutput,
             ),
             default_operation="inspect_document",
@@ -611,6 +789,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "compare_documents": RiskLevel.HIGH,
                 "create_presentation": RiskLevel.HIGH,
                 "update_presentation": RiskLevel.HIGH,
+                "create_document": RiskLevel.HIGH,
+                "create_spreadsheet": RiskLevel.HIGH,
             },
             verify=_verify_document_manage,
             examples=(
@@ -619,6 +799,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 {"operation": "create_presentation",
                  "title": "Weekly Update",
                  "content": "Status: green. Blockers: none."},
+                {"operation": "create_document", "title": "Packing list", "content": "# Clothes\n- Rain jacket\n- Two pairs of socks"},
+                {"operation": "create_spreadsheet", "title": "Invoices", "rows": [["Vendor", "Amount"], ["Plumbing", 120.5], ["Office supplies", 89.9]], "total_row": True},
             ),
         )
     )
