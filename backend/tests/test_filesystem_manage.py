@@ -677,3 +677,24 @@ async def test_a_listing_asked_for_through_the_input_model_carries_dates_by_defa
     assert searched["with_dates"] is None
     off = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=False))  # an explicit no still means no
     assert off.output["with_dates"] is False and ", modified " not in off.output["terminal_output"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_listing_says_which_folders_it_did_not_open_so_a_largest_file_is_not_named_from_half_the_tree(tmp_path) -> None:
+    """Sealed Verdict 2 fin2_d1: the biggest file was three levels down, the listing stopped at two, and the answer named the three biggest of what it saw."""
+    (tmp_path / "alpha" / "deep").mkdir(parents=True)
+    (tmp_path / "alpha" / "deep" / "glacier.bin").write_bytes(b"x" * 40_000)
+    (tmp_path / "alpha" / "seed.bin").write_bytes(b"x" * 2_000)
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "beta").mkdir()
+    (tmp_path / "beta" / "boulder.bin").write_bytes(b"x" * 75_000)
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+
+    shallow = await adapter.execute(_request(tmp_path, "inspect_folder", max_depth=2))
+    assert shallow.output["not_opened"] == ["alpha/deep"]  # an empty folder is not a hidden one
+    assert "Not opened (deeper than max_depth 2): alpha/deep." in shallow.output["summary"] and "larger max_depth" in shallow.output["summary"]
+    assert "Not opened" in shallow.output["terminal_output"][0]["content"].splitlines()[0]  # in the first line the model reads
+    deeper = await adapter.execute(_request(tmp_path, "inspect_folder", max_depth=3))
+    assert deeper.output["not_opened"] == [] and "glacier.bin" in deeper.output["terminal_output"][0]["content"] and "Not opened" not in deeper.output["summary"]
+    capped = await adapter.execute(_request(tmp_path, "inspect_folder", max_depth=3, max_entries=2))
+    assert "Stopped at 2 items; there may be more." in capped.output["summary"]

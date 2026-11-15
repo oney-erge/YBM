@@ -303,6 +303,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A folder listing says what it did not open. `inspect_folder` stops at `max_depth` (2 by default) and at `max_entries`, and said nothing about it: asked for "the three largest files" in a folder whose biggest file was three levels down, the
+  assistant named the three biggest of what it had seen and called them the largest (sealed Verdict 2, fin2_d1). The first line of the result now names the folders that were not opened (those with something in them) and tells the model to call again with a
+  larger depth before it says which file is largest or newest, and says when the entry limit stopped the listing.
 - A folder listing carries each file's modified time by default, for real this time. The Phase 1 change passed its tests and did nothing live: the tool's input model filled `with_dates: false` into every
   call that came through it, and an explicit false overrides the default. The sealed Verdict 2 run found it (fin2_d3, "which files changed in the last three days?": names and sizes, then "no tool shows modification
   times"). The field is now unset unless someone sets it, and a test makes the call the way the Operator does, through the model.
