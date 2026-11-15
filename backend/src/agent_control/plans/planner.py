@@ -28,7 +28,8 @@ Rules:
 - `depends_on`: positions of earlier steps that must be done first. Leave it empty when a step simply follows the one before it.
 - Use only what the assistant can do. If a step needs something it cannot do, make it a user step.
 - The steps are about the goal in the real world. Do not invent chores on the computer (making folders, files or spreadsheets) unless the goal is about the computer.
-- A goal with a date (a move on December 20, a party on January 10): work backwards from it. Start each step's title with when it is due, as a date or as "N days before" ("Dec 6: Book the movers", "2 weeks before: Order the invitations"), and order the steps by that date."""
+- `due`: the day the step should be done or started, written YYYY-MM-DD, on every step when the goal has a date or a stretch of time (a move on December 20, a party on January 10, a house next year, a skill in three months). Leave it empty when the goal has no time in it. The first steps are this week or next; never a day before today; with a fixed date work backwards from it, with a stretch of time spread the steps across it. Do not put the day in the title. List the steps in the order of their days.
+- A goal that takes months (a house, a business, a degree) is a plan of phases, each one a real thing to do ("Find out what the local rules and permits are", "Choose and hire the builder"), with the first steps small and the later ones just specific enough to start. Never state a price, a law or a permit rule as a fact: a step for the assistant finds it out from sources, and the user decides."""
 
 MAY_ASK = (
     "If you cannot tell what the goal is at all (not just a detail), do not write steps: set `question` to ONE short question and `options` to "
@@ -43,6 +44,7 @@ class StepDraft(BaseModel):
     owner: Literal["ybm", "user", "access"] = "ybm"
     needs: list[str] = Field(default_factory=list)
     depends_on: list[int] = Field(default_factory=list)
+    due: str = Field(default="", max_length=20)
 
 
 class PlanDraft(BaseModel):

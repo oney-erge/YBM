@@ -8,8 +8,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from agent_control.plans.model import Plan, PlanStatus
-from agent_control.plans.runner import render_plan
+from agent_control.plans.model import Plan, PlanStatus, StepStatus
+from agent_control.plans.runner import day_text, render_plan
 
 _FOOTERS = {
     PlanStatus.PROPOSED: "Start it when you are ready, or tell me what to change.",
@@ -27,8 +27,18 @@ _BUTTONS: dict[PlanStatus, list[tuple[str, str]]] = {
 }
 
 
+def _footer(plan: Plan) -> str:
+    if plan.status == PlanStatus.ACTIVE and not any(step.status in (StepStatus.RUNNING, StepStatus.WAITING) for step in plan.steps):
+        held = plan.next_held()
+        if held is not None:
+            return f"Nothing to do until {day_text(held.due)}: {held.title}. I will start it then."
+    if plan.status == PlanStatus.PROPOSED and not plan.check_in_days and plan.weeks_ahead():
+        return f"{_FOOTERS[plan.status]} It runs for about {plan.weeks_ahead()} weeks: say \"check in every week\" and I will tell you how it stands."
+    return _FOOTERS[plan.status]
+
+
 def card_text(plan: Plan) -> str:
-    return f"{render_plan(plan, results=plan.status != PlanStatus.PROPOSED)}\n\n{_FOOTERS[plan.status]}"[:3900]
+    return f"{render_plan(plan, results=plan.status != PlanStatus.PROPOSED)}\n\n{_footer(plan)}"[:3900]
 
 
 def card_keyboard(plan: Plan) -> dict[str, Any] | None:

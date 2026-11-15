@@ -10,7 +10,7 @@ task a plan starts are the ones every task has.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 
 from pydantic import Field, field_validator
@@ -43,6 +43,13 @@ class StepStatus(StrEnum):
 
 #: A plan that has no more than this many steps can be read on a phone. A longer one is a project of projects: split it.
 MAX_STEPS = 20
+#: A step with a date is not started more than this many days before it: a plan that spans months waits, active, for each date to come near.
+HOLD_DAYS = 7
+#: The longest stretch between check-ins a person can ask for, and the farthest date a step may have.
+MAX_CHECK_IN_DAYS = 60
+#: A plan that runs at least this many days is offered a check-in, once, when it is shown.
+CHECK_IN_OFFER_DAYS = 21
+MAX_DUE_YEARS = 5
 
 
 class PlanStep(StrictBaseModel):
@@ -59,6 +66,8 @@ class PlanStep(StrictBaseModel):
     depends_on: list[int] = Field(default_factory=list)
     #: The ability (abilities/) this step is expected to use, when the planner knew one. A hint to the task, not a constraint.
     ability: str = ""
+    #: The day the step should be done or started, when the goal has a date or a stretch of time. Steps are kept in the order of these days.
+    due: date | None = None
     status: StepStatus = StepStatus.PENDING
     task_id: str | None = None
     result: str = ""
@@ -68,6 +77,19 @@ class PlanStep(StrictBaseModel):
     @classmethod
     def _clean(cls, value: object) -> object:
         return " ".join(value.split()) if isinstance(value, str) else value
+
+    @field_validator("due", mode="before")
+    @classmethod
+    def _a_day(cls, value: object) -> object:
+        """A day written as YYYY-MM-DD. Anything else (empty, a phrase, a date that does not exist) is no date at all, not an error."""
+        if isinstance(value, datetime):
+            return value.date()
+        if isinstance(value, str):
+            try:
+                return date.fromisoformat(value.strip()[:10])
+            except ValueError:
+                return None
+        return value
 
 
 class Plan(StrictBaseModel):
@@ -83,6 +105,12 @@ class Plan(StrictBaseModel):
     #: plan still knows its chat after that task is cleared from the history.
     routing: dict[str, str] = Field(default_factory=dict)
     steps: list[PlanStep] = Field(default_factory=list)
+    #: What the user has told the assistant about this project (the plot, the budget, a decision), one line each, kept with the plan so every
+    #: step's task is told it and a later one does not ask again.
+    notes: str = Field(default="", max_length=2000)
+    #: Tell the user how the plan stands every this many days while it is active; 0 is never. The user asks for it, nothing sets it by itself.
+    check_in_days: int = Field(default=0, ge=0, le=MAX_CHECK_IN_DAYS)
+    last_check_in_at: datetime | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -95,8 +123,7 @@ class Plan(StrictBaseModel):
             return list(step.depends_on)
         return [step.position - 1] if step.position > 1 else []
 
-    def ready_steps(self) -> list[PlanStep]:
-        """Pending steps whose dependencies are done or skipped, in order. A skipped step does not hold up what follows it."""
+    def _unblocked(self) -> list[PlanStep]:
         finished = {step.position for step in self.steps if step.status in (StepStatus.DONE, StepStatus.SKIPPED)}
         return [
             step
@@ -104,5 +131,52 @@ class Plan(StrictBaseModel):
             if step.status == StepStatus.PENDING and all(dep in finished for dep in self.dependencies_of(step))
         ]
 
+    def ready_steps(self, today: date | None = None) -> list[PlanStep]:
+        """Pending steps whose dependencies are done or skipped and whose day is near, in order. A skipped step does not hold up what follows it."""
+        horizon = (today or date.today()) + timedelta(days=HOLD_DAYS)
+        return [step for step in self._unblocked() if step.due is None or step.due <= horizon]
+
+    def weeks_ahead(self, today: date | None = None) -> int:
+        """How many whole weeks until the last day on the plan: 0 for a plan with no days or one that ends within three weeks."""
+        today = today or date.today()
+        days = max((step.due for step in self.steps if step.due is not None), default=today) - today
+        return days.days // 7 if days.days >= CHECK_IN_OFFER_DAYS else 0
+
+    def next_held(self, today: date | None = None) -> PlanStep | None:
+        """The step that could go on now but is waiting for its day, the earliest one: what "next" means to a person who asks."""
+        ready = {step.id for step in self.ready_steps(today)}
+        held = [step for step in self._unblocked() if step.id not in ready and step.due is not None]
+        return min(held, key=lambda step: (step.due, step.position), default=None)
+
     def finished(self) -> bool:
         return bool(self.steps) and all(step.status in (StepStatus.DONE, StepStatus.SKIPPED) for step in self.steps)
+
+
+def in_date_order(steps: list[PlanStep], today: date | None = None) -> list[PlanStep]:
+    """Steps in the order of their days, numbered 1..n, with `depends_on` following the steps it named.
+
+    A day before today becomes today and a day too far away is dropped. A step without a day sorts with the step before it, so the steps a
+    drafter wrote without dates stay where they were; steps are only moved by a day they were given. A dependency that, after the move,
+    points at the step itself or a later one is dropped: the order of the days is the order of the work.
+    """
+    today = today or date.today()
+    farthest = today + timedelta(days=366 * MAX_DUE_YEARS)
+    cleaned: list[PlanStep] = []
+    for step in steps:
+        due = step.due
+        if due is not None and due < today:
+            due = today
+        if due is not None and due > farthest:
+            due = None
+        cleaned.append(step.model_copy(update={"due": due}))
+    keys: list[date] = []
+    for step in cleaned:
+        keys.append(step.due or (keys[-1] if keys else today))
+    order = sorted(range(len(cleaned)), key=lambda index: (keys[index], index))
+    new_position = {cleaned[index].position: place for place, index in enumerate(order, 1)}
+    result = []
+    for place, index in enumerate(order, 1):
+        step = cleaned[index]
+        depends = sorted({new_position[d] for d in step.depends_on if d in new_position and new_position[d] < place})
+        result.append(step.model_copy(update={"position": place, "depends_on": depends}))
+    return result

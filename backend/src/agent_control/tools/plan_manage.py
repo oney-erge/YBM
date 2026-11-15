@@ -13,10 +13,10 @@ from typing import Any
 from pydantic import ValidationError
 
 from agent_control.config import AppSettings
-from agent_control.plans.model import MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus
+from agent_control.plans.model import MAX_CHECK_IN_DAYS, MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus, in_date_order
 from agent_control.plans.planner import can_do_text, draft_plan
 from agent_control.plans.runner import audit_plan, cancel_plan, pause_plan, render_plan, routing_of
-from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
+from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus, utc_now
 from agent_control.storage.audit import AuditLogger
 from agent_control.storage.repositories import Repositories
 from agent_control.tools.contracts import PlanManageInput, PlanManageOutput
@@ -24,6 +24,8 @@ from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDe
 
 #: Where an unfinished plan can be found again: the newest one of this chat that has not ended.
 _OPEN = [PlanStatus.PROPOSED, PlanStatus.ACTIVE, PlanStatus.PAUSED]
+#: The most days a shift may move the steps: a year either way.
+MAX_SHIFT_DAYS = 366
 
 
 def _steps_from(raw: list[dict[str, Any]]) -> list[PlanStep]:
@@ -40,10 +42,12 @@ def _steps_from(raw: list[dict[str, Any]]) -> list[PlanStep]:
         if any(dep >= position or dep < 1 for dep in step.depends_on):
             raise ValueError(f"step {position} depends on steps {step.depends_on}; a step can only wait for earlier ones")
         steps.append(step)
-    return steps
+    return in_date_order(steps)
 
 
-_STEP_FIELDS = {"title", "detail", "owner", "needs", "depends_on", "ability"}
+_STEP_FIELDS = {"title", "detail", "owner", "needs", "depends_on", "ability", "due"}
+#: Each line a person tells the assistant about the project, and how many lines a plan keeps (the oldest go first).
+NOTE_CHARS = 300
 
 
 class PlanManageAdapter:
@@ -67,7 +71,8 @@ class PlanManageAdapter:
         try:
             handler = {
                 "create": self._create, "show": self._show, "add_step": self._add_step,
-                "update_step": self._update_step, "set_status": self._set_status,
+                "update_step": self._update_step, "set_status": self._set_status, "set_check_in": self._set_check_in,
+                "shift_dates": self._shift_dates, "add_note": self._add_note,
             }.get(operation)
             if handler is None:
                 return failed_result(request, f"unsupported plan operation: {operation}")
@@ -161,6 +166,11 @@ class PlanManageAdapter:
         for name in ("title", "detail", "needs", "depends_on", "ability"):
             if data.get(name) is not None:
                 fields[name] = data[name]
+        if data.get("due") is not None:
+            wanted_day = PlanStep(position=1, title="x", due=data["due"]).due
+            if wanted_day is None and str(data["due"]).strip():
+                raise ValueError("a day is written YYYY-MM-DD")
+            fields["due"] = wanted_day
         if data.get("owner"):
             fields["owner"] = StepOwner(data["owner"])
         if data.get("status"):
@@ -171,10 +181,48 @@ class PlanManageAdapter:
             if wanted == StepStatus.DONE and not step.result:
                 fields["result"] = "marked done"
         if not fields:
-            raise ValueError("nothing to change: give a title, detail, owner, needs, depends_on, ability or status")
+            raise ValueError("nothing to change: give a title, detail, owner, needs, depends_on, ability, due or status")
         self.repositories.plans.update_step(step.id, **fields)
         updated = self.repositories.plans.get(plan.id) or plan
         return updated, f"Step {step.position} updated.\n{render_plan(updated)}"
+
+    def _set_check_in(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
+        """The user asked to hear how the plan stands every so many days. The first check-in comes that many days from now."""
+        plan = self._find(request, task)
+        days = request.input.get("days")
+        if days is None or not 0 <= int(days) <= MAX_CHECK_IN_DAYS:
+            raise ValueError(f"days is how often to check in, 1 to {MAX_CHECK_IN_DAYS}, or 0 to stop")
+        self.repositories.plans.update_plan(plan.id, check_in_days=int(days), last_check_in_at=utc_now())
+        updated = self.repositories.plans.get(plan.id) or plan
+        said = f"I will tell the user how the plan stands every {int(days)} days while it is active." if int(days) else "No more check-ins."
+        return updated, f"{said}\n{render_plan(updated)}"
+
+    def _shift_dates(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
+        """The project slipped, or moved: every step that is not finished moves by the same number of days."""
+        plan = self._find(request, task)
+        if plan.status in (PlanStatus.DONE, PlanStatus.CANCELLED):
+            raise ValueError(f"the plan is {plan.status.value}")
+        days = request.input.get("days")
+        if days is None or not -MAX_SHIFT_DAYS <= int(days) <= MAX_SHIFT_DAYS or int(days) == 0:
+            raise ValueError(f"days is how far to move the unfinished steps, between -{MAX_SHIFT_DAYS} and {MAX_SHIFT_DAYS}, not 0")
+        moved = self.repositories.plans.shift_dates(plan.id, int(days))
+        if not moved:
+            raise ValueError("no unfinished step has a day to move")
+        updated = self.repositories.plans.get(plan.id) or plan
+        return updated, f"{moved} steps moved by {int(days)} days.\n{render_plan(updated)}"
+
+    def _add_note(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
+        """Something the user said about the project that later steps need (the place, the budget, a choice): kept with the plan."""
+        plan = self._find(request, task)
+        note = " ".join(str(request.input.get("note") or "").split())[:NOTE_CHARS]
+        if not note:
+            raise ValueError("give the note: one fact the user told you about this project")
+        lines = [*[line for line in plan.notes.splitlines() if line.strip()], f"- {note}"]
+        while len("\n".join(lines)) > 2000:
+            lines.pop(0)
+        self.repositories.plans.update_plan(plan.id, notes="\n".join(lines))
+        updated = self.repositories.plans.get(plan.id) or plan
+        return updated, f"Noted with the plan: {note}"
 
     def _set_status(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
         plan = self._find(request, task)
@@ -207,17 +255,24 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             description=(
                 "turn a goal too big for one task (build something, set something up, plan a trip) into a plan the user can start: give the "
                 "goal and a planner drafts the steps, each owned by you (ybm), by the user (user) or by you once the user gives you something "
-                "(access); the plan is saved and the user starts it. Use this instead of asking a list of questions: at most one question first"
+                "(access), each with a day when the goal has a date or a stretch of time; the plan is saved and the user starts it. Also: check in "
+                "every N days (set_check_in), move the unfinished days when the project slips (shift_dates), keep a fact the user told you with "
+                "the plan (add_note). Use this instead of asking a list of questions: at most one question first"
             ),
-            operations=("create", "show", "add_step", "update_step", "set_status"),
+            operations=("create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"),
             input_schema=PlanManageInput,
             output_schema=PlanManageOutput,
-            operation_output_schemas=same_output_schema(("create", "show", "add_step", "update_step", "set_status"), PlanManageOutput),
+            operation_output_schemas=same_output_schema(
+                ("create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"), PlanManageOutput
+            ),
             default_operation="show",
             examples=(
                 {"operation": "create", "goal": "Build a small indoor quadcopter with a camera and a small language model on it, about 300 dollars"},
                 {"operation": "show"},
                 {"operation": "update_step", "position": 1, "status": "done"},
+                {"operation": "set_check_in", "days": 7},
+                {"operation": "shift_dates", "days": 14},
+                {"operation": "add_note", "note": "The plot is 600 square meters outside Bursa; the budget is 250,000 euros."},
             ),
         )
     )

@@ -26,9 +26,15 @@ def open_plan_note(plans: PlanRepository, conversation_id: str | None) -> str:
     plan = found[0]
     lines = ["\n\n## A plan is open in this chat", f"Goal: {plan.goal} (the plan is {plan.status.value})"]
     for step in sorted(plan.steps, key=lambda s: s.position)[:12]:
-        lines.append(f"{step.position}. {step.title} - {_MARKS[step.status]}")
+        when = f" (due {step.due.isoformat()})" if step.due is not None else ""
+        lines.append(f"{step.position}. {step.title}{when} - {_MARKS[step.status]}")
+    if plan.notes.strip():
+        lines.append("What the user has told you about it:\n" + plan.notes.strip())
+    if plan.check_in_days:
+        lines.append(f"You check in with the user every {plan.check_in_days} days.")
     lines.append(
         "If the user is talking about this plan (starting it, changing it, saying a step is done, asking how it is going), use plan.manage: "
-        "show, update_step, add_step or set_status. A new, unrelated request is not about the plan."
+        "show, update_step, add_step or set_status. If it slips or moves, shift_dates moves every unfinished step; if they ask to be checked "
+        "on, set_check_in; a fact they give about the project goes in with add_note. A new, unrelated request is not about the plan."
     )
     return "\n".join(lines)
