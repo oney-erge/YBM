@@ -52,17 +52,22 @@ class JobRunner:
         self.send_file = send_file
         self.reports_dir = Path(reports_dir)
         self.unit_seconds = unit_seconds
+        # One unit at a time in this process, whoever asks: the worker runs several loops that all call tick() on this one runner.
+        self._unit_lock = asyncio.Lock()
 
     async def tick(self) -> int:
         """Do one unit of the oldest running job, if nobody is waiting. Returns 1 when a unit ran."""
-        if self.repositories.tasks.list_by_statuses(_ACTIVE, limit=1):
+        if self._unit_lock.locked() or self.repositories.tasks.list_by_statuses(_ACTIVE, limit=1):
             return 0
-        for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=1):
-            try:
-                await self._unit(job)
-            except Exception:  # noqa: BLE001 - one job's trouble must not stop the worker taking tasks
-                logger.warning("job_unit_failed", job_id=job.id, exc_info=True)
-            return 1
+        # The worker runs max_parallel_tasks loops, each calling tick(). Without this, two of them read the same saved state and did the same unit
+        # twice: live on 11/14 a section was written twice and the report and its closing message were sent twice, ten seconds apart.
+        async with self._unit_lock:
+            for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=1):
+                try:
+                    await self._unit(job)
+                except Exception:  # noqa: BLE001 - one job's trouble must not stop the worker taking tasks
+                    logger.warning("job_unit_failed", job_id=job.id, exc_info=True)
+                return 1
         return 0
 
     async def _unit(self, job: Job) -> None:
