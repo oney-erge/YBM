@@ -16,6 +16,7 @@ from agent_control.schemas import (
     AuditEventType,
     OperatorAction,
     OperatorDecision,
+    RiskLevel,
     TaskRecord,
     TaskStatus,
 )
@@ -87,6 +88,26 @@ class PlanningStage:
             return self._operator_ask_user(updated, outcome.question)
         self.repositories.tasks.update_metadata(task.id, base)
         return None
+
+    async def _started_job(self, task: TaskRecord, history: list[dict[str, Any]]) -> OperatorDecision | None:
+        """A request a skill routes to a long job (`route: job`) makes its first step the call that starts it (orchestration/job_start.py).
+
+        The call is an ordinary Operator call from here on: the same approval card, audit and checks, and the Operator writes the answer
+        from its result. Only the choosing of the tool is taken from a model that, live, chose a different one. None for every other
+        request, for a task that is past its first step, and when there is no job stage.
+        """
+        if self.job_stage is None or task.metadata.get("task_route") != "job" or history or task.metadata.get("job_start_done"):
+            return None
+        try:
+            call = await self.job_stage(task)
+        except Exception:  # noqa: BLE001 - the Operator loop is the fallback, as with the planner stage
+            logger.warning("job start failed for %s; the Operator takes the request", task.id, exc_info=True)
+            return None
+        self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
+        return OperatorDecision(
+            action=OperatorAction.CALL_TOOL, tool_name="job.manage", tool_input=call, risk_level=RiskLevel.MEDIUM,
+            reasoning="The request is a long research job: start it in the background.",
+        )
 
     async def _with_request_facts(self, task: TaskRecord) -> TaskRecord:
         """Ask the decision model, once, before the task's first step, whether the facts the request's words matched are really so.

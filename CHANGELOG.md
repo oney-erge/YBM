@@ -10,6 +10,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - The second verdict suite (`e2e/verdict2_cases.json`, 20 cases `fin2_*`, frozen by hash, `--suite verdict2`): the exam for the finished assistant. It covers what the plan added
   (spreadsheet and Word files, a program written and run, long plans, a background research job started, asked about and stopped, overnight work) next to files it must read
   exactly, a correction in the middle of a search, a remembered allergy and three safety cases. It is run once on the final code; 18 of 20 passes.
+- A request for in-depth research starts the job with a call written in code. Found by the first live run of the research job: the skill was in the Operator's prompt and the 9B still chose `delegate`
+  with web.search, spent six steps, and offered to hand the request to Claude Code. The skill now says `route: job`; for such a request the worker makes `job.manage start_research` the first step, with a goal
+  and a page count written by one model call with its own short instructions (`orchestration/job_start.py`; a failure leaves the person's own words as the goal). It goes through the same approval card, audit and
+  checks, and the Operator writes the answer from its result. Also found: once a job has started, the fulfillment check no longer demands that the task itself read source content and deliver a file, and a research
+  job that finds no Chrome running with DevTools (after a restart, or the night after it was approved) starts the assistant's own Chrome profile minimized instead of failing for want of a search.
 - Phase 1 of the ultimate-assistant plan, from the sealed Verdict run (7 of 13 by rubric):
   - **Counts come from code.** The decision model can raise a fact the patterns miss, `counts_things` (`request_facts.ADDED_FACT_QUESTIONS`, asked about every request in the same call as the
     others; 8 of 10 count phrasings clear 0.5 and 13 of 178 e2e messages do, all counts or totals). For such a request the number check also looks at two-digit numbers, and what a

@@ -517,7 +517,8 @@ class ChromeDevToolsClient:
         self.base_url = f"http://{config.host}:{config.remote_debugging_port}"
         self._message_id = 0
 
-    def ensure_available(self) -> None:
+    def ensure_available(self, *, minimized: bool = False) -> None:
+        """Make sure Chrome answers on the DevTools port, starting its own profile when it does not. `minimized` keeps that window out of the way (a background job)."""
         if self._version() is not None:
             return
         if not self.config.launch_if_missing:
@@ -533,6 +534,7 @@ class ChromeDevToolsClient:
                 f"--user-data-dir={user_data_dir}",
                 "--no-first-run",
                 "--no-default-browser-check",
+                *(["--start-minimized"] if minimized else []),
                 "about:blank",
             ],
             stdout=subprocess.DEVNULL,

@@ -273,8 +273,12 @@ in saved state and shows the model one small thing at a time.
 | `jobs/runner.py` | One unit of the oldest running job per worker pass, and only when no task is waiting, so a question asked in the middle of a six-hour job is answered at once. It keeps no state of its own; five failed units in a row stop the job with what it has. The report is written to `.agent_control/jobs/<id>/report.md` and sent to the chat. |
 | `tools/job_manage.py` | `job.manage`: `start_research` (approval-gated, with a sentence that says what it will do), `status` ("how far are you?"), `pause`, `resume`, `stop`. At most two open jobs in a chat. |
 
-The skill `Research a topic in depth` (`skills/starter/`, `ask: always`, its `when:` question measured at 0.6) tells the Operator to start a job for a request that wants thorough
-research instead of answering from a few searches.
+The skill `Research a topic in depth` (`skills/starter/`, `route: job`, its `when:` question measured at 0.6) is asked about for every request. When the decision
+model says yes, the worker does not leave the choice of tool to the Operator (live on 11/14 the 9B chose `delegate` with web.search, with the skill in its prompt):
+`orchestration/job_start.py` makes one model call that writes the goal and the number of pages the person named, and the task's first step is `job.manage start_research` with
+that input. It is an ordinary call (approval card, audit, checks) and the Operator writes the answer from its result. Once a job has started, the "read sources" and "send the
+report" obligations of the request belong to the job, so the fulfillment check does not send the Operator back to do them itself. A search that finds no Chrome with DevTools
+starts the assistant's own profile, minimized, rather than failing.
 
 ### Gaming mode
 

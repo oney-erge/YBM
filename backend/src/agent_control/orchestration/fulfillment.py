@@ -490,7 +490,24 @@ def deliverable_evidence(task: TaskRecord) -> str:
     return "\n".join(lines)
 
 
+#: What a background research job does for the task that started it: it reads the pages and sends the report, later, by itself.
+_DONE_BY_A_STARTED_JOB = frozenset({PostconditionType.SOURCE_CONTENT, PostconditionType.ARTIFACT_DELIVERED})
+
+
+def _job_started(task: TaskRecord) -> bool:
+    history = task.metadata.get("operator_history")
+    return isinstance(history, list) and any(
+        isinstance(entry, dict) and entry.get("tool_name") == "job.manage" and entry.get("status") == "succeeded"
+        and isinstance(entry.get("input"), dict) and entry["input"].get("operation") == "start_research"
+        for entry in history
+    )
+
+
 def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> bool:
+    if expected in _DONE_BY_A_STARTED_JOB and _job_started(task):
+        # "Read ten sources and send me a report" is what the job it started will do; the task's answer says it is running. Found live
+        # 11/14: the check sent the Operator back to read pages and attach a file itself, the work the job exists to do.
+        return True
     if expected == PostconditionType.WORKSPACE_DIR:
         # Direct filesystem writes to an explicit project folder may not emit
         # a separate workspace_dir field. Concrete produced paths prove both

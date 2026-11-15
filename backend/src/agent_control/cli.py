@@ -57,6 +57,8 @@ from agent_control.jobs.runner import JobRunner
 from agent_control.plans.context import open_plan_note
 from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
+from agent_control.orchestration.asking import users_own_words
+from agent_control.orchestration.job_start import start_research_call
 from agent_control.plans.stage import run_plan_stage
 from agent_control.storage import ApprovalRepository, AuditLogger, Database, Repositories
 from agent_control.storage.repositories import PlanRepository
@@ -509,6 +511,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
         "fact_checks": _fact_checker(settings),
         "gpu_hold": _gpu_hold(settings),
         "plan_stage": _plan_stage(registry, settings, repositories, audit, operator_provider),
+        "job_stage": _job_stage(settings, operator_provider),
         "persona_config": settings.adapters.persona,
         "skills_config": settings.adapters.skills,
         "auditor": AuditorService(auditor_provider) if auditor_provider else None,
@@ -586,6 +589,17 @@ def _plan_stage(registry, settings: AppSettings, repositories: Repositories, aud
 
     async def stage(task):
         return await run_plan_stage(repositories, audit, provider, can_do_text(registry.abilities), task)
+
+    return stage
+
+
+def _job_stage(settings: AppSettings, provider) -> Callable | None:
+    """The call that starts a long job for a request a skill routes to one (orchestration/job_start.py), or None when jobs are off."""
+    if not settings.jobs.enabled:
+        return None
+
+    async def stage(task):
+        return await start_research_call(provider, users_own_words(task))
 
     return stage
 

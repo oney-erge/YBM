@@ -7,8 +7,8 @@ import base64
 import httpx
 import pytest
 
-from agent_control.config import WebSearchAdapterConfig
-from agent_control.jobs.io import build_io, parse_results, real_url, visible_text
+from agent_control.config import BrowserAdapterConfig, WebSearchAdapterConfig
+from agent_control.jobs.io import build_io, make_browser_search, parse_results, real_url, visible_text
 from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.tools.web_search import WebSearchAdapter
 
@@ -128,3 +128,35 @@ async def test_duckduckgo_that_asks_for_a_human_check_is_an_error_not_no_results
     adapter = WebSearchAdapter(WebSearchAdapterConfig())
     result = await adapter.execute(ToolCallRequest(task_id="t", tool_name="web.search", capability=Capability.NETWORK_HTTP, input={"operation": "search", "query": "heat pump"}))
     assert result.status == ToolResultStatus.FAILED and "human check" in (result.error_message or "") and "BRAVE_SEARCH_API_KEY" in (result.error_message or "")
+
+
+@pytest.mark.asyncio
+async def test_a_search_starts_the_assistants_own_chrome_minimized_when_none_is_running_and_closes_its_tab(monkeypatch) -> None:
+    """After a restart nobody has opened a browser: the job must not die for lack of one."""
+    seen: dict = {}
+
+    class FakeClient:
+        def __init__(self, config) -> None:
+            seen["launch_if_missing"] = config.launch_if_missing
+
+        def ensure_available(self, *, minimized: bool = False) -> None:
+            seen["minimized"] = minimized
+
+        def open_url(self, url, new_tab=False):
+            seen["url"] = url
+            return "target-1"
+
+        def wait(self, seconds) -> None:
+            return None
+
+        def _evaluate_value(self, target, script):
+            return [{"title": "Heat pumps", "href": "https://example.org/hp", "snippet": "s"}]
+
+        def close_tab(self, target) -> None:
+            seen["closed"] = target
+
+    monkeypatch.setattr("agent_control.tools.browser.ChromeDevToolsClient", FakeClient)
+    results = await make_browser_search(BrowserAdapterConfig())("heat pump cost", 5)
+    assert results[0]["url"] == "https://example.org/hp" and "q=heat+pump+cost" in seen["url"]
+    assert seen["launch_if_missing"] is True and seen["minimized"] is True and seen["closed"] == "target-1"
+    assert make_browser_search(BrowserAdapterConfig(enabled=False)) is None
