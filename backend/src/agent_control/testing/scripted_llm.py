@@ -151,6 +151,9 @@ SCRATCH_PLACEHOLDER = "<scenario_scratch_root>"
 _PLACEHOLDER_PATH = re.compile(re.escape(SCRATCH_PLACEHOLDER) + r"(?:/[^\s'\"),\]}]+)*")
 
 
+_MODIFIED_TIME = re.compile(r", modified \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC")
+
+
 def _normalize(text: str) -> str:
     # Tool output uses the host platform's native line endings. Recordings
     # made on Windows therefore contain CRLF while Linux CI produces LF for
@@ -200,6 +203,10 @@ def _normalize(text: str) -> str:
     text = _WINDOWS_USER_DIR.sub(r"\1<user>", text)
 
     text = _RUN_TIME.sub("<run time>", text)
+
+    # A listing carries each file's modified time (filesystem_manage): the time a test's files were made, which differs every run. Taken out, a recording
+    # made before listings had dates still matches, and one made after it matches on every run.
+    text = _MODIFIED_TIME.sub("", text)
 
     return _HEX_RUN.sub("<id>", _TEMPDIR_RUN.sub("<tmpdir>", text))
 
