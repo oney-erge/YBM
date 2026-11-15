@@ -239,3 +239,12 @@ async def test_the_rounds_never_go_past_the_limit_and_an_older_saved_job_without
         if state["stage"] == "read":
             break
     assert state["round"] < research.MAX_SEARCH_ROUNDS and len(state["sources"]) <= 150 and state["stage"] == "read"
+
+
+def test_an_abbreviation_does_not_end_a_sentence_so_a_cited_claim_is_not_cut_in_half() -> None:
+    """Live 11/14: "Law No. 5403 is required [1]." was split after "No." and the report said "5403 is required [1]."."""
+    text = "On farmland, a non-agricultural use permission under Law No. 5403 is required [1]. Building inspection is covered by Law No. 4708 [2][4]. 4,000 dollars is typical [3]."
+    kept = research.only_given_citations(text, {1, 2, 3, 4})
+    assert kept == text  # all three sentences whole, the one that starts with a number too
+    assert "Law No. 5403 is required [1]." in kept and "Law No. 4708 [2][4]." in kept
+    assert research.only_given_citations("A claim from memory. Art. 21 of the Zoning Law requires a permit [1]. Dr. Smith agrees.", {1}) == "Art. 21 of the Zoning Law requires a permit [1]."

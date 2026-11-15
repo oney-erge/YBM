@@ -306,6 +306,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A correction sent while the assistant is working reaches the answer. Live 11/14: "Find my resume", then "The Word one, not the PDF" six seconds in, and the answer listed both files. The person's
   words are now shown to the model as what the person added (they were a step named `_user_note`, read as one more result), and an answer the model wrote while a note arrived is held back and written
   again with the note in front of it.
+- A research report no longer cuts "Law No. 5403 is required [1]." after "No." (the half with the citation was kept as "5403 is required [1]."). The sentence check that removes any sentence with no note behind it
+  does not end a sentence at a common abbreviation (No., Art., Sec., Dr., Inc., etc.).
 - A file the user sends in Telegram is no longer read as a request to send a file. The intake's note ("[The user sent a file: ...]") was
   matched by the fulfillment check as "send" and "file", so a PDF the user sent for a summary was sent back to them, and a photo task blocked
   on a delivery nobody asked for; the notes are now left out of that check and the no-caption text is "Here is a picture.". The note also

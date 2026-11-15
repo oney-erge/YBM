@@ -317,7 +317,10 @@ def numbered_notes(state: dict[str, Any], question_index: int) -> list[tuple[int
 
 #: A sentence that says what the sources do not say needs no citation: it claims nothing.
 _NOT_SAID = re.compile(r"(?i)^(?:the\s+)?(?:provided\s+|available\s+)?(?:notes|sources|pages|reports?)\s+(?:do|does|did)\s+(?:not|n't)\b|^no\s+(?:page|source|note)s?\b|^i\s+could\s+not\b")
-_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9$\"'(])")
+#: A sentence ends at . ! ? and a space, unless the period closes an abbreviation: "Law No. 5403 is required [1]." is one sentence (live 11/14: it was cut after "No." and
+#: the half that held the citation was kept as "5403 is required [1].").
+_ABBREVIATIONS = ("No", "Nos", "Art", "Arts", "Sec", "Secs", "Dr", "Mr", "Mrs", "Ms", "St", "vs", "approx", "est", "Inc", "Ltd", "Co", "Corp", "etc", "Fig", "Vol", "pp", "p")
+_SENTENCE = re.compile("".join(rf"(?<!\b{word}\.)" for word in _ABBREVIATIONS) + r"(?<=[.!?])\s+(?=[A-Z0-9$\"'(])")
 
 
 def only_given_citations(text: str, allowed: set[int]) -> str:
