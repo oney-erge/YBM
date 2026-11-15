@@ -47,6 +47,10 @@ _PROGRAM_LABEL = re.compile(r"^(?:\w[\w ]* operation completed: \w+|(?:Workspace
 _READABLE_CHARS = 1500
 
 
+#: The folder a script runs in, named after the task: an internal place, never an answer.
+_INTERNAL_FOLDER = re.compile(r"code_interpreter[\\/]task_|[\\/]task_task_", re.IGNORECASE)
+
+
 def without_program_labels(text: str) -> str:
     return "\n".join(line for line in text.split("\n") if not _PROGRAM_LABEL.match(line.strip()))
 
@@ -69,8 +73,12 @@ def fulfilled_step_budget_answer(task: TaskRecord, history: list[dict[str, Any]]
             if readable:
                 return readable[:_READABLE_CHARS]
     workspace_dir = task.metadata.get("workspace_dir")
-    if workspace_dir:
+    if workspace_dir and not _INTERNAL_FOLDER.search(str(workspace_dir)):
         return f"Completed the requested work in {workspace_dir}."
+    if workspace_dir:
+        # The folder a script ran in is named after the task ("code_interpreter/task_task_ab12..."): not somewhere the person can use, and the
+        # challenge run found it in the answer ("reply leaked forbidden content"). The honest sentence is that the result was not put into words.
+        return "I ran the work but ran out of steps before I could put what it found into words, so I will not guess at it. Ask me again and I will write it up."
     return "Completed the requested work and recorded the required result."
 
 

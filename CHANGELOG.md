@@ -301,6 +301,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- An answer no longer names the folder a script ran in. When a task reached its step limit with nothing readable from its last step, the answer was "Completed the requested work in ...code_interpreter	ask_task_..."; the
+  challenge run flagged it (an internal task name in a reply). It now says the work ran but there were no steps left to put what it found into words, and that it will not guess. A folder the person made (a project) is still named.
 - "I noticed a procedure worth keeping" no longer arrives in the middle of someone's work. The learning card (keep this skill, remember this preference) is shown only when no other
   task of the chat is moving or waiting for an approval tap, and never after a step of a plan; otherwise the proposal waits in the queue (the console) as before.
 - A correction sent while the assistant is working reaches the answer. Live 11/14: "Find my resume", then "The Word one, not the PDF" six seconds in, and the answer listed both files. The person's
