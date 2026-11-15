@@ -104,6 +104,8 @@ class PlanningStage:
             logger.warning("job start failed for %s; the Operator takes the request", task.id, exc_info=True)
             return None
         self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
+        if call is None:  # about research already running (status, pause, stop): the Operator answers it, with the open job in front of it
+            return None
         return OperatorDecision(
             action=OperatorAction.CALL_TOOL, tool_name="job.manage", tool_input=call, risk_level=RiskLevel.MEDIUM,
             reasoning="The request is a long research job: start it in the background.",
