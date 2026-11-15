@@ -57,7 +57,7 @@ from agent_control.jobs.runner import JobRunner
 from agent_control.plans.context import open_plan_note
 from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
-from agent_control.jobs.context import open_job_note
+from agent_control.jobs.context import has_open_job, open_job_note
 from agent_control.orchestration.asking import users_own_words
 from agent_control.orchestration.job_start import start_research_call
 from agent_control.plans.stage import run_plan_stage
@@ -541,7 +541,10 @@ def _task_notes(
         if settings.plans.enabled:
             text += open_plan_note(repositories.plans, conversation_id)
         if settings.jobs.enabled:
-            text += open_job_note(repositories.jobs, repositories.conversations.external_id(conversation_id), settings.jobs.reports_dir)
+            chat_id = repositories.conversations.external_id(conversation_id)
+            text += open_job_note(repositories.jobs, chat_id, settings.jobs.reports_dir)
+            if not route and has_open_job(repositories.jobs, chat_id):
+                route = "job"  # while research is open, any message may be about it ("pause the research" is nothing a yes/no question can recognize)
         return text, route
 
     return notes

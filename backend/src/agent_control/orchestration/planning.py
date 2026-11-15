@@ -25,15 +25,22 @@ from agent_control.schemas import (
 logger = logging.getLogger(__name__)
 
 
-def _research_started(history: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """The step that started a research job in this task and succeeded, or None."""
+def _job_call_entry(history: list[dict[str, Any]], operation: str) -> dict[str, Any] | None:
+    """The step of this task that made the `job.manage` call with this operation, whatever came of it, or None."""
     for entry in history:
-        if (
-            isinstance(entry, dict) and entry.get("tool_name") == "job.manage" and entry.get("status") == "succeeded"
-            and isinstance(entry.get("input"), dict) and entry["input"].get("operation") == "start_research"
-        ):
+        if isinstance(entry, dict) and entry.get("tool_name") == "job.manage" and isinstance(entry.get("input"), dict) and entry["input"].get("operation") == operation:
             return entry
     return None
+
+
+def job_answer(entry: dict[str, Any]) -> str:
+    """What the person is told once the call the stage made has run: for a start, what it will do; for the others, the tool's own sentence. No job number."""
+    if entry.get("status") != "succeeded":
+        reason = " ".join(str(entry.get("error") or entry.get("output_summary") or "").split()).rstrip(".")
+        return f"I could not do that: {reason}." if reason else "I could not do that."
+    if entry["input"].get("operation") == "start_research":
+        return started_answer(entry)
+    return " ".join(str(entry.get("output_summary") or "").split())
 
 
 def started_answer(entry: dict[str, Any]) -> str:
@@ -112,19 +119,24 @@ class PlanningStage:
         return None
 
     async def _started_job(self, task: TaskRecord, history: list[dict[str, Any]]) -> OperatorDecision | None:
-        """A request a skill routes to a long job (`route: job`) makes its first step the call that starts it (orchestration/job_start.py).
+        """A message routed to a long job (`route: job`: a request for research, or any message while research is open in the chat) makes its first
+        step the call it asks for, start, status, pause, resume or stop (orchestration/job_start.py), and is answered in code when that call has run.
 
-        The call is an ordinary Operator call from here on: the same approval card, audit and checks, and the Operator writes the answer
-        from its result. Only the choosing of the tool is taken from a model that, live, chose a different one. None for every other
-        request, for a task that is past its first step, and when there is no job stage.
+        The call is an ordinary Operator call: the same approval card, audit and checks. Only the choosing of the tool and the writing of the answer
+        are taken from a model that, live, chose another tool, made up a job id, and claimed a stop that had not happened. None for a message that
+        turns out to be about something else, for a task that is past its first step, and when there is no job stage.
         """
         if self.job_stage is None or task.metadata.get("task_route") != "job":
             return None
-        started = _research_started(history)
-        if started is not None:
-            # The job is running and the person has what they need to know. The answer is written here, not by the Operator: in a second live run it
-            # went on calling the job tool with an id from an earlier job, offered a hand-over to Claude Code and asked whether to wait or pause.
-            return OperatorDecision(action=OperatorAction.DONE, final_answer=started_answer(started), reasoning="The research job is running.")
+        forced = str(task.metadata.get("job_forced_call") or "")
+        if forced:
+            entry = _job_call_entry(history, forced)
+            if entry is None:
+                return None  # the call has not run yet (it waits for an approval) or went another way: the loop is the Operator's
+            # The call has run and the person has what they need to know. The answer is written here, not by the Operator: in live runs it went on
+            # calling the job tool with an id from an earlier job (or from a task), offered a hand-over to Claude Code, asked whether to wait or pause,
+            # and once said "has been stopped" about a job it had not stopped.
+            return OperatorDecision(action=OperatorAction.DONE, final_answer=job_answer(entry), reasoning="The research call has run.")
         if history or task.metadata.get("job_start_done"):
             return None
         try:
@@ -132,12 +144,13 @@ class PlanningStage:
         except Exception:  # noqa: BLE001 - the Operator loop is the fallback, as with the planner stage
             logger.warning("job start failed for %s; the Operator takes the request", task.id, exc_info=True)
             return None
-        self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
-        if call is None:  # about research already running (status, pause, stop): the Operator answers it, with the open job in front of it
+        if call is None:  # about something else: the Operator takes it
+            self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
             return None
+        self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True, "job_forced_call": call["operation"]})
         return OperatorDecision(
             action=OperatorAction.CALL_TOOL, tool_name="job.manage", tool_input=call, risk_level=RiskLevel.MEDIUM,
-            reasoning="The request is a long research job: start it in the background.",
+            reasoning="The message is about long research: the call it asks for is made first.",
         )
 
     async def _with_request_facts(self, task: TaskRecord) -> TaskRecord:

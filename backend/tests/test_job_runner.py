@@ -179,7 +179,7 @@ async def test_the_tool_starts_a_job_for_this_chat_and_says_how_to_follow_it(tmp
     assert job.kind == "research" and job.routing["source_chat_id"] == "100" and job.state["max_pages"] == 40 and job.status == JobStatus.RUNNING
     assert "how far are you" in started.output["summary"]
     status = await call(operation="status")
-    assert job.id in status.output["summary"] and "planning the questions" in status.output["summary"]
+    assert "Which heat pump for Chicago?" in status.output["summary"] and "planning the questions" in status.output["summary"] and job.id not in status.output["summary"]
 
 
 @pytest.mark.asyncio
@@ -202,7 +202,7 @@ async def test_the_tool_refuses_a_third_open_job_and_controls_the_newest(tmp_pat
 @pytest.mark.asyncio
 async def test_a_goal_is_required_and_a_chat_with_no_jobs_is_told_so(tmp_path) -> None:
     _repos, call = _tool(tmp_path)
-    assert (await call(operation="status")).output["summary"] == "There are no long jobs in this chat."
+    assert (await call(operation="status")).output["summary"] == "There is no research in this chat."
     assert (await call(operation="pause")).status == ToolResultStatus.FAILED
 
 
@@ -235,3 +235,22 @@ async def test_several_loops_ticking_at_once_do_one_unit_not_the_same_unit_sever
     ran = await asyncio.gather(*(runner.tick() for _ in range(4)))
     assert sorted(ran) == [0, 0, 0, 1] and len(started) == 1  # one loop did the unit, the others found it taken
     assert await runner.tick() == 1  # and the next pass is free again
+
+
+@pytest.mark.asyncio
+async def test_a_job_id_the_model_made_up_does_not_stop_a_control_and_status_shows_what_is_running(tmp_path) -> None:
+    """Live 11/15: a pause was called with a task id as the job id and refused as "no open research job" while one was running."""
+    repos, call = _tool(tmp_path)
+    old = (await call(operation="start_research", goal="An old one")).output["job_id"]
+    repos.jobs.save(old, status=JobStatus.DONE)
+    running = (await call(operation="start_research", goal="The running one")).output["job_id"]
+    status = await call(operation="status", job_id="task_69fa6f49b9b5402a930ded7bc3c2ba35")
+    assert "The running one" in status.output["summary"] and "An old one" not in status.output["summary"] and "task_" not in status.output["summary"]
+    paused = await call(operation="pause", job_id="task_69fa6f49b9b5402a930ded7bc3c2ba35")  # not a job of this chat: the open one is meant
+    assert paused.status == ToolResultStatus.SUCCEEDED and repos.jobs.get(running).status == JobStatus.PAUSED
+    assert "job_" not in paused.output["summary"]
+    resumed = await call(operation="resume", job_id="job_cut_short")
+    assert resumed.status == ToolResultStatus.SUCCEEDED and repos.jobs.get(running).status == JobStatus.RUNNING
+    refused = await call(operation="resume")
+    assert refused.status == ToolResultStatus.FAILED and "the research is running, not paused" in (refused.error_message or "") and "job_" not in (refused.error_message or "")
+    assert (await call(operation="status")).output["summary"].count("The running one") == 1

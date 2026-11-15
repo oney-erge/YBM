@@ -21,6 +21,10 @@ RECENT_DAYS = 7
 SUMMARY_CHARS = 500
 
 
+def has_open_job(jobs: JobRepository, chat_id: str | None) -> bool:
+    return bool(chat_id) and bool(jobs.list(statuses=list(OPEN_STATUSES), chat_id=chat_id, limit=1))
+
+
 def open_job_note(jobs: JobRepository, chat_id: str | None, reports_dir: str | Path | None = None) -> str:
     """The research running in this chat, and the research finished in the last week with its summary and where its report is."""
     if not chat_id:
