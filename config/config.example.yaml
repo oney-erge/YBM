@@ -340,7 +340,7 @@ adapters:
     allowed_url_prefixes: []
     blocked_hosts: []
     timeout_seconds: 30
-    max_response_chars: 100000
+    max_response_chars: 400000
     max_body_chars: 100000
     user_agent: "YBM-http-request/1.0"
   terminal:

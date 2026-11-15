@@ -160,3 +160,19 @@ async def test_a_search_starts_the_assistants_own_chrome_minimized_when_none_is_
     assert results[0]["url"] == "https://example.org/hp" and "q=heat+pump+cost" in seen["url"]
     assert seen["launch_if_missing"] is True and seen["minimized"] is True and seen["closed"] == "target-1"
     assert make_browser_search(BrowserAdapterConfig(enabled=False)) is None
+
+
+def test_a_page_with_its_article_inside_a_form_or_an_unclosed_header_is_still_read() -> None:
+    """Found live 11/14: 16 of 36 pages read as empty. WebForms sites wrap everything in a <form>; some headers and asides are never closed."""
+    article = "<p>" + "An owner who builds on land they already hold needs a building permit from the municipality before the first wall goes up. " * 6 + "</p>"
+    in_form = f"<html><head><title>Costs</title></head><body><form id='aspnetForm'><div>{article}</div></form></body></html>"
+    unclosed = f"<html><body><header class='site'><div>Menu</div><main>{article}</main></body></html>"
+    for markup in (in_form, unclosed):
+        page = visible_text(markup)
+        assert "building permit from the municipality" in page.text and len(page.text) >= 500, markup[:60]
+
+
+def test_navigation_and_footers_are_still_left_out_when_the_page_has_plenty_of_text_without_them() -> None:
+    article = "<p>" + "Ground-source systems cost more to install but run cheaper over twenty years, according to the survey of owners. " * 6 + "</p>"
+    page = visible_text(f"<html><body><nav><a>Pricing and plans for the product line overview</a></nav><article>{article}</article><footer>Terms of service and privacy policy of the company</footer></body></html>")
+    assert "Ground-source systems" in page.text and "Pricing and plans" not in page.text and "Terms of service" not in page.text
