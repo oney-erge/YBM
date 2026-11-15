@@ -226,6 +226,26 @@ class ConversationMemoryRepository:
         }
 
 
+#: The history entry task_inbox.attach_note writes for something the person said while the task was working.
+_USER_NOTE = "_user_note"
+
+
+def _keep_notes_that_arrived(metadata: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    """Carry the person's notes that are in the stored history but not in the one being written.
+
+    A step runs for seconds outside any transaction, holding its own copy of the history; a note the person sends meanwhile is appended to the stored one, and
+    the step then wrote its copy over it. Found by the sealed Verdict 2 run (fin2_e1: "Find the tax letter", then "sorry, I meant the one from the council"):
+    the assistant said "Noted" and answered about the other letter, because the note was gone from the history when the model next looked.
+    """
+    mine, stored = metadata.get("operator_history"), current.get("operator_history")
+    if not isinstance(mine, list) or not isinstance(stored, list):
+        return metadata
+    lost = [entry for entry in stored if isinstance(entry, dict) and entry.get("tool_name") == _USER_NOTE and entry not in mine]
+    if not lost:
+        return metadata
+    return {**metadata, "operator_history": [*mine, *lost], "user_note_count": max(int(metadata.get("user_note_count") or 0), int(current.get("user_note_count") or 0))}
+
+
 class TaskRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -580,7 +600,7 @@ class TaskRepository:
             ):
                 return current
             if current.status != TaskStatus.CANCELLED:
-                metadata = dict(metadata)
+                metadata = _keep_notes_that_arrived(dict(metadata), current.metadata)
                 if "last_control_signal" in current.metadata:
                     metadata["last_control_signal"] = current.metadata["last_control_signal"]
                 if current.status == TaskStatus.PAUSED:

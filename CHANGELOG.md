@@ -309,6 +309,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A folder listing carries each file's modified time by default, for real this time. The Phase 1 change passed its tests and did nothing live: the tool's input model filled `with_dates: false` into every
   call that came through it, and an explicit false overrides the default. The sealed Verdict 2 run found it (fin2_d3, "which files changed in the last three days?": names and sizes, then "no tool shows modification
   times"). The field is now unset unless someone sets it, and a test makes the call the way the Operator does, through the model.
+- A correction sent while a step is running is no longer lost. The step works for seconds outside any transaction with its own copy of the history; a note the person sent meanwhile was appended to the stored history, and the step then saved
+  its copy over it, so the assistant said "Noted" and the model never saw the note (sealed Verdict 2, fin2_e1: "Find the tax letter", then "sorry, the one from the council": answered with the other letter). Saving a task's metadata now carries
+  over the person's notes that the written history does not have.
 - Pause, resume, stop and "how far along?" for research are made and answered in code. Live on 11/15, on the real bot: "Pause the research." called pause with a task id as the job id and was refused, was answered "already paused" while the
   job ran, "Resume the research." was taken for the answer to a question about it, and "Stop it" was answered "has been stopped" about a job that was still running. A yes/no question cannot recognize these ("Pause the research." scored 0.09), so
   while research is open in the chat every message is routed to the research stage, whose one model call says which of start, status, pause, resume, stop or something else it is (on the real 9B: 6 of 6 requests and 18 of 18 controls and
