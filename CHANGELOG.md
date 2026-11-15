@@ -309,6 +309,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 - A Word document is never made with only its title. Live on 11/15 the model wrote the checklist as `lines` and the tool read only `content`, so a .docx holding just the title ("1 lines") was made and sent.
   `create_document` now takes the text as `content` or as a list of `lines`, and refuses a call that has neither, saying what is missing, so the model tries again instead of sending an empty file.
+- The assistant is told today's date when a request depends on it. Asked "which of the files in this folder were modified in the last week?" it answered "What is today's date?", because the Operator's prompt never said what day it is. The decision model now
+  answers one more question about every request ("does it refer to a time relative to now?", `depends_on_today`, read at 0.35 because a line of date costs nothing; on the running model 11 of 12 phrasings of a relative time clear it and none of 12 ordinary
+  requests does), and only then the Operator's prompt carries "Today is Sunday, November 15, 2026; it is 15:56 on this computer's clock". Every other request's prompt is unchanged.
 - Recorded scenario prompts no longer carry a file's modified time. A listing now shows when each file changed, which is the time a test made its files, so the recorded prompts of the folder scenarios stopped matching on every run;
   the time is taken out of the prompt before it is hashed (`testing/scripted_llm.py`), so recordings made before listings had dates still match.
 - A folder listing says what it did not open. `inspect_folder` stops at `max_depth` (2 by default) and at `max_entries`, and said nothing about it: asked for "the three largest files" in a folder whose biggest file was three levels down, the

@@ -69,14 +69,14 @@ async def test_the_worker_asks_once_before_the_first_step_and_keeps_the_answers(
     task = repos.tasks.create("Sort the files. Do not delete anything.", metadata={"original_message_text": "Sort the files. Do not delete anything."})
     task = await worker._with_request_facts(task)
     assert task.metadata[CHECKS_KEY] == {"deletes": False, "moves": True, "counts_things": False}
-    assert asked == [("Sort the files. Do not delete anything.", ("deletes", "moves", "counts_things"))]
+    assert asked == [("Sort the files. Do not delete anything.", ("deletes", "moves", "counts_things", "depends_on_today"))]
     await worker._with_request_facts(task)
     assert len(asked) == 1  # not again
     assert not RequestFacts.from_task(task).deletes
 
 
 @pytest.mark.asyncio
-async def test_a_request_no_pattern_matched_is_asked_only_whether_it_counts(tmp_path) -> None:
+async def test_a_request_no_pattern_matched_is_asked_only_the_added_questions(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     asked: list = []
 
@@ -86,7 +86,7 @@ async def test_a_request_no_pattern_matched_is_asked_only_whether_it_counts(tmp_
 
     task = repos.tasks.create("Hello there.", metadata={"original_message_text": "Hello there."})
     task = await TaskWorker(repos, audit, fact_checks=checks)._with_request_facts(task)
-    assert asked == [("counts_things",)] and CHECKS_KEY in task.metadata  # one question in the same call, never the pattern facts
+    assert asked == [("counts_things", "depends_on_today")] and CHECKS_KEY in task.metadata  # the added questions in one call, never the pattern facts
 
 
 @pytest.mark.asyncio

@@ -167,3 +167,21 @@ def test_the_assistants_own_offer_is_not_the_user_naming_a_coding_agent() -> Non
     assert RequestFacts.from_task(TaskRecord(objective="Ask Claude Code to fix it", metadata={"original_message_text": "Ask Claude Code to fix it"})).providers == ("claude_code",)
     odd = objective_with_answer(request, "Which of [a] or [b]? Say Codex or Claude Code.", "a")
     assert RequestFacts.from_task(TaskRecord(objective=odd, metadata={"original_message_text": request})).providers == ()
+
+
+def test_a_request_about_a_relative_time_gets_todays_date_and_no_other_does() -> None:
+    """Live 11/15: "which files were modified in the last week?" was answered "What is today's date?" because the Operator was never told."""
+    from datetime import datetime, timezone
+
+    from agent_control.orchestration.request_facts import ALL_FACT_QUESTIONS, CHECKS_KEY, FACT_CONFIRM_AT, FACT_CONFIRM_AT_BY_NAME, today_note
+
+    assert "depends_on_today" in ALL_FACT_QUESTIONS
+    assert FACT_CONFIRM_AT_BY_NAME["depends_on_today"] < FACT_CONFIRM_AT  # a line of date is cheap: read at a lower mark than the facts that change what runs
+    now = datetime(2026, 11, 15, 15, 56, tzinfo=timezone.utc)
+    note = today_note({"depends_on_today": True}, now)
+    assert "Today is Sunday, November 15, 2026" in note and "15:56" in note and "do not ask the person for the date" in note
+    # every other request: no change to its prompt at all
+    assert today_note({"depends_on_today": False}, now) == ""
+    assert today_note({"counts_things": True}, now) == ""
+    assert today_note(None, now) == "" and today_note("yes", now) == ""
+    assert CHECKS_KEY == "fact_checks"
