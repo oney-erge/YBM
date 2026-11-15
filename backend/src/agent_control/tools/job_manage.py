@@ -79,9 +79,9 @@ class JobManageAdapter:
         return {
             "job_id": job.id, "jobs": [{"id": job.id, "status": job.status.value}],
             "summary": (
-                f"Started research job {job.id}: {goal[:200]}. It reads up to {job.state['max_pages']} pages, one at a time, in the background; "
+                f"Started the research on: {goal[:200]}. It reads up to {job.state['max_pages']} pages, one at a time, in the background; "
                 "the person's messages are answered first. Progress messages come to this chat, and the report comes at the end. Tell the person "
-                "in one or two sentences that it has started and that they can ask 'how far are you?', pause it or stop it at any time."
+                "in one or two sentences, without any job number, that it has started and that they can ask 'how far are you?', pause it or stop it at any time."
             ),
         }
 
@@ -101,17 +101,17 @@ class JobManageAdapter:
             if job.status != JobStatus.RUNNING:
                 raise ValueError(f"job {job.id} is {job.status.value}, not running")
             pause_job(self.repositories, job)
-            said = f"Paused {job.id}. Nothing more is read until 'resume'. What it has so far is kept."
+            said = f"Paused the research. Nothing more is read until 'resume'. What it has so far is kept."
         elif operation == "resume":
             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED):
                 raise ValueError(f"job {job.id} is {job.status.value}, not paused")
             resume_job(self.repositories, job)
-            said = f"Resumed {job.id}. {research.progress_text(job.state)}"
+            said = f"Resumed the research. {research.progress_text(job.state)}"
         else:
             if not job.is_open and job.status != JobStatus.FAILED:
                 raise ValueError(f"job {job.id} already ended ({job.status.value})")
             cancel_job(self.repositories, job)
-            said = f"Stopped {job.id}. {research.progress_text(job.state)} Nothing more will be read."
+            said = f"Stopped the research. {research.progress_text(job.state)} Nothing more will be read."
         return {"job_id": job.id, "jobs": [{"id": job.id, "status": self.repositories.jobs.get(job.id).status.value}], "summary": said}
 
 

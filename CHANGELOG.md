@@ -301,6 +301,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The assistant no longer says "job_d56bb54f..." to the person. The job tool's start, pause, resume and stop results named the job by its id and the model repeated it; they now say "the research"
+  and tell the model to leave any job number out (a status listing still carries ids, for the rare chat with two jobs).
 - A job's unit of work runs once. The worker runs several loops that all call the job runner, and two of them read the same saved state and did the same unit: live on 11/14 a report section was
   written twice and the finished report and its closing message were sent twice, ten seconds apart. The runner now does one unit at a time in the process, whoever asks.
 - A question about research that is already running no longer starts new research. Found by the first live run of the research job: "How far along is the research?" was routed as a request, and a second
