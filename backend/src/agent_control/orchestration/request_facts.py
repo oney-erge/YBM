@@ -14,6 +14,7 @@ be settled by the decision model instead of by words, this is the only place tha
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -102,13 +103,30 @@ FACT_QUESTIONS: dict[str, str] = {
 #: harmless: a number that a tool produced is never pushed back), and 13 of 178 messages in the e2e suites do, all of them counts or totals.
 ADDED_FACT_QUESTIONS: dict[str, str] = {
     "counts_things": "Does answering this request mean counting or adding up several things (words, lines, files, amounts, or how many times something appears)?",
+    "depends_on_today": "Does this request refer to a time relative to now, such as today, yesterday, tomorrow, last week, recently, the last few days, or in two weeks?",
 }
 #: Every fact the decision model is asked about, with its question.
 ALL_FACT_QUESTIONS: dict[str, str] = {**FACT_QUESTIONS, **ADDED_FACT_QUESTIONS}
 #: The probability of "yes" at which a pattern-matched fact is confirmed (the corpus above was read at this).
 FACT_CONFIRM_AT = 0.5
+#: A fact whose "yes" costs almost nothing (a line of date in the prompt) is read at a lower mark, so that the requests it should reach are reached.
+#: depends_on_today, measured on the running decision model: 11 of 12 phrasings of a relative time clear 0.35 (the one that does not is "what day of the week
+#: is it?", 0.11), none of 12 ordinary requests does (the highest is 0.30), and 19 of 251 messages in the e2e suites clear 0.5, nearly all of them about a time.
+FACT_CONFIRM_AT_BY_NAME = {"depends_on_today": 0.35}
 #: Where the answers are kept: a task's metadata, `{fact: bool}`, written once before its first step (orchestration/planning.py).
 CHECKS_KEY = "fact_checks"
+
+
+def today_note(checks: Any, now: datetime | None = None) -> str:
+    """"Today is ..." for a request that refers to a time relative to now, and nothing for any other: their prompts do not change.
+
+    The Operator's prompt never said what day it is. Asked "which files in this folder were modified in the last week?" the assistant answered
+    "What is today's date? I need it to determine which files were modified" (live 11/15, after the listing already showed each file's date).
+    """
+    if not isinstance(checks, dict) or not checks.get("depends_on_today"):
+        return ""
+    moment = now or datetime.now().astimezone()
+    return f"\n\nToday is {moment.strftime('%A, %B')} {moment.day}, {moment.year}; it is {moment.strftime('%H:%M')} on this computer's clock. Work out what \"today\", \"yesterday\", \"last week\" and the like mean from it; do not ask the person for the date."
 
 
 def own_words(task: Any) -> str:
