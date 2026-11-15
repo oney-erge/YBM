@@ -12,7 +12,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SYSTEM_PROMPT = """You plan projects for a personal assistant that lives on the user's computer. You are given a goal, what the user has said
 about it, and what the assistant can and cannot do. Write a plan the user can start.
@@ -23,6 +23,7 @@ Rules:
   ybm    = the assistant does it on the computer: research, comparing options, writing code or documents, making lists, drafting messages.
   user   = only the user can: buying, assembling, testing, signing, choosing between options, anything physical or that costs money.
   access = the assistant could do it once the user gives it something (an account, a key, a login). Put what it needs in `needs`.
+- Finding things out is the assistant's step (ybm), even when the user decides afterwards: rules and permits, prices, options, who could do the work, what to ask them. The user's steps are what only a person can do: deciding, visiting, meeting, signing, paying, collecting. `needs` is for the user's side only, in plain words (a budget, an account); never the name of a tool.
 - The assistant never pays and never places an order. Plan it as two steps: the assistant makes the shopping list with links, then the user buys.
 - `summary`: one or two sentences: what done looks like, and the assumptions you made, so the user can correct the plan.
 - `depends_on`: positions of earlier steps that must be done first. Leave it empty when a step simply follows the one before it.
@@ -38,7 +39,15 @@ MAY_ASK = (
 MAY_NOT_ASK = "Do not ask questions. Where something is unknown, assume something sensible and say so in `summary`."
 
 
+def _require_a_day(schema: dict[str, Any]) -> None:
+    """A field the model may leave out, it leaves out: with "due" only optional, one live house plan had a day on 1 step of 9 and another, drafted from the same goal, on all of them.
+    Required in the schema the model is held to, a day or an empty string is written for every step; a draft without one is still accepted in code."""
+    schema["required"] = [*schema.get("required", []), "due"]
+
+
 class StepDraft(BaseModel):
+    model_config = ConfigDict(json_schema_extra=_require_a_day)
+
     title: str = Field(min_length=1, max_length=160)
     detail: str = Field(default="", max_length=600)
     owner: Literal["ybm", "user", "access"] = "ybm"

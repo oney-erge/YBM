@@ -240,3 +240,17 @@ def test_the_planner_knows_the_date_and_is_told_to_work_backwards_from_a_dated_g
     assert prompt.startswith("Today is Saturday, November 14, 2026.\n\nGoal: Move apartment on December 20")
     assert "work backwards from it" in SYSTEM_PROMPT and "YYYY-MM-DD" in SYSTEM_PROMPT and "Do not put the day in the title" in SYSTEM_PROMPT
     assert "Do not invent chores on the computer" in SYSTEM_PROMPT  # a move is boxes and utilities, not folders and spreadsheets
+
+
+def test_the_day_is_required_in_the_schema_the_model_is_held_to_but_a_draft_without_one_is_still_accepted() -> None:
+    """Live 11/14: the same goal gave a day on 1 step of 9 and, drafted again, on all of them. Required, 6 of 6 drafts had a day on every step."""
+    from agent_control.plans.planner import PlanDraft, StepDraft
+
+    assert "due" in PlanDraft.model_json_schema()["$defs"]["StepDraft"]["required"]
+    assert StepDraft(title="a step").due == "" and PlanDraft(steps=[StepDraft(title="a step")]).steps[0].due == ""
+
+
+def test_finding_things_out_is_told_to_be_the_assistants_step_and_needs_is_not_for_tool_names() -> None:
+    from agent_control.plans.planner import SYSTEM_PROMPT
+
+    assert "Finding things out is the assistant's step (ybm)" in SYSTEM_PROMPT and "never the name of a tool" in SYSTEM_PROMPT
