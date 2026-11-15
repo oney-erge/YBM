@@ -303,6 +303,18 @@ async def test_no_total_for_a_column_that_is_not_all_numbers_and_the_inputs_are_
 
 
 @pytest.mark.asyncio
+async def test_a_file_goes_where_the_model_said_whichever_field_it_used_and_outside_the_roots_is_an_error_not_a_silent_move(tmp_path) -> None:
+    """Live 11/15: asked to save a Word file in a named folder, the model wrote "output_path"; the tool ignored it and the answer claimed the folder."""
+    wanted = tmp_path / "trip" / "list.docx"
+    by_path, *_ = await _make(tmp_path, operation="create_document", title="Trip", lines=["- Tent"], output_path=str(wanted))
+    assert by_path.status.value == "succeeded" and Path(by_path.output["path"]) == wanted.resolve() and wanted.exists()
+    by_name, *_ = await _make(tmp_path, operation="create_document", title="Trip", lines=["- Tent"], output_name=str(tmp_path / "other.docx"))
+    assert Path(by_name.output["path"]) == (tmp_path / "other.docx").resolve()
+    elsewhere, *_ = await _make(tmp_path, operation="create_document", title="Trip", lines=["- Tent"], output_path=str(tmp_path.parent / "outside" / "x.docx"))
+    assert elsewhere.status.value == "failed" and "outside configured document roots" in (elsewhere.error_message or "")
+
+
+@pytest.mark.asyncio
 async def test_the_text_of_a_word_document_can_be_a_list_of_lines_and_a_document_with_only_a_title_is_refused(tmp_path) -> None:
     """Live 11/15: the model wrote the checklist as "lines", the tool read only "content", and a Word file holding just its title was made and sent."""
     from agent_control.tools.office_text import office_text

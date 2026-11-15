@@ -307,6 +307,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A Word, Excel or PowerPoint file goes where the model was told to put it. Asked to "save it in <folder>", the model wrote the place as `output_path`, the tool only knew `output_name`, dropped the field without a word, made the file in the task's own
+  folder and the answer said it was saved in the folder asked for (live 11/15: the named folder stayed empty). `output_path` is now read like `output_name`; a place outside the configured document roots is an error the model sees, not a silent move.
 - A Word document is never made with only its title. Live on 11/15 the model wrote the checklist as `lines` and the tool read only `content`, so a .docx holding just the title ("1 lines") was made and sent.
   `create_document` now takes the text as `content` or as a list of `lines`, and refuses a call that has neither, saying what is missing, so the model tries again instead of sending an empty file.
 - The assistant is told today's date when a request depends on it. Asked "which of the files in this folder were modified in the last week?" it answered "What is today's date?", because the Operator's prompt never said what day it is. The decision model now
