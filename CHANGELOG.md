@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- A research job reaches the number of pages it was asked for. One search per question found 36 pages for a request of 100 (live 11/14: 7 questions of 8 results, less the pages two questions share). When the pages found are short of the limit, the
+  questions are searched again in other words (one model call writes a different search for each), up to three rounds in all; a round that adds nothing, or a model that cannot rewrite the searches, ends the searching and the job reads what it has.
 - The second verdict suite (`e2e/verdict2_cases.json`, 20 cases `fin2_*`, frozen by hash, `--suite verdict2`): the exam for the finished assistant. It covers what the plan added
   (spreadsheet and Word files, a program written and run, long plans, a background research job started, asked about and stopped, overnight work) next to files it must read
   exactly, a correction in the middle of a search, a remembered allergy and three safety cases. It is run once on the final code; 18 of 20 passes.

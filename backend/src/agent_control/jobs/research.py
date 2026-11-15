@@ -50,6 +50,9 @@ class ResearchIO:
 
 MIN_QUESTIONS, MAX_QUESTIONS = 3, 10
 RESULTS_PER_QUERY = 8
+#: One search per question finds about half of what a request for 100 pages needs (7 questions of 8 results, less the pages two questions share: 36 live on 11/14).
+#: When the pages found are short of the limit the person set, the questions are searched again in different words, up to this many rounds in all.
+MAX_SEARCH_ROUNDS = 3
 PAGE_CHARS = 6_000  # the part of a page the model reads: about 1,500 tokens, so one unit is seconds, not minutes
 MAX_FACTS_PER_PAGE = 4
 MAX_FACTS_PER_SECTION = 14
@@ -60,6 +63,10 @@ PROGRESS_EVERY = 10  # pages read between two messages to the person
 
 class _Questions(BaseModel):
     questions: list[str] = Field(default_factory=list, description="the sub-questions that, answered, answer the goal; each a full question")
+
+
+class _Phrasings(BaseModel):
+    searches: list[str] = Field(default_factory=list, description="one web search for each question, in the same order, in different words")
 
 
 class _Fact(BaseModel):
@@ -83,6 +90,11 @@ NOTES_SYSTEM = (
     f"{MAX_FACTS_PER_PAGE} facts from the page that help answer it: prices, ranges, numbers, named options, comparisons, what people report. Each fact "
     "has a quote: the exact words from the page that say it, copied character for character, a sentence or a phrase of at least eight words. If nothing "
     "on the page helps, return an empty list. Never write a fact the page does not state."
+)
+PHRASE_SYSTEM = (
+    "You rewrite web searches so that other websites answer them. You are given research questions. For each one write a different search: other key words and "
+    "another angle (a guide, a price list, an official page, owners' or customers' experiences, a forum), not the same words in another order. One search per "
+    "question, in the same order."
 )
 SECTION_SYSTEM = (
     "You write one section of a research report from numbered notes. Use only the notes: every sentence that states a fact ends with the numbers "
@@ -108,6 +120,9 @@ def new_state(max_pages: int = DEFAULT_MAX_PAGES) -> dict[str, Any]:
         "max_pages": max(5, min(int(max_pages), HARD_MAX_PAGES)),
         "questions": [],
         "queries_done": 0,
+        "round": 0,  # 0 searches the questions as written; each later round searches them in other words (`phrasings`)
+        "phrasings": [],
+        "added_this_round": 0,
         "sources": [],  # {"id": n, "url", "title", "question": index, "status": new|read|skipped|failed, "facts": [{claim, quote}]}
         "sections": [],  # {"question", "text"}
         "summary": "",
@@ -184,9 +199,12 @@ async def _search(state: dict[str, Any], io: ResearchIO) -> Unit:
     seen = {normalized_url(source["url"]) for source in state["sources"]}
     if index < len(questions) and len(state["sources"]) < state["max_pages"]:
         # The pages are shared out across the questions, so the last question is not left with what the first ones did not use.
-        share = max(2, -(-state["max_pages"] // len(questions)))  # rounded up, so the limit is reached and not stopped just short of it
+        # Rounded up, so the limit is reached and not stopped just short of it; in a later round, shared out over what is still missing.
+        missing = state["max_pages"] - len(state["sources"]) if state.get("round") else state["max_pages"]
+        share = max(2, -(-missing // (len(questions) - index if state.get("round") else len(questions))))
         found = 0
-        for result in await io.search(questions[index], RESULTS_PER_QUERY):
+        queries = state.get("phrasings") or questions
+        for result in await io.search(queries[index], RESULTS_PER_QUERY):
             url = str(result.get("url") or "").strip()
             if not url.startswith(("http://", "https://")) or normalized_url(url) in seen or found >= share:
                 continue
@@ -199,11 +217,35 @@ async def _search(state: dict[str, Any], io: ResearchIO) -> Unit:
             if len(state["sources"]) >= state["max_pages"]:
                 break
         state["queries_done"] = index + 1
+        state["added_this_round"] = state.get("added_this_round", 0) + found
         return Unit(state)
     if not state["sources"]:
         raise ValueError("the searches found no pages")
+    if len(state["sources"]) < state["max_pages"] and state.get("round", 0) + 1 < MAX_SEARCH_ROUNDS and state.get("added_this_round", 0) > 0:
+        more = await _more_searches(state, io)
+        if more is not None:
+            return more
     state["stage"] = "read"
     return Unit(state, say=f"I found {len(state['sources'])} pages to read. Reading them one at a time now.")
+
+
+async def _more_searches(state: dict[str, Any], io: ResearchIO) -> Unit | None:
+    """The pages found are fewer than the person asked for: write each question's search again in other words, once more round. None when the model cannot.
+
+    More pages are a bonus, not a need, so a model that fails here leaves the job to read what it has instead of failing it.
+    """
+    questions = state["questions"]
+    listed = "\n".join(f"{n}. {question}" for n, question in enumerate(questions, 1))
+    try:
+        answer = await io.think(PHRASE_SYSTEM, f"Questions:\n{listed}", _Phrasings)
+    except Exception:  # noqa: BLE001 - see above
+        return None
+    searches = [" ".join(str(item).split()) for item in getattr(answer, "searches", [])]
+    if not any(searches):
+        return None
+    state["phrasings"] = [searches[i] if i < len(searches) and searches[i] else questions[i] for i in range(len(questions))]
+    state["round"], state["queries_done"], state["added_this_round"] = state.get("round", 0) + 1, 0, 0
+    return Unit(state, say=f"I have {len(state['sources'])} pages so far and you asked for up to {state['max_pages']}. Searching again in different words.")
 
 
 async def _read(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
