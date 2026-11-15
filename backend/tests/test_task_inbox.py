@@ -143,3 +143,17 @@ def test_tasks_that_already_explained_themselves_are_never_nagged(tmp_path, stat
     repos, _audit = make_repos(tmp_path)
 
     assert not due_for_heartbeat(_task(repos, status, updated_ago_s=99999), interval_seconds=300)
+
+
+def test_what_the_person_added_is_shown_to_the_model_as_their_words_not_as_one_more_tool_result() -> None:
+    """Live 11/14: "The Word one, not the PDF." was a step called _user_note in the history, and the answer listed both files."""
+    from agent_control.orchestration.operator import _format_history
+
+    history = [
+        {"tool_name": "filesystem.manage", "input": {"operation": "search"}, "status": "succeeded", "output_summary": "resume.docx, resume.pdf"},
+        {"tool_name": NOTE_ENTRY_NAME, "input": None, "status": "user_note", "output_summary": "The Word one, not the PDF."},
+    ]
+    shown = _format_history(history)
+    assert '2. THE PERSON ADDED, while you were working: "The Word one, not the PDF."' in shown
+    assert "Your answer has to reflect it." in shown and "_user_note" not in shown
+    assert "1. filesystem.manage (succeeded)" in shown  # the real step is shown as before
