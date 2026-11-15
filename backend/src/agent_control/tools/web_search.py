@@ -157,6 +157,13 @@ class WebSearchAdapter:
 
     async def _duckduckgo(self, query: str, limit: int) -> list[dict[str, str]]:
         response = await self._get(f"https://html.duckduckgo.com/html/?q={quote_plus(query)}")
+        # A blocked client is answered with HTTP 202 and a page that asks for a human check. It parses to no results, which read as "No results
+        # for ..." and hid that every search on this connection was refused (found 11/14: the first research job found no pages at all).
+        if response.status_code == 202 or "anomaly" in response.text[:30000].lower():
+            raise RuntimeError(
+                "DuckDuckGo asked for a human check and did not search (it blocks automated searches from some connections). A Brave Search key "
+                "(BRAVE_SEARCH_API_KEY, free) or a SearXNG instance in the web search settings gives searches that are not refused."
+            )
         parser = _DuckDuckGoParser()
         parser.feed(response.text)
         return parser.results[:limit]

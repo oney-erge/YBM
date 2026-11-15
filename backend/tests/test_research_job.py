@@ -28,7 +28,7 @@ class _Fake:
             return research._Questions(questions=self.questions)
         title = user.split("Page title: ")[1].split("\n")[0]
         facts = self.facts_for.get(title, [])
-        return research._Notes(relevant=bool(facts), facts=[research._Fact(claim=c, quote=q) for c, q in facts])
+        return research._Notes(facts=[research._Fact(claim=c, quote=q) for c, q in facts])
 
     async def write(self, system, user):
         self.calls.append(("write", user[:60]))
@@ -143,3 +143,15 @@ def test_progress_is_said_in_words_for_every_stage() -> None:
     texts = {stage: research.progress_text({**state, "stage": stage}) for stage in ("plan", "search", "read", "write", "finish")}
     assert "planning" in texts["plan"] and "0 of 2 questions searched" in texts["search"]
     assert "1 of 2 pages read (1 to go)" in texts["read"] and "0 of 2 sections written" in texts["write"] and texts["finish"] == "Finishing the report."
+
+
+def test_a_sentence_no_note_supports_is_removed_and_one_that_says_what_the_sources_do_not_say_stays() -> None:
+    """The first live report said "the only suitable choice" and "owners report significant savings": neither was in any note."""
+    text = (
+        "Air-source units cost 4,000 to 8,000 dollars [1]. They are the only suitable choice for every home. "
+        "Ground-source costs more [2][99]. Owners report significant savings. The sources do not say what insulation is needed. No page covered permits."
+    )
+    kept = research.only_given_citations(text, {1, 2})
+    assert kept == "Air-source units cost 4,000 to 8,000 dollars [1]. Ground-source costs more [2]. The sources do not say what insulation is needed. No page covered permits."
+    assert research.only_given_citations("It is the best.", {1}) == ""  # nothing supported: nothing said
+    assert research.only_given_citations("Costs 5 dollars [7].", {1}) == ""  # a citation to a note that was not given leaves nothing to stand on
