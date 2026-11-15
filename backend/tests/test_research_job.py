@@ -155,3 +155,87 @@ def test_a_sentence_no_note_supports_is_removed_and_one_that_says_what_the_sourc
     assert kept == "Air-source units cost 4,000 to 8,000 dollars [1]. Ground-source costs more [2]. The sources do not say what insulation is needed. No page covered permits."
     assert research.only_given_citations("It is the best.", {1}) == ""  # nothing supported: nothing said
     assert research.only_given_citations("Costs 5 dollars [7].", {1}) == ""  # a citation to a note that was not given leaves nothing to stand on
+
+
+class _Wide:
+    """An engine with plenty to say: each distinct search gets its own pages (the same search the same ones again), and a model that rewrites searches."""
+
+    def __init__(self, *, per_search=8, rewrite=True, rewrite_error=False, same_pages=False) -> None:
+        self.per_search, self.rewrite, self.rewrite_error, self.same_pages = per_search, rewrite, rewrite_error, same_pages
+        self.searched: list[str] = []
+
+    async def think(self, system, user, schema):
+        if schema is research._Questions:
+            return research._Questions(questions=[f"Question {n}?" for n in range(1, 8)])
+        if schema is research._Phrasings:
+            if self.rewrite_error:
+                raise TimeoutError("slow")
+            return research._Phrasings(searches=[f"another way to ask {n}" for n in range(1, 8)] if self.rewrite else [])
+        return research._Notes(facts=[])
+
+    async def write(self, system, user):
+        return "text [1]"
+
+    async def search(self, query, count):
+        self.searched.append(query)
+        slug = "everything" if self.same_pages else query.replace(" ", "-").replace("?", "")  # same_pages: every search gets the same pages
+        return [{"title": f"{slug} {i}", "url": f"https://site{i}.example/{slug}", "snippet": ""} for i in range(count)]
+
+    async def fetch(self, url):
+        return Page("page", "A sentence long enough to count as the text of a page. " * 6)
+
+    @property
+    def io(self) -> ResearchIO:
+        return ResearchIO(think=self.think, write=self.write, search=self.search, fetch=self.fetch)
+
+
+async def _search_only(wide: _Wide, max_pages: int):
+    state, said = new_state(max_pages), []
+    for _ in range(200):
+        unit = await advance("a goal", state, wide.io)
+        state = unit.state
+        if unit.say:
+            said.append(unit.say)
+        if state["stage"] == "read":
+            break
+    return state, said
+
+
+@pytest.mark.asyncio
+async def test_a_request_for_more_pages_than_one_search_per_question_finds_searches_again_in_other_words() -> None:
+    """Live 11/14: 100 pages asked for, 7 questions of 8 results, 36 pages found and the job went on to read them."""
+    wide = _Wide()
+    state, said = await _search_only(wide, 100)
+    assert len(state["sources"]) == 100 and state["round"] == 1 and state["stage"] == "read"  # 56 in the first round, the rest in the second
+    assert wide.searched[:7] == [f"Question {n}?" for n in range(1, 8)]  # the questions as written first
+    assert wide.searched[7:9] == ["another way to ask 1", "another way to ask 2"]  # then each in other words
+    assert any("Searching again in different words" in line for line in said) and said[-1].startswith("I found 100 pages")
+    assert len({source["url"] for source in state["sources"]}) == 100  # no page twice
+
+
+@pytest.mark.asyncio
+async def test_no_second_round_when_the_first_found_enough_or_when_a_round_adds_nothing_or_the_model_cannot_rewrite() -> None:
+    enough = await _search_only(_Wide(), 30)
+    assert len(enough[0]["sources"]) == 30 and enough[0]["round"] == 0
+    # An engine that answers every search with the same eight pages: the second round finds nothing new, and the job reads what it has
+    state, _ = await _search_only(_Wide(same_pages=True), 100)
+    assert state["stage"] == "read" and len(state["sources"]) == 8 and state["round"] == 1
+    # A model that cannot rewrite the searches, or writes none: the pages found are read, not an error
+    for broken in (_Wide(rewrite_error=True), _Wide(rewrite=False)):
+        state, said = await _search_only(broken, 100)
+        assert state["stage"] == "read" and state["round"] == 0 and len(state["sources"]) == 56
+        assert not any("different words" in line for line in said)
+
+
+@pytest.mark.asyncio
+async def test_the_rounds_never_go_past_the_limit_and_an_older_saved_job_without_them_still_advances() -> None:
+    state = new_state(150)
+    for key in ("round", "phrasings", "added_this_round"):
+        del state[key]  # a job saved before rounds existed
+    wide = _Wide()
+    for _ in range(200):
+        unit = await advance("a goal", state, wide.io)
+        state = unit.state
+        if state["stage"] == "read":
+            break
+    assert state["round"] < research.MAX_SEARCH_ROUNDS and len(state["sources"]) <= 150 and state["stage"] == "read"
