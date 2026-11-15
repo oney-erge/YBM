@@ -177,7 +177,8 @@ class ArtifactDeliverInput(ToolInputModel):
 
 class DocumentManageInput(ToolInputModel):
     operation: Literal[
-        "inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation"
+        "inspect_document", "extract_text", "summarize_pdf", "compare_documents", "create_presentation", "update_presentation",
+        "create_document", "create_spreadsheet",
     ] = "inspect_document"
     path: str | None = None
     artifact_id: str | None = None
@@ -187,6 +188,9 @@ class DocumentManageInput(ToolInputModel):
     content: str | None = None
     instructions: str | None = None
     output_name: str | None = None
+    # create_spreadsheet: the rows, each a list of cells (the first row is the header), and whether to add a "Total" row that sums the number columns.
+    rows: list[list[str | int | float | None]] | None = Field(default=None, max_length=2000)
+    total_row: bool = False
 
     @model_validator(mode="after")
     def _require_inputs_per_operation(self) -> "DocumentManageInput":
@@ -203,6 +207,10 @@ class DocumentManageInput(ToolInputModel):
             raise ValueError(
                 "create_presentation requires at least one of 'title', 'content', or 'instructions'"
             )
+        if op == "create_document" and not (self.title or self.content or self.instructions):
+            raise ValueError("create_document requires at least one of 'title', 'content', or 'instructions'")
+        if op == "create_spreadsheet" and not (self.rows and any(self.rows)):
+            raise ValueError("create_spreadsheet requires 'rows': a list of rows, each a list of cells, the first row the header")
         if op == "compare_documents":
             if len(self.source_paths) < 2:
                 raise ValueError("compare_documents requires at least two source_paths")

@@ -236,3 +236,67 @@ async def test_verify_document_manage_returns_none_for_a_read_only_operation(tmp
     result = await adapter.execute(request)
 
     assert _verify_document_manage(request, result) is None
+
+
+async def _make(tmp_path, **payload):
+    repos, _audit = make_repos(tmp_path)
+    task = repos.tasks.create("make a file")
+    adapter = DocumentManageAdapter(repos.artifacts, allowed_roots=[str(tmp_path)])
+    request = ToolCallRequest(task_id=task.id, tool_name="document.manage", capability=Capability.FILESYSTEM_WRITE, input=payload)
+    return await adapter.execute(request), request, repos, task
+
+
+@pytest.mark.asyncio
+async def test_a_word_document_is_made_from_a_title_and_lines_and_reads_back(tmp_path) -> None:
+    """Verdict 2 fin2_a3: "a packing checklist as a Word document" ended as a PowerPoint file, because the tool made only presentations."""
+    from agent_control.tools.office_text import office_text
+
+    content = "# Clothes\n- Rain jacket\n- Two pairs of socks\n[ ] Map & compass\nTake water for 3 days."
+    result, request, repos, task = await _make(tmp_path, operation="create_document", title="Three-day hiking checklist", content=content)
+    assert result.status.value == "succeeded" and result.output["path"].endswith(".docx") and result.output["paragraph_count"] == 6
+    text = office_text(Path(result.output["path"]))
+    assert "Three-day hiking checklist" in text and "Clothes" in text and "\u2022 Rain jacket" in text and "\u2022 Map & compass" in text and "Take water for 3 days." in text
+    with ZipFile(result.output["path"]) as docx:
+        assert {"[Content_Types].xml", "_rels/.rels", "word/document.xml"} <= set(docx.namelist())
+        assert b"<w:b/>" in docx.read("word/document.xml")  # the heading is bold
+    assert repos.artifacts.list_for_task(task.id)[0].type == ArtifactType.DOCUMENT
+    verification = _verify_document_manage(request, result)
+    assert verification.checked == 1 and verification.verified == 1
+    missing = _verify_document_manage(request, result.model_copy(update={"output": {**result.output, "path": str(tmp_path / "nope.docx")}}))
+    assert missing.verified == 0 and "not found" in missing.missing[0]
+
+
+@pytest.mark.asyncio
+async def test_a_spreadsheet_is_made_from_rows_with_numbers_as_numbers_and_a_total_row_summed_here(tmp_path) -> None:
+    """Verdict 2 fin2_a1: four invoices into one spreadsheet with a total row. The 9B's own Python failed; the sum is now worked out by the tool."""
+    from xml.etree import ElementTree
+
+    rows = [["Vendor", "Date", "Amount"], ["Brightwater Plumbing", "2026-03-15", "120.50"], ["Delta Office Supplies", "2026-04-15", 89.9], ["Corner Electric", "2026-05-15", 310], ["Alder Print Shop", "2026-06-15", "45.60"]]
+    result, request, repos, task = await _make(tmp_path, operation="create_spreadsheet", title="Invoices", rows=rows, total_row=True)
+    assert result.status.value == "succeeded" and result.output["path"].endswith(".xlsx") and result.output["totals"] == {"Amount": 566.0}
+    assert "The total row says Amount 566" in result.output["summary"]
+    with ZipFile(result.output["path"]) as xlsx:
+        sheet = ElementTree.fromstring(xlsx.read("xl/worksheets/sheet1.xml"))
+    ns = {"x": "http://schemas.openxmlformats.org/spreadsheetml/2006/main"}
+    sheet_rows = sheet.findall("x:sheetData/x:row", ns)
+    assert len(sheet_rows) == 6  # the header, four invoices and the total
+    total = {cell.get("r"): cell for cell in sheet_rows[-1].findall("x:c", ns)}
+    assert total["C6"].find("x:f", ns).text == "SUM(C2:C5)" and total["C6"].find("x:v", ns).text == "566"
+    amount = {cell.get("r"): cell for cell in sheet_rows[1].findall("x:c", ns)}
+    assert amount["C2"].get("t") is None and amount["C2"].find("x:v", ns).text == "120.5"  # a number, not text
+    assert amount["B2"].get("t") == "inlineStr"  # a date stays text
+    assert _verify_document_manage(request, result).verified == 1
+
+
+@pytest.mark.asyncio
+async def test_no_total_for_a_column_that_is_not_all_numbers_and_the_inputs_are_checked(tmp_path) -> None:
+    result, _request, _repos, _task = await _make(tmp_path, operation="create_spreadsheet", title="Mixed", rows=[["Name", "Qty", "Note"], ["a", 2, "ok"], ["b", "3", "later"]], total_row=True)
+    assert result.output["totals"] == {"Qty": 5.0}  # Note has words in it, Name has words in it
+    plain, *_ = await _make(tmp_path, operation="create_spreadsheet", title="Plain", rows=[["A"], ["x"]])
+    assert plain.output["totals"] == {}
+    with pytest.raises(ValueError, match="requires 'rows'"):
+        from agent_control.tools.contracts import DocumentManageInput
+
+        DocumentManageInput(operation="create_spreadsheet", title="x")
+    with pytest.raises(ValueError, match="create_document requires"):
+        DocumentManageInput(operation="create_document")
