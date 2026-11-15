@@ -332,6 +332,9 @@ class DocumentManageAdapter:
         return resolved
 
     def _output_path(self, request: ToolCallRequest, requested: Any, *, default_stem: str, suffix: str) -> Path:
+        # A model writes the place it was asked for as "output_path" as often as "output_name"; the unknown field was dropped without a word, the file
+        # went to the task's folder, and the answer said it was saved where the person asked (live 11/15: "saved it to word", a folder that stayed empty).
+        requested = requested or request.input.get("output_path")
         if requested:
             path = self._safe_path(str(requested))
             if path.suffix.lower() != suffix:
