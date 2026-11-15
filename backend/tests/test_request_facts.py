@@ -141,3 +141,29 @@ def test_counting_is_a_fact_only_the_decision_model_can_raise() -> None:
     task.metadata[CHECKS_KEY] = {"counts_things": False}
     assert not RequestFacts.from_task(task).counts_things
     assert set(ADDED_FACT_QUESTIONS) <= set(ALL_FACT_QUESTIONS) and "tallies" in ALL_FACT_QUESTIONS
+
+
+def test_the_assistants_own_offer_is_not_the_user_naming_a_coding_agent() -> None:
+    """Live 11/15: offered a hand-over to Claude Code, told no, and the task was handed over anyway because "Claude Code" in the offer counted as the user's."""
+    from agent_control.clarification import objective_with_answer
+    from agent_control.orchestration.call_rewrites import _coding_agent_requested
+    from agent_control.orchestration.request_facts import RequestFacts
+    from agent_control.schemas import TaskRecord
+
+    offer = "I tried several ways to do this on my own and could not finish it. Do you want me to hand it to Claude Code on this computer? Reply yes to hand it over, or no and I will tell you what I found."
+    request = "Please research which houseplants are safe for cats."
+    objective = objective_with_answer(request, offer, "no, just tell me what you found")
+    task = TaskRecord(objective=objective, metadata={"original_message_text": request, "claude_code_offer": {"question": offer, "state": "declined"}})
+    facts = RequestFacts.from_task(task)
+    assert not facts.names_a_coding_agent and facts.providers == ()
+    assert not _coding_agent_requested(task, {"operation": "start", "provider": "claude_code"})
+    # the user's own answer is still the user's: "use Claude Code" names it
+    named = TaskRecord(objective=objective_with_answer(request, "Which tool should I use?", "use Claude Code please"), metadata={"original_message_text": request})
+    assert RequestFacts.from_task(named).providers == ("claude_code",) and _coding_agent_requested(named, {"operation": "start", "provider": "claude_code"})
+    # and a yes to the offer is still a yes
+    accepted = TaskRecord(objective=objective, metadata={"original_message_text": request, "claude_code_offer": {"question": offer, "state": "accepted"}})
+    assert _coding_agent_requested(accepted, {"operation": "start", "provider": "claude_code"})
+    # a message that names it itself, and a question with a bracket inside it
+    assert RequestFacts.from_task(TaskRecord(objective="Ask Claude Code to fix it", metadata={"original_message_text": "Ask Claude Code to fix it"})).providers == ("claude_code",)
+    odd = objective_with_answer(request, "Which of [a] or [b]? Say Codex or Claude Code.", "a")
+    assert RequestFacts.from_task(TaskRecord(objective=odd, metadata={"original_message_text": request})).providers == ()

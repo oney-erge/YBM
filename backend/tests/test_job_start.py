@@ -106,7 +106,7 @@ async def test_only_a_routed_task_with_a_stage_is_started_and_a_stage_that_fails
 async def test_the_loop_runs_the_job_call_before_the_operator_decides_anything_and_the_operator_then_writes_the_answer(tmp_path):
     """The live failure: the skill was in the prompt and the 9B chose delegate. Now the first call is not its choice, and it goes through the same executor."""
     repos, audit = make_repos(tmp_path)
-    adapter = StaticToolAdapter({"summary": "Research started (job_x): up to 12 pages.", "answer": "Research started."})
+    adapter = StaticToolAdapter({"summary": "Started the research on: heating old stone houses. It reads up to 12 pages, one at a time, in the background.", "answer": "Research started."})
     operator = QueueOperator([OperatorDecision(action=OperatorAction.DONE, final_answer="It is running in the background; I will message you as it goes.")])
     worker = TaskWorker(
         repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter, tool_name="job.manage"), operator=operator,
@@ -119,8 +119,10 @@ async def test_the_loop_runs_the_job_call_before_the_operator_decides_anything_a
             break
     finished = repos.tasks.get(task.id)
     assert [r.tool_name for r in adapter.requests] == ["job.manage"] and adapter.requests[0].input["operation"] == "start_research"
-    assert operator.calls == 1  # only for the answer: the first step was not its to take
-    assert finished.status == TaskStatus.COMPLETED and "running in the background" in str(finished.metadata.get("synthesized_answer") or finished.metadata)
+    assert operator.calls == 0  # neither the first step nor the answer is the model's: a started job is told in code
+    answer = str(finished.metadata.get("synthesized_answer") or "")
+    assert finished.status == TaskStatus.COMPLETED and answer.startswith("I have started researching this in the background.")
+    assert "up to 12 pages" in answer and "job_" not in answer
 
 
 def _with_history(repos, *entries):
@@ -197,3 +199,16 @@ def test_every_bundled_starter_skill_parses_and_the_research_skill_is_routed_to_
     research = next(skill for skill in _load_skills(str(root)) if skill["name"] == "Research a topic in depth")
     assert research["route"] == "job" and research["when_at"] == 0.55 and research["tools"] == ["job.manage"]
     assert "already under way" in research["when"] and research["when"].startswith("Is the user asking you to start researching")
+
+
+def test_a_started_job_is_told_to_the_person_in_code_without_a_job_number_and_only_when_it_really_started() -> None:
+    """Live 11/15: after the job started, the Operator kept calling the job tool with the id of an earlier job, offered Claude Code, and asked whether to wait or pause."""
+    from agent_control.orchestration.planning import _research_started, started_answer
+
+    done = {"tool_name": "job.manage", "status": "succeeded", "input": {"operation": "start_research", "goal": "g"}, "output_summary": "Started the research on: g. It reads up to 10 pages, one at a time"}
+    assert _research_started([{"tool_name": "_fulfillment_check"}, done]) is done
+    for history in ([], [{**done, "status": "failed"}], [{**done, "input": {"operation": "status"}}], [{"tool_name": "web.search", "status": "succeeded"}]):
+        assert _research_started(history) is None
+    said = started_answer(done)
+    assert "up to 10 pages" in said and "job_" not in said and "pause or stop it" in said
+    assert "I will read the pages one at a time" in started_answer({**done, "output_summary": "Started."})

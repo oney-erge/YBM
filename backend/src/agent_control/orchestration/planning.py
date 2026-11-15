@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from agent_control.orchestration import planner
@@ -22,6 +23,27 @@ from agent_control.schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _research_started(history: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The step that started a research job in this task and succeeded, or None."""
+    for entry in history:
+        if (
+            isinstance(entry, dict) and entry.get("tool_name") == "job.manage" and entry.get("status") == "succeeded"
+            and isinstance(entry.get("input"), dict) and entry["input"].get("operation") == "start_research"
+        ):
+            return entry
+    return None
+
+
+def started_answer(entry: dict[str, Any]) -> str:
+    """What the person is told when their research has started: what it will do, what they will get, what they can say. No job number."""
+    pages = re.search(r"reads up to (\d+) pages", str(entry.get("output_summary") or ""))
+    reads = f"I will read up to {pages.group(1)} pages, one at a time, and message you as I go." if pages else "I will read the pages one at a time and message you as I go."
+    return (
+        f"I have started researching this in the background. {reads} When it is done I will send you the report, with where each claim comes from. "
+        "You can ask me how far along it is, or tell me to pause or stop it, whenever you like."
+    )
 
 
 class PlanningStage:
@@ -96,7 +118,14 @@ class PlanningStage:
         from its result. Only the choosing of the tool is taken from a model that, live, chose a different one. None for every other
         request, for a task that is past its first step, and when there is no job stage.
         """
-        if self.job_stage is None or task.metadata.get("task_route") != "job" or history or task.metadata.get("job_start_done"):
+        if self.job_stage is None or task.metadata.get("task_route") != "job":
+            return None
+        started = _research_started(history)
+        if started is not None:
+            # The job is running and the person has what they need to know. The answer is written here, not by the Operator: in a second live run it
+            # went on calling the job tool with an id from an earlier job, offered a hand-over to Claude Code and asked whether to wait or pause.
+            return OperatorDecision(action=OperatorAction.DONE, final_answer=started_answer(started), reasoning="The research job is running.")
+        if history or task.metadata.get("job_start_done"):
             return None
         try:
             call = await self.job_stage(task)
