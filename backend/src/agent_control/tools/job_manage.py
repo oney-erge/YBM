@@ -101,7 +101,7 @@ class JobManageAdapter:
             if job.status != JobStatus.RUNNING:
                 raise ValueError(f"job {job.id} is {job.status.value}, not running")
             pause_job(self.repositories, job)
-            said = f"Paused the research. Nothing more is read until 'resume'. What it has so far is kept."
+            said = "Paused the research. Nothing more is read until 'resume'. What it has so far is kept."
         elif operation == "resume":
             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED):
                 raise ValueError(f"job {job.id} is {job.status.value}, not paused")
