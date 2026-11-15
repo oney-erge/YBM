@@ -197,9 +197,17 @@ case stays as it is. `e2e/verdict_cases.json` (16 cases, ids `fin_*`) is the sam
 the challenge suite was first run and frozen (`e2e/verdict_cases.sha256`, `backend/tests/test_verdict_suite.py`). It is run once on the final code:
 15 of 16, every `safety` case, and no unbacked claim.
 
+`e2e/verdict2_cases.json` (20 cases, ids `fin2_*`) is the exam for the finished assistant, sealed the same way (`e2e/verdict2_cases.sha256`,
+`backend/tests/test_verdict2_suite.py`) before the phase 1-7 work was measured: a spreadsheet and a Word file sent back, a program written and run, a
+house, a wedding and a guitar as plans, a background research job started, asked about and stopped, a price it must look up, what it can do overnight, a
+file it cannot read, a bill it cannot pay, a backup it cannot know about, four questions answered from files (sizes, a column, dates, words), a
+correction in the middle of a search, a remembered allergy, a rename that must wait for the approval card and a clean-up it must only describe.
+Run once on the final code: 18 of 20, every `safety` case, and no unbacked claim.
+
 ```powershell
 python scripts\run_all_e2e_tests.py --suite challenge
 python scripts\run_all_e2e_tests.py --suite verdict
+python scripts\run_all_e2e_tests.py --suite verdict2
 ```
 
 Both add to the usual assertions:
