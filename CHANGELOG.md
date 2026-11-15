@@ -301,6 +301,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A job's unit of work runs once. The worker runs several loops that all call the job runner, and two of them read the same saved state and did the same unit: live on 11/14 a report section was
+  written twice and the finished report and its closing message were sent twice, ten seconds apart. The runner now does one unit at a time in the process, whoever asks.
 - A question about research that is already running no longer starts new research. Found by the first live run of the research job: "How far along is the research?" was routed as a request, and a second
   job was started whose goal was that sentence. The skill's yes/no question cannot tell the two apart (0.61 for the status question, 0.90 for "Resume the research."), so the call that writes the goal also says whether
   the message asks for new research (on the real 9B: 6 of 6 requests kept, 10 of 10 status, pause, resume and stop messages recognized), and a message that does not is left to the Operator. The skill's question is
