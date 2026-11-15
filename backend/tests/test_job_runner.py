@@ -214,3 +214,24 @@ def test_starting_needs_the_persons_approval_and_the_tool_is_unnamed_while_off_s
     assert definition.approval_required_operations == ("start_research",)
     on = build_tool_registry(AppSettings(_env_file=None, jobs={"enabled": True}), "http://127.0.0.1:8765", repositories=repos, audit_logger=audit)
     assert "job.manage" in on.context() and "start_research" in on.context()
+
+
+@pytest.mark.asyncio
+async def test_several_loops_ticking_at_once_do_one_unit_not_the_same_unit_several_times(tmp_path) -> None:
+    """Live 11/14: the worker runs several loops that all call tick(); a section was written twice and the finished report was sent twice."""
+    import asyncio
+
+    repos, audit = make_repos(tmp_path)
+    _job(repos, stage="write", questions=["Q?"], sections=[], sources=[{"id": 1, "url": "https://a.example/x", "title": "T", "question": 0, "status": "read", "facts": [{"claim": "c", "quote": "q" * 30}]}])
+    started = []
+
+    class Slow(_Io):
+        async def write(self, system, user):
+            started.append(1)
+            await asyncio.sleep(0.2)
+            return "It costs 4,000 to 8,000 dollars [1]."
+
+    runner, _chat = _runner(repos, audit, tmp_path, io=Slow())
+    ran = await asyncio.gather(*(runner.tick() for _ in range(4)))
+    assert sorted(ran) == [0, 0, 0, 1] and len(started) == 1  # one loop did the unit, the others found it taken
+    assert await runner.tick() == 1  # and the next pass is free again
