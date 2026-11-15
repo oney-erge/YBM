@@ -63,13 +63,14 @@ class _Questions(BaseModel):
 
 
 class _Fact(BaseModel):
-    claim: str = Field(description="one fact from the page, in your own short words")
-    quote: str = Field(description="the exact words from the page that say it, copied, not reworded")
+    claim: str = Field(description="what the page says, in one short sentence with its numbers")
+    quote: str = Field(description="the exact words from the page that say it, copied character for character")
 
 
 class _Notes(BaseModel):
-    relevant: bool = Field(default=False, description="true only if the page says something that answers the question")
-    facts: list[_Fact] = Field(default_factory=list)
+    # No "is this page relevant" flag: asked that first, the 9B said "not relevant" about a page of monthly running costs by system size and season.
+    # Asked only for facts with their quotations, it found four on that page and none on a page about something else; no verified fact means not relevant.
+    facts: list[_Fact] = Field(default_factory=list, description="up to 4 facts that help answer the question; empty if the page has none")
 
 
 PLAN_SYSTEM = (
@@ -78,9 +79,10 @@ PLAN_SYSTEM = (
     f"Between {MIN_QUESTIONS} and {MAX_QUESTIONS} questions. Each is a complete question that a web search could answer."
 )
 NOTES_SYSTEM = (
-    "You read one web page to help answer a question. Say whether the page answers it. If it does, list up to "
-    f"{MAX_FACTS_PER_PAGE} facts it states. Each fact has a quote: the exact words from the page that say it, copied character for character. "
-    "Never write a fact the page does not state. If the page is about something else, say it is not relevant and list no facts."
+    "You read part of one web page to help answer a question. Copy out up to "
+    f"{MAX_FACTS_PER_PAGE} facts from the page that help answer it: prices, ranges, numbers, named options, comparisons, what people report. Each fact "
+    "has a quote: the exact words from the page that say it, copied character for character, a sentence or a phrase of at least eight words. If nothing "
+    "on the page helps, return an empty list. Never write a fact the page does not state."
 )
 SECTION_SYSTEM = (
     "You write one section of a research report from numbered notes. Use only the notes: every sentence that states a fact ends with the numbers "
@@ -89,8 +91,9 @@ SECTION_SYSTEM = (
 )
 SUMMARY_SYSTEM = (
     "You summarise a research report for a person who will read only this. From the sections, write the answer in at most 90 words, plain prose: "
-    "the conclusion first, then the one or two things that matter most. Keep the citation numbers in square brackets where you use a fact. "
-    "Say plainly which parts the sources did not answer."
+    "the conclusion first, then the one or two things that matter most. Every sentence that states a fact must end with the citation numbers in "
+    "square brackets that the section gave for it, like [4] or [3][5]; a sentence with no number is removed. Do not add anything the sections do not "
+    "say. Say plainly which parts the sources did not answer."
 )
 
 _CITATION = re.compile(r"\[(\d+)\]")
@@ -216,7 +219,7 @@ async def _read(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
     text = page.text[:PAGE_CHARS]
     question = state["questions"][source["question"]]
     answer = await io.think(NOTES_SYSTEM, f"Goal: {goal}\nQuestion: {question}\n\nPage title: {page.title}\nPage text:\n{text}", _Notes)
-    source["facts"] = verified_facts(getattr(answer, "facts", []), text) if getattr(answer, "relevant", False) else []
+    source["facts"] = verified_facts(getattr(answer, "facts", []), text)
     source["status"] = "read"
     state["pages_read"] += 1
     say = None
@@ -270,9 +273,21 @@ def numbered_notes(state: dict[str, Any], question_index: int) -> list[tuple[int
     return notes[:MAX_FACTS_PER_SECTION]
 
 
+#: A sentence that says what the sources do not say needs no citation: it claims nothing.
+_NOT_SAID = re.compile(r"(?i)^(?:the\s+)?(?:provided\s+|available\s+)?(?:notes|sources|pages|reports?)\s+(?:do|does|did)\s+(?:not|n't)\b|^no\s+(?:page|source|note)s?\b|^i\s+could\s+not\b")
+_SENTENCE = re.compile(r"(?<=[.!?])\s+(?=[A-Z0-9$\"'(])")
+
+
 def only_given_citations(text: str, allowed: set[int]) -> str:
-    """Take out a citation to a note number that was not given: a source the model made up."""
-    return re.sub(r"\[(\d+)\]", lambda match: match.group(0) if int(match.group(1)) in allowed else "", text)
+    """Keep only what a note supports: a citation to a number that was not given is a source the model made up and is removed, and a sentence
+    that cites nothing is removed, because a claim with no note behind it is the model speaking from memory ("the only suitable choice",
+    "owners report significant savings": neither was in any note of the first live report). A sentence that says what the sources do not say stays."""
+    kept = []
+    for sentence in _SENTENCE.split(" ".join(text.split())):
+        cleaned = re.sub(r"\[(\d+)\]", lambda match: match.group(0) if int(match.group(1)) in allowed else "", sentence).strip()
+        if _CITATION.search(cleaned) or _NOT_SAID.match(cleaned):
+            kept.append(re.sub(r"\s+([.,;])", r"\1", cleaned))
+    return " ".join(kept)
 
 
 async def _finish(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:

@@ -52,6 +52,7 @@ from agent_control.heartbeat import run_heartbeat_forever
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
 from agent_control.jobs.io import build_io as build_job_io
+from agent_control.jobs.io import make_browser_search
 from agent_control.jobs.runner import JobRunner
 from agent_control.plans.context import open_plan_note
 from agent_control.plans.planner import can_do_text
@@ -545,7 +546,7 @@ def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditL
     search, fetch = registry.adapters.get("web.search"), registry.adapters.get("http.request")
     if not settings.jobs.enabled or provider is None or search is None or fetch is None:
         return None
-    io = build_job_io(provider, search, fetch)
+    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser))
     return JobRunner(repositories, audit, lambda _job: io, say=sink.say, send_file=sink.send_file, reports_dir=settings.jobs.reports_dir)
 
 

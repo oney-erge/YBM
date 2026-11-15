@@ -27,7 +27,7 @@ class _Io:
             raise RuntimeError("model down")
         if schema is research._Questions:
             return research._Questions(questions=["What does it cost?", "Who installs it?", "What goes wrong?"])
-        return research._Notes(relevant=True, facts=[research._Fact(claim="Costs 4,000 to 8,000 dollars.", quote="Air-source units cost between 4,000 and 8,000 dollars installed")])
+        return research._Notes(facts=[research._Fact(claim="Costs 4,000 to 8,000 dollars.", quote="Air-source units cost between 4,000 and 8,000 dollars installed")])
 
     async def write(self, system, user):
         return "It costs 4,000 to 8,000 dollars [1]."

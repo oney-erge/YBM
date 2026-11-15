@@ -22,6 +22,15 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
     "Completed the requested work in the project folder I made for this task."
   - **The hardware report gives the card's total memory** and says what is free right now as a fact about this minute. The live answer quoted "1.7 GB available" for an 8 GB card.
   - **"Created code.txt" is a write claim.** The check looked for the noun "file" and missed a named file, so a made-up "The file code.txt has been created" with no tool run could pass.
+- Research jobs found to work on the real web (live, 10 pages, 1.4 minutes, 6 of 10 pages with verified facts, every cited figure traceable to a quotation): four findings from the first live runs.
+  - **Search goes through the person's Chrome first** (`jobs/io.py make_browser_search`), then the `web.search` tool. The first job found no pages: DuckDuckGo's HTML page answers this connection with a
+    human check (HTTP 202) and Bing's plain HTML answers for the first word of the query only ("heat pump installation cost Chicago" returned films). Chrome with DevTools, when it is already running, is
+    read as a person reads it, Bing's redirects unwrapped, a tab opened and closed per query, and no browser is ever started. When no engine answers the job says why.
+  - **`web.search` says when DuckDuckGo is blocked** instead of "No results" (`tools/web_search.py`), and names the fix (a Brave Search key or a SearXNG instance).
+  - **Notes are facts with quotations, no relevance flag.** Asked first whether a page was relevant, the 9B said "not relevant" about a page of monthly running costs by system size and season, and every page
+    ended with no facts. Asked only for facts, it found four on that page, none on pages about something else, and every quotation was in the page.
+  - **A sentence that cites no note is removed** from sections and the summary, a sentence that says what the sources do not say stays: the first report called cold-climate heat pumps "the only
+    suitable choice" and said "owners report significant savings", and no note said either.
 - The Operator's prompt never loses the name of a tool, and the skills list stays short (`orchestration/operator.py _without_the_tail`, `tools/skills.py`). On 11/14 ten scripts the
   assistant had kept from test tasks, listed one per line, pushed the tool catalog over its limit; the last-resort trim cut a slice out of the middle, `system.inventory` was gone, and "how many
   Steam games do I have?" and "where is this file?" (11 of 11 passes before) went to the screen tool for minutes. Authored skills are listed with their description cut at a word, kept
