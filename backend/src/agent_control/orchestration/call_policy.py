@@ -36,6 +36,7 @@ from agent_control.orchestration.call_rewrites import (
     _filesystem_search_input_with_content_intent,
     _is_blind_persona_replace,
     _is_simulated_delete,
+    _is_unrequested_move,
     _ordered_artifact_delivery_call,
     _required_named_coding_agent_call,
     _schedule_id_from_this_task,
@@ -130,6 +131,8 @@ def vet_call(
         refusal = Refusal("unrequested_coding_agent")
     elif _is_simulated_delete(task, tool_name, tool_input):
         refusal = Refusal("simulated_delete")
+    elif _is_unrequested_move(task, tool_name, tool_input):
+        refusal = Refusal("unrequested_move")
     elif _is_blind_persona_replace(tool_name, tool_input, history):
         refusal = Refusal("blind_persona_replace")
     if refusal is not None:

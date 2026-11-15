@@ -61,7 +61,12 @@ NEW_ACCOUNT = re.compile(
     re.IGNORECASE,
 )
 #: Give files new names ("rename every .txt so it starts with old-", "name them ...").
-RENAME = re.compile(r"\brename\b|\bnew names?\b|\bnames? (?:should )?(?:start|begin|end)s? with\b", re.IGNORECASE)
+RENAME = re.compile(r"\brename\b|\bnew names?\b|\bnames? (?:should )?(?:start|begin|end)s? with\b|\b(?:prefix|suffix)\b", re.IGNORECASE)
+#: Words that ask for files to be put somewhere else or sorted into folders, as opposed to being given other names.
+ORGANIZING = re.compile(
+    r"\b(?:organi[sz]e|sort|tidy|clean ?up|group|move|archive|file them|put (?:them|it|these|those)? ?(?:in|into|under)|into (?:a |the |new )?(?:sub-?)?folders?)\b",
+    re.IGNORECASE,
+)
 #: Move files into a folder the user names ("move the .png files into a subfolder called pictures").
 MOVE_VERB = re.compile(r"\bmove\b", re.IGNORECASE)
 NAMED_FOLDER = re.compile(r"\b(?:sub-?)?(?:folder|directory)\s+(?:called|named)\s+\S", re.IGNORECASE)
@@ -150,6 +155,11 @@ class RequestFacts:
     @property
     def deletes(self) -> bool:
         return self._believed("deletes", bool(DELETE.search(self.own)))
+
+    @property
+    def only_renames(self) -> bool:
+        """Asks for files to be given other names and not to be moved, sorted or organized."""
+        return bool(RENAME.search(URL.sub(" ", self.own))) and not ORGANIZING.search(self.own)
 
     @property
     def moves(self) -> bool:

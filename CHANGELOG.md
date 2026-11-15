@@ -312,6 +312,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - A correction sent while a step is running is no longer lost. The step works for seconds outside any transaction with its own copy of the history; a note the person sent meanwhile was appended to the stored history, and the step then saved
   its copy over it, so the assistant said "Noted" and the model never saw the note (sealed Verdict 2, fin2_e1: "Find the tax letter", then "sorry, the one from the council": answered with the other letter). Saving a task's metadata now carries
   over the person's notes that the written history does not have.
+- A request for new names does not get files moved into folders. Sealed Verdict 2 (fin2_s1, "add the prefix 2026- to every file name"): the model asked for an organize plan, applied it (four files moved into a new folder called
+  "documents"), renamed them there, and reported only the renaming. An organize plan, or a manifest with a move in it, is now refused for a request that only gives files other names ("prefix" and "suffix" count as renaming; asking to
+  sort, organize, group or move keeps those calls), with the way to rename in place. This is not an approval: the user's own setting (`require_approval_at_or_above: critical`) lets file changes run without a card, which that
+  case also tests and which is left as the user set it.
 - Pause, resume, stop and "how far along?" for research are made and answered in code. Live on 11/15, on the real bot: "Pause the research." called pause with a task id as the job id and was refused, was answered "already paused" while the
   job ran, "Resume the research." was taken for the answer to a question about it, and "Stop it" was answered "has been stopped" about a job that was still running. A yes/no question cannot recognize these ("Pause the research." scored 0.09), so
   while research is open in the chat every message is routed to the research stage, whose one model call says which of start, status, pause, resume, stop or something else it is (on the real 9B: 6 of 6 requests and 18 of 18 controls and

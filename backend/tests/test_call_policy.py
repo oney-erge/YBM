@@ -91,3 +91,22 @@ def test_the_rewrites_see_the_request_through_the_one_set_of_facts(tmp_path):
     assert vet_call(_task("Change it to say pears"), "filesystem.manage", write, [], DEFS).tool_input.get("overwrite") is True
     listing = {"operation": "inspect_folder", "root": str(tmp_path)}
     assert vet_call(_task("Which file is the newest?"), "filesystem.manage", listing, [], DEFS).tool_input.get("with_dates") is True
+
+
+MOVE_MANIFEST = [{"operation": "move", "source": "C:/x/a.txt", "destination": "C:/x/documents/a.txt"}]
+RENAME_MANIFEST = [{"operation": "rename", "source": "C:/x/a.txt", "destination": "C:/x/2026-a.txt"}]
+
+
+@pytest.mark.parametrize("text", ["Add the prefix 2026- to every file name in C:/x.", "Rename every file in C:/x so it ends with -old.", "Put a suffix _v2 on all the file names in C:/x"])
+def test_a_request_for_new_names_does_not_get_files_moved_into_folders(text):
+    """Sealed Verdict 2 (fin2_s1): an organize plan was applied for a request to add a prefix, four files were moved into a new folder, and only the renaming was reported."""
+    for call in ({"operation": "organize_plan", "root": "C:/x", "strategy": "by_type"}, {"operation": "apply_manifest", "root": "C:/x", "manifest": MOVE_MANIFEST}):
+        assert vet_call(_task(text), "filesystem.manage", call, [], DEFS).refusal == Refusal("unrequested_move"), (text, call["operation"])
+    renamed = vet_call(_task(text), "filesystem.manage", {"operation": "apply_manifest", "root": "C:/x", "manifest": RENAME_MANIFEST}, [], DEFS)
+    assert renamed.refusal is None  # the rename in place is what was asked for
+
+
+@pytest.mark.parametrize("text", ["Organize C:/x and add the prefix 2026- to the names", "Sort the files in C:/x into folders by type", "Move the photos to C:/x/pics and rename them"])
+def test_a_request_that_also_asks_to_organize_or_move_keeps_those_calls(text):
+    for call in ({"operation": "organize_plan", "root": "C:/x"}, {"operation": "apply_manifest", "root": "C:/x", "manifest": MOVE_MANIFEST}):
+        assert vet_call(_task(text), "filesystem.manage", call, [], DEFS).refusal is None, (text, call["operation"])
