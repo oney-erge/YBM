@@ -35,7 +35,7 @@ from agent_control.channels.whatsapp_notifications import WhatsAppTaskNotifier
 from agent_control.config import AppSettings, backend_base_url, load_settings
 from agent_control.llm import LLMMessageClassifier, build_default_llm_provider
 from agent_control.llm.classifier import MessageClassifier
-from agent_control.abilities.context import relevant, render as render_notes
+from agent_control.abilities.context import relevant, render as render_notes, route_of
 from agent_control import gaming
 from agent_control.llm.decision import DecisionModelClient, build_decision_classifier
 from agent_control.task_inbox import find_steerable_task
@@ -536,7 +536,7 @@ def _task_notes(
         if catalog is not None:
             shown = await relevant(catalog.index(), request, confirm=client.yes_no if client else None)
             text += render_notes(shown)
-            route = next((ability.route for ability in shown if ability.route), "")
+            route = route_of(shown)
         if settings.plans.enabled:
             text += open_plan_note(repositories.plans, conversation_id)
         return text, route

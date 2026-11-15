@@ -277,3 +277,15 @@ async def test_a_skill_that_routes_to_the_planner_is_asked_about_for_every_reque
     no = _Confirmer({"skill:plan-a-project": 0.1})
     assert [a for a in await relevant(index, request, confirm=no) if a.kind.value == "skill"] == []
     assert [a for a in await relevant(index, request, confirm=None) if a.kind.value == "skill"] == []  # no decision model: nothing to confirm with
+
+
+def test_a_confirmed_research_job_wins_over_a_confirmed_plan_and_no_route_is_none():
+    from agent_control.abilities.context import route_of
+    from agent_control.abilities.model import Ability, AbilityKind, AbilityState
+
+    def skill(name: str, route: str = "") -> Ability:
+        return Ability(id=f"skill:{name}", kind=AbilityKind.SKILL, name=name, summary="s", state=AbilityState.READY, route=route)
+
+    plan, job, plain = skill("plan", "plan"), skill("research", "job"), skill("report")
+    assert route_of([plan, job]) == "job" and route_of([job, plan]) == "job"
+    assert route_of([plain, plan]) == "plan" and route_of([plain]) == "" and route_of([]) == ""
