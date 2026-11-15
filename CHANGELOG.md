@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- "What did you find about drones yesterday?" has something to answer from. Research that finished in the last week is told to the Operator with its summary and where its report is (a listing used to say only "Done: the report was sent."),
+  with the instruction to say only what those lines say, to say it has no record of what is not there, and to send a report again with `artifact.deliver` (the challenge case c_e3).
 - A research job reads the pages it finds. Live on 11/14, 16 of 36 pages of one job read as empty. Two causes, both fixed: the web read tool stopped at 100,000 characters, and a modern page spends
   that much on scripts and styles before its article (`adapters.http_request.max_response_chars` now defaults to 400,000); and the reducer that keeps a page's words dropped navigation, footers and forms, so a
   site that wraps its whole page in a `<form>`, or leaves a `<header>` open, read as nothing. A page whose reduced text is short is now read again without dropping any part, and the fuller reading is used when

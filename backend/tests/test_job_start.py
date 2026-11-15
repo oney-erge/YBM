@@ -182,7 +182,8 @@ def test_the_operator_is_told_a_job_is_running_in_the_chat_and_that_a_message_ab
     assert "Never start another research for a message like that." in note and "job.manage" in note
     assert open_job_note(repos.jobs, "other-chat") == ""  # another chat's job is not shown
     repos.jobs.save(job.id, status=JobStatus.DONE)
-    assert open_job_note(repos.jobs, "42") == ""  # an ended job is not running
+    ended = open_job_note(repos.jobs, "42")
+    assert "## Research is running" not in ended and "## Research finished for this person in the last week" in ended  # an ended job is not running; it is a finished one
 
 
 def test_every_bundled_starter_skill_parses_and_the_research_skill_is_routed_to_the_job_stage() -> None:
@@ -212,3 +213,26 @@ def test_a_started_job_is_told_to_the_person_in_code_without_a_job_number_and_on
     said = started_answer(done)
     assert "up to 10 pages" in said and "job_" not in said and "pause or stop it" in said
     assert "I will read the pages one at a time" in started_answer({**done, "output_summary": "Started."})
+
+
+def test_research_finished_in_the_last_week_is_told_to_the_operator_with_its_summary_and_where_its_report_is(tmp_path):
+    """Challenge c_e3 "What did you find about drones yesterday?": the only record of a finished job was "Done: the report was sent.", so the answer had nothing true to say."""
+    from datetime import timedelta
+
+    from agent_control.jobs import research
+    from agent_control.jobs.context import open_job_note
+    from agent_control.jobs.model import Job, JobStatus
+    from agent_control.schemas import utc_now
+
+    repos, _ = make_repos(tmp_path)
+    state = {**research.new_state(10), "summary": "Small indoor drones weigh 250 g and fly about 8 minutes [1]. The sources do not say what a license costs."}
+    done = repos.jobs.create(Job(kind="research", goal="what small indoor drones can do", state=state, routing=dict(ROUTING), status=JobStatus.DONE))
+    old = repos.jobs.create(Job(kind="research", goal="an old one", state=state, routing=dict(ROUTING), status=JobStatus.DONE))
+    with repos.jobs.database.connect() as connection:
+        connection.execute("UPDATE background_jobs SET updated_at = ? WHERE id = ?", ((utc_now() - timedelta(days=30)).isoformat(), old.id))
+    note = open_job_note(repos.jobs, "42", reports_dir=".agent_control/jobs")
+    assert "## Research finished for this person in the last week" in note and "what small indoor drones can do" in note
+    assert "weigh 250 g and fly about 8 minutes" in note and f"{done.id}" in note and "report.md" in note and "artifact.deliver" in note
+    assert "an old one" not in note  # a month ago is not "the last week"
+    assert "## Research is running" not in note  # nothing is running
+    assert open_job_note(repos.jobs, "other", reports_dir=".agent_control/jobs") == ""
