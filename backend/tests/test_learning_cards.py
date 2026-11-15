@@ -121,3 +121,40 @@ async def test_the_worker_shows_a_new_proposal_in_the_chat_the_task_came_from(tm
     await worker._offer_learning(repos.tasks.create("no chat"), _skill(settings))
     await TaskWorker(repos, audit)._offer_learning(task, _skill(settings))
     assert len(sink.said) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_proposal_is_not_shown_in_the_middle_of_someones_work_or_after_a_step_of_a_plan(tmp_path):
+    """Found 11/14: "I noticed a procedure worth keeping" arrived while the next request of the same chat was already running."""
+    from agent_control.schemas import ChannelType
+
+    repos, audit = make_repos(tmp_path)
+    settings = _settings(tmp_path)
+    sink = _Sink()
+    proposal = _skill(settings)  # the same proposal each time: it stays in the queue until it is shown
+    worker = TaskWorker(repos, audit, notification_sink=sink)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    done = repos.tasks.update_status(repos.tasks.create("Total the invoices", conversation_id=conversation, metadata=dict(ROUTING)).id, TaskStatus.COMPLETED)
+
+    busy = repos.tasks.create("Now the receipts", conversation_id=conversation, metadata=dict(ROUTING))
+    repos.tasks.update_status(busy.id, TaskStatus.RUNNING)
+    await worker._offer_learning(done, proposal)
+    assert sink.said == []  # the next request is running: the card waits in the queue
+
+    repos.tasks.update_status(busy.id, TaskStatus.AWAITING_APPROVAL)
+    await worker._offer_learning(done, proposal)
+    assert sink.said == []  # waiting for a tap is still being in the middle of something
+
+    repos.tasks.update_status(busy.id, TaskStatus.COMPLETED)
+    await worker._offer_learning(done, proposal)
+    assert len(sink.said) == 1  # quiet now
+
+    step = repos.tasks.create("Plan step 1", conversation_id=conversation, metadata={**ROUTING, "plan_id": "plan_x"})
+    step = repos.tasks.update_status(step.id, TaskStatus.COMPLETED)
+    await worker._offer_learning(step, proposal)
+    assert len(sink.said) == 1  # a step of a plan never asks about keeping anything
+
+    waiting_plan_step = repos.tasks.create("Plan step 2", conversation_id=conversation, metadata={**ROUTING, "plan_id": "plan_x"})
+    repos.tasks.update_status(waiting_plan_step.id, TaskStatus.RUNNING)
+    await worker._offer_learning(done, proposal)
+    assert len(sink.said) == 2  # a plan's own tasks do not count as the user's work in progress

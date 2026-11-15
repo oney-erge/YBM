@@ -13,6 +13,11 @@ from agent_control.schemas import (
 
 logger = logging.getLogger(__name__)
 
+#: A task in one of these states is the user's work in progress: it is moving, or it is waiting for a tap.
+_MOVING = frozenset({
+    TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.PLANNED, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.AWAITING_APPROVAL,
+})
+
 
 class LearningStage:
     async def _maybe_learn_preference(self, task: TaskRecord) -> None:
@@ -50,8 +55,21 @@ class LearningStage:
         routing = routing_of(task)
         if suggestion is None or say is None or not routing:
             return
+        if self._chat_is_busy(task):
+            return  # a question about keeping something does not belong in the middle of someone's work: it waits in the queue
         text, keyboard = learning_card(suggestion)
         await say(routing, text, keyboard)
+
+    def _chat_is_busy(self, task: TaskRecord) -> bool:
+        """The task is a step of a plan, or another task of this chat is still moving (or waiting for an approval tap)."""
+        if task.metadata.get("plan_id"):
+            return True
+        if task.conversation_id is None:
+            return False
+        for other in self.repositories.tasks.list_for_conversation(task.conversation_id, limit=20):
+            if other.id != task.id and other.status in _MOVING and not other.metadata.get("plan_id"):
+                return True
+        return False
 
     async def _maybe_learn_skill(self, task: TaskRecord) -> None:
         """Offer to save a successful multi-step run as a reusable procedure.
