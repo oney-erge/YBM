@@ -22,3 +22,7 @@ apply_manifest with no manifest (which applies the plan), and it shows both call
 as examples. Only that catalog text and the derived keys changed; recorded
 responses were preserved. The organize flow itself is covered by
 test_fulfillment.py and test_worker_operator_loop.py.
+
+The document.manage catalog was updated again in November 2026 (create_document and create_spreadsheet). Only its description, operation list, examples and derived
+fixture keys changed (`ybm scenario rekey --all`: document_pdf_summary, operator_loop_filesystem_search, send_found_pdf); recorded responses were preserved.
+This was a catalog maintenance update, not a live model re-record. The new operations are covered by deterministic tests in test_document_manage.py.
