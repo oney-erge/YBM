@@ -120,14 +120,18 @@ def parse_results(raw: Any, count: int) -> list[dict[str, str]]:
 
 
 def make_browser_search(config: BrowserAdapterConfig) -> BrowserSearch | None:
-    """Search through Chrome when it is already running with DevTools. It never starts a browser: a job in the background must not open a window."""
+    """Search through Chrome with DevTools. When Chrome is not running, the assistant's own profile is started, minimized (`launch_if_missing`, on by default).
+
+    A job that has to search cannot wait for a person to open a browser: after a restart, or the night after they approved it, nobody has. Starting the
+    browser the web tool already uses, out of the way, is within what they agreed to when they approved a job that reads the web.
+    """
     if not config.enabled:
         return None
     from agent_control.tools.browser import ChromeDevToolsClient
 
     def search_sync(query: str, count: int) -> list[dict[str, str]]:
-        client = ChromeDevToolsClient(config.model_copy(update={"launch_if_missing": False}))
-        client.ensure_available()  # raises when Chrome is not running with DevTools
+        client = ChromeDevToolsClient(config)
+        client.ensure_available(minimized=True)  # raises when Chrome cannot be reached or started
         target = client.open_url(f"https://www.bing.com/search?q={quote_plus(query)}&setlang=en-US", new_tab=True)
         try:
             for _ in range(3):  # the results may not be in the page yet

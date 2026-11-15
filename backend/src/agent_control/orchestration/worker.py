@@ -189,6 +189,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         plan_runner: PlanRunner | None = None,
         job_runner: Any | None = None,
         plan_stage: Callable[[TaskRecord], Awaitable[StageOutcome]] | None = None,
+        job_stage: Callable[[TaskRecord], Awaitable[dict[str, Any]]] | None = None,
         fact_checks: Callable[[str, tuple[str, ...]], Awaitable[dict[str, bool]]] | None = None,
         gpu_hold: Callable[[], bool] | None = None,
     ) -> None:
@@ -197,6 +198,8 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         self.job_runner = job_runner
         # Plans a request that a skill routes to the planner (plans/stage.py); None when plans are off.
         self.plan_stage = plan_stage
+        # The input of the call that starts a long job for a request a skill routes to one (orchestration/job_start.py); None when jobs are off.
+        self.job_stage = job_stage
         # What bears on a request that the Operator cannot already see (abilities/context.py, plans/context.py), as prompt text, given
         # the request and the chat; "" for most.
         self.ability_notes = ability_notes
@@ -741,24 +744,28 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
             staged = await self._planned(latest)
             if staged is not None:
                 return staged
+            started = await self._started_job(latest, history)
             try:
-                with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
-                    decision = await self.operator.decide(
-                        latest.objective,
-                        self._planner_context(
-                            self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or ""),
-                            metadata=latest.metadata,
-                        ),
-                        history,
-                        memory_context=memory_context, prefer_major=prefer_major,
-                        # Only passed when it applies, so an Operator without the option is called exactly as before.
-                        **({"finish_only": True} if offer_pending else {}),
+                if started is not None:
+                    decision = started
+                else:
+                    with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
+                        decision = await self.operator.decide(
+                            latest.objective,
+                            self._planner_context(
+                                self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or ""),
+                                metadata=latest.metadata,
+                            ),
+                            history,
+                            memory_context=memory_context, prefer_major=prefer_major,
+                            # Only passed when it applies, so an Operator without the option is called exactly as before.
+                            **({"finish_only": True} if offer_pending else {}),
+                        )
+                    latest = self._record_llm_usage(
+                        latest, "operator", getattr(self.operator, "last_usage", None),
+                        fallback_used=getattr(self.operator, "last_fallback_used", False),
                     )
-                latest = self._record_llm_usage(
-                    latest, "operator", getattr(self.operator, "last_usage", None),
-                    fallback_used=getattr(self.operator, "last_fallback_used", False),
-                )
-                self._record_llm_call(latest.id, "operator", len(history), self.operator, step_id=step_id)
+                    self._record_llm_call(latest.id, "operator", len(history), self.operator, step_id=step_id)
             except CloudFallbackNeeded as exc:
                 return self._ask_hosted_permission(latest, history, exc)
             except Exception as exc:
