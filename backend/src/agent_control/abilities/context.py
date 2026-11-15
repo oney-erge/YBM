@@ -87,6 +87,16 @@ async def relevant(
     return shown
 
 
+def route_of(shown: list[Ability]) -> str:
+    """The route a request takes: a research job when the skill for one is confirmed, else the first route a confirmed skill names.
+
+    The question that sends a request to the planner is a lenient one (0.45) and the one that sends it to a long job a strict one (0.6), so a
+    request both say yes to ("look into how to build a house and read a lot of sources") asked for the job in words.
+    """
+    routes = [ability.route for ability in shown if ability.route]
+    return "job" if "job" in routes else (routes[0] if routes else "")
+
+
 def render(abilities: list[Ability]) -> str:
     """The prompt block: empty when there is nothing to say, so that a prompt for an ordinary request does not change."""
     if not abilities:
