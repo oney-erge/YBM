@@ -116,9 +116,18 @@ def own_words(task: Any) -> str:
     return original or str(task.objective or "")
 
 
+#: A question the assistant put to the user, as clarification.objective_with_answer folds it into the objective. Its answer stays: that is the user's.
+_ASSISTANTS_QUESTION = re.compile(r"\n?\[Question to the user: .*?\](?=\n\[User clarification:|\s*$)", re.DOTALL)
+
+
 def own_and_objective(task: Any) -> str:
-    """The user's words and the objective made from them, for a fact the objective may state in other words (newest, ask me first)."""
-    return " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), task.objective))
+    """The user's words and the objective made from them, for a fact the objective may state in other words (newest, ask me first).
+
+    Without the assistant's own questions. Live on 11/15 the assistant offered to hand a task to Claude Code, was told no, and then handed it over: the
+    offer sat in the objective, "Claude Code" in it counted as the user naming a coding agent, and the check that refuses one nobody asked for let it through.
+    """
+    objective = _ASSISTANTS_QUESTION.sub("", str(task.objective or ""))
+    return " ".join(str(value or "") for value in (task.metadata.get("original_message_text"), objective))
 
 
 @dataclass(frozen=True)
