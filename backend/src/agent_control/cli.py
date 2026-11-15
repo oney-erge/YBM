@@ -57,6 +57,7 @@ from agent_control.jobs.runner import JobRunner
 from agent_control.plans.context import open_plan_note
 from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
+from agent_control.jobs.context import open_job_note
 from agent_control.orchestration.asking import users_own_words
 from agent_control.orchestration.job_start import start_research_call
 from agent_control.plans.stage import run_plan_stage
@@ -527,7 +528,7 @@ def _task_notes(
     """What to tell the Operator before a task's first step beyond its tool list: what bears on the request (abilities/context.py) and the
     plan open in the chat (plans/context.py). None when both are off."""
     catalog = registry.abilities
-    if catalog is None and not settings.plans.enabled:
+    if catalog is None and not settings.plans.enabled and not settings.jobs.enabled:
         return None
     client = DecisionModelClient(settings.decision) if settings.decision.mode != "off" else None
 
@@ -539,6 +540,8 @@ def _task_notes(
             route = route_of(shown)
         if settings.plans.enabled:
             text += open_plan_note(repositories.plans, conversation_id)
+        if settings.jobs.enabled:
+            text += open_job_note(repositories.jobs, repositories.conversations.external_id(conversation_id))
         return text, route
 
     return notes
@@ -599,7 +602,7 @@ def _job_stage(settings: AppSettings, provider) -> Callable | None:
         return None
 
     async def stage(task):
-        return await start_research_call(provider, users_own_words(task))
+        return await start_research_call(provider, users_own_words(task))  # None: not a start
 
     return stage
 

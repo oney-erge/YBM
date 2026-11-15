@@ -198,7 +198,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         plan_runner: PlanRunner | None = None,
         job_runner: Any | None = None,
         plan_stage: Callable[[TaskRecord], Awaitable[StageOutcome]] | None = None,
-        job_stage: Callable[[TaskRecord], Awaitable[dict[str, Any]]] | None = None,
+        job_stage: Callable[[TaskRecord], Awaitable[dict[str, Any] | None]] | None = None,
         fact_checks: Callable[[str, tuple[str, ...]], Awaitable[dict[str, bool]]] | None = None,
         gpu_hold: Callable[[], bool] | None = None,
     ) -> None:
