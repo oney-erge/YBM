@@ -7,6 +7,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Word documents and spreadsheets can be made. `document.manage` made only PowerPoint files: a request for "a packing checklist as a Word document" ended as a .pptx (sealed Verdict 2, fin2_a3), and one for a spreadsheet of four invoices
+  with a total row failed on the model's own Python (fin2_a1). `create_document` (a title and lines of text; `# ` lines are bold headings, `- ` and `[ ] ` lines bullets) and `create_spreadsheet` (rows, the first the header; numbers stored as numbers;
+  `total_row` adds a Total row of real SUM formulas that is summed by the tool, not by the model) write the files with the standard library, nothing to install, and read them back to check. Checked with openpyxl and python-docx: both open them,
+  the spreadsheet's cells are typed, its total is 566 for the four invoices.
 - "What did you find about drones yesterday?" has something to answer from. Research that finished in the last week is told to the Operator with its summary and where its report is (a listing used to say only "Done: the report was sent."),
   with the instruction to say only what those lines say, to say it has no record of what is not there, and to send a report again with `artifact.deliver` (the challenge case c_e3).
 - A research job reads the pages it finds. Live on 11/14, 16 of 36 pages of one job read as empty. Two causes, both fixed: the web read tool stopped at 100,000 characters, and a modern page spends
