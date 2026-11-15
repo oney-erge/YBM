@@ -141,3 +141,43 @@ def test_a_started_job_does_the_reading_and_the_sending_the_request_asked_for_an
     for entries in ((), (_entry("status"),), (_entry("start_research", "failed"),)):
         other = _with_history(repos, *entries)
         assert not _postcondition_satisfied(other, PostconditionType.SOURCE_CONTENT) and not _postcondition_satisfied(other, PostconditionType.ARTIFACT_DELIVERED)
+
+
+@pytest.mark.asyncio
+async def test_a_message_about_research_already_running_is_not_a_start_and_the_operator_answers_it():
+    """Live 11/14: "How far along is the research?" started a second job whose goal was that sentence."""
+    status = _Provider(_Start(goal="", pages=None, new_research=False))
+    assert await start_research_call(status, "How far along is the research?") is None
+    assert (await start_research_call(_Provider(_Start(goal="g", pages=None, new_research=True)), REQUEST))["operation"] == "start_research"
+    assert "already under way" in status.asked[0][0] and "new_research" in status.asked[0][0]
+
+
+@pytest.mark.asyncio
+async def test_the_worker_leaves_a_message_that_is_not_a_start_to_the_operator_and_does_not_ask_again(tmp_path):
+    repos, audit = make_repos(tmp_path)
+
+    async def not_a_start(task):
+        return None
+
+    worker = TaskWorker(repos, audit, job_stage=not_a_start)
+    task = _task(repos, task_route="job")
+    assert await worker._started_job(task, []) is None
+    assert repos.tasks.get(task.id).metadata["job_start_done"] is True
+
+
+def test_the_operator_is_told_a_job_is_running_in_the_chat_and_that_a_message_about_it_is_not_a_new_job(tmp_path):
+    from agent_control.jobs.context import open_job_note
+    from agent_control.jobs.model import Job, JobStatus
+    from agent_control.jobs import research
+
+    repos, _ = make_repos(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    assert repos.conversations.external_id(conversation) == "42" and repos.conversations.external_id("conv_nope") is None and repos.conversations.external_id(None) is None
+    assert open_job_note(repos.jobs, "42") == "" and open_job_note(repos.jobs, None) == ""
+    job = repos.jobs.create(Job(kind="research", goal="how people heat old stone houses without making them damp", state=research.new_state(12), routing=dict(ROUTING)))
+    note = open_job_note(repos.jobs, "42")
+    assert "## Research is running for this person in this chat" in note and "how people heat old stone houses" in note and "(running)" in note
+    assert "Never start another research for a message like that." in note and "job.manage" in note
+    assert open_job_note(repos.jobs, "other-chat") == ""  # another chat's job is not shown
+    repos.jobs.save(job.id, status=JobStatus.DONE)
+    assert open_job_note(repos.jobs, "42") == ""  # an ended job is not running

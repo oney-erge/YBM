@@ -301,6 +301,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A question about research that is already running no longer starts new research. Found by the first live run of the research job: "How far along is the research?" was routed as a request, and a second
+  job was started whose goal was that sentence. The skill's yes/no question cannot tell the two apart (0.61 for the status question, 0.90 for "Resume the research."), so the call that writes the goal also says whether
+  the message asks for new research (on the real 9B: 6 of 6 requests kept, 10 of 10 status, pause, resume and stop messages recognized), and a message that does not is left to the Operator. The skill's question is
+  now sharper (measured: it separates the live status question, 0.42, from the requests, 0.56 to 0.96), and when a research job is open in the chat the Operator is told so, with the tool that controls it, as it is for an open plan.
 - "I noticed a procedure worth keeping" no longer arrives in the middle of someone's work. The learning card (keep this skill, remember this preference) is shown only when no other
   task of the chat is moving or waiting for an approval tap, and never after a step of a plan; otherwise the proposal waits in the queue (the console) as before.
 - A correction sent while the assistant is working reaches the answer. Live 11/14: "Find my resume", then "The Word one, not the PDF" six seconds in, and the answer listed both files. The person's

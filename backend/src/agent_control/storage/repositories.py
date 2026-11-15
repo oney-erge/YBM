@@ -141,6 +141,14 @@ class ConversationRepository:
             ).fetchone()
             return str(row["id"])
 
+    def external_id(self, conversation_id: str | None) -> str | None:
+        """The chat a conversation is (a Telegram chat id), or None."""
+        if not conversation_id:
+            return None
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT external_id FROM conversations WHERE id = ?", (conversation_id,)).fetchone()
+        return str(row["external_id"]) if row else None
+
 
 class MessageRepository:
     def __init__(self, database: Database) -> None:
