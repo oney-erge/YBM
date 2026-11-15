@@ -113,6 +113,7 @@ from agent_control.storage.repositories import (
     WorkerClaimLost,
     worker_claim_context,
 )
+from agent_control.task_inbox import NOTE_ENTRY_NAME
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,14 @@ ORPHANABLE_STATUSES = (TaskStatus.RUNNING, TaskStatus.INTERPRETING)
 
 
 
+
+
+def _noted_while_deciding(task: TaskRecord, seen: list[dict[str, Any]]) -> bool:
+    """A note from the person (task_inbox.attach_note) that is in the task's history now and was not in `seen`, the history the model read."""
+    fresh = task.metadata.get("operator_history")
+    return isinstance(fresh, list) and any(
+        isinstance(entry, dict) and entry.get("tool_name") == NOTE_ENTRY_NAME for entry in fresh[len(seen):]
+    )
 
 
 class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, ReplyStage, PlanningStage, RecordsStage, GuardStage):
@@ -787,6 +796,10 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         # turn the returned decision into a new tool dispatch in that case.
         latest = self.repositories.tasks.get(latest.id) or latest
         if latest.status in {TaskStatus.PAUSED, TaskStatus.CANCELLED}:
+            return latest
+        if decision.action == OperatorAction.DONE and _noted_while_deciding(latest, history):
+            # The person added something while the model was writing its answer, so the answer was written without it. It is not
+            # delivered: the next pass decides again with the note in front of the model (live 11/14: "the Word one, not the PDF").
             return latest
 
         if budget_reached and offer_pending and decision.action in TOOL_RUNNING_ACTIONS:

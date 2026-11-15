@@ -14,6 +14,7 @@ from pydantic import ValidationError
 from agent_control.llm.providers import LLMProvider
 from agent_control.prompts import prompt_text, render_prompt
 from agent_control.schemas import OperatorDecision
+from agent_control.task_inbox import NOTE_ENTRY_NAME
 
 
 OPERATOR_SYSTEM_PROMPT = prompt_text("base/operator_system.md")
@@ -229,6 +230,14 @@ def _format_history(history: list[dict]) -> str:
     for index, entry in enumerate(recent, start=1):
         tool_name = entry.get("tool_name", "?")
         status = entry.get("status", "?")
+        if tool_name == NOTE_ENTRY_NAME:
+            # What the person added while the work was running (task_inbox.attach_note). Shown as a tool step called "_user_note" it was
+            # read as one more result and left out of the answer (live 11/14: "the Word one, not the PDF" and the answer listed both).
+            lines.append(
+                f"{index}. THE PERSON ADDED, while you were working: \"{_history_field(entry.get('output_summary') or '')}\"\n"
+                "   That changes what they want. Your answer has to reflect it."
+            )
+            continue
         line = f"{index}. {tool_name} ({status})"
         tool_input = entry.get("input")
         if tool_input:

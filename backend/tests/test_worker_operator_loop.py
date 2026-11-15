@@ -4112,3 +4112,34 @@ def test_a_budget_reached_answer_says_what_the_work_produced_before_naming_its_f
     assert fulfilled_step_budget_answer(task, [{**found, "output_summary": header}]).startswith("Completed the requested work in ")
     assert fulfilled_step_budget_answer(TaskRecord(objective="x", metadata={"schedule_id": "s1"}), [found]) == "Created the requested schedule (s1)."
     assert without_program_labels("Return code: 0\nhello") == "hello"
+
+
+@pytest.mark.asyncio
+async def test_an_answer_written_while_the_person_added_something_is_not_delivered_and_is_written_again_with_it(tmp_path) -> None:
+    """Live 11/14: "Find my resume", then "the Word one, not the PDF" six seconds in; the answer, written meanwhile, listed both."""
+    from agent_control.task_inbox import attach_note
+
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Find my resume")
+    asked_with: list[int] = []
+
+    class NotedOperator(QueueOperator):
+        async def decide(self, objective, config_context, history, **kwargs):
+            asked_with.append(len(history))
+            if self.calls == 0:  # the person writes while the model is deciding
+                attach_note(repos, audit, repos.tasks.get(task.id), text="The Word one, not the PDF.", actor="user")
+            return await super().decide(objective, config_context, history, **kwargs)
+
+    operator = NotedOperator([
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Your resume is resume.docx and resume.pdf."),
+        OperatorDecision(action=OperatorAction.DONE, final_answer="Your Word resume is resume.docx."),
+    ])
+    worker = TaskWorker(repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, StaticToolAdapter()), operator=operator)
+    for _ in range(4):
+        await worker.process_next()
+        if repos.tasks.get(task.id).status == TaskStatus.COMPLETED:
+            break
+    finished = repos.tasks.get(task.id)
+    assert operator.calls == 2 and asked_with == [0, 1]  # the second time the note is in front of the model
+    assert finished.status == TaskStatus.COMPLETED
+    assert "resume.docx." in str(finished.metadata.get("synthesized_answer") or finished.metadata) and "resume.pdf" not in str(finished.metadata.get("synthesized_answer") or "")
