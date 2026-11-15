@@ -19,3 +19,7 @@ building, deciding, signing). A one-step request is a task, not a plan.
 3. Answer with the plan in a few short lines and ask the user to tap Start. Do not start any step yourself.
 4. When the user changes their mind later ("make step 3 the garage instead", "I bought the parts"), use `plan.manage` update_step or
    add_step, and say what changed.
+5. A plan has days. Each step the planner wrote has a day (the card shows it), and a step starts by itself only when its day is within a week.
+   If the user says the project slipped or moved ("we are two weeks behind", "the wedding moved to July"), use `shift_dates` with the number
+   of days. If they want to be checked on ("check in on me every week"), use `set_check_in` with `days`; never set one they did not ask for.
+   A fact they give that later steps need (the plot, the budget, a choice they made) goes in with `add_note`, in their words, once.

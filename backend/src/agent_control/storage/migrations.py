@@ -229,6 +229,9 @@ SCHEMA_STATEMENTS = [
         status TEXT NOT NULL,
         source_task_id TEXT,
         routing_json TEXT NOT NULL DEFAULT '{}',
+        notes TEXT NOT NULL DEFAULT '',
+        check_in_days INTEGER NOT NULL DEFAULT 0,
+        last_check_in_at TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
@@ -244,6 +247,7 @@ SCHEMA_STATEMENTS = [
         needs_json TEXT NOT NULL,
         depends_json TEXT NOT NULL,
         ability TEXT NOT NULL,
+        due TEXT,
         status TEXT NOT NULL,
         task_id TEXT,
         result TEXT NOT NULL,
@@ -292,6 +296,11 @@ ADDITIVE_MIGRATIONS = [
     ("approval_grants", "max_operations",    "ALTER TABLE approval_grants ADD COLUMN max_operations INTEGER"),
     ("approval_grants", "operations_used",   "ALTER TABLE approval_grants ADD COLUMN operations_used INTEGER NOT NULL DEFAULT 0"),
     ("approval_grants", "revoked",           "ALTER TABLE approval_grants ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0"),
+    # Plans gained days on steps, notes and check-ins after they first shipped.
+    ("project_plan_steps", "due",              "ALTER TABLE project_plan_steps ADD COLUMN due TEXT"),
+    ("project_plans", "notes",                 "ALTER TABLE project_plans ADD COLUMN notes TEXT NOT NULL DEFAULT ''"),
+    ("project_plans", "check_in_days",         "ALTER TABLE project_plans ADD COLUMN check_in_days INTEGER NOT NULL DEFAULT 0"),
+    ("project_plans", "last_check_in_at",      "ALTER TABLE project_plans ADD COLUMN last_check_in_at TEXT"),
 ]
 
 

@@ -13,7 +13,7 @@ One step at a time: the local model serves one request at a time, and the user r
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
+from datetime import date, timedelta
 
 import structlog
 
@@ -64,6 +64,8 @@ def step_objective(plan: Plan, step: PlanStep) -> str:
     ]
     if step.detail:
         lines.append(step.detail)
+    if plan.notes.strip():
+        lines.append("What the user has told you about this project:\n" + plan.notes.strip())
     if earlier:
         lines.append("What the earlier steps found:\n" + "\n".join(earlier))
     lines.append(
@@ -138,6 +140,8 @@ class PlanRunner:
         if plan is None or plan.status not in (PlanStatus.PROPOSED, PlanStatus.PAUSED):
             return plan
         self.repositories.plans.set_status(plan_id, PlanStatus.ACTIVE)
+        if plan.check_in_days:
+            self.repositories.plans.update_plan(plan_id, last_check_in_at=utc_now())  # the first check-in is a period from the start
         self._audit(plan, "plan_started")
         await self._advance(self.repositories.plans.get(plan_id) or plan)
         return self.repositories.plans.get(plan_id)
@@ -157,6 +161,8 @@ class PlanRunner:
             try:
                 if await self._advance(plan):
                     changed += 1
+                if await self._check_in(self.repositories.plans.get(plan.id) or plan):
+                    changed += 1
             except Exception:  # noqa: BLE001 - one plan's trouble must not stop the others, or the worker
                 logger.warning("plan_advance_failed", plan_id=plan.id, exc_info=True)
         return changed
@@ -174,9 +180,21 @@ class PlanRunner:
         if any(step.status in (StepStatus.RUNNING, StepStatus.WAITING) for step in plan.steps):
             return changed
         ready = plan.ready_steps()
-        if not ready:
+        if not ready:  # nothing to do yet: the next step's day has not come near, or a step is in someone's hands
             return changed
         return await self._begin(plan, ready[0]) or changed
+
+    async def _check_in(self, plan: Plan) -> bool:
+        """Tell the user how an active plan stands when the days they asked for have passed. No model: the numbers come from the plan."""
+        if plan.status != PlanStatus.ACTIVE or not plan.check_in_days:
+            return False
+        last = plan.last_check_in_at or plan.created_at
+        if utc_now() - last < timedelta(days=plan.check_in_days):
+            return False
+        self.repositories.plans.update_plan(plan.id, last_check_in_at=utc_now())
+        self._audit(plan, "plan_check_in")
+        await self._tell(plan, check_in_text(plan))
+        return True
 
     def _settle(self, plan: Plan) -> bool:
         """Read the tasks of the steps that are in flight and record how each ended."""
@@ -264,6 +282,34 @@ def _finished_text(plan: Plan) -> str:
     return f"The plan is finished: {plan.goal}\n{done} of {len(plan.steps)} steps done{tail}."
 
 
+def day_text(day: date, today: date | None = None) -> str:
+    """A day as people say it: "Dec 6", with the year only when it is not this one."""
+    today = today or date.today()
+    text = f"{day.strftime('%b')} {day.day}"
+    return text if day.year == today.year else f"{text}, {day.year}"
+
+
+def check_in_text(plan: Plan, today: date | None = None) -> str:
+    """How a plan stands, from the plan alone: what is done, what is next and when, what waits for the user."""
+    today = today or date.today()
+    done = sum(1 for step in plan.steps if step.status in (StepStatus.DONE, StepStatus.SKIPPED))
+    lines = [f"Check-in on your plan: {plan.goal}", f"{done} of {len(plan.steps)} steps done."]
+    waiting = [step for step in plan.steps if step.status == StepStatus.WAITING]
+    if waiting:
+        lines.append(f"Waiting for you: {waiting[0].title}.")
+    nxt = plan.next_held(today)
+    pending = [step for step in sorted(plan.steps, key=lambda s: s.position) if step.status in (StepStatus.PENDING, StepStatus.RUNNING)]
+    if nxt is not None:
+        lines.append(f"Next: {nxt.title}, due {day_text(nxt.due, today)}.")
+    elif pending and not waiting:
+        lines.append(f"Next: {pending[0].title}.")
+    late = [step for step in pending if step.due is not None and step.due < today]
+    if late:
+        lines.append(f"Past its day: {late[0].title} (was due {day_text(late[0].due, today)}).")
+    lines.append("Tell me if anything changed and I will move the plan.")
+    return "\n".join(lines)
+
+
 def render_plan(plan: Plan, *, results: bool = False) -> str:
     """The plan as text for a chat: the goal, one line per step with where it stands and who does it."""
     marks = {
@@ -275,7 +321,8 @@ def render_plan(plan: Plan, *, results: bool = False) -> str:
     if plan.summary:
         lines.append(plan.summary)
     for step in sorted(plan.steps, key=lambda s: s.position):
-        lines.append(f"{marks[step.status]} {step.position}. {step.title}{owners[step.owner]}")
+        when = f"{day_text(step.due)} - " if step.due is not None else ""
+        lines.append(f"{marks[step.status]} {step.position}. {when}{step.title}{owners[step.owner]}")
         if step.needs and step.status in (StepStatus.PENDING, StepStatus.WAITING):
             lines.append("      needs: " + "; ".join(step.needs))
         if results and step.result and step.status == StepStatus.DONE:
