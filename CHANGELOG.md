@@ -295,6 +295,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- "I noticed a procedure worth keeping" no longer arrives in the middle of someone's work. The learning card (keep this skill, remember this preference) is shown only when no other
+  task of the chat is moving or waiting for an approval tap, and never after a step of a plan; otherwise the proposal waits in the queue (the console) as before.
 - A file the user sends in Telegram is no longer read as a request to send a file. The intake's note ("[The user sent a file: ...]") was
   matched by the fulfillment check as "send" and "file", so a PDF the user sent for a summary was sent back to them, and a photo task blocked
   on a delivery nobody asked for; the notes are now left out of that check and the no-caption text is "Here is a picture.". The note also
