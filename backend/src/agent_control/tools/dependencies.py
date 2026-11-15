@@ -26,8 +26,10 @@ machine permanently:
 from __future__ import annotations
 
 import asyncio
+import importlib.util
 from pathlib import Path
 import re
+import shutil
 import sys
 from typing import Any
 
@@ -54,6 +56,24 @@ _REQUIREMENT = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,63})\s*(==|~=|>=)?\s*(
 def _package_name(requirement: str) -> str | None:
     match = _REQUIREMENT.match(requirement.strip())
     return match.group(1).lower().replace("_", "-") if match else None
+
+
+def installer_command(target: Path, requirements: list[str]) -> list[str]:
+    """The command that installs `requirements` into `target`: pip when this Python has it, else uv, else an honest refusal.
+
+    This install's Python is uv's, and a uv environment has no pip: every install failed with "No module named pip", so a spreadsheet, a Word file or a
+    chart could never be made (the allowed packages were not there and could not be added). `uv pip install --target` does the same job.
+    """
+    if importlib.util.find_spec("pip") is not None:
+        return [
+            sys.executable, "-m", "pip", "install", "--target", str(target),
+            "--no-input", "--disable-pip-version-check", "--no-color", *requirements,
+        ]
+    uv = shutil.which("uv")
+    if uv:
+        # --link-mode=copy: the target folder is often on another drive than uv's cache, where hard links fail with a warning on every call.
+        return [uv, "pip", "install", "--python", sys.executable, "--target", str(target), "--no-progress", "--color", "never", "--link-mode=copy", *requirements]
+    raise ValueError("neither pip nor uv is available in this installation, so nothing can be installed here")
 
 
 class DependenciesAdapter:
@@ -114,12 +134,7 @@ class DependenciesAdapter:
 
         target = Path(self.config.target_root).expanduser().resolve() / (request.task_id or "shared")
         target.mkdir(parents=True, exist_ok=True)
-        command = [
-            sys.executable, "-m", "pip", "install",
-            "--target", str(target),
-            "--no-input", "--disable-pip-version-check", "--no-color",
-            *requirements,
-        ]
+        command = installer_command(target, requirements)
         process = await asyncio.create_subprocess_exec(
             *command, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
         )

@@ -111,3 +111,25 @@ def test_tool_is_absent_until_the_capability_is_enabled() -> None:
     definition = next(d for d in registry.definitions if d.name == "dependencies.install")
 
     assert definition.enabled is False
+
+
+def test_the_install_command_is_pip_when_pip_is_there_else_uv_else_a_clear_refusal(tmp_path, monkeypatch) -> None:
+    """Found live 11/15: this install's Python is uv's and has no pip, so every install failed ("No module named pip") and no spreadsheet, Word file or chart could be made."""
+    import sys
+    from pathlib import Path
+
+    from agent_control.tools import dependencies as deps
+
+    target = tmp_path / "t"
+    monkeypatch.setattr(deps.importlib.util, "find_spec", lambda name: object() if name == "pip" else None)
+    assert deps.installer_command(target, ["openpyxl"])[:4] == [sys.executable, "-m", "pip", "install"]
+
+    monkeypatch.setattr(deps.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(deps.shutil, "which", lambda name: "/bin/uv" if name == "uv" else None)
+    command = deps.installer_command(target, ["openpyxl", "python-docx"])
+    assert command[:3] == ["/bin/uv", "pip", "install"] and command[-2:] == ["openpyxl", "python-docx"]
+    assert command[command.index("--python") + 1] == sys.executable and command[command.index("--target") + 1] == str(Path(target))
+
+    monkeypatch.setattr(deps.shutil, "which", lambda name: None)
+    with pytest.raises(ValueError, match="neither pip nor uv"):
+        deps.installer_command(target, ["openpyxl"])
