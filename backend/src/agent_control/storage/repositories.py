@@ -1989,10 +1989,11 @@ class PlanRepository:
     def create(self, plan: Plan) -> Plan:
         with self.database.connect() as connection:
             connection.execute(
-                "INSERT INTO project_plans (id, conversation_id, goal, summary, status, source_task_id, routing_json, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO project_plans (id, conversation_id, goal, summary, status, source_task_id, routing_json, notes, check_in_days, "
+                "last_check_in_at, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (plan.id, plan.conversation_id, plan.goal, plan.summary, plan.status.value, plan.source_task_id,
-                 _dump(plan.routing), _dt(plan.created_at), _dt(plan.updated_at)),
+                 _dump(plan.routing), plan.notes, plan.check_in_days, _dt(plan.last_check_in_at) if plan.last_check_in_at else None,
+                 _dt(plan.created_at), _dt(plan.updated_at)),
             )
             for step in plan.steps:
                 self._insert_step(connection, plan.id, step)
@@ -2033,9 +2034,32 @@ class PlanRepository:
         with self.database.connect() as connection:
             connection.execute("UPDATE project_plans SET status = ?, updated_at = ? WHERE id = ?", (status.value, _dt(utc_now()), plan_id))
 
+    def update_plan(self, plan_id: str, **fields: Any) -> None:
+        """Change what a plan keeps beside its steps: notes, check_in_days, last_check_in_at."""
+        allowed = {"notes", "check_in_days", "last_check_in_at"}
+        unknown = set(fields) - allowed
+        if unknown:
+            raise ValueError(f"cannot update plan fields: {sorted(unknown)}")
+        columns = [f"{name} = ?" for name in fields]
+        params = [_dt(value) if name == "last_check_in_at" and value is not None else value for name, value in fields.items()]
+        with self.database.connect() as connection:
+            connection.execute(f"UPDATE project_plans SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(utc_now()), plan_id))
+
+    def shift_dates(self, plan_id: str, days: int) -> int:
+        """Move the day of every step that is not finished by `days` (negative: earlier). Returns how many steps moved."""
+        plan = self.get(plan_id)
+        if plan is None:
+            return 0
+        moved = 0
+        for step in plan.steps:
+            if step.due is not None and step.status not in (StepStatus.DONE, StepStatus.SKIPPED):
+                self.update_step(step.id, due=step.due + timedelta(days=days))
+                moved += 1
+        return moved
+
     def update_step(self, step_id: str, **fields: Any) -> None:
-        """Change a step: status, task_id, result, title, detail, owner, needs, depends_on, ability."""
-        allowed = {"status", "task_id", "result", "title", "detail", "owner", "needs", "depends_on", "ability"}
+        """Change a step: status, task_id, result, title, detail, owner, needs, depends_on, ability, due."""
+        allowed = {"status", "task_id", "result", "title", "detail", "owner", "needs", "depends_on", "ability", "due"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"cannot update plan step fields: {sorted(unknown)}")
@@ -2043,7 +2067,10 @@ class PlanRepository:
         for name, value in fields.items():
             column = {"needs": "needs_json", "depends_on": "depends_json"}.get(name, name)
             columns.append(f"{column} = ?")
-            params.append(_dump(value) if name in ("needs", "depends_on") else getattr(value, "value", value))
+            if name == "due":
+                params.append(value.isoformat() if value is not None else None)
+            else:
+                params.append(_dump(value) if name in ("needs", "depends_on") else getattr(value, "value", value))
         now = utc_now()
         with self.database.connect() as connection:
             connection.execute(f"UPDATE project_plan_steps SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(now), step_id))
@@ -2071,10 +2098,10 @@ class PlanRepository:
     @staticmethod
     def _insert_step(connection: sqlite3.Connection, plan_id: str, step: PlanStep) -> None:
         connection.execute(
-            "INSERT INTO project_plan_steps (id, plan_id, position, title, detail, owner, needs_json, depends_json, ability, status, task_id, result, "
-            "updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "INSERT INTO project_plan_steps (id, plan_id, position, title, detail, owner, needs_json, depends_json, ability, due, status, task_id, "
+            "result, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (step.id, plan_id, step.position, step.title, step.detail, step.owner.value, _dump(step.needs), _dump(step.depends_on),
-             step.ability, step.status.value, step.task_id, step.result, _dt(step.updated_at)),
+             step.ability, step.due.isoformat() if step.due else None, step.status.value, step.task_id, step.result, _dt(step.updated_at)),
         )
 
     @staticmethod
@@ -2083,7 +2110,7 @@ class PlanRepository:
             PlanStep(
                 id=s["id"], plan_id=s["plan_id"], position=s["position"], title=s["title"], detail=s["detail"],
                 owner=StepOwner(s["owner"]), needs=_load(s["needs_json"], []), depends_on=_load(s["depends_json"], []),
-                ability=s["ability"], status=StepStatus(s["status"]), task_id=s["task_id"], result=s["result"],
+                ability=s["ability"], due=s["due"], status=StepStatus(s["status"]), task_id=s["task_id"], result=s["result"],
                 updated_at=datetime.fromisoformat(s["updated_at"]),
             )
             for s in step_rows
@@ -2091,6 +2118,8 @@ class PlanRepository:
         return Plan(
             id=row["id"], conversation_id=row["conversation_id"], goal=row["goal"], summary=row["summary"],
             status=PlanStatus(row["status"]), source_task_id=row["source_task_id"], routing=_load(row["routing_json"], {}), steps=steps,
+            notes=row["notes"], check_in_days=row["check_in_days"],
+            last_check_in_at=datetime.fromisoformat(row["last_check_in_at"]) if row["last_check_in_at"] else None,
             created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 

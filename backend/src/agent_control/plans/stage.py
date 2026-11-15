@@ -16,7 +16,7 @@ from typing import Any
 
 import structlog
 
-from agent_control.plans.model import MAX_STEPS, Plan, PlanStep
+from agent_control.plans.model import MAX_STEPS, Plan, PlanStep, in_date_order
 from agent_control.plans.planner import draft_plan
 from agent_control.plans.runner import audit_plan, render_plan, routing_of
 from agent_control.schemas import TaskRecord
@@ -52,6 +52,7 @@ async def run_plan_stage(
         steps = [PlanStep(position=i, **step.model_dump()) for i, step in enumerate(draft.steps[:MAX_STEPS], 1)]
         if any(dep >= step.position or dep < 1 for step in steps for dep in step.depends_on):
             steps = [step.model_copy(update={"depends_on": []}) for step in steps]  # a dependency that points forward is dropped, not trusted
+        steps = in_date_order(steps)
         plan = repositories.plans.create(Plan(
             conversation_id=task.conversation_id, goal=goal[:500], summary=draft.summary.strip()[:1200],
             source_task_id=task.id, routing=routing_of(task), steps=steps,
@@ -65,4 +66,5 @@ async def run_plan_stage(
 
 def answer_for(plan: Plan) -> str:
     """The text the task finishes with: the plan, short. (The chat shows the card, with its buttons, in its place.)"""
-    return f"{render_plan(plan)}\n\nStart it when you are ready, or tell me what to change."
+    offer = f"It runs for about {plan.weeks_ahead()} weeks: say \"check in every week\" and I will tell you how it stands.\n\n" if plan.weeks_ahead() else ""
+    return f"{render_plan(plan)}\n\n{offer}Start it when you are ready, or tell me what to change."

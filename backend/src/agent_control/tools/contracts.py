@@ -330,7 +330,7 @@ class AbilitiesInput(ToolInputModel):
 
 
 class PlanManageInput(ToolInputModel):
-    operation: Literal["create", "show", "add_step", "update_step", "set_status"] = "show"
+    operation: Literal["create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"] = "show"
     # create: the goal; the steps are optional, and when omitted a planner drafts them. Each step: title, detail, owner (ybm, user or
     # access), needs (what the user must give or do first), depends_on (positions of earlier steps it waits for), ability.
     goal: str | None = None
@@ -345,6 +345,11 @@ class PlanManageInput(ToolInputModel):
     needs: list[str] | None = None
     depends_on: list[int] | None = None
     ability: str | None = None
+    # add_step, update_step: the day the step is due, YYYY-MM-DD. set_check_in: how many days between check-ins (0 stops them). shift_dates: how
+    # many days to move every unfinished step (negative: earlier). add_note: one fact the user told you about the project.
+    due: str | None = None
+    days: int | None = None
+    note: str | None = None
     # update_step: done, skipped or pending (what the user told you). set_status: active (start), paused or cancelled.
     status: Literal["done", "skipped", "pending", "active", "paused", "cancelled"] | None = None
 
@@ -358,6 +363,10 @@ class PlanManageInput(ToolInputModel):
             raise ValueError("operation=add_step requires 'title'")
         if self.operation == "set_status" and self.status not in ("active", "paused", "cancelled"):
             raise ValueError("operation=set_status requires 'status' of active, paused or cancelled")
+        if self.operation in ("set_check_in", "shift_dates") and self.days is None:
+            raise ValueError(f"operation={self.operation} requires 'days'")
+        if self.operation == "add_note" and not (self.note or "").strip():
+            raise ValueError("operation=add_note requires 'note'")
         return self
 
 

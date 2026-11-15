@@ -15,6 +15,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
   and a page count written by one model call with its own short instructions (`orchestration/job_start.py`; a failure leaves the person's own words as the goal). It goes through the same approval card, audit and
   checks, and the Operator writes the answer from its result. Also found: once a job has started, the fulfillment check no longer demands that the task itself read source content and deliver a file, and a research
   job that finds no Chrome running with DevTools (after a restart, or the night after it was approved) starts the assistant's own Chrome profile minimized instead of failing for want of a search.
+- Plans that last months. A planned step has a day (`due`, written YYYY-MM-DD by the planner) and steps are kept in the order of their days, so "Dec 6: book the movers" no longer
+  comes after "Jan 10". The runner starts a step only when its day is within a week, so a plan for a house waits, active, for each day instead of asking every step at once, and the card
+  says "Nothing to do until Dec 6". `plan.manage` gained `set_check_in` (tell me how it stands every N days, said from the plan alone with no model, only when asked for),
+  `shift_dates` (the project slipped: move every unfinished step) and `add_note` (a fact the user gave, kept with the plan and told to every step's task). A plan that runs three
+  weeks or more offers the check-in once. Existing databases gain the columns on start.
 - Phase 1 of the ultimate-assistant plan, from the sealed Verdict run (7 of 13 by rubric):
   - **Counts come from code.** The decision model can raise a fact the patterns miss, `counts_things` (`request_facts.ADDED_FACT_QUESTIONS`, asked about every request in the same call as the
     others; 8 of 10 count phrasings clear 0.5 and 13 of 178 e2e messages do, all counts or totals). For such a request the number check also looks at two-digit numbers, and what a
