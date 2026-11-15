@@ -24,5 +24,7 @@ responses were preserved. The organize flow itself is covered by
 test_fulfillment.py and test_worker_operator_loop.py.
 
 The document.manage catalog was updated again in November 2026 (create_document and create_spreadsheet). Only its description, operation list, examples and derived
-fixture keys changed (`ybm scenario rekey --all`: document_pdf_summary, operator_loop_filesystem_search, send_found_pdf); recorded responses were preserved.
+fixture keys changed; recorded responses were preserved. `ybm scenario rekey --all` handled document_pdf_summary, operator_loop_filesystem_search and send_found_pdf; it cannot rekey a fixture
+whose tests have near-identical prompts (a refusal test beside a success test), so the new catalog block was copied from a rekeyed fixture into desktop_file_search_then_delivery, file_find_and_read,
+filesystem_search and folder_open_inspection and their keys re-derived (same replacement in every stored prompt).
 This was a catalog maintenance update, not a live model re-record. The new operations are covered by deterministic tests in test_document_manage.py.
