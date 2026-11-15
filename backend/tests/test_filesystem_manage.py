@@ -659,3 +659,21 @@ async def test_read_file_still_tidies_runs_of_spaces_and_tabs(tmp_path) -> None:
     result = await adapter.execute(_request(tmp_path, "read_file", path=str(tmp_path / "notes.txt")))
 
     assert result.output["text"] == "a b c\nindented line"
+
+
+@pytest.mark.asyncio
+async def test_a_listing_asked_for_through_the_input_model_carries_dates_by_default(tmp_path) -> None:
+    """Verdict 2 fin2_d3: the dates-by-default fix passed its tests (a bare dict) and did nothing live, because the input model filled with_dates=False into every
+    validated call and an explicit False overrides the default. The call as the Operator makes it goes through the model."""
+    from agent_control.tools.contracts import FilesystemInspectInput, FilesystemSearchInput
+
+    (tmp_path / "recent.txt").write_text("x", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    validated = FilesystemInspectInput(operation="inspect_folder", root=str(tmp_path)).model_dump()
+    assert validated["with_dates"] is None  # not False: nobody said so
+    listed = await adapter.execute(_request(tmp_path, "inspect_folder", **{k: v for k, v in validated.items() if k not in ("operation", "root")}))
+    assert listed.output["with_dates"] is True and ", modified " in listed.output["terminal_output"][0]["content"]
+    searched = FilesystemSearchInput(operation="search", root=str(tmp_path), query="*.txt").model_dump()
+    assert searched["with_dates"] is None
+    off = await adapter.execute(_request(tmp_path, "inspect_folder", with_dates=False))  # an explicit no still means no
+    assert off.output["with_dates"] is False and ", modified " not in off.output["terminal_output"][0]["content"]

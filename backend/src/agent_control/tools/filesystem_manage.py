@@ -99,7 +99,8 @@ class FilesystemManageAdapter:
         # A listing says when each file was modified unless the call says not to. It was off unless the request used a word for recency
         # (newest, latest, oldest), so "which files are older than a year?" got sizes only and the model asked the person which files were old
         # (the sealed Verdict run, 11/14). A date costs a few tokens a line; a question about time that cannot be answered costs the answer.
-        output["with_dates"] = bool(request.input.get("with_dates", operation in _DATED_LISTINGS))
+        asked = request.input.get("with_dates")
+        output["with_dates"] = bool(asked) if asked is not None else operation in _DATED_LISTINGS
         output["terminal_output"] = [_terminal_output(operation, output)]
         return ToolCallResult(request_id=request.id, status=ToolResultStatus.SUCCEEDED, output=output)
 

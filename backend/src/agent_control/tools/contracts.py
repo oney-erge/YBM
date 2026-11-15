@@ -598,8 +598,10 @@ class FilesystemInspectInput(ToolInputModel):
     root: str = Field(min_length=1)
     max_depth: int = Field(default=2, ge=0, le=10)
     max_entries: int = Field(default=200, ge=1, le=5000)
-    # Show each file's modified time in the listing. Turned on by the worker for a request about what changed last.
-    with_dates: bool = False
+    # Show each file's modified time in the listing. None: the tool's own default (on for a listing and a search). Not False by default: a validated call
+    # carried an explicit False, which turned the default off for every call that came through here (Verdict 2, fin2_d3: "which files changed in the last
+    # three days?" got names and sizes and was answered "no tool shows modification times").
+    with_dates: bool | None = None
 
     @model_validator(mode="before")
     @classmethod
@@ -623,7 +625,7 @@ class FilesystemSearchInput(ToolInputModel):
     query: str = Field(min_length=1)
     include_content: bool = False
     max_results: int = Field(default=100, ge=1, le=1000)
-    with_dates: bool = False
+    with_dates: bool | None = None
 
 
 class FilesystemResolveDesktopItemInput(ToolInputModel):
