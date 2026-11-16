@@ -5,6 +5,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.1.7] - 2026-11-15
+
 ### Added
 
 - Word documents and spreadsheets can be made. `document.manage` made only PowerPoint files: a request for "a packing checklist as a Word document" ended as a .pptx (sealed Verdict 2, fin2_a3), and one for a spreadsheet of four invoices
