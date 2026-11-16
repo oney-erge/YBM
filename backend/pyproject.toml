@@ -1,6 +1,6 @@
 [project]
 name = "agent-control-backend"
-version = "0.1.6"
+version = "0.1.7"
 description = "Configurable local agentic control system backend"
 authors = [{ name = "oney-erge" }]
 license = { text = "MIT" }
