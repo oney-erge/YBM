@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from agent_control.orchestration import StaticToolAdapter, TaskWorker
 from agent_control.orchestration.fulfillment import _postcondition_satisfied
-from agent_control.orchestration.job_start import MAX_PAGES, MIN_PAGES, _Start, start_research_call
+from agent_control.orchestration.job_start import MAX_PAGES, MIN_PAGES, JobIntentUnavailable, JobPageLimitExceeded, _Start, start_research_call
 from agent_control.schemas import ChannelType, OperatorAction, OperatorDecision, PostconditionType, TaskStatus
 from helpers import make_repos
 from test_worker_operator_loop import QueueOperator, _executor_with_adapter, _settings
@@ -31,7 +32,7 @@ class _Provider:
 
 @pytest.mark.asyncio
 async def test_the_call_carries_the_goal_without_the_instructions_and_the_number_of_pages_the_person_named():
-    provider = _Provider(_Start(goal="How people heat old stone houses without making them damp", pages=12))
+    provider = _Provider(_Start(action="start", goal="How people heat old stone houses without making them damp", pages=12))
     call = await start_research_call(provider, REQUEST)
     assert call == {"operation": "start_research", "goal": "How people heat old stone houses without making them damp", "max_pages": 12}
     system, user, schema = provider.asked[0]
@@ -39,21 +40,43 @@ async def test_the_call_carries_the_goal_without_the_instructions_and_the_number
 
 
 @pytest.mark.asyncio
-async def test_a_number_outside_what_a_job_accepts_is_brought_inside_and_no_number_is_no_limit():
-    for named, expected in ((3, MIN_PAGES), (500, MAX_PAGES), (60, 60)):
-        call = await start_research_call(_Provider(_Start(goal="g", pages=named)), REQUEST)
-        assert call["max_pages"] == expected
-    assert "max_pages" not in await start_research_call(_Provider(_Start(goal="g", pages=None)), REQUEST)
-    assert "max_pages" not in await start_research_call(_Provider(_Start(goal="g", pages=0)), REQUEST)
+async def test_a_number_outside_what_a_job_accepts_is_rejected_without_silent_reduction():
+    for named in (MIN_PAGES, MAX_PAGES, 500, 60):
+        call = await start_research_call(_Provider(_Start(action="start", goal="g", pages=named)), REQUEST)
+        assert call["max_pages"] == named
+    for named in (0, 3, 5000):
+        with pytest.raises(JobPageLimitExceeded, match=str(named)):
+            await start_research_call(_Provider(_Start(action="start", goal="g", pages=named)), REQUEST)
+    assert "max_pages" not in await start_research_call(_Provider(_Start(action="start", goal="g", pages=None)), REQUEST)
 
 
 @pytest.mark.asyncio
-async def test_a_model_that_fails_or_says_nothing_leaves_the_persons_own_words_as_the_goal_and_the_call_is_still_made():
+async def test_an_unsupported_page_request_explains_the_limit_without_starting(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    async def stage(task):
+        return await start_research_call(_Provider(_Start(action="start", goal="g", pages=5000)), task.objective)
+    task = _task(repos, task_route="job")
+    decision = await TaskWorker(repos, audit, job_stage=stage)._started_job(task, [])
+    assert decision.action == OperatorAction.BLOCKED
+    assert "5000" in decision.reason and "1000" in decision.reason and "no research job was started" in decision.reason
+    assert not repos.tasks.get(task.id).metadata.get("job_forced_call")
+
+
+@pytest.mark.asyncio
+async def test_unknown_research_action_does_not_default_to_start(caplog):
     words = " ".join(REQUEST.split())
-    assert await start_research_call(_Provider(TimeoutError("slow")), REQUEST) == {"operation": "start_research", "goal": words}
-    assert (await start_research_call(_Provider(_Start(goal="  ", pages=None)), REQUEST))["goal"] == words
-    assert await start_research_call(None, REQUEST) == {"operation": "start_research", "goal": words}
-    assert len((await start_research_call(None, "x " * 3000))["goal"]) <= 2000
+    for request in ("Pause the research.", "Resume the research.", "Stop the research.", "Research status?", REQUEST):
+        with pytest.raises(JobIntentUnavailable):
+            await start_research_call(_Provider(TimeoutError("synthetic-secret")), request)
+    with pytest.raises(JobIntentUnavailable):
+        await start_research_call(None, REQUEST)
+    with pytest.raises(JobIntentUnavailable):
+        await start_research_call(_Provider(None), REQUEST)
+    with pytest.raises(ValidationError):
+        _Start.model_validate({"goal": "missing action"})
+    assert "synthetic-secret" not in caplog.text
+    assert (await start_research_call(_Provider(_Start(action="start", goal="  ")), REQUEST))["goal"] == words
+    assert len((await start_research_call(_Provider(_Start(action="start")), "x " * 3000))["goal"]) <= 2000
 
 
 # --- the worker -------------------------------------------------------------------------------------------------------------------------------
@@ -88,7 +111,7 @@ async def test_a_routed_request_starts_with_the_job_call_once_and_only_on_its_fi
 
 
 @pytest.mark.asyncio
-async def test_only_a_routed_task_with_a_stage_is_started_and_a_stage_that_fails_leaves_it_to_the_operator(tmp_path):
+async def test_only_a_routed_task_with_a_stage_is_started_and_a_failed_stage_blocks(tmp_path):
     repos, audit = make_repos(tmp_path)
     calls: list = []
     assert await TaskWorker(repos, audit, job_stage=_stage(calls))._started_job(_task(repos), []) is None  # no route
@@ -99,7 +122,31 @@ async def test_only_a_routed_task_with_a_stage_is_started_and_a_stage_that_fails
     async def broken(task):
         raise RuntimeError("no model")
 
-    assert await TaskWorker(repos, audit, job_stage=broken)._started_job(_task(repos, task_route="job"), []) is None
+    decision = await TaskWorker(repos, audit, job_stage=broken)._started_job(_task(repos, task_route="job"), [])
+    assert decision.action == OperatorAction.BLOCKED
+    assert "Check its status and try again" in decision.reason
+
+
+@pytest.mark.asyncio
+async def test_failed_intent_does_not_dispatch_or_let_operator_guess(tmp_path, caplog):
+    from agent_control.channels.task_notify import format_task_message
+
+    repos, audit = make_repos(tmp_path)
+    adapter = StaticToolAdapter({"summary": "unexpected"})
+    operator = QueueOperator([OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="job.manage", tool_input={"operation": "start_research", "goal": "unsafe"})])
+
+    async def stage(task):
+        return await start_research_call(_Provider(TimeoutError("synthetic-secret")), task.objective)
+
+    worker = TaskWorker(repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, adapter, tool_name="job.manage"), operator=operator, job_stage=stage)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    task = repos.tasks.create("Pause the research.", conversation_id=conversation, metadata={**ROUTING, "original_message_text": "Pause the research.", "task_route": "job"})
+    await worker.process_next()
+    finished = repos.tasks.get(task.id)
+    assert finished.status == TaskStatus.BLOCKED
+    assert operator.calls == 0 and adapter.requests == []
+    assert "Check its status and try again" in format_task_message(finished)
+    assert "synthetic-secret" not in caplog.text
 
 
 @pytest.mark.asyncio

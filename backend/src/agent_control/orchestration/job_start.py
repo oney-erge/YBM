@@ -17,8 +17,8 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-#: `job.manage` accepts 5 to 150 pages (tools/contracts.py JobManageInput); a number outside it is brought inside rather than refused.
-MIN_PAGES, MAX_PAGES = 5, 150
+#: The tool contract permits up to 1000 pages; the configured limit is checked separately.
+MIN_PAGES, MAX_PAGES = 5, 1000
 
 SYSTEM = """You prepare a message about research for a program that reads many web pages and writes a report. You are given what the person wrote.
 
@@ -28,9 +28,17 @@ SYSTEM = """You prepare a message about research for a program that reads many w
 
 
 class _Start(BaseModel):
-    action: Literal["start", "status", "pause", "resume", "stop", "other"] = Field(default="start", description="what the person wants done with research")
+    action: Literal["start", "status", "pause", "resume", "stop", "other"] = Field(description="what the person wants done with research")
     goal: str = Field(default="", description="for start: what to find out, with everything the person said that matters, and nothing about how to work")
     pages: int | None = Field(default=None, description="for start: how many sources or pages the person asked to read; empty when they gave no number")
+
+
+class JobIntentUnavailable(RuntimeError):
+    """The research action could not be determined safely."""
+
+
+class JobPageLimitExceeded(ValueError):
+    """The requested research size is outside the supported range."""
 
 
 async def start_research_call(provider: Any, request: str) -> dict[str, Any] | None:
@@ -38,24 +46,27 @@ async def start_research_call(provider: Any, request: str) -> dict[str, Any] | N
 
     Found live: the skill's yes/no question cannot tell a request for research from a question about research already running ("Pause the research."
     scored 0.09 and "Resume the research." 0.90), and a small model that is asked to pick the control tool calls it with an id it made up, or says it
-    cannot. So the call that writes the goal says which of the five it is, and the worker makes that the task's first step. Never raises: on a failure
-    their own words are the goal of a start, as before."""
+    cannot. So the call that writes the goal says which of the five it is, and the worker makes that the task's first step. If the action cannot
+    be determined, refuse to guess: a pause or stop must not turn into a new job."""
     words = " ".join((request or "").split())[:2000]
-    goal, pages, action = words, None, "start"
-    if provider is not None and words:
-        try:
-            answer = await provider.generate_structured(SYSTEM, f"The person wrote:\n{words}", _Start, temperature=0.0)
-        except Exception:  # noqa: BLE001 - their own words are a fine goal; the call must still be made
-            logger.warning("job_start_extraction_failed", exc_info=True)
-        else:
-            action = answer.action
-            if action == "other":
-                return None
-            if action != "start":
-                return {"operation": action}
-            goal = " ".join((answer.goal or "").split())[:2000] or words
-            if answer.pages:
-                pages = min(MAX_PAGES, max(MIN_PAGES, int(answer.pages)))
+    if provider is None or not words:
+        raise JobIntentUnavailable("Research action is unavailable")
+    try:
+        answer = await provider.generate_structured(SYSTEM, f"The person wrote:\n{words}", _Start, temperature=0.0)
+        if not isinstance(answer, _Start):
+            raise TypeError("Research action was not structured")
+        action = answer.action
+    except Exception as exc:  # noqa: BLE001 - the action is unknown, so do not choose a side effect
+        logger.warning("job_start_extraction_failed: %s", type(exc).__name__)
+        raise JobIntentUnavailable("Research action is unavailable") from exc
+    if action == "other":
+        return None
+    if action != "start":
+        return {"operation": action}
+    goal = " ".join((answer.goal or "").split())[:2000] or words
+    pages = answer.pages
+    if pages is not None and not MIN_PAGES <= pages <= MAX_PAGES:
+        raise JobPageLimitExceeded(f"Research supports {MIN_PAGES} to {MAX_PAGES} pages per job; requested {pages}.")
     call: dict[str, Any] = {"operation": "start_research", "goal": goal}
     if pages is not None:
         call["max_pages"] = pages
