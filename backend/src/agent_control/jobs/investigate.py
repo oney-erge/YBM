@@ -279,6 +279,8 @@ async def _options(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
     options = []
     for option in getattr(answer, "options", []):
         cited = [ident.strip().upper() for ident in option.evidence if ident.strip().upper() in known]
+        if not any(ident.startswith("F") for ident in cited):
+            cited += _supporting_findings(option, state["findings"])  # the model left the evidence out or named nothing real (it does, now and then): code finds what in the findings the option is about
         # A way forward must rest on something found on this computer (an F). What the web says about someone else's machine supports a finding; it does not stand in for one:
         # on the first live run an option about a firewall port came only from forum notes about a different problem, and no check of this computer had looked at the firewall.
         if any(ident.startswith("F") for ident in cited) and option.title.strip() and option.how.strip():
@@ -292,6 +294,21 @@ async def _options(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
 
 
 # --- the end -----------------------------------------------------------------------------------------------------------------------------------
+
+
+_WORD = re.compile(r"[a-z0-9]{4,}")
+_PLAIN = frozenset({"that", "this", "with", "from", "have", "will", "your", "when", "then", "into", "them", "they", "been", "does", "more", "than", "which", "should", "must", "also", "only", "open", "click"})
+
+
+def _supporting_findings(option: _Option, findings: list[dict[str, Any]]) -> list[str]:
+    """The findings an option is about, by the words they share (two or more that are not everyday words): the ids to cite when the model did not."""
+    wanted = set(_WORD.findall(f"{option.title} {option.why} {option.how}".lower())) - _PLAIN
+    scored = []
+    for finding in findings:
+        shared = wanted & (set(_WORD.findall(finding["text"].lower())) - _PLAIN)
+        if len(shared) >= 2:
+            scored.append((len(shared), finding["id"]))
+    return [ident for _count, ident in sorted(scored, reverse=True)[:2]]
 
 
 def _finish(goal: str, state: dict[str, Any]) -> Unit:

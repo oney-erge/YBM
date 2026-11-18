@@ -180,3 +180,25 @@ async def test_a_finished_investigation_gives_its_goal_what_it_found_and_waits_f
     assert saved.status == GoalStatus.WAITING and saved.waiting == {"question": "Which way forward should I try?"}
     assert any(line.startswith("Found: Ethernet is on a Public network") for line in saved.evidence) and any(line.startswith("Option 1: Set the network to Private") for line in saved.evidence)
     assert saved.attempts[-1]["kind"] == "job" and saved.attempts[-1]["outcome"] == "investigated"
+
+
+@pytest.mark.asyncio
+async def test_when_the_model_leaves_the_evidence_out_code_finds_the_findings_an_option_is_about() -> None:
+    """Live 11/18: the 9B wrote three sensible options with an empty evidence list, and a rule that wants evidence dropped all of them."""
+    class _NoEvidence(_Fake):
+        async def think(self, system, user, schema):
+            if schema is investigate._Options:
+                return investigate._Options(options=[
+                    investigate._Option(title="Switch the Ethernet network from Public to Private", why="Windows turns discovery off on a Public network.", how="Settings, Network, Ethernet, network profile Private", changes_something=True),
+                    investigate._Option(title="Start the Function Discovery services", why="They are stopped.", how="Open Services and start them", changes_something=True),
+                    investigate._Option(title="Buy a new television", why="It might work better.", how="Go to a shop"),  # nothing found is about this
+                ])
+            return await super().think(system, user, schema)
+
+    state = investigate.new_state()
+    state["findings"] = [
+        {"id": "F1", "text": "The Ethernet adapter is on a Public network, which turns discovery off.", "probe": "network_overview"},
+        {"id": "F2", "text": "The Function Discovery Resource Publication service is stopped.", "probe": "services"},
+    ]
+    unit = await investigate._options("My TV will not cast", state, _NoEvidence().io)
+    assert [(option["title"][:12], option["evidence"]) for option in unit.state["options"]] == [("Switch the E", ["F1"]), ("Start the Fu", ["F2"])]
