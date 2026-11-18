@@ -26,11 +26,25 @@ MAX_OPEN_JOBS = 2
 
 def job_line(job: Job) -> str:
     """One job in words: what it is for, where it is, and what it is doing."""
+    failure = (
+        "Could not save the report; a partial file may exist. Check it before resuming."
+        if job.state.get("stop_reason") == "report_write_failed"
+        else f"Stopped after repeated errors. {research.progress_text(job.state)} 'Resume' tries again."
+    )
+    delivery = job.state.get("delivery") or {}
+    delivery_text = {
+        "pending": " Delivery is pending.",
+        "sending": " Delivery was started; its outcome is not yet confirmed.",
+        "uncertain": " Delivery could not be confirmed; the saved report can be sent again.",
+        "sent": " Delivery was confirmed by the channel.",
+        "unavailable": " Automatic delivery is unavailable on this channel.",
+        "missing": " The saved report is missing; check the report location.",
+    }.get(delivery.get("status"), "")
     where = {
         JobStatus.RUNNING: research.progress_text(job.state) if job.state else "Starting.",
         JobStatus.PAUSED: f"Paused. {research.progress_text(job.state)}" if job.state else "Paused.",
-        JobStatus.DONE: "Done: the report was sent.",
-        JobStatus.FAILED: f"Stopped after repeated errors. {research.progress_text(job.state)} 'Resume' tries again.",
+        JobStatus.DONE: "Done: the report was saved." + delivery_text,
+        JobStatus.FAILED: failure,
         JobStatus.CANCELLED: "Stopped.",
     }[job.status]
     return f"{job.goal[:100]}. {where}"
@@ -72,7 +86,9 @@ class JobManageAdapter:
         if len(open_jobs) >= MAX_OPEN_JOBS:
             raise ValueError(f"{len(open_jobs)} researches are already open in this chat; pause or stop one first, or wait for it to finish")
         pages = int(request.input.get("max_pages") or self.config.default_pages)
-        job = self.repositories.jobs.create(Job(kind="research", goal=goal, state=research.new_state(min(pages, self.config.max_pages)), routing=routing))
+        if pages > self.config.max_pages:
+            raise ValueError(f"requested {pages} pages exceeds the configured research limit of {self.config.max_pages}; change the limit or request fewer pages")
+        job = self.repositories.jobs.create(Job(kind="research", goal=goal, state=research.new_state(pages), routing=routing))
         self.audit.append(
             AuditEventType.TASK_STATE_CHANGED, actor="job", task_id=request.task_id, payload={"reason": "job_started", "job_id": job.id, "kind": "research"}
         )
@@ -106,23 +122,28 @@ class JobManageAdapter:
 
     def _control(self, operation: str, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
         job = self._named(request, routing) or next(iter(reversed(self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]))), None)
+        if job is None and operation == "resume":
+            job = next(iter(reversed(self._mine(routing, [JobStatus.FAILED]))), None)
         if job is None:
             raise ValueError("there is no research running in this chat to " + operation)
         if operation == "pause":
             if job.status != JobStatus.RUNNING:
                 raise ValueError(f"the research is {job.status.value}, not running")
-            pause_job(self.repositories, job)
-            said = "Paused the research. Nothing more is read until 'resume'. What it has so far is kept."
+            if not pause_job(self.repositories, job):
+                raise ValueError("the research changed while pausing; check its status and retry")
+            said = "Paused the research. No new step starts until 'resume'; a step already underway may still finish. What was saved is kept."
         elif operation == "resume":
             if job.status not in (JobStatus.PAUSED, JobStatus.FAILED):
                 raise ValueError(f"the research is {job.status.value}, not paused")
-            resume_job(self.repositories, job)
+            if not resume_job(self.repositories, job):
+                raise ValueError("the research changed while resuming; check its status and retry")
             said = f"Resumed the research. {research.progress_text(job.state)}"
         else:
             if not job.is_open and job.status != JobStatus.FAILED:
                 raise ValueError(f"the research already ended ({job.status.value})")
-            cancel_job(self.repositories, job)
-            said = f"Stopped the research. {research.progress_text(job.state)} Nothing more will be read."
+            if not cancel_job(self.repositories, job):
+                raise ValueError("the research changed while stopping; check its status and retry")
+            said = f"Stopped the research. {research.progress_text(job.state)} No new steps will start; a step already underway may still finish."
         return {"job_id": job.id, "jobs": [{"id": job.id, "status": self.repositories.jobs.get(job.id).status.value}], "summary": said}
 
 
@@ -139,7 +160,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             named_when_disabled=False,
             description=(
                 "start and control a long job that runs in the background for hours: start_research reads many web pages one at a time, keeps the "
-                "words that support every claim, messages the person as it goes and ends with a cited report; status says how far it is; pause, "
+                "quotations from pages, messages the person as it goes and ends with a cited report that needs source review; status says how far it is; pause, "
                 "resume and stop control it. Use it when the person asks for thorough research, many sources, or to be told when it is done"
             ),
             operations=OPERATIONS,
