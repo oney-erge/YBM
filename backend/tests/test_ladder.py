@@ -704,3 +704,24 @@ async def test_a_final_answer_that_writes_out_a_wrong_total_is_sent_back_once_wi
     assert last["tool_name"] == "_number_check" and last["hint_id"] == "sum" and "which is 15" in last["error"]
     second = await worker.process_task(first.id)
     assert second.status == TaskStatus.COMPLETED and second.metadata["synthesized_answer"].startswith("15 lines")
+
+
+@pytest.mark.asyncio
+async def test_at_the_higher_initiative_levels_a_choice_among_options_is_the_assistants_to_make_and_a_fact_is_still_asked(tmp_path):
+    """11/16: "Google Cast, Chromecast or PyChromecast?" went to the person, who said "you choose"."""
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=4)
+    choice = OperatorDecision(action=OperatorAction.ASK_USER, question="Which casting library should I use?", options=["pychromecast", "google cast sdk", "catt"])
+    worker = _worker(repos, audit, _Seen([choice, choice, choice]))
+    first = await worker.process_task(task.id)
+    assert first.status == TaskStatus.RUNNING  # not asked: told to choose
+    entry = [item for item in first.metadata["operator_history"] if item.get("tool_name") == "_clarification_check"][-1]
+    assert "At initiative level 4 the routine choices are yours" in entry["error"] and "pychromecast" in entry["error"]
+    assert first.metadata["operator_optional_question_recovery_count"] == 1
+    # at level 3 (the default) the same question goes to the person, as it always did
+    balanced = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
+    assert (await _worker(repos, audit, _Seen([choice])).process_task(balanced.id)).status == TaskStatus.CLARIFYING
+    # a fact only the person has (no options) is asked at any level
+    fact = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=5)
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="What is the name of the TV in the living room?")
+    assert (await _worker(repos, audit, _Seen([ask])).process_task(fact.id)).status == TaskStatus.CLARIFYING
