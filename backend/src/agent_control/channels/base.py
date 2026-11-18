@@ -248,8 +248,12 @@ async def route_clarifying_reply(
     if disposition == "new":
         return None
     if disposition == "uncertain":
-        return _reply(inbound, f"Is that an answer to the question about '{task.objective[:100]}' or a new request? "
-                      f"For an answer, use 'reply {task.id}: your answer'. For a new request, use 'new: your request'.")
+        # The decision model could not tell an answer from a new request. Nobody should have to type "reply task_...:" to say it (live 11/18: a plain "Ethernet" to "which
+        # network interface?" was answered with that instruction). When the question belongs to a goal, the one call that reads the message already sees the goal and
+        # what it waits on, and says whether this answers it (orchestration/goal_routing.py): it goes on to that. A question with no goal is answered by the reply, as
+        # it was before there was any doubt about it.
+        if task.metadata.get("goal_id"):
+            return None
     return resume_clarifying_reply(repositories, audit, inbound, conversation_id, expected_task_id=task.id, expected_token=token)
 
 
