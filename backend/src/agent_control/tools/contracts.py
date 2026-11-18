@@ -381,6 +381,32 @@ class PlanManageInput(ToolInputModel):
         return self
 
 
+class MailManageInput(ToolInputModel):
+    operation: Literal["status", "list", "read", "draft", "send"] = "status"
+    # list: how many messages (at most 30) and whether only the unread ones.
+    limit: int = Field(default=10, ge=1, le=30)
+    unread_only: bool = True
+    # read: the number a list gave.
+    message_id: str | None = None
+    # draft, send: one recipient, a subject and the text.
+    to: str | None = None
+    subject: str | None = None
+    body: str | None = None
+
+    @model_validator(mode="after")
+    def needs_its_arguments(self) -> "MailManageInput":
+        if self.operation == "read" and not (self.message_id or "").strip():
+            raise ValueError("operation=read requires 'message_id'")
+        if self.operation in ("draft", "send") and not ((self.to or "").strip() and (self.subject or "").strip() and (self.body or "").strip()):
+            raise ValueError(f"operation={self.operation} requires 'to', 'subject' and 'body'")
+        return self
+
+
+class MailManageOutput(ToolOutputModel):
+    operation: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+
+
 class JobManageInput(ToolInputModel):
     operation: Literal["start_research", "start_investigation", "status", "pause", "resume", "stop"] = "status"
     # start_research: what to find out, as a full goal with everything the user said (the topic, the place, the budget), and how many pages
