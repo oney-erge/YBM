@@ -1063,6 +1063,18 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
             clarification_recovery = clarification_recovery_reason(candidate, history, decision.question)
+            level = latest.metadata.get("initiative_level")
+            if (
+                not clarification_recovery and decision.options and isinstance(level, int) and not isinstance(level, bool) and level >= 4
+                and int(latest.metadata.get("operator_optional_question_recovery_count", 0)) < 2
+            ):
+                # A question that offers options is a choice. At the higher initiative levels the person has said that routine choices are the assistant's to make (11/16: "Google Cast,
+                # Chromecast or PyChromecast?" and then "you choose"): pick the best-supported one now and say which. A fact only the person has asks no such question (it has no options
+                # to pick from), and an approval is a card, not a question; neither is touched.
+                clarification_recovery = (
+                    f"At initiative level {level} the routine choices are yours: you were going to ask the person to choose among {', '.join(str(o) for o in decision.options[:5])}. "
+                    "Choose the one the evidence supports best, say in your answer which you chose and why, and go on."
+                )
             if clarification_recovery:
                 recovery_count = int(
                     latest.metadata.get("operator_optional_question_recovery_count", 0)
