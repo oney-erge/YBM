@@ -15,6 +15,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A chat reply is sent before the conversation summary is written, and "typing" shows at once. Measured on the live bot (11/18): three chat messages took 23, 23 and 15 seconds; the first sign ("typing") came 14 seconds after the message and the first word 23. Of those, 13 seconds were the model writing the conversation summary before anything else happened, 6 were the Concierge's own call and the rest two checks by the decision model. Through the Telegram polling loop the turn is now kept at once with the cheap summary, "typing" is sent before any model call, and the model's summary is written right after the reply has gone (`ConversationMemoryService.refresh_summary`, run by the loop through `TelegramIntakeService.run_after_reply`; it still waits while a task is using the model, as before). A caller that handles one update by itself (no loop to run it) writes the summary inline, as it did.
+
+### Changed
+
 - A declined external coding handoff permits a bounded local continuation. Assistant-owned plan steps resume after clarification instead of treating the reply as proof of completion; explicit skipped prerequisites block dependent steps.
 - Clarification replies and expiry now use guarded atomic transitions. Telegram buttons are bound to the question they showed; older buttons ask the user to reply to the current question. The handoff confirmation button now records an answer the consent parser recognizes.
 - Plan step admission now commits its child task and step link together, and plan cancellation and child settlement recheck current state. Web chat replies from a task card are bound to that task and question.

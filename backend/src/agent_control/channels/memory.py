@@ -135,8 +135,8 @@ class ConversationMemoryService:
         self._summarize_again: set[str] = set()
         self._background: set[asyncio.Future[None]] = set()
 
-    async def update_from_user_message(self, conversation_id: str, text: str) -> dict[str, Any]:
-        return await self.update_from_turn(conversation_id, "user", text)
+    async def update_from_user_message(self, conversation_id: str, text: str, *, summarize: bool = True) -> dict[str, Any]:
+        return await self.update_from_turn(conversation_id, "user", text, summarize=summarize)
 
     async def update_from_assistant_message(self, conversation_id: str, text: str) -> dict[str, Any]:
         return await self.update_from_turn(conversation_id, "assistant", text)
@@ -144,7 +144,7 @@ class ConversationMemoryService:
     async def update_from_task_summary(self, conversation_id: str, text: str) -> dict[str, Any]:
         return await self.update_from_turn(conversation_id, "task", text)
 
-    async def update_from_turn(self, conversation_id: str, role: str, text: str) -> dict[str, Any]:
+    async def update_from_turn(self, conversation_id: str, role: str, text: str, *, summarize: bool = True) -> dict[str, Any]:
         existing = self.repositories.conversation_memory.get(conversation_id)
         state = dict((existing or {}).get("facts") or {})
         turns = _recent_turns(state)
@@ -155,7 +155,11 @@ class ConversationMemoryService:
         state["strategy"] = "rolling_summary_with_recent_turns"
 
         existing_summary = str((existing or {}).get("summary") or DEFAULT_SUMMARY)
-        if gaming.is_on():
+        if not summarize:
+            # The turn is kept at once and the summary is written after the reply is sent (refresh_summary): a model call that writes a summary is 5 to 13 seconds
+            # that a person waits through before the first word of the answer, and nothing in this message's own handling needs it.
+            summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
+        elif gaming.is_on():
             # The person said they are gaming: no model is loaded for a summary. The recent turns are kept and the next message after
             # gaming mode ends re-summarizes. (Found live: a held message reloaded the model through this call, 0.8 GB to 6.2 GB of video memory.)
             summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
@@ -171,6 +175,23 @@ class ConversationMemoryService:
             summary = await self._summarize(existing_summary, turns)
         state["summary"] = summary
         return self.repositories.conversation_memory.upsert(conversation_id, summary, state)
+
+    async def refresh_summary(self, conversation_id: str) -> None:
+        """Write the model's summary of the conversation now, for the turns kept so far. Called after the reply has been sent, so the next message is read with it.
+
+        Never raises, and does nothing while the person is gaming or a task of this conversation is using the model: the summary is a convenience, and one that has to wait is
+        simply written by the next call.
+        """
+        try:
+            record = self.repositories.conversation_memory.get(conversation_id)
+            if record is None or self.provider is None or gaming.is_on() or self._task_in_flight(conversation_id):
+                return
+            turns = _recent_turns(dict(record.get("facts") or {}))
+            summary = await self._summarize(str(record.get("summary") or DEFAULT_SUMMARY), turns)
+            latest = self.repositories.conversation_memory.get(conversation_id) or record  # turns that arrived meanwhile are kept; only the summary is replaced
+            self.repositories.conversation_memory.upsert(conversation_id, summary, dict(latest.get("facts") or {}))
+        except Exception:  # noqa: BLE001 - a summary is never worth a failed message
+            logger.warning("conversation summary refresh failed", exc_info=True)
 
     def _summarize_later(self, conversation_id: str) -> None:
         """Summarize this conversation after the reply, at most one run at a time per conversation."""

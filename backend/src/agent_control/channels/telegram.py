@@ -4,6 +4,7 @@ import asyncio
 import logging
 import re
 from pathlib import Path
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 import httpx
@@ -312,6 +313,7 @@ class TelegramPollingRunner:
     def __init__(self, client: TelegramBotApi, intake: "TelegramIntakeService") -> None:
         self.client = client
         self.intake = intake
+        intake.defer_summary = True  # this loop runs what is kept for after the reply
 
     async def poll_once(self, offset: int | None = None, timeout: int = 30) -> tuple[int | None, list[ChannelUpdateResult]]:
         updates = await self.client.get_updates(offset=offset, timeout=timeout)
@@ -326,6 +328,7 @@ class TelegramPollingRunner:
                     await self.client.send_message(result.outbound_message.chat_id, result.outbound_message.text)
                 if result.outbound_message and result.outbound_message.artifact_ids:
                     await self._send_artifacts(result.outbound_message)
+                await self.intake.run_after_reply()
             except Exception as exc:
                 if self.intake.audit:
                     self.intake.audit.append(
@@ -588,6 +591,10 @@ class TelegramIntakeService:
         self._callback_ack: str | None = None
         # Looks at answered chat messages in the background; kept so they are not collected before they finish.
         self._background: set[asyncio.Future[bool]] = set()
+        # Work that is only worth doing once the reply is on its way (the conversation summary): run by the polling loop right after it sends.
+        self._after_reply: list[Callable[[], Awaitable[None]]] = []
+        # Set by the polling loop, which runs the after-reply work: with no loop to run it (a test, a caller that handles one update) the summary is written inline, as it was.
+        self.defer_summary = False
         # (chat id, message id, text, keyboard) to show again once a button has been handled: the plan card after a tap.
         self._callback_edit: tuple[str, Any, str, dict[str, Any] | None] | None = None
 
@@ -655,6 +662,8 @@ class TelegramIntakeService:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
             if inbound.text:
                 self._start_warming()
+                # The first sign of life, before any model call: "typing" shows within a second, not after the conversation summary was written.
+                asyncio.ensure_future(self._say_typing(inbound.chat_id))
             if inbound.text:
                 await self._update_conversation_memory(conversation_id, inbound.text)
             try:
@@ -815,7 +824,20 @@ class TelegramIntakeService:
         return inbound.model_copy(update={"text": text})
 
     async def _update_conversation_memory(self, conversation_id: str, text: str) -> None:
-        await self.memory_service.update_from_user_message(conversation_id, text)
+        if not self.defer_summary:
+            await self.memory_service.update_from_user_message(conversation_id, text)
+            return
+        await self.memory_service.update_from_user_message(conversation_id, text, summarize=False)
+        self._after_reply.append(lambda: self.memory_service.refresh_summary(conversation_id))
+
+    async def run_after_reply(self) -> None:
+        """Do what was kept for after the reply, once: each item may fail without affecting the others or the message that was answered."""
+        pending, self._after_reply = self._after_reply, []
+        for work in pending:
+            try:
+                await work()
+            except Exception:  # noqa: BLE001
+                logger.warning("work after a reply failed", exc_info=True)
 
     async def _transcribe_voice(self, inbound: InboundMessage) -> InboundMessage:
         if self.bot_api is None or self.stt is None:
