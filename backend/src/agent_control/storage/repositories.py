@@ -34,6 +34,9 @@ from agent_control.schemas import (
     ToolResultStatus,
     utc_now,
 )
+from agent_control.goals import MAX_ATTEMPTS as GOAL_MAX_ATTEMPTS
+from agent_control.goals import OPEN_STATUSES as GOAL_OPEN_STATUSES
+from agent_control.goals import Goal, GoalStatus
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.plans.model import MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus
 from agent_control.storage.database import Database
@@ -2140,6 +2143,69 @@ class JobRepository:
         )
 
 
+class GoalRepository:
+    """Goals (goals.py): what the person wants, kept across the attempts at it. Every write is a compare-and-swap on `revision`, so two workers
+    that touch one goal (an attempt ending while a message arrives) cannot overwrite each other."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def create(self, goal: Goal) -> Goal:
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO goals (id, conversation_id, objective, words, status, waiting_json, declined_json, attempts_json, evidence_json, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (goal.id, goal.conversation_id, goal.objective, goal.words, goal.status.value, _dump(goal.waiting), _dump(goal.declined), _dump(goal.attempts),
+                 _dump(goal.evidence), _dt(goal.created_at), _dt(goal.updated_at)),
+            )
+        return self.get(goal.id) or goal
+
+    def get(self, goal_id: str) -> Goal | None:
+        with self.database.connect() as connection:
+            row = connection.execute("SELECT * FROM goals WHERE id = ?", (goal_id,)).fetchone()
+        return self._row_to_goal(row) if row is not None else None
+
+    def list_open(self, conversation_id: str, *, limit: int = 4) -> list[Goal]:
+        """The goals of a chat that are still wanted and were touched lately, newest first."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM goals WHERE conversation_id = ? AND status IN (?, ?, ?) ORDER BY updated_at DESC, rowid DESC LIMIT ?",
+                (conversation_id, *(status.value for status in GOAL_OPEN_STATUSES), limit * 3),
+            ).fetchall()
+        return [goal for goal in (self._row_to_goal(row) for row in rows) if goal.is_fresh()][:limit]
+
+    def update(self, goal_id: str, change: Callable[[Goal], Goal | None]) -> Goal | None:
+        """Read the goal, let `change` return its new form (None: leave it), and save it only if no one saved it meanwhile; tried a few times."""
+        for _ in range(6):
+            goal = self.get(goal_id)
+            if goal is None:
+                return None
+            changed = change(goal.model_copy(deep=True))
+            if changed is None:
+                return goal
+            attempts = changed.attempts[-GOAL_MAX_ATTEMPTS:]
+            with self.database.connect() as connection:
+                cursor = connection.execute(
+                    "UPDATE goals SET objective = ?, status = ?, waiting_json = ?, declined_json = ?, attempts_json = ?, evidence_json = ?, updated_at = ?, "
+                    "revision = revision + 1 WHERE id = ? AND revision = ?",
+                    (changed.objective, changed.status.value, _dump(changed.waiting), _dump(sorted(set(changed.declined))), _dump(attempts), _dump(changed.evidence[-20:]),
+                     _dt(utc_now()), goal_id, goal.revision),
+                )
+                saved = cursor.rowcount == 1
+            if saved:  # read after the write is committed, not inside the transaction that makes it
+                return self.get(goal_id)
+        raise RuntimeError(f"goal {goal_id} was changed by someone else too many times in a row")
+
+    @staticmethod
+    def _row_to_goal(row: Any) -> Goal:
+        return Goal(
+            id=row["id"], conversation_id=row["conversation_id"], objective=row["objective"], words=row["words"], status=GoalStatus(row["status"]),
+            waiting=_load(row["waiting_json"], {}), declined=_load(row["declined_json"], []), attempts=_load(row["attempts_json"], []),
+            evidence=_load(row["evidence_json"], []), created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+            revision=int(row["revision"]),
+        )
+
+
 class PlanRepository:
     """Plans and their steps (plans/model.py). A plan outlives the tasks it starts, so it is stored on its own, not inside a task."""
 
@@ -2543,6 +2609,7 @@ class Repositories:
     folder_watches: FolderWatchRepository
     plans: PlanRepository
     jobs: JobRepository
+    goals: GoalRepository
 
     @classmethod
     def for_database(cls, database: Database) -> "Repositories":
@@ -2565,4 +2632,5 @@ class Repositories:
             folder_watches=FolderWatchRepository(database),
             plans=PlanRepository(database),
             jobs=JobRepository(database),
+            goals=GoalRepository(database),
         )

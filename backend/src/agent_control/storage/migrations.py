@@ -275,6 +275,23 @@ SCHEMA_STATEMENTS = [
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status, updated_at)",
+    """
+    CREATE TABLE IF NOT EXISTS goals (
+        id TEXT PRIMARY KEY,
+        conversation_id TEXT NOT NULL,
+        objective TEXT NOT NULL,
+        words TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        waiting_json TEXT NOT NULL DEFAULT '{}',
+        declined_json TEXT NOT NULL DEFAULT '[]',
+        attempts_json TEXT NOT NULL DEFAULT '[]',
+        evidence_json TEXT NOT NULL DEFAULT '[]',
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_goals_conversation ON goals(conversation_id, status, updated_at)",
 ]
 
 

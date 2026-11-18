@@ -51,6 +51,7 @@ from agent_control.config import AppSettings
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
 from agent_control.llm.decision import DecisionModelClient
+from agent_control.orchestration import goal_routing
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.schemas import (
     ApprovalStatus,
@@ -428,7 +429,16 @@ async def classify_and_spawn_task(
     if status_answer is not None:
         return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
 
+    chosen = goal_routing.take_choice(repositories, conversation_id, inbound.text)
+    forced_goal_id: str | None = None
+    forced_act: str | None = None
+    if chosen is not None:
+        # "2" answering "Which one do you mean?": the message that could not be placed is read again, now with the goal the person picked.
+        original, forced_act, forced_goal_id = chosen
+        inbound = inbound.model_copy(update={"text": original})
+
     await send_progress(inbound.chat_id, ACKNOWLEDGMENT_TEXT)
+    goal_labels: dict[str, Any] = {}
     try:
         # The Concierge prompt does double duty (classify + compose a chat
         # reply in one call, see prompts/base/concierge_system.md) - a chat
@@ -447,9 +457,18 @@ async def classify_and_spawn_task(
                 objective=inbound.text or "",
             )
         )
+        goals_text, goal_labels = goal_routing.context_for(repositories, conversation_id)
+        if goals_text:
+            classification_context = f"{classification_context}\n\n{goals_text}" if classification_context else goals_text
         classify_started = time.monotonic()
         try:
             classification = await classifier.classify(inbound, context=classification_context)
+            if goal_labels and classification.act is None:
+                # With goals open the call is asked to say what the message does to them. A small model sometimes leaves that out; asking again
+                # costs a second or two and is better than reading "try again" as a request of its own.
+                again = await classifier.classify(inbound, context=classification_context)
+                if again.act is not None:
+                    classification = again
         except TypeError:
             classification = await classifier.classify(inbound)
         # The Concierge was the one agent with no timing anywhere: llm_calls
@@ -518,11 +537,33 @@ async def classify_and_spawn_task(
         # and being classified. Fall through and treat it as a normal request
         # rather than silently dropping what the user asked for.
 
+    route = goal_routing.route_of(classification, goal_labels)
+    if forced_goal_id is not None or (chosen is not None and forced_act):
+        picked = next((goal for goal in goal_labels.values() if goal.id == forced_goal_id), None)
+        route = goal_routing.GoalRoute(picked, forced_act or "continue") if picked is not None else goal_routing.GoalRoute(None, "new")
+    elif route.ambiguous:
+        goal_routing.remember_choice(repositories, conversation_id, inbound, goal_labels, route.act)
+        return ChannelUpdateResult(
+            authorized=True, inbound_message=inbound, classification=classification,
+            outbound_message=OutboundMessage(channel=inbound.channel, chat_id=inbound.chat_id, text=goal_routing.ambiguity_question(goal_labels)),
+        )
+    if route.goal is not None and route.act in ("answer", "delegate", "decline"):
+        said = goal_routing.resume_waiting_task(repositories, audit, route, inbound)
+        if said is not None:
+            return ChannelUpdateResult(
+                authorized=True, inbound_message=inbound, classification=classification,
+                outbound_message=OutboundMessage(channel=inbound.channel, chat_id=inbound.chat_id, text=said),
+            )
+        route = goal_routing.GoalRoute(route.goal, "continue")  # nothing waits for an answer: the message carries the goal on
+
     intent_route = classification.intent.route if classification.intent is not None else None
     if intent_route is None:
         is_chat_only = not classification.is_task and classification.task_type != TaskType.STATUS_REQUEST
     else:
         is_chat_only = intent_route == IntentRoute.CONVERSATION and classification.task_type != TaskType.STATUS_REQUEST
+
+    if route.goal is not None and route.act in ("continue", "plan"):
+        is_chat_only = False  # carrying a goal on is work, whatever the sentence looks like on its own
 
     if is_chat_only and settings is not None and settings.abilities.enabled and settings.decision.mode != "off":
         # A chat reply knows nothing of the ability index. It answers "read that out loud" with "I cannot speak" and offers nothing (or, once the
@@ -552,7 +593,8 @@ async def classify_and_spawn_task(
             )
         return _spawn_failed(audit, inbound, classification.reason, actor, classification)
 
-    objective = (classification.normalized_objective or inbound.text).strip()
+    objective = goal_routing.objective_for(route, classification, inbound.text)
+    goal_id, goal_metadata = goal_routing.prepare_attempt(route, conversation_id)
     voice_attachment = next((a for a in inbound.attachments if isinstance(a, VoiceAttachment)), None)
     voice_metadata = (
         {"voice_file_id": voice_attachment.file_id, "voice_transcript": voice_attachment.transcript}
@@ -567,7 +609,10 @@ async def classify_and_spawn_task(
     ) + recent_artifacts_context(repositories, conversation_id)
     # Sent before the task exists so the id of this one message can be written with the task's first
     # record: every later progress update edits it instead of adding a bubble to the chat.
-    progress_anchor = await send_progress(inbound.chat_id, TASK_STARTED_TEXT)
+    started_text = TASK_STARTED_TEXT
+    if route.goal is not None and len(goal_labels) > 1:
+        started_text = f"Carrying on with: {route.goal.objective[:100]}"  # several goals were open: say which one this was taken to be, so a wrong guess is seen at once
+    progress_anchor = await send_progress(inbound.chat_id, started_text)
     task = repositories.tasks.create(
         objective,
         conversation_id=conversation_id,
@@ -588,16 +633,20 @@ async def classify_and_spawn_task(
             "expected_postconditions": [item.value for item in classification.expected_postconditions],
             "original_message_text": inbound.text,
             "memory_context": mem_ctx,
+            **goal_metadata,
             **({"progress_message_id": progress_anchor} if progress_anchor else {}),
             **voice_metadata,
         },
     )
+    goal_routing.record_attempt(repositories, task, route, goal_id, conversation_id=conversation_id, objective=objective, words=inbound.text or "")
     audit.append(
         AuditEventType.TASK_CREATED,
         actor=actor,
         task_id=task.id,
         correlation_id=inbound.correlation_id,
         payload={
+            "goal_id": goal_id,
+            "goal_act": route.act,
             "objective": task.objective,
             "conversation_id": conversation_id,
             "task_type": classification.task_type.value,
