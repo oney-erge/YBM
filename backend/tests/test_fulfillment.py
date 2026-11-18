@@ -15,7 +15,7 @@ Tests are split accordingly:
 
 from __future__ import annotations
 
-from agent_control.orchestration.fulfillment import _postcondition_satisfied, expected_postconditions, validate_fulfillment
+from agent_control.orchestration.fulfillment import _postcondition_satisfied, expected_postconditions, fulfillment_guidance, validate_fulfillment
 from agent_control.schemas import PostconditionType, TaskRecord
 
 
@@ -663,3 +663,23 @@ def test_a_missing_delivery_is_told_with_the_exact_call_to_make() -> None:
     # a file the interpreter made only as a script is not offered as the thing to send when a written file is known
     written = [{"tool_name": "filesystem.manage", "status": "succeeded", "input": {"operation": "write_text_file", "path": "C:\out\notes.txt"}}]
     assert "notes.txt" in (exact_delivery_call(TaskRecord(objective="x", metadata={}), written) or "")
+
+
+def test_an_install_is_done_when_an_install_tool_succeeded_not_when_a_package_was_named() -> None:
+    """11/16: "Add googlecast to allowlist", "Use googlecast" and "No thanks" completed the plan steps "install the packages", "draft the script" and "run it"."""
+    from agent_control.orchestration.request_facts import CHECKS_KEY
+    from agent_control.schemas import PostconditionType
+
+    step = TaskRecord(objective="Install the required Python packages into the task environment", metadata={CHECKS_KEY: {"installs_software": True}})
+    assert any(item.type == PostconditionType.PACKAGE_INSTALLED for item in expected_postconditions(step))
+    assert PostconditionType.PACKAGE_INSTALLED in validate_fulfillment(step).missing  # no install tool ran
+    asked = step.model_copy(update={"metadata": {**step.metadata, "operator_history": [{"tool_name": "dependencies.install", "status": "failed"}, {"tool_name": "filesystem.manage", "status": "succeeded"}]}})
+    assert PostconditionType.PACKAGE_INSTALLED in validate_fulfillment(asked).missing  # a failed install, or another tool, is no install
+    done = step.model_copy(update={"metadata": {**step.metadata, "operator_history": [{"tool_name": "dependencies.install", "status": "succeeded"}]}})
+    assert PostconditionType.PACKAGE_INSTALLED not in validate_fulfillment(done).missing
+    program = step.model_copy(update={"metadata": {**step.metadata, "operator_history": [{"tool_name": "ability.acquire", "status": "succeeded"}]}})
+    assert PostconditionType.PACKAGE_INSTALLED not in validate_fulfillment(program).missing
+    # no install fact (the model off, or unsure): no obligation, as before
+    plain = TaskRecord(objective="Summarize the report", metadata={})
+    assert all(item.type != PostconditionType.PACKAGE_INSTALLED for item in expected_postconditions(plain))
+    assert "dependencies.install" in fulfillment_guidance("expected_package_installed_missing")

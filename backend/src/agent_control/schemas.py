@@ -209,6 +209,7 @@ class PostconditionType(StrEnum):
     EXTERNAL_COMMAND = "external_command"
     PAGE_MATCHES_REQUEST = "page_matches_request"
     FORM_SUBMITTED = "form_submitted"
+    PACKAGE_INSTALLED = "package_installed"
 
 
 class AuditEventType(StrEnum):

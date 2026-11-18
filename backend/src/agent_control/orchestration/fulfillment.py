@@ -140,6 +140,12 @@ def expected_postconditions(task: TaskRecord) -> tuple[PlanPostcondition, ...]:
     for always in (PostconditionType.FORM_SUBMITTED, PostconditionType.PAGE_MATCHES_REQUEST):
         if not any(item.type == always for item in chosen):
             chosen.extend(item for item in _dedupe(inferred) if item.type == always)
+    from agent_control.orchestration.request_facts import RequestFacts
+
+    if RequestFacts.from_task(task).installs_software and not any(item.type == PostconditionType.PACKAGE_INSTALLED for item in chosen):
+        # An install is done when an install tool ran and succeeded, not when the person said which package to use (11/16: three plan steps were "done" by the
+        # replies "Add googlecast to allowlist", "Use googlecast" and "No thanks", and nothing was installed).
+        chosen.append(PlanPostcondition(type=PostconditionType.PACKAGE_INSTALLED, description="the package was installed by an install tool that succeeded"))
     return tuple(chosen)
 
 
@@ -508,6 +514,8 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
         # "Read ten sources and send me a report" is what the job it started will do; the task's answer says it is running. Found live
         # 11/14: the check sent the Operator back to read pages and attach a file itself, the work the job exists to do.
         return True
+    if expected == PostconditionType.PACKAGE_INSTALLED:
+        return _an_install_succeeded(task)
     if expected == PostconditionType.WORKSPACE_DIR:
         # Direct filesystem writes to an explicit project folder may not emit
         # a separate workspace_dir field. Concrete produced paths prove both
@@ -600,6 +608,18 @@ def _postcondition_satisfied(task: TaskRecord, expected: PostconditionType) -> b
     if expected == PostconditionType.EXTERNAL_COMMAND:
         return _external_command_succeeded(task)
     return False
+
+
+#: The tools that install, and the operation that does not: an install tool that only listed or checked has installed nothing.
+_INSTALL_TOOLS = frozenset({"dependencies.install", "ability.acquire"})
+
+
+def _an_install_succeeded(task: TaskRecord) -> bool:
+    history = task.metadata.get("operator_history") if isinstance(task.metadata, dict) else None
+    return any(
+        isinstance(entry, dict) and entry.get("tool_name") in _INSTALL_TOOLS and entry.get("status") == "succeeded"
+        for entry in (history if isinstance(history, list) else [])
+    )
 
 
 def _page_matches_request(task: TaskRecord) -> bool:
@@ -831,6 +851,10 @@ def fulfillment_guidance(gap: str, delivery_call: str | None = None) -> str:
         "expected_file_organization_missing": (
             "Call filesystem.manage organize_plan, then apply_manifest with the same root and no manifest: "
             "it applies that plan."
+        ),
+        "expected_package_installed_missing": (
+            "Nothing was installed yet. Call dependencies.install (a Python package) or ability.acquire (a program); the person approves it on a card. "
+            "Do not say it is installed, or move on, until it ran. If it is refused or fails, say exactly what blocked it and what would unblock it."
         ),
         "expected_external_command_missing": "Use code.interpreter or the configured terminal tool and verify exit code 0.",
         "expected_page_matches_request_missing": (
