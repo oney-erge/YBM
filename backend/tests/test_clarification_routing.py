@@ -22,15 +22,25 @@ def _message(text):
 
 
 @pytest.mark.asyncio
-async def test_unavailable_model_asks_for_target_and_keeps_the_question(tmp_path):
+async def test_when_the_model_cannot_tell_an_answer_from_a_new_request_nobody_is_asked_to_type_syntax(tmp_path):
+    """Live 11/18: a plain "Ethernet" to "which network interface?" was answered with "use 'reply task_...: your answer'". A question that belongs to a goal is left to the one call
+    that reads the message with the goal in view; one with no goal is answered by the reply, as it was before there was any doubt. The typed forms still work for anyone who uses them."""
     repos, audit = make_repos(tmp_path)
     conversation, task = _waiting(repos)
-    reply = await route_clarifying_reply(repos, audit, _message("What is the weather?"), conversation, None)
-    assert "new request" in reply.text and task.id in reply.text
-    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    # no goal behind the question: the reply is its answer
+    answer = await route_clarifying_reply(repos, audit, _message("Chromecast"), conversation, None)
+    assert answer is not None
+    assert repos.tasks.get(task.id).metadata["clarification_answer"] == "Chromecast"
+    assert "reply task_" not in answer.text
+    # a question with a goal: handed on (None) to the goal-aware classification, and the question stays open
+    other = repos.tasks.create("Connect the printer", conversation_id=conversation, metadata={"clarifying_question": "Which port?", "goal_id": "goal_x"})
+    repos.tasks.update_status(other.id, TaskStatus.CLARIFYING)
+    assert await route_clarifying_reply(repos, audit, _message("Ethernet"), conversation, None) is None
+    assert repos.tasks.get(other.id).status == TaskStatus.CLARIFYING
+    # the typed forms still work
     assert await route_clarifying_reply(repos, audit, _message("new: What is the weather?"), conversation, None) is None
-    answer = await route_clarifying_reply(repos, audit, _message(f"reply {task.id}: Chromecast"), conversation, None)
-    assert "resuming" in answer.text and repos.tasks.get(task.id).metadata["clarification_answer"] == "Chromecast"
+    typed = await route_clarifying_reply(repos, audit, _message(f"reply {other.id}: COM3"), conversation, None)
+    assert typed is not None and repos.tasks.get(other.id).metadata["clarification_answer"] == "COM3"
 
 
 @pytest.mark.asyncio
