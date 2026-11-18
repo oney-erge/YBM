@@ -206,8 +206,12 @@ def build_index(
     abilities.extend(extra)
     abilities.extend(agent_abilities(providers, bool(coding_definition and coding_definition.enabled)))
     abilities.extend(mcp_abilities(settings))
-    abilities.extend(tool_abilities(registry.definitions))
+    mail = (registry.definition_index or {}).get("mail.manage")
+    mail_ready = bool(mail and mail.enabled)
+    # The mailbox tool is an ability only while it is set up; until then a request to send an email meets the known gap that says so (abilities/gaps.py),
+    # and once it is, that gap would be false and goes.
+    abilities.extend(ability for ability in tool_abilities(registry.definitions) if mail_ready or ability.id != "tool:mail.manage")
     if settings.abilities.acquire:
         abilities.extend(recipe_abilities(settings))
-    abilities.extend(KNOWN_GAPS)
+    abilities.extend(gap for gap in KNOWN_GAPS if not (mail_ready and gap.id == "gap:mail.send"))
     return AbilityIndex(abilities)
