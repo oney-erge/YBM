@@ -5,6 +5,22 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- A declined external coding handoff permits a bounded local continuation. Assistant-owned plan steps resume after clarification instead of treating the reply as proof of completion; explicit skipped prerequisites block dependent steps.
+- Clarification replies and expiry now use guarded atomic transitions. Telegram buttons are bound to the question they showed; older buttons ask the user to reply to the current question. The handoff confirmation button now records an answer the consent parser recognizes.
+- Plan step admission now commits its child task and step link together, and plan cancellation and child settlement recheck current state. Web chat replies from a task card are bound to that task and question.
+- An old claimed plan step with no linked task pauses for inspection instead of automatically repeating work that may already exist.
+- Plan and task revisions protect questions and plan transitions even when consecutive writes have the same timestamp. Plan edits cannot mark work complete without the runner or reset a running step; inserted steps preserve explicit prerequisites.
+- User-owned steps require an explicit completion report or skip; a deferral such as "not yet" no longer silently completes or skips the step.
+- A delegated choice on a user-owned decision-only step can advance after a recorded result. Older plans and mixed-action steps stay open for the remaining action; the planner's decision-only marker still needs semantic evaluation.
+- Unaddressed free-form messages while a question is open are checked against the configured decision model in decision/cascade modes. Uncertain or unavailable classifications ask whether the message is an answer or a new request; explicit task replies and `new:` remain available.
+- Settings has a five-level decision preference. It guides the planner and operator for new tasks, while existing access and approval rules remain separate.
+- Research supports configured limits up to 1,000 pages, batches search rewrites, keeps a Markdown report and attempts a Word copy. Out-of-range requests are refused instead of silently reduced. Citations still require substantive review.
+- Research controls and publication use guarded SQLite revisions. Report delivery has separate saved state; pending delivery can resume after restart, while an uncertain send is not automatically repeated.
+- Workflow scheduling errors appear inside the open dialog.
+- System inventory can inspect Windows displays attached to the desktop, including an unambiguous monitor name when Windows provides one. It does not discover network TVs or verify playback.
+
 ## [0.1.7] - 2026-11-15
 
 ### Added

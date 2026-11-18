@@ -154,6 +154,11 @@ has or ask one question (with `operator.constrain_calls` its next reply can only
 not run. What it answers goes through the usual audit and fulfillment checks; a model that refuses the offer ends the task as before
 (blocked, or finished with the result it already read).
 
+When the user declines an offered Claude Code handoff, the same goal and its evidence are kept. The worker records the refusal before
+checking an exhausted step budget, gives the local Operator three additional ordinary tool slots beyond its previous normal budget
+or work, and asks it to try a different feasible approach. Existing targeted fulfillment-repair allowances remain separate. Normal policy, approval, duplicate-effect and no-progress
+checks still apply. This is a limited continuation, not a guarantee that an alternative exists or that the model will find one.
+
 **Answers are checked against what the task read.** Before a `done` reaches the user (`operator.verify_numbers`, on by default; one
 send-back per task, `orchestration/number_check.py`): an email address or web link that the request, the tool results and the
 remembered facts never held is flagged ("do not make up values"), and for a request that asks for a calculation a result-sized number

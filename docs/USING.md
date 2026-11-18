@@ -39,6 +39,12 @@ Browser") and offers a button, instead of failing with a code.
 
 The status strip in the header shows the model, Telegram, VS Code, workspace, and database at a glance.
 
+### Decision preference
+
+In Settings, Decision preference selects how much judgment YBM should use for routine choices, from 1 (Guided) to 5 (Delegated). The default is 3 (Balanced). This is guidance to the model, not a guarantee; required permissions and approvals still apply. New tasks use the current setting, while an existing task retains its recorded preference.
+
+Research jobs default to 60 pages and can be configured up to 1,000. A request above the configured limit is refused with the limit rather than silently reduced. Reports are saved locally as Markdown and, when creation succeeds, Word. A send with an uncertain result is not automatically repeated; ask YBM to send the saved report again if needed. Review the sources and claims before relying on the report.
+
 ## Projects and recurring work
 
 In **Agent -> Projects**, create a project with folders, instructions, and success criteria. Use
