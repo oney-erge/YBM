@@ -48,6 +48,7 @@ class _Fake:
                 investigate._Option(title="Set the network to Private", why="Discovery is off while it is Public.", how="Settings > Network > Ethernet > Private", changes_something=True, undo="Set it back to Public", evidence=["F1", "W1"]),
                 investigate._Option(title="Buy a new TV", why="Because.", how="Shop", evidence=[]),  # rests on nothing: not offered
                 investigate._Option(title="Restart the router", why="It helps.", how="Unplug it", evidence=["F9"]),  # cites a finding that does not exist: not offered
+                investigate._Option(title="Open a firewall port", why="A forum says so.", how="Add a rule", evidence=["W1"]),  # rests only on the web: not offered
             ])
         raise AssertionError(schema)
 
@@ -93,11 +94,11 @@ async def test_it_looks_first_keeps_only_what_a_result_shows_and_offers_only_wha
     assert all(finding["probe"] in {"network_overview", "lan_devices"} for finding in state["findings"])
     assert {item["id"]: item["status"] for item in state["hypotheses"]} == {"H1": "supported", "H2": "refuted", "H3": "open"}  # H9 was not a listed cause
     assert state["web_notes"] and state["web_notes"][0]["claim"] == "Discovery is off on a Public network." and state["web_notes"][0]["url"] == "https://help.example/cast"
-    assert [option["title"] for option in state["options"]] == ["Set the network to Private"]  # the two that rested on nothing are not offered
+    assert [option["title"] for option in state["options"]] == ["Set the network to Private"]  # the ones that rested on nothing, on a finding that does not exist, or only on the web are not offered
     assert state["options"][0]["evidence"] == ["F1", "W1"] and state["options"][0]["changes_something"]
     assert said[0].startswith("I will look into this properly: first I check network overview, lan devices")
     assert state["stage"] == "done" and "Ways forward:" in state["summary"] and "1. Set the network to Private" in state["summary"] and "I will ask you first" in state["summary"]
-    assert "To undo it: Set it back to Public" in state["summary"] and "What I could not tell: A firewall blocks discovery" in state["summary"]
+    assert "To undo it: Set it back to Public" in state["summary"] and "No check settled these, so I do not know whether they are true:\n- A firewall blocks discovery" in state["summary"]
     assert report.startswith("# My TV will not take a cast") and "## What each check showed" in report and "### host check {'host': '192.168.1.224'}" in report and "[W1]" in report
 
 
