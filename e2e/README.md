@@ -218,7 +218,13 @@ python scripts\run_all_e2e_tests.py --suite challenge
 python scripts\run_all_e2e_tests.py --suite verdict
 python scripts\run_all_e2e_tests.py --suite verdict2
 python scripts\run_all_e2e_tests.py --suite verdict3
+python scripts\run_all_e2e_tests.py --suite continuity
 ```
+
+`e2e/continuity_cases.json` (6 cases, ids `cont_*`) is a development suite, not a sealed one: the mechanisms behind the 2026-11-16 chain in which a follow-up
+became new work, a short reply was taken as a result, "you choose" started an unrelated plan, and "that file" was read at a rewritten path, in other topics and
+other words (a printer, a QR code, a word count, an errands file, a messy folder, a folder renamed by a correction). A new variant of a mechanism found later is
+added here. The sealed Verdict 3 holds the same ideas in different cases.
 
 Both add to the usual assertions:
 
