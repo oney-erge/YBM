@@ -77,15 +77,8 @@ class ReplyStage:
         notified = set(task.metadata.get("notified_statuses", []))
         if self.notification_sink is not None and status_key not in notified:
             await self._send_notification(task)
+            self.repositories.tasks.mark_notified(task.id, status_key)
         await self._remember_task_completion(task)
-        latest = self.repositories.tasks.get(task.id)
-        if latest is None:
-            return
-        updated_notified = sorted({*latest.metadata.get("notified_statuses", []), status_key})
-        self.repositories.tasks.update_metadata(
-            task.id,
-            {**latest.metadata, "notified_statuses": updated_notified},
-        )
 
     async def _remember_task_completion(self, task: TaskRecord) -> None:
         if not task.conversation_id or task.status not in {TaskStatus.COMPLETED, TaskStatus.BLOCKED, TaskStatus.FAILED}:

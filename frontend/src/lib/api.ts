@@ -208,6 +208,7 @@ export const TaskRecordSchema = z.object({
   conversation_id: z.string().nullable(),
   created_at: z.string(),
   updated_at: z.string(),
+  clarification_token: z.string().optional(),
   metadata: z.record(z.string(), z.unknown()),
   allowed_actions: z.array(z.enum(["pause", "resume", "cancel"])).optional(),
   // Only populated by the chat endpoints (docs/archive/UI_UX_AUDIT.md Phase 1's
@@ -234,10 +235,10 @@ export function listChatMessages(limit = 50, projectId?: string) {
   return apiFetch(`/api/chat/messages?limit=${limit}${project}`, ChatMessagesResponseSchema)
 }
 
-export function sendChatMessage(text: string, attachmentIds: string[] = [], projectId?: string) {
+export function sendChatMessage(text: string, attachmentIds: string[] = [], projectId?: string, replyToTaskId?: string, questionToken?: string) {
   return apiFetch("/api/chat/messages", ChatSendResponseSchema, {
     method: "POST",
-    body: JSON.stringify({ text, attachment_ids: attachmentIds, project_id: projectId }),
+    body: JSON.stringify({ text, attachment_ids: attachmentIds, project_id: projectId, reply_to_task_id: replyToTaskId, question_token: questionToken }),
   })
 }
 
@@ -1552,6 +1553,17 @@ export function updateDecisionConfig(input: { mode: DecisionMode; profile: strin
   return apiFetch("/api/config/decision", ConfigUpdateResponseSchema, {
     method: "POST",
     body: JSON.stringify(input),
+  })
+}
+
+export function fetchInitiativeConfig() {
+  return apiFetch("/api/config/initiative", z.object({ level: z.number().int().min(1).max(5) }))
+}
+
+export function updateInitiativeConfig(level: number) {
+  return apiFetch("/api/config/initiative", ConfigUpdateResponseSchema, {
+    method: "POST",
+    body: JSON.stringify({ level }),
   })
 }
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from agent_control import gaming
@@ -270,6 +271,28 @@ def memory_context(
         return facts_block + _clean_summary(summary, max_chars)
     recent = "\n".join(f"- {turn['role']}: {turn['text']}" for turn in turns)
     return facts_block + _clean_summary(f"{summary}\nRecent turns:\n{recent}", max_chars)
+
+
+def recent_artifacts_context(repositories: Repositories, conversation_id: str | None) -> str:
+    """Keep recorded artifact identities verbatim instead of reconstructing paths from a summary."""
+    if not conversation_id:
+        return ""
+    artifacts = repositories.artifacts.list_recent_for_conversation(conversation_id, limit=3)
+    lines = []
+    for artifact in artifacts:
+        uri = str(artifact.uri or "")
+        # Avoid presenting a partial path or a multiline value as an authoritative identifier.
+        if (not uri or len(uri) > 400 or "\n" in uri or "\r" in uri
+                or not (Path(uri).is_absolute() or PureWindowsPath(uri).is_absolute())):
+            continue
+        lines.append(f"- {artifact.id}: {uri}")
+    if not lines:
+        return ""
+    return (
+        "\n\nRecent artifacts recorded in this conversation, newest first (paths may no longer exist):\n"
+        + "\n".join(lines)
+        + "\nUse an exact identifier; if the intended artifact is ambiguous, ask. Recheck it before use."
+    )
 
 
 def _summary_system_prompt(max_summary_chars: int) -> str:

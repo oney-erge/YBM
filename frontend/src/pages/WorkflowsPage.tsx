@@ -141,6 +141,7 @@ function ScheduleWorkflowDialog({ workflow, onOpenChange }: { workflow: TaskWork
   const [fileParameter, setFileParameter] = useState(workflow.parameters[0] ?? "")
   const [suffixes, setSuffixes] = useState(".pdf,.txt,.csv,.json")
   const [settleSeconds, setSettleSeconds] = useState(10)
+  const [formError, setFormError] = useState<string | null>(null)
   const { data: projects } = useProjects()
   const schedule = useScheduleWorkflow()
   const watch = useWatchWorkflow()
@@ -181,21 +182,22 @@ function ScheduleWorkflowDialog({ workflow, onOpenChange }: { workflow: TaskWork
           </select>
         </div>
         {workflow.parameters.filter((param) => trigger !== "folder" || param !== fileParameter).map((param) => <Label key={param} className="flex flex-col gap-1"><span className="font-mono text-xs text-muted-foreground">{`{{${param}}}`}</span><Input value={values[param] ?? ""} onChange={(event) => setValues({ ...values, [param]: event.target.value })} /></Label>)}
+        {formError && <p role="alert" className="text-sm text-destructive">{formError}</p>}
         <DialogFooter>
           <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
-          <Button type="button" disabled={missingValue || pending || (trigger === "folder" ? !folder.trim() || !fileParameter || !suffixes.trim() || settleSeconds < 1 || settleSeconds > 300 : !cadence.trim() || !timezone.trim())} onClick={() => trigger === "folder" ? watch.mutate(
+          <Button type="button" disabled={missingValue || pending || (trigger === "folder" ? !folder.trim() || !fileParameter || !suffixes.trim() || settleSeconds < 1 || settleSeconds > 300 : !cadence.trim() || !timezone.trim())} onClick={() => { setFormError(null); return trigger === "folder" ? watch.mutate(
             { workflowId: workflow.id, values, folder, fileParameter, suffixes: suffixes.split(",").map((value) => value.trim()).filter(Boolean), settleSeconds, projectId: projectId || undefined },
             {
               onSuccess: () => { toast.success("Folder automation created. Waiting for new or changed files."); onOpenChange(false) },
-              onError: (error) => toast.error(error.message),
+              onError: (error) => setFormError(error.message),
             },
           ) : schedule.mutate(
             { workflowId: workflow.id, values, cadence, timezone, projectId: projectId || undefined },
             {
               onSuccess: (result) => { toast.success(`Automation scheduled for ${new Date(result.schedule.next_run_at).toLocaleString()}.`); onOpenChange(false) },
-              onError: (error) => toast.error(error instanceof ApiError ? error.message : "Could not schedule this workflow."),
+              onError: (error) => setFormError(error instanceof ApiError ? error.message : "Could not schedule this workflow."),
             },
-          )}>{trigger === "folder" ? "Watch folder" : "Schedule"}</Button>
+          ) }}>{trigger === "folder" ? "Watch folder" : "Schedule"}</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>

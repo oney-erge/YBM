@@ -19,6 +19,15 @@ from helpers import make_repos
 ROUTING = {"source_channel": "telegram", "source_chat_id": "42", "source_sender_id": "7"}
 
 
+def test_finished_plan_card_does_not_call_skipped_steps_done():
+    plan = Plan(goal="Prepare a backup", status=PlanStatus.DONE, steps=[
+        PlanStep(position=1, title="Choose a disk", status=StepStatus.SKIPPED),
+        PlanStep(position=2, title="Write a note", status=StepStatus.DONE),
+    ])
+    text = card_text(plan)
+    assert "Finished with 1 step skipped." in text and "All done." not in text
+
+
 class _Bot:
     def __init__(self) -> None:
         self.sent = []
@@ -124,6 +133,34 @@ async def test_a_step_that_waits_for_the_user_does_not_take_whatever_they_say_ne
 
 
 @pytest.mark.asyncio
+async def test_reply_does_not_complete_a_plan_step_that_changed_while_waiting(tmp_path):
+    from agent_control.schemas import utc_now
+
+    repos, audit = make_repos(tmp_path)
+    plan, step_task = await _waiting_step(repos, audit)
+    repos.plans.update_step(plan.steps[0].id, status=StepStatus.PENDING)
+    result = resume_clarifying_task(repos, audit, step_task, text="Done", actor="test", message_id="old", received_at=utc_now())
+    assert not result.accepted
+    assert repos.tasks.get(step_task.id).status == TaskStatus.CLARIFYING
+
+
+def test_multiple_open_questions_require_a_specific_reply(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    tasks = []
+    for objective in ("First project", "Second project"):
+        task = repos.tasks.create(objective, conversation_id=conversation, metadata={"clarifying_question": "Which option?"})
+        tasks.append(repos.tasks.update_status(task.id, TaskStatus.CLARIFYING))
+    ambiguous = resume_clarifying_reply(repos, audit, _reply("yes", conversation), conversation)
+    assert "More than one question" in ambiguous.text
+    assert all(repos.tasks.get(task.id).status == TaskStatus.CLARIFYING for task in tasks)
+    directed = resume_clarifying_reply(repos, audit, _reply(f"reply {tasks[0].id}: first option", conversation), conversation)
+    assert "resuming" in directed.text
+    assert repos.tasks.get(tasks[0].id).metadata["clarification_answer"] == "first option"
+    assert repos.tasks.get(tasks[1].id).status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
 async def test_the_words_its_buttons_offer_answer_it_and_done_moves_the_plan_on(tmp_path):
     repos, audit = make_repos(tmp_path)
     plan, step_task = await _waiting_step(repos, audit)
@@ -134,6 +171,183 @@ async def test_the_words_its_buttons_offer_answer_it_and_done_moves_the_plan_on(
     await PlanRunner(repos, audit).tick()
     plan = repos.plans.get(plan.id)
     assert plan.steps[0].status == StepStatus.DONE and plan.steps[1].status == StepStatus.RUNNING
+    assert plan.steps[0].result == "User reported: done"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("message", ["No", "No thanks", "Not yet", "I need more time", "Please explain this"])
+async def test_unconfirmed_reply_does_not_complete_or_skip_a_user_step(tmp_path, message):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    result = resume_clarifying_task(repos, audit, task, text=message, actor="test", message_id="m", received_at=utc_now())
+    assert not result.accepted and "not marked this step done" in result.reason
+    await PlanRunner(repos, audit).tick()
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.WAITING
+
+
+@pytest.mark.asyncio
+async def test_punctuated_completion_is_still_a_report_for_the_waiting_step(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    reply = resume_clarifying_reply(repos, audit, _reply("Done!", plan.conversation_id), plan.conversation_id)
+    assert "On to the next step" in reply.text
+    assert repos.tasks.get(task.id).status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_short_deferral_does_not_spawn_or_skip_a_user_step(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    reply = resume_clarifying_reply(repos, audit, _reply("Not yet", plan.conversation_id), plan.conversation_id)
+    assert "not marked this step done" in reply.text
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.WAITING
+
+
+@pytest.mark.asyncio
+async def test_stop_does_not_silently_skip_the_waiting_step(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    reply = resume_clarifying_reply(repos, audit, _reply("stop", plan.conversation_id), plan.conversation_id)
+    assert "Pause or Cancel" in reply.text
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.WAITING
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reply_text", ["You choose", "Please decide for me.", "It's up to you", "Use your judgment", "Could you choose one?"])
+async def test_delegating_a_pending_choice_resumes_the_step_without_completing_it(tmp_path, reply_text):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    reply = resume_clarifying_reply(repos, audit, _reply(reply_text, plan.conversation_id), plan.conversation_id)
+    assert "make the choice" in reply.text
+    saved = repos.tasks.get(task.id)
+    step = repos.plans.get(plan.id).steps[0]
+    assert saved.status == TaskStatus.RECEIVED and step.status == StepStatus.RUNNING and step.owner == StepOwner.YBM
+    assert saved.metadata["plan_delegated_from_owner"] == "user" and saved.metadata["clarification_answer"] == reply_text
+    assert "choice does not itself complete other parts" in saved.objective
+    await PlanRunner(repos, audit).tick()
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_delegated_choice_does_not_complete_a_combined_step(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    repos.plans.update_step(plan.steps[0].id, title="Choose and buy a drive")
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "synthesized_answer": "I chose drive A."}, TaskStatus.COMPLETED)
+    announced = []
+    async def announce(item):
+        announced.append(item)
+    await PlanRunner(repos, audit, announce=announce).tick()
+    current, result = repos.tasks.get(task.id), repos.plans.get(plan.id)
+    assert current.status == TaskStatus.COMPLETED
+    assert result.steps[0].task_id != task.id
+    assert repos.tasks.get(result.steps[0].task_id).status == TaskStatus.CLARIFYING
+    assert result.steps[0].owner == StepOwner.USER and result.steps[0].status == StepStatus.WAITING
+    assert "I chose drive A" in announced[0].metadata["clarifying_question"]
+    assert result.steps[1].status == StepStatus.PENDING
+    resume_clarifying_reply(repos, audit, _reply("Done", plan.conversation_id), plan.conversation_id)
+    await PlanRunner(repos, audit).tick()
+    assert "I chose drive A" in repos.plans.get(plan.id).steps[0].result
+
+
+@pytest.mark.asyncio
+async def test_explicit_choice_only_step_advances_after_the_choice(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    repos.plans.update_step(plan.steps[0].id, choice_only=True)
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "synthesized_answer": "I chose drive A."}, TaskStatus.COMPLETED)
+    await PlanRunner(repos, audit).tick()
+    result = repos.plans.get(plan.id)
+    assert result.steps[0].status == StepStatus.DONE and result.steps[0].result == "I chose drive A."
+    assert result.steps[1].status == StepStatus.RUNNING
+
+
+@pytest.mark.asyncio
+async def test_changed_choice_contract_does_not_complete_the_step(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    repos.plans.update_step(plan.steps[0].id, choice_only=True)
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    repos.plans.update_step(plan.steps[0].id, title="Choose and buy a drive")
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "synthesized_answer": "I chose drive A."}, TaskStatus.COMPLETED)
+    await PlanRunner(repos, audit).tick()
+    result = repos.plans.get(plan.id)
+    assert result.steps[0].status == StepStatus.WAITING and result.steps[1].status == StepStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_decision_only_marker_without_a_recorded_choice_stays_waiting(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    repos.plans.update_step(plan.steps[0].id, choice_only=True)
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, current.metadata, TaskStatus.COMPLETED)
+    await PlanRunner(repos, audit).tick()
+    result = repos.plans.get(plan.id)
+    assert result.steps[0].status == StepStatus.WAITING and result.steps[1].status == StepStatus.PENDING
+    waiting = repos.tasks.get(result.steps[0].task_id)
+    assert "could not find a recorded choice" in waiting.metadata["clarifying_question"]
+
+
+@pytest.mark.asyncio
+async def test_cancelling_after_delegated_choice_does_not_claim_step_was_done(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "synthesized_answer": "I chose drive A."}, TaskStatus.COMPLETED)
+    await PlanRunner(repos, audit).cancel(plan.id)
+    result = repos.plans.get(plan.id)
+    assert result.status == PlanStatus.CANCELLED and result.steps[0].status == StepStatus.SKIPPED
+    assert "I chose drive A" in result.steps[0].result
+
+
+@pytest.mark.asyncio
+async def test_delegated_access_choice_keeps_access_step_waiting(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    repos.plans.update_step(plan.steps[0].id, owner=StepOwner.ACCESS, choice_only=True)
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "synthesized_answer": "Use provider A."}, TaskStatus.COMPLETED)
+    await PlanRunner(repos, audit).tick()
+    result = repos.plans.get(plan.id)
+    waiting = repos.tasks.get(result.steps[0].task_id)
+    assert result.steps[0].owner == StepOwner.ACCESS and result.steps[0].status == StepStatus.WAITING
+    assert "It's ready" in waiting.metadata["clarifying_options"]
+    assert "say it's ready" in waiting.metadata["clarifying_question"]
+
+
+@pytest.mark.asyncio
+async def test_delegated_step_that_cannot_be_done_pauses_instead_of_completing(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    current = repos.tasks.get(task.id)
+    repos.tasks.update_metadata(task.id, {**current.metadata, "last_worker_error": "A physical choice needs input"}, TaskStatus.BLOCKED)
+    await PlanRunner(repos, audit).tick()
+    result = repos.plans.get(plan.id)
+    assert result.status == PlanStatus.PAUSED and result.steps[0].status == StepStatus.FAILED
+
+
+@pytest.mark.asyncio
+async def test_delegation_does_not_start_work_while_plan_is_paused(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    plan, task = await _waiting_step(repos, audit)
+    await PlanRunner(repos, audit).pause(plan.id)
+    reply = resume_clarifying_reply(repos, audit, _reply("You choose", plan.conversation_id), plan.conversation_id)
+    assert "plan is paused" in reply.text
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.WAITING
 
 
 @pytest.mark.asyncio
@@ -162,6 +376,61 @@ async def test_a_step_waiting_for_days_is_not_expired_like_an_ordinary_question(
     _, step_task = await _waiting_step(repos, audit)
     assert expire_stale_clarifications(repos, audit, now=utc_now() + timedelta(days=5)) == []
     assert repos.tasks.get(step_task.id).status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
+async def test_answer_to_assistant_step_resumes_work_instead_of_completing_plan(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    plan = repos.plans.create(Plan(
+        goal="Set up a device", conversation_id=conversation, routing=dict(ROUTING),
+        steps=[PlanStep(position=1, title="Install the library"), PlanStep(position=2, title="Run the script")],
+    ))
+    runner = PlanRunner(repos, audit)
+    await runner.start(plan.id)
+    plan = repos.plans.get(plan.id)
+    task = repos.tasks.get(plan.steps[0].task_id)
+    repos.tasks.update_metadata(task.id, {**task.metadata, "clarifying_question": "Which library?"}, TaskStatus.CLARIFYING)
+
+    reply = resume_clarifying_reply(repos, audit, _reply("You choose", conversation), conversation)
+
+    task = repos.tasks.get(task.id)
+    assert reply.text == "Got it - resuming the task with your answer."
+    assert task.status == TaskStatus.RECEIVED
+    assert task.metadata["clarification_answer"] == "You choose"
+    assert "plan_step_answer" not in task.metadata
+    await runner.tick()
+    plan = repos.plans.get(plan.id)
+    assert plan.steps[0].status == StepStatus.RUNNING
+    assert plan.steps[1].status == StepStatus.PENDING
+
+
+@pytest.mark.asyncio
+async def test_declining_handoff_on_assistant_plan_step_does_not_cancel_or_complete_it(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    plan = repos.plans.create(Plan(
+        goal="Investigate a device", conversation_id=conversation, routing=dict(ROUTING),
+        steps=[PlanStep(position=1, title="Investigate"), PlanStep(position=2, title="Verify")],
+    ))
+    runner = PlanRunner(repos, audit)
+    await runner.start(plan.id)
+    task = repos.tasks.get(repos.plans.get(plan.id).steps[0].task_id)
+    question = "Hand this to Claude Code?"
+    repos.tasks.update_metadata(task.id, {
+        **task.metadata, "clarifying_question": question,
+        "claude_code_offer": {"question": question, "state": "pending"},
+    }, TaskStatus.CLARIFYING)
+
+    resume_clarifying_reply(repos, audit, _reply("no", conversation), conversation)
+
+    task = repos.tasks.get(task.id)
+    assert task.status == TaskStatus.RECEIVED
+    assert task.metadata["clarification_answer"] == "no"
+    await runner.tick()
+    plan = repos.plans.get(plan.id)
+    assert plan.steps[0].status == StepStatus.RUNNING
+    assert plan.steps[1].status == StepStatus.PENDING
 
 
 # --- the plan the Operator is told about ------------------------------------------------------------------------------------------------------

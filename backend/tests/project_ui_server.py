@@ -20,9 +20,15 @@ def main():
         (root / "config").mkdir()
         (root / "config/config.yaml").write_text("{}", encoding="utf-8")
         from project_system import make_system
+        from agent_control.config import load_settings
         from agent_control.scheduler import run_scheduler_forever
 
-        app, _, _, worker, _ = make_system(root / "work", ask_first=True)
+        # Keep the isolated scripted system, but reload the setting exercised by
+        # the browser just as the production admin server reloads config.yaml.
+        def settings_loader(settings):
+            return settings.model_copy(update={"operator": load_settings().operator})
+
+        app, _, _, worker, _ = make_system(root / "work", ask_first=True, settings_loader=settings_loader)
 
         @asynccontextmanager
         async def lifespan(app):

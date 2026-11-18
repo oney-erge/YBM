@@ -352,6 +352,7 @@ class PlanManageInput(ToolInputModel):
     title: str | None = None
     detail: str | None = None
     owner: Literal["ybm", "user", "access"] | None = None
+    choice_only: bool | None = None
     needs: list[str] | None = None
     depends_on: list[int] | None = None
     ability: str | None = None
@@ -360,8 +361,8 @@ class PlanManageInput(ToolInputModel):
     due: str | None = None
     days: int | None = None
     note: str | None = None
-    # update_step: done, skipped or pending (what the user told you). set_status: active (start), paused or cancelled.
-    status: Literal["done", "skipped", "pending", "active", "paused", "cancelled"] | None = None
+    # update_step: skipped or pending for an unstarted step. Completion belongs to the plan runner.
+    status: Literal["skipped", "pending", "active", "paused", "cancelled"] | None = None
 
     @model_validator(mode="after")
     def needs_its_arguments(self) -> "PlanManageInput":
@@ -385,7 +386,7 @@ class JobManageInput(ToolInputModel):
     # start_research: what to find out, as a full goal with everything the user said (the topic, the place, the budget), and how many pages
     # at most (the person's own number if they gave one).
     goal: str | None = None
-    max_pages: int | None = Field(default=None, ge=5, le=150)
+    max_pages: int | None = Field(default=None, ge=5, le=1000)
     # status, pause, resume, stop: which job (default: the newest of this chat that has not ended).
     job_id: str | None = None
 
@@ -1076,7 +1077,7 @@ class MemoryManageOutput(ToolOutputModel):
 
 
 class SystemInventoryInput(ToolInputModel):
-    operation: Literal["steam_games", "installed_apps", "disk_space", "hardware", "find_files"] = "find_files"
+    operation: Literal["steam_games", "installed_apps", "disk_space", "hardware", "displays", "find_files"] = "find_files"
     query: str | None = None
     extensions: list[str] = Field(default_factory=list, max_length=12)
     match: Literal["name", "content"] = "name"
@@ -1104,7 +1105,7 @@ class SystemInstalledAppsInput(ToolInputModel):
 
 
 class SystemSimpleInput(ToolInputModel):
-    operation: Literal["steam_games", "disk_space", "hardware"] = "steam_games"
+    operation: Literal["steam_games", "disk_space", "hardware", "displays"] = "steam_games"
 
 
 class SystemInventoryOutput(ToolOutputModel):

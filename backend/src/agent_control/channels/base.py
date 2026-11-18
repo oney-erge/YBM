@@ -37,14 +37,16 @@ from typing import Any, Protocol
 from agent_control.abilities.context import asks_about_the_assistant, asks_for_what_a_recipe_covers
 from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
-from agent_control.channels.memory import memory_context
+from agent_control.channels.memory import memory_context, recent_artifacts_context
 from agent_control.channels.responder import ChatResponder, gateway_context
 from agent_control.clarification import (
+    assess_unaddressed_reply,
     expire_stale_clarifications,
-    find_clarifying_task,
-    find_plan_step_answer,
+    explicit_reply_task,
+    reply_candidates,
     resume_clarifying_task,
 )
+from agent_control.channels.quick_answers import clarification_token
 from agent_control.config import AppSettings
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
@@ -175,7 +177,8 @@ def approve_latest_pending(repositories: Repositories, audit: AuditLogger, inbou
 
 
 def resume_clarifying_reply(
-    repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str
+    repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str,
+    *, expected_task_id: str | None = None, expected_token: str | None = None,
 ) -> OutboundMessage | None:
     """Route a reply to the task waiting on a question instead of spawning a
     new task, or None if no clarification is pending. Core logic lives in
@@ -185,21 +188,68 @@ def resume_clarifying_reply(
     if not text:
         return None
     expire_stale_clarifications(repositories, audit)
-    task = find_plan_step_answer(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text) or find_clarifying_task(
-        repositories, conversation_id=conversation_id, chat_id=inbound.chat_id
-    )
+    directed = re.fullmatch(r"reply\s+(task_[0-9a-f]{32})\s*:\s*(.+)", text, flags=re.IGNORECASE | re.DOTALL)
+    if directed:
+        task = explicit_reply_task(repositories, task_id=directed.group(1), conversation_id=conversation_id, chat_id=inbound.chat_id)
+        if task is None:
+            return _reply(inbound, "That question is no longer open in this chat. Check the current task and try again.")
+        text = directed.group(2).strip()
+    else:
+        candidates = reply_candidates(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text)
+        if len(candidates) > 1:
+            choices = "\n".join(f"- {' '.join(candidate.objective.split())[:100]}: {candidate.id}" for candidate in candidates[:5])
+            return _reply(inbound, "More than one question is open. Use its button, or reply with 'reply TASK_ID: your answer'.\n" + choices)
+        task = candidates[0] if candidates else None
     if task is None:
+        if expected_task_id:
+            return _reply(inbound, "That question changed while I was checking your message. Please reply to the current question.")
         return None
+    if expected_task_id and (task.id != expected_task_id or clarification_token(task) != expected_token):
+        return _reply(inbound, "That question changed while I was checking your message. Please reply to the current question.")
     result = resume_clarifying_task(
         repositories, audit, task,
         text=text, actor=f"{inbound.channel.value}:user:{inbound.sender_id}",
         message_id=inbound.id, received_at=inbound.received_at, correlation_id=inbound.correlation_id,
     )
+    if not result.accepted:
+        return _reply(inbound, result.reason or "That question changed or was already answered. Please check the current task before replying.")
+    if result.delegated:
+        return _reply(inbound, "I'll make the choice and tell you what remains for this step.")
     if result.plan_step:
         return _reply(inbound, "Okay, I'll leave that step out." if result.cancelled else "Noted. On to the next step.")
     if result.cancelled:
         return _reply(inbound, f"Cancelled: {result.task.objective[:200]}")
     return _reply(inbound, "Got it - resuming the task with your answer.")
+
+
+async def route_clarifying_reply(
+    repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str, settings: AppSettings | None,
+) -> OutboundMessage | None:
+    """Resolve an unaddressed message before allowing it to mutate a waiting task."""
+    text = (inbound.text or "").strip()
+    if not text or re.match(r"(?is)^new\s*:\s*\S", text):
+        return None
+    if re.fullmatch(r"reply\s+task_[0-9a-f]{32}\s*:\s*.+", text, flags=re.IGNORECASE | re.DOTALL):
+        return resume_clarifying_reply(repositories, audit, inbound, conversation_id)
+    expire_stale_clarifications(repositories, audit)
+    candidates = reply_candidates(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text)
+    if len(candidates) != 1:
+        return resume_clarifying_reply(repositories, audit, inbound, conversation_id)
+    task = candidates[0]
+    token = clarification_token(task)
+    disposition = await assess_unaddressed_reply(task, text, settings.decision if settings else None)
+    current = repositories.tasks.get(task.id)
+    if current is None or current.status != TaskStatus.CLARIFYING or clarification_token(current) != token:
+        return _reply(inbound, "That question changed while I was checking your message. Please reply to the current question.")
+    latest = reply_candidates(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text)
+    if len(latest) != 1 or latest[0].id != task.id:
+        return _reply(inbound, "The open questions changed while I was checking your message. Please choose the current target.")
+    if disposition == "new":
+        return None
+    if disposition == "uncertain":
+        return _reply(inbound, f"Is that an answer to the question about '{task.objective[:100]}' or a new request? "
+                      f"For an answer, use 'reply {task.id}: your answer'. For a new request, use 'new: your request'.")
+    return resume_clarifying_reply(repositories, audit, inbound, conversation_id, expected_task_id=task.id, expected_token=token)
 
 
 def _spawn_failed(
@@ -514,7 +564,7 @@ async def classify_and_spawn_task(
         recent_turns=5, max_chars=1600,
         remembered_facts=repositories.memory_facts.list_all(),
         objective=objective,
-    )
+    ) + recent_artifacts_context(repositories, conversation_id)
     # Sent before the task exists so the id of this one message can be written with the task's first
     # record: every later progress update edits it instead of adding a bubble to the chat.
     progress_anchor = await send_progress(inbound.chat_id, TASK_STARTED_TEXT)

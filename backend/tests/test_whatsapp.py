@@ -169,7 +169,7 @@ async def test_whatsapp_reply_resumes_a_clarifying_task_instead_of_spawning_a_ne
         task.id, {**task.metadata, "clarifying_question": "Which folder?"}, TaskStatus.CLARIFYING,
     )
 
-    reply = await service.handle_update_async(_update("the Downloads folder", message_id="2"))
+    reply = await service.handle_update_async(_update(f"reply {task.id}: the Downloads folder", message_id="2"))
 
     assert reply.task is None
     assert reply.outbound_message is not None
@@ -177,6 +177,17 @@ async def test_whatsapp_reply_resumes_a_clarifying_task_instead_of_spawning_a_ne
     resumed = repos.tasks.get(task.id)
     assert resumed.status == TaskStatus.RECEIVED
     assert len(repos.tasks.list_recent(limit=10)) == 1
+
+
+@pytest.mark.asyncio
+async def test_whatsapp_explicit_new_request_keeps_waiting_question(tmp_path) -> None:
+    service, repos, _audit = _service(tmp_path, WhatsAppConfig(enabled=True, allowed_numbers=[NUMBER]),
+                                      classifier=StaticMessageClassifier())
+    task = (await service.handle_update_async(_update("Connect the TV", message_id="1"))).task
+    repos.tasks.update_metadata(task.id, {**task.metadata, "clarifying_question": "Which library?"}, TaskStatus.CLARIFYING)
+    result = await service.handle_update_async(_update("new: Find my notes", message_id="2"))
+    assert result.task.id != task.id and result.task.objective == "Find my notes"
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
 
 
 @pytest.mark.asyncio

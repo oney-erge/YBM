@@ -16,6 +16,7 @@ pre-normalized envelope (`{id, from, chat_id, text, timestamp}`), so
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -25,7 +26,7 @@ from agent_control.channels.base import (
     ChannelUpdateResult,
     approve_latest_pending,
     classify_and_spawn_task,
-    resume_clarifying_reply,
+    route_clarifying_reply,
     status_summary,
 )
 from agent_control.channels.memory import ConversationMemoryService, detect_remember_request
@@ -211,9 +212,12 @@ class WhatsAppIntakeService:
         if plain_response is not None:
             return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=plain_response)
 
-        clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
+        clarify_response = await route_clarifying_reply(self.repositories, self.audit, inbound, conversation_id, self.settings)
         if clarify_response is not None:
             return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=clarify_response)
+
+        if inbound.text and re.match(r"(?is)^new\s*:\s*\S", inbound.text.strip()):
+            inbound = inbound.model_copy(update={"text": re.sub(r"(?is)^new\s*:\s*", "", inbound.text.strip(), count=1)})
 
         return await classify_and_spawn_task(
             inbound, conversation_id,

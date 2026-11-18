@@ -83,6 +83,7 @@ async def test_a_tap_on_a_plan_that_has_moved_on_or_is_gone_says_so_and_changes_
 
 @pytest.mark.asyncio
 async def test_a_quick_answer_button_answers_the_question_once(tmp_path):
+    from agent_control.channels.quick_answers import clarification_token
     service, repos, bot = _setup(tmp_path)
     conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
     task = repos.tasks.create(
@@ -90,11 +91,12 @@ async def test_a_quick_answer_button_answers_the_question_once(tmp_path):
         metadata={"source_chat_id": "100", "clarifying_question": "What kind?", "clarifying_options": ["Indoor", "Outdoor camera"]},
     )
     repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
-    await _tap(service, f"answer:{task.id}:o1", "a")
+    button = f"answer:{task.id}:o1:{clarification_token(repos.tasks.get(task.id))}"
+    await _tap(service, button, "a")
     resumed = repos.tasks.get(task.id)
     assert resumed.status == TaskStatus.RECEIVED and resumed.metadata["clarification_answer"] == "Outdoor camera"
     assert "[User clarification: Outdoor camera]" in resumed.objective and bot.answered[-1] == ("a", "Okay: Outdoor camera")
-    await _tap(service, f"answer:{task.id}:o1", "b")  # a second tap on the same button
+    await _tap(service, button, "b")  # a second tap on the same button
     assert bot.answered[-1] == ("b", "That question was already answered.")
 
 
@@ -106,3 +108,50 @@ async def test_a_tap_on_a_button_that_is_not_there_changes_nothing(tmp_path):
     repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
     await _tap(service, f"answer:{task.id}:o5")
     assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING and bot.answered[-1][1] == "That question was already answered."
+
+
+@pytest.mark.asyncio
+async def test_an_old_button_cannot_answer_a_new_question_on_the_same_task(tmp_path):
+    from agent_control.channels.quick_answers import clarification_token
+
+    service, repos, bot = _setup(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
+    task = repos.tasks.create("Choose", conversation_id=conversation, metadata={"source_chat_id": "100",
+        "clarifying_question": "Which first?", "clarifying_options": ["A", "B"]})
+    first = repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    old_button = f"answer:{task.id}:o0:{clarification_token(first)}"
+    newer = repos.tasks.update_metadata(task.id, {**first.metadata, "clarifying_question": "Which second?",
+                                                    "clarifying_options": ["C", "D"]}, TaskStatus.CLARIFYING)
+    await _tap(service, old_button, "old")
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert bot.answered[-1][1] == "This button is out of date. Reply to the current question."
+    await _tap(service, f"answer:{task.id}:o0:{clarification_token(newer)}", "new")
+    assert repos.tasks.get(task.id).metadata["clarification_answer"] == "C"
+
+
+@pytest.mark.asyncio
+async def test_legacy_button_is_rejected_with_a_way_to_continue(tmp_path):
+    service, repos, bot = _setup(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
+    task = repos.tasks.create("Choose", conversation_id=conversation, metadata={"source_chat_id": "100",
+        "clarifying_question": "Which?", "clarifying_options": ["A"]})
+    repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    await _tap(service, f"answer:{task.id}:o0")
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert "Reply to the current question" in bot.answered[-1][1]
+
+
+@pytest.mark.asyncio
+async def test_a_question_button_cannot_be_used_from_another_allowed_chat(tmp_path):
+    from agent_control.channels.quick_answers import clarification_token
+
+    service, repos, bot = _setup(tmp_path)
+    service.adapter.config.allowed_chat_ids.append(200)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
+    task = repos.tasks.create("Choose", conversation_id=conversation, metadata={"source_chat_id": "100",
+        "clarifying_question": "Which?", "clarifying_options": ["A"]})
+    task = repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    await service.handle_update_async({"update_id": 1, "callback_query": {"id": "foreign", "from": {"id": 42},
+        "message": {"message_id": 7, "chat": {"id": 200}}, "data": f"answer:{task.id}:o0:{clarification_token(task)}"}})
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    assert bot.answered[-1][1] == "That question is not open in this chat."

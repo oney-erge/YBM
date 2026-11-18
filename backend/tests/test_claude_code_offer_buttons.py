@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_control.channels.telegram_notifications import TelegramTaskNotifier
+from agent_control.channels.quick_answers import clarification_token
 from agent_control.config import TelegramConfig
 from agent_control.schemas import ChannelType, TaskRecord, TaskStatus
 from test_telegram import _FakeBotApiForCallbacks, _service
@@ -29,7 +30,7 @@ async def test_the_offer_is_sent_with_a_yes_and_a_no_button():
     await TelegramTaskNotifier(client).notify(task)  # type: ignore[arg-type]
     buttons = [button for row in client.last_reply_markup["inline_keyboard"] for button in row]
     assert [button["text"] for button in buttons] == ["Yes, ask Claude Code", "No thanks"]
-    assert [button["callback_data"] for button in buttons] == [f"answer:{task.id}:yes", f"answer:{task.id}:no"]
+    assert [button["callback_data"] for button in buttons] == [f"answer:{task.id}:yes:{clarification_token(task)}", f"answer:{task.id}:no:{clarification_token(task)}"]
     assert all(len(button["callback_data"].encode()) <= 64 for button in buttons)
 
 
@@ -46,9 +47,11 @@ async def test_other_questions_and_answered_offers_get_no_buttons():
 
 
 def _press(service, task_id: str, answer: str, callback_id: str = "cbq1"):
+    task = service.repositories.tasks.get(task_id)
+    token = clarification_token(task) if task is not None else "missing"
     return service.handle_update({
         "update_id": 1,
-        "callback_query": {"id": callback_id, "from": {"id": 42}, "message": {"chat": {"id": 100}}, "data": f"answer:{task_id}:{answer}"},
+        "callback_query": {"id": callback_id, "from": {"id": 42}, "message": {"chat": {"id": 100}}, "data": f"answer:{task_id}:{answer}:{token}"},
     })
 
 
@@ -72,6 +75,7 @@ def _setup(tmp_path):
 
 
 def test_tapping_yes_answers_the_question_and_resumes_the_task(tmp_path):
+    from agent_control.orchestration import TaskWorker
     service, repos, bot_api = _setup(tmp_path)
     task = _waiting_task(repos)
 
@@ -79,9 +83,11 @@ def test_tapping_yes_answers_the_question_and_resumes_the_task(tmp_path):
 
     resumed = repos.tasks.get(task.id)
     assert resumed.status == TaskStatus.RECEIVED
-    assert resumed.metadata["clarification_answer"] == "Yes, please ask Claude Code"
+    assert resumed.metadata["clarification_answer"] == "Yes"
     assert resumed.metadata["answered_clarifying_question"] == "Hand it to Claude Code?"
     assert bot_api.answered == [("cbq1", "Okay, asking Claude Code.")]
+    decision = TaskWorker(repos, service.audit)._ladder_step(resumed, [], "step")
+    assert decision.tool_name == "coding.agent" and decision.tool_input["provider"] == "claude_code"
 
 
 def test_tapping_no_declines_and_does_not_cancel_the_task(tmp_path):
@@ -93,7 +99,7 @@ def test_tapping_no_declines_and_does_not_cancel_the_task(tmp_path):
     resumed = repos.tasks.get(task.id)
     assert resumed.status == TaskStatus.RECEIVED, "a bare 'no' would have cancelled it"
     assert resumed.metadata["clarification_answer"] == "No thanks"
-    assert bot_api.answered == [("cbq1", "Okay, I'll answer with what I have.")]
+    assert bot_api.answered == [("cbq1", "Okay, I'll look for another local approach.")]
 
 
 def test_a_second_tap_or_a_stale_button_does_nothing(tmp_path):
@@ -104,7 +110,7 @@ def test_a_second_tap_or_a_stale_button_does_nothing(tmp_path):
     _press(service, task.id, "no", "cbq2")
     _press(service, "task_that_does_not_exist", "yes", "cbq3")
 
-    assert repos.tasks.get(task.id).metadata["clarification_answer"] == "Yes, please ask Claude Code"
+    assert repos.tasks.get(task.id).metadata["clarification_answer"] == "Yes"
     assert [text for _, text in bot_api.answered[1:]] == ["That question was already answered."] * 2
 
 
