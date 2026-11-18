@@ -288,7 +288,9 @@ plans:
 jobs:
   enabled: true
   default_pages: 60   # pages a research job reads when you give no number
-  max_pages: 150      # the most it ever reads
+  max_pages: 1000     # the most it ever reads; individual jobs still require approval
+  quiet_start: 23     # progress messages use scheduler.default_timezone
+  quiet_end: 8        # equal hours disable quiet time; completion and failures still notify
 
 # Looking at pictures (a photo you send, a screenshot) with a local vision model through LocalDeploy. The assistant's own model reads
 # text only. Each use asks you first, because it loads a model of about 3 GB. Nothing leaves this computer.
@@ -303,6 +305,9 @@ operator:
   # model that never converges. Fulfillment/audit check entries do not count
   # against it. Raise for genuinely long multi-tool work; lower to fail fast.
   max_steps: 12
+  # 1 asks about meaningful choices; 5 chooses routine details whenever possible.
+  # This does not change approval requirements or tool permissions.
+  initiative_level: 3
 
 adapters:
   vscode:
