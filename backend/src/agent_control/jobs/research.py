@@ -80,6 +80,11 @@ class _Chapters(BaseModel):
     chapters: list[str] = Field(default_factory=list, description="the chapters of the report, each a short title; together they cover the goal, each a different area")
 
 
+class _Supported(BaseModel):
+    supported: bool = Field(description="true only if the quotations say what the sentence says: the same subject, the same numbers, the same units and conditions")
+    reason: str = Field(default="", description="one short phrase: what matches, or what differs")
+
+
 class _Phrasings(BaseModel):
     searches: list[str] = Field(default_factory=list, description="one web search for each question, in the same order, in different words")
 
@@ -109,6 +114,11 @@ CHAPTER_SYSTEM = (
     "You write the overview of one chapter of a research report from its sections. At most 120 words, plain prose: what the sections together say, "
     "the most important numbers first. Every sentence that states a fact ends with the citation numbers in square brackets that the sections gave for it, like "
     "[4] or [3][5]; a sentence with no number is removed. Do not add anything the sections do not say. Say plainly what the sources did not answer."
+)
+CLAIM_SYSTEM = (
+    "You check one sentence of a research report against the exact quotations from the pages it cites. The sentence is supported only if the quotations say what it "
+    "says: about the same subject (the same product, model, place or person; a price of a thing is not the cost of using it), with the same numbers and the same units "
+    "and conditions. A number in the sentence must be in the quotations. If the quotations are about something else, say something weaker, or say the opposite, it is not supported."
 )
 NOTES_SYSTEM = (
     "You read part of one web page to help answer a question. Copy out up to "
@@ -423,8 +433,79 @@ async def _write(state: dict[str, Any], io: ResearchIO) -> Unit:
         listed = "\n".join(f"[{number}] {fact['quote']}  (from {source['title']})" for number, source, fact in notes)
         written = await io.write(SECTION_SYSTEM, f"Question: {question}\n\nNotes:\n{listed}")
         text = only_given_citations(written.strip(), {number for number, _s, _f in notes})
+        text = await _checked(state, text, io)
+        text = text or "No page I could read answered this question."  # every sentence failed its check: nothing the pages said supports a claim here
     state["sections"].append({"question": question, "text": text})
     return Unit(state, say=f"Writing: section {index + 1} of {len(state['questions'])} done." if (index + 1) % 3 == 0 else None)
+
+
+_NUMBER = re.compile(r"(?<![\w.])\d[\d,. ]*\d|(?<![\w.])\d")
+
+
+def _numbers(text: str) -> set[str]:
+    """The numbers a sentence states, without citation marks and thousands separators: "4,000" and "4000" are the same number."""
+    cleaned = _CITATION.sub(" ", text)
+    return {re.sub(r"[,\s]", "", found).rstrip(".") for found in _NUMBER.findall(cleaned)} - {""}
+
+
+def number_missing(sentence: str, quotes: list[str]) -> bool:
+    """A number in the sentence that none of the cited quotations contain: the claim has a figure no source gave. Checked without a model."""
+    stated = _numbers(sentence)
+    if not stated:
+        return False
+    given = _numbers(" ".join(quotes))
+    return bool(stated - given)
+
+
+async def check_claims(text: str, quotes_by_number: dict[int, list[str]], io: ResearchIO) -> tuple[str, int, int, int]:
+    """Keep the sentences whose cited quotations say what they say. (the text, sentences checked, sentences removed, sentences left unchecked).
+
+    A quotation can really be in a page while the sentence built on it says something else: a used graphics card's price became "the cost of offloading" in the first
+    live report (11/15). Citing is not support. Each sentence with a citation is checked against the quotations of the notes it cites: first, without a model, that every
+    number it states is in them; then by the model, whether they say the same thing about the same subject. A sentence that fails is removed. When the model cannot check
+    (it fails or times out), the sentence stays and is counted as unchecked, so the report can say so instead of passing it off as checked.
+    """
+    kept: list[str] = []
+    checked = removed = unchecked = 0
+    for sentence in _SENTENCE.split(" ".join(text.split())):
+        numbers = [int(n) for n in _CITATION.findall(sentence)]
+        if not numbers or _NOT_SAID.match(sentence):
+            kept.append(sentence)
+            continue
+        quotes = [quote for number in dict.fromkeys(numbers) for quote in quotes_by_number.get(number, [])]
+        if not quotes:
+            removed += 1
+            checked += 1
+            continue
+        checked += 1
+        if number_missing(sentence, quotes):
+            removed += 1
+            continue
+        listed = "\n".join(f"- {quote}" for quote in quotes[:6])
+        try:
+            answer = await io.think(CLAIM_SYSTEM, f"Sentence: {_CITATION.sub('', sentence).strip()}\n\nQuotations:\n{listed}", _Supported)
+        except Exception:  # noqa: BLE001 - a check that cannot run is reported as not run, it does not decide
+            checked -= 1
+            unchecked += 1
+            kept.append(sentence)
+            continue
+        if getattr(answer, "supported", False):
+            kept.append(sentence)
+        else:
+            removed += 1
+    return " ".join(kept), checked, removed, unchecked
+
+
+def _quotes_by_number(state: dict[str, Any]) -> dict[int, list[str]]:
+    return {int(source["id"]): [fact["quote"] for fact in source.get("facts") or []] for source in state["sources"]}
+
+
+async def _checked(state: dict[str, Any], text: str, io: ResearchIO) -> str:
+    text, checked, removed, unchecked = await check_claims(text, _quotes_by_number(state), io)
+    state["claims_checked"] = int(state.get("claims_checked", 0)) + checked
+    state["claims_removed"] = int(state.get("claims_removed", 0)) + removed
+    state["claims_unchecked"] = int(state.get("claims_unchecked", 0)) + unchecked
+    return text
 
 
 def numbered_notes(state: dict[str, Any], question_index: int) -> list[tuple[int, dict[str, Any], dict[str, str]]]:
@@ -475,6 +556,7 @@ async def _chapter_overview(state: dict[str, Any], io: ResearchIO) -> Unit:
         body = "\n\n".join(f"{section['question']}\n{section['text']}" for section in answered)
         used = {int(n) for section in answered for n in _CITATION.findall(section["text"])}
         overview = only_given_citations((await io.write(CHAPTER_SYSTEM, f"Chapter: {chapter['title']}\n\nSections:\n{body}")).strip(), used)
+        overview = await _checked(state, overview, io)
     chapter["overview"] = overview
     return Unit(state, say=f"Chapter {index + 1} of {len(state['chapters'])} written: {chapter['title']}.")
 
@@ -486,11 +568,13 @@ async def _finish(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
         body = "\n\n".join(f"{chapter['title']}\n{chapter['overview']}" for chapter in overviews)
         used = {int(n) for chapter in overviews for n in _CITATION.findall(chapter["overview"])}
         summary = only_given_citations((await io.write(SUMMARY_SYSTEM, f"Goal: {goal}\n\nChapters:\n{body}")).strip(), used) if overviews else ""
+        summary = await _checked(state, summary, io) if summary else summary
         summary = summary or "I could not write a summary from the chapters, but each chapter below has what the sources said."
     elif answered:
         body = "\n\n".join(f"{section['question']}\n{section['text']}" for section in answered)
         used = {int(n) for section in answered for n in _CITATION.findall(section["text"])}
         summary = only_given_citations((await io.write(SUMMARY_SYSTEM, f"Goal: {goal}\n\nSections:\n{body}")).strip(), used)
+        summary = await _checked(state, summary, io)
     else:
         summary = "I could not find pages that answer this. The sources I read did not say anything I could check."
     state["summary"], state["stage"] = summary, "done"
@@ -521,6 +605,11 @@ def render_report(goal: str, state: dict[str, Any]) -> str:
     read = sum(1 for source in state["sources"] if source["status"] == "read")
     attempted = sum(1 for source in state["sources"] if source["status"] in ("read", "failed"))
     useful = sum(1 for source in state["sources"] if source["status"] == "read" and source.get("facts"))
-    lines += ["", f"_{len(state['sources'])} pages found; {attempted} attempted; {read} read; {useful} with recorded quotations; {len(cited)} cited. "
-              "Check that the report's claims are supported by the sources and their context._"]
+    lines += ["", f"_{len(state['sources'])} pages found; {attempted} attempted; {read} read; {useful} with recorded quotations; {len(cited)} cited._"]
+    checked = int(state.get("claims_checked", 0))
+    if checked or state.get("claims_unchecked"):
+        lines += [
+            f"_Every cited sentence was checked against the quotations it cites: {checked} checked, {int(state.get('claims_removed', 0))} removed because the quotations did not say it"
+            + (f", {int(state['claims_unchecked'])} could not be checked and are kept" if state.get("claims_unchecked") else "") + ". A check by a small model is not a proof: read the sources behind a claim you rely on._"
+        ]
     return "\n".join(lines)

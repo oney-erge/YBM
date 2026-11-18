@@ -29,6 +29,8 @@ class _Io:
         self.fail = fail
 
     async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
         if self.fail:
             raise RuntimeError("model down")
         if schema is research._Questions:

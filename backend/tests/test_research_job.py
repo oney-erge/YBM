@@ -25,6 +25,8 @@ class _Fake:
         self.calls: list[tuple[str, str]] = []
 
     async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
         self.calls.append(("think", user[:60]))
         if schema is research._Questions:
             return research._Questions(questions=self.questions)
@@ -208,6 +210,8 @@ class _Wide:
         self.searched: list[str] = []
 
     async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
         if schema is research._Questions:
             return research._Questions(questions=[f"Question {n}?" for n in range(1, 8)])
         if schema is research._Phrasings:
@@ -301,6 +305,8 @@ class _Big(_Fake):
         self.chapter_requests = 0
 
     async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
         if schema is research._Chapters:
             self.chapter_requests += 1
             return research._Chapters(chapters=[f"Area {n}" for n in range(1, 12)])  # more than asked: the extra are cut
@@ -414,6 +420,8 @@ async def test_synthetic_600_page_job_keeps_search_history_across_restarts() -> 
             self.rewrite_prompts = []
 
         async def think(self, system, user, schema):
+            if schema is research._Supported:
+                return research._Supported(supported=True)
             if schema is research._Phrasings:
                 self.rewrite_calls += 1
                 self.rewrite_prompts.append(user)
@@ -438,3 +446,59 @@ async def test_synthetic_600_page_job_keeps_search_history_across_restarts() -> 
     assert len(state["chapters"]) == 6 and len(state["search_history"]) >= 2
     assert "previous searches:" in fake.rewrite_prompts[2]
     assert "600 pages found; 600 attempted; 600 read" in report
+
+
+class _Judge:
+    """A model that judges a sentence against its quotations the way a careful reader would: here, by whether the quotation is about the same thing."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail, self.asked = fail, []
+
+    async def think(self, system, user, schema):
+        self.asked.append(user)
+        if self.fail:
+            raise TimeoutError("model busy")
+        sentence = user.split("Sentence: ")[1].split("\n")[0]
+        quotes = user.split("Quotations:\n")[1]
+        return research._Supported(supported=("graphics card" in sentence.lower()) == ("graphics card" in quotes.lower()))
+
+    @property
+    def io(self) -> ResearchIO:
+        return ResearchIO(think=self.think, write=None, search=None, fetch=None)
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_is_kept_only_when_the_quotations_it_cites_say_it() -> None:
+    """11/15: a used graphics card's price in a quotation became "the cost of offloading" in the report's summary. A real quotation is not support."""
+    quotes = {1: ["A used graphics card costs about 700 dollars on the second-hand market, a typical price in 2026."], 2: ["Offloading layers to system memory cut generation speed from 40 to 9 tokens per second."]}
+    judge = _Judge()
+    text = (
+        "A used graphics card costs about 700 dollars [1]. Offloading costs 700 dollars [1]. Offloading cut the speed from 40 to 9 tokens per second [2]. "
+        "Offloading cut the speed from 40 to 12 tokens per second [2]. The sources do not say how it ages."
+    )
+    kept, checked, removed, unchecked = await research.check_claims(text, quotes, judge.io)
+    assert kept == "A used graphics card costs about 700 dollars [1]. Offloading cut the speed from 40 to 9 tokens per second [2]. The sources do not say how it ages."
+    assert (checked, removed, unchecked) == (4, 2, 0)
+    assert len(judge.asked) == 3  # "12" is not in the quotation: removed without asking the model; the one about a card's price was removed by the model, the other two passed
+
+
+@pytest.mark.asyncio
+async def test_numbers_are_compared_without_thousands_separators_and_a_missing_note_removes_the_sentence() -> None:
+    assert research.number_missing("It costs 4,000 dollars [1].", ["installed for 4000 dollars"]) is False
+    assert research.number_missing("It costs 5,000 dollars [1].", ["installed for 4000 dollars"]) is True
+    assert research.number_missing("Owners are happy [1].", ["a quotation with no number at all"]) is False
+    kept, checked, removed, _ = await research.check_claims("It exists [9].", {1: ["It exists"]}, _Judge().io)
+    assert (kept, checked, removed) == ("", 1, 1)  # [9] has no quotation behind it
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_cannot_run_keeps_the_sentence_and_says_it_was_not_checked() -> None:
+    kept, checked, removed, unchecked = await research.check_claims("The card is good [1].", {1: ["The card is good for gaming."]}, _Judge(fail=True).io)
+    assert kept == "The card is good [1]." and (checked, removed, unchecked) == (0, 0, 1)
+
+
+@pytest.mark.asyncio
+async def test_the_report_says_how_many_claims_were_checked_and_removed() -> None:
+    state, _said, report = await _run(_Fake(facts_for={"Costs": [("Air-source units cost 4,000 to 8,000 dollars installed.", "Air-source units cost between 4,000 and 8,000 dollars installed in the Chicago area.")]}))
+    assert state["claims_checked"] >= 1 and state["claims_removed"] >= 0
+    assert "Every cited sentence was checked against the quotations it cites" in report and "A check by a small model is not a proof" in report
