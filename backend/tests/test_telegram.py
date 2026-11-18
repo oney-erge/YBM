@@ -102,7 +102,7 @@ def test_telegram_reply_resumes_a_clarifying_task_instead_of_spawning_a_new_one(
                 "message_id": 2,
                 "from": {"id": 42},
                 "chat": {"id": 100},
-                "text": "the Downloads folder",
+                "text": f"reply {task.id}: the Downloads folder",
             }
         }
     )
@@ -116,6 +116,18 @@ def test_telegram_reply_resumes_a_clarifying_task_instead_of_spawning_a_new_one(
     # The answer only makes sense next to the question; the Operator sees both.
     assert resumed.objective.endswith("[Question to the user: Which folder?]\n[User clarification: the Downloads folder]")
     assert len(repos.tasks.list_recent(limit=10)) == 1
+
+
+def test_telegram_explicit_new_request_keeps_waiting_question(tmp_path) -> None:
+    service, repos = _service(tmp_path, TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100]),
+                              classifier=StaticMessageClassifier())
+    def message(mid, text):
+        return {"message": {"message_id": mid, "from": {"id": 42}, "chat": {"id": 100}, "text": text}}
+    task = service.handle_update(message(1, "Connect the TV")).task
+    repos.tasks.update_metadata(task.id, {**task.metadata, "clarifying_question": "Which library?"}, TaskStatus.CLARIFYING)
+    result = service.handle_update(message(2, "new: Find my notes"))
+    assert result.task.id != task.id and result.task.objective == "Find my notes"
+    assert repos.tasks.get(task.id).status == TaskStatus.CLARIFYING
 
 
 def test_telegram_reply_cancel_word_cancels_the_clarifying_task(tmp_path) -> None:

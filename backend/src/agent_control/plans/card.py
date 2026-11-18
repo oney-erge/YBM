@@ -28,6 +28,10 @@ _BUTTONS: dict[PlanStatus, list[tuple[str, str]]] = {
 
 
 def _footer(plan: Plan) -> str:
+    if plan.status == PlanStatus.DONE:
+        skipped = sum(step.status == StepStatus.SKIPPED for step in plan.steps)
+        if skipped:
+            return f"Finished with {skipped} {'step' if skipped == 1 else 'steps'} skipped."
     if plan.status == PlanStatus.ACTIVE and not any(step.status in (StepStatus.RUNNING, StepStatus.WAITING) for step in plan.steps):
         held = plan.next_held()
         if held is not None:

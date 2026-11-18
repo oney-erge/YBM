@@ -43,6 +43,7 @@ SCHEMA_STATEMENTS = [
         metadata_json TEXT NOT NULL,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0,
         FOREIGN KEY(conversation_id) REFERENCES conversations(id)
     )
     """,
@@ -232,6 +233,7 @@ SCHEMA_STATEMENTS = [
         notes TEXT NOT NULL DEFAULT '',
         check_in_days INTEGER NOT NULL DEFAULT 0,
         last_check_in_at TEXT,
+        revision INTEGER NOT NULL DEFAULT 0,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )
@@ -244,6 +246,7 @@ SCHEMA_STATEMENTS = [
         title TEXT NOT NULL,
         detail TEXT NOT NULL,
         owner TEXT NOT NULL,
+        choice_only INTEGER NOT NULL DEFAULT 0,
         needs_json TEXT NOT NULL,
         depends_json TEXT NOT NULL,
         ability TEXT NOT NULL,
@@ -251,6 +254,7 @@ SCHEMA_STATEMENTS = [
         status TEXT NOT NULL,
         task_id TEXT,
         result TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0,
         updated_at TEXT NOT NULL,
         FOREIGN KEY(plan_id) REFERENCES project_plans(id) ON DELETE CASCADE
     )
@@ -266,7 +270,8 @@ SCHEMA_STATEMENTS = [
         state_json TEXT NOT NULL DEFAULT '{}',
         routing_json TEXT NOT NULL DEFAULT '{}',
         created_at TEXT NOT NULL,
-        updated_at TEXT NOT NULL
+        updated_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 0
     )
     """,
     "CREATE INDEX IF NOT EXISTS idx_background_jobs_status ON background_jobs(status, updated_at)",
@@ -282,6 +287,7 @@ ADDITIVE_MIGRATIONS = [
     # symptoms we hit earlier).
     ("tasks", "claimed_by",        "ALTER TABLE tasks ADD COLUMN claimed_by TEXT"),
     ("tasks", "claim_expires_at",  "ALTER TABLE tasks ADD COLUMN claim_expires_at TEXT"),
+    ("tasks", "revision",          "ALTER TABLE tasks ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"),
     # step_id (docs/archive/UI_UX_AUDIT.md Phase 14e) landed one commit after
     # llm_calls itself - a database created between those two commits (this
     # machine's own included) has the table but not the column yet.
@@ -298,9 +304,14 @@ ADDITIVE_MIGRATIONS = [
     ("approval_grants", "revoked",           "ALTER TABLE approval_grants ADD COLUMN revoked INTEGER NOT NULL DEFAULT 0"),
     # Plans gained days on steps, notes and check-ins after they first shipped.
     ("project_plan_steps", "due",              "ALTER TABLE project_plan_steps ADD COLUMN due TEXT"),
+    ("project_plan_steps", "choice_only",      "ALTER TABLE project_plan_steps ADD COLUMN choice_only INTEGER NOT NULL DEFAULT 0"),
+    ("project_plan_steps", "revision",         "ALTER TABLE project_plan_steps ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"),
+    ("project_plans", "revision",              "ALTER TABLE project_plans ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"),
     ("project_plans", "notes",                 "ALTER TABLE project_plans ADD COLUMN notes TEXT NOT NULL DEFAULT ''"),
     ("project_plans", "check_in_days",         "ALTER TABLE project_plans ADD COLUMN check_in_days INTEGER NOT NULL DEFAULT 0"),
     ("project_plans", "last_check_in_at",      "ALTER TABLE project_plans ADD COLUMN last_check_in_at TEXT"),
+    # Controls and unit completion must compare a durable generation, including pause/resume ABA races.
+    ("background_jobs", "revision", "ALTER TABLE background_jobs ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"),
 ]
 
 

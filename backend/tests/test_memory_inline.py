@@ -1,12 +1,34 @@
 """Inline checks for the placeholder-path scrubber used by memory."""
-from agent_control.channels.memory import DEFAULT_SUMMARY, _strip_placeholder_paths, memory_context
-from agent_control.schemas import MemoryFact, MemorySource
+from agent_control.channels.memory import DEFAULT_SUMMARY, _strip_placeholder_paths, memory_context, recent_artifacts_context
+from agent_control.schemas import Artifact, ArtifactType, ChannelType, MemoryFact, MemorySource
+from helpers import make_repos
 
 
 def test_strips_me_path_keeps_basename():
     assert _strip_placeholder_paths(
         r"found and read C:\Users\me\Desktop\resume.pdf today"
     ) == "found and read resume.pdf today"
+
+
+def test_recent_artifacts_keep_exact_paths_and_stay_in_their_conversation(tmp_path):
+    repos, _ = make_repos(tmp_path)
+    first = repos.conversations.get_or_create(ChannelType.TELEGRAM, "first")
+    other = repos.conversations.get_or_create(ChannelType.TELEGRAM, "other")
+    task = repos.tasks.create("make documents", conversation_id=first)
+    other_task = repos.tasks.create("other documents", conversation_id=other)
+    old_path = r"C:\Some Folder\first\report.docx"
+    new_path = r"C:\Some Folder\second\report.docx"
+    repos.artifacts.create(Artifact(task_id=task.id, type=ArtifactType.DOCUMENT, uri=old_path))
+    newest = repos.artifacts.create(Artifact(task_id=task.id, type=ArtifactType.DOCUMENT, uri=new_path))
+    repos.artifacts.create(Artifact(task_id=other_task.id, type=ArtifactType.DOCUMENT, uri=r"C:\Private\secret.docx"))
+
+    context = recent_artifacts_context(repos, first)
+
+    assert old_path in context and new_path in context and newest.id in context
+    assert context.index(new_path) < context.index(old_path)
+    assert r"C:\Private\secret.docx" not in context
+    assert "if the intended artifact is ambiguous, ask" in context
+    assert "paths may no longer exist" in context
 
 
 def test_strips_forward_slash_user_path():

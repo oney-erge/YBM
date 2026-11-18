@@ -317,13 +317,103 @@ async def test_a_yes_becomes_a_claude_code_call_that_carries_the_request_and_wha
 
 
 @pytest.mark.asyncio
-async def test_a_no_stops_the_offer_for_good_and_tells_the_model_to_answer_with_what_it_has(tmp_path):
+async def test_a_no_stops_the_offer_and_preserves_a_bounded_local_attempt(tmp_path):
     repos, audit = make_repos(tmp_path)
     task = _answered(repos, _task_with_history(repos, "Find my annual thing", [_empty("budget")]), "no")
     worker = _worker(repos, audit, _Seen([]))
     result = worker._ladder_step(task, list(task.metadata["operator_history"]), "step_1")
     assert result.status == TaskStatus.RUNNING and result.metadata["claude_code_offer"]["state"] == "declined"
     assert result.metadata["operator_history"][-1]["hint_id"] == "declined"
+    assert "materially different local approach" in result.metadata["operator_history"][-1]["error"]
+    assert result.metadata["local_recovery_step_limit"] == worker.operator_max_steps + 3
+
+
+def test_proactive_recovery_offers_one_local_alternative_within_the_existing_budget(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    history = [_read_failed() for _ in range(3)]
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    worker = _worker(repos, audit, _Seen([]))
+    result = worker._offer_finish_or_block(task, history, called="filesystem.manage:read_file", blocked_message="stuck")
+    marker = result.metadata["operator_history"][-1]
+    assert marker["hint_id"] == "alternative_after_repeat" and "materially different" in marker["error"]
+    assert "local_recovery_step_limit" not in result.metadata
+    again = worker._offer_finish_or_block(result, result.metadata["operator_history"], called="filesystem.manage:read_file", blocked_message="stuck")
+    assert again.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+
+
+def test_proactive_recovery_does_not_extend_an_exhausted_budget(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    history = [_read_failed() for _ in range(3)]
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    worker = _worker(repos, audit, _Seen([]))
+    worker.operator_max_steps = 3
+    result = worker._offer_finish_or_block(task, history, called="filesystem.manage:read_file", blocked_message="stuck")
+    assert result.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+
+
+@pytest.mark.asyncio
+async def test_proactive_recovery_can_run_a_different_permitted_tool(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    history = [{"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"} for _ in range(3)]
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    operator = _Seen([OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
+                                       tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW)])
+    worker = _worker(repos, audit, operator)
+    recovered = worker._offer_finish_or_block(task, history, called="other.tool", blocked_message="stuck")
+    result = await worker.process_task(recovered.id)
+    assert any(entry.get("tool_name") == "filesystem.manage" for entry in result.metadata["operator_history"])
+    assert operator.finish_only_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_declined_offer_after_budget_allows_a_different_local_call(tmp_path, monkeypatch):
+    repos, audit = make_repos(tmp_path)
+    prior = {"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"}
+    stuck = {"tool_name": "_stuck_check", "status": "stuck_refused", "error": "budget"}
+    task = _answered(repos, _task_with_history(repos, "Investigate a device", [prior, stuck]), "no")
+    operator = _Seen([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW),
+    ])
+    worker = _worker(repos, audit, operator)
+    worker.operator_max_steps = 1
+    monkeypatch.setattr(worker, "_claude_code_ready", lambda: True)
+
+    continued = await worker.process_task(task.id)
+    assert continued.metadata["claude_code_offer"]["state"] == "declined"
+    assert continued.metadata["local_recovery_step_limit"] == 4
+    after_call = await worker.process_task(task.id)
+
+    assert after_call.status == TaskStatus.RUNNING
+    assert any(entry.get("tool_name") == "filesystem.manage" for entry in after_call.metadata["operator_history"])
+    assert operator.finish_only_calls == [False]
+    assert not any(entry.get("tool_name") == "coding.agent" for entry in after_call.metadata["operator_history"])
+
+
+@pytest.mark.asyncio
+async def test_local_continuation_still_has_a_bounded_budget(tmp_path, monkeypatch):
+    repos, audit = make_repos(tmp_path)
+    prior = {"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"}
+    old_stop = {"tool_name": "_stuck_check", "status": "stuck_refused", "error": "budget"}
+    task = _answered(repos, _task_with_history(repos, "Investigate a device", [prior, old_stop]), "no")
+    operator = _Seen([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW),
+    ])
+    worker = _worker(repos, audit, operator)
+    worker.operator_max_steps = 1
+    monkeypatch.setattr(worker, "_claude_code_ready", lambda: True)
+    continued = await worker.process_task(task.id)
+    history = list(continued.metadata["operator_history"])
+    history.extend({"tool_name": f"local.{i}", "input": {}, "status": "failed"} for i in range(3))
+    repos.tasks.update_metadata(task.id, {**continued.metadata, "operator_history": history}, TaskStatus.RUNNING)
+
+    offered = await worker.process_task(task.id)
+    assert offered.metadata["operator_history"][-1]["status"] == "stuck"
+    refused = await worker.process_task(task.id)
+    assert refused.metadata["operator_history"][-1]["status"] == "stuck_refused"
+    blocked = await worker.process_task(task.id)
+    assert blocked.status == TaskStatus.BLOCKED
+    assert blocked.metadata["claude_code_offer"]["state"] == "declined"
+    assert not any(entry.get("tool_name") == "filesystem.manage" for entry in blocked.metadata["operator_history"])
 
 
 @pytest.mark.asyncio

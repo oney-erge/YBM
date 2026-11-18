@@ -39,6 +39,7 @@ from agent_control.orchestration.delegation import DelegationStage
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.external import ExternalStage
 from agent_control.orchestration.finishing import (
+    current_recovery_history,
     finish_named_as_a_tool,
     finish_offer_pending,
     fulfilled_step_budget_answer,
@@ -180,6 +181,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         task_budget_seconds: float | None = None,
         operator: OperatorLoopService | None = None,
         operator_max_steps: int = 12,
+        initiative_level: int = 3,
         auto_close_blocked_hours: int = 0,
         auditor: AuditorService | None = None,
         persist_llm_calls: bool = True,
@@ -235,6 +237,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         # execution path. See orchestration/operator.py.
         self.operator = operator
         self.operator_max_steps = operator_max_steps
+        self.initiative_level = initiative_level
         self.auto_close_blocked_hours = auto_close_blocked_hours
         self._last_stale_sweep: float | None = None  # the first poll sweeps (monotonic time can be small on a fresh boot)
         # The Auditor (docs/archive/HISTORY.md P3 §2.1) - grounds a `done` decision
@@ -589,6 +592,10 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
             return latest
 
         history: list[dict[str, Any]] = list(latest.metadata.get("operator_history") or [])
+        if "initiative_level" not in latest.metadata:
+            latest = self.repositories.tasks.update_metadata(
+                latest.id, {**latest.metadata, "initiative_level": self.initiative_level}
+            )
         # A task is RUNNING while this loop works on it. It is not yet when the loop starts, and it is not again after a question was
         # answered (clarification.resume_clarifying_task puts it back to RECEIVED, with the loop flag still set): a call is only
         # admitted for a RUNNING task, so the first call after an answer was never run and the model was asked again, every poll.
@@ -601,16 +608,33 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
             self.audit.task_state_changed("worker", task.id, task.status, TaskStatus.RUNNING)
 
         tool_call_count = steps_used(history)
+        pending_offer = latest.metadata.get("claude_code_offer")
+        if (
+            isinstance(pending_offer, dict)
+            and pending_offer.get("state") == "pending"
+            and pending_offer.get("question")
+            and latest.metadata.get("answered_clarifying_question") == pending_offer.get("question")
+            and not is_yes(latest.metadata.get("clarification_answer"))
+        ):
+            # Process the refusal before the budget gate: the offer itself can be
+            # made after the ordinary budget is exhausted.
+            continued = self._ladder_step(latest, history, new_id("step"))
+            if isinstance(continued, TaskRecord):
+                return continued
         fulfillment_repair_count = sum(
             1 for entry in history if entry.get("tool_name") == CHECK_ENTRY_FULFILLMENT
         )
-        budget_reached = tool_call_count >= self.operator_max_steps + fulfillment_repair_count
+        budget_limit = max(
+            self.operator_max_steps + fulfillment_repair_count,
+            int(latest.metadata.get("local_recovery_step_limit") or 0),
+        )
+        budget_reached = tool_call_count >= budget_limit
         offer_pending = finish_offer_pending(history)
         if budget_reached and not offer_pending:
             fulfillment = validate_fulfillment(latest)
             repair_possible = bool(fulfillment.first_gap) and fulfillment_repair_count < 2
             if not repair_possible and not any(
-                isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history
+                isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in current_recovery_history(history)
             ):
                 # Out of steps with nothing left to repair. Ending now gave the user a canned line ("Completed the requested
                 # work in <folder>") when the work was done and "Blocked" when it was not, although the model usually knows
@@ -623,7 +647,8 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     "error": (
                         "The step budget is used up. Answer now with what you have: state what you found, and say plainly "
                         "anything you could not do (action done), or ask the user one question (action ask_user). "
-                        "Do not call another tool."
+                        "If the objective remains unfinished, suggest an evidence-based next action or available alternative; "
+                        "label an untested idea as such. Do not call another tool."
                     ),
                 })
                 return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})

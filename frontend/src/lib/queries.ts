@@ -140,8 +140,8 @@ export function useChatMessages(projectId?: string) {
 export function useSendChatMessage() {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ text, attachmentIds, projectId }: { text: string; attachmentIds?: string[]; projectId?: string }) =>
-      sendChatMessage(text, attachmentIds, projectId),
+    mutationFn: ({ text, attachmentIds, projectId, replyToTaskId, questionToken }: { text: string; attachmentIds?: string[]; projectId?: string; replyToTaskId?: string; questionToken?: string }) =>
+      sendChatMessage(text, attachmentIds, projectId, replyToTaskId, questionToken),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
     },

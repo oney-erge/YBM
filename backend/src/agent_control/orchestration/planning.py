@@ -7,6 +7,8 @@ from typing import Any
 
 from agent_control.orchestration import planner
 from agent_control.orchestration.asking import users_own_words
+from agent_control.orchestration.initiative import initiative_guidance
+from agent_control.orchestration.job_start import JobPageLimitExceeded
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_STRATEGY,
 )
@@ -141,9 +143,14 @@ class PlanningStage:
             return None
         try:
             call = await self.job_stage(task)
-        except Exception:  # noqa: BLE001 - the Operator loop is the fallback, as with the planner stage
-            logger.warning("job start failed for %s; the Operator takes the request", task.id, exc_info=True)
-            return None
+        except JobPageLimitExceeded as exc:
+            return OperatorDecision(action=OperatorAction.BLOCKED, reason=f"{exc} Please choose a supported size; no research job was started.")
+        except Exception as exc:  # noqa: BLE001 - an unknown research action must not become a different action
+            logger.warning("job intent unavailable for %s: %s", task.id, type(exc).__name__)
+            return OperatorDecision(
+                action=OperatorAction.BLOCKED,
+                reason="I could not determine the research action, so I did not issue a research command for this request. Check its status and try again.",
+            )
         if call is None:  # about something else: the Operator takes it
             self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
             return None
@@ -201,7 +208,7 @@ class PlanningStage:
             base = scope_catalog_text(
                 base, scope_for_task(metadata), intent.get("route") if isinstance(intent, dict) else None
             )
-        return base + extra
+        return initiative_guidance(metadata.get("initiative_level") if metadata else None) + base + extra
 
     @staticmethod
     def _project_planner_context(metadata: dict[str, Any]) -> str:

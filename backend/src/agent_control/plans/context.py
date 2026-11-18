@@ -33,8 +33,9 @@ def open_plan_note(plans: PlanRepository, conversation_id: str | None) -> str:
     if plan.check_in_days:
         lines.append(f"You check in with the user every {plan.check_in_days} days.")
     lines.append(
-        "If the user is talking about this plan (starting it, changing it, saying a step is done, asking how it is going), use plan.manage: "
-        "show, update_step, add_step or set_status. If it slips or moves, shift_dates moves every unfinished step; if they ask to be checked "
-        "on, set_check_in; a fact they give about the project goes in with add_note. A new, unrelated request is not about the plan."
+        "If the user is talking about this plan, use plan.manage to show it, edit an unstarted step, add a step or change the plan status. "
+        "The runner records completion; if a user-owned step is waiting, ask the user to reply Done on that step rather than declaring it done. "
+        "If it slips or moves, shift_dates moves every unfinished step; if they ask to be checked on, set_check_in; "
+        "a fact they give about the project goes in with add_note. A new, unrelated request is not about the plan."
     )
     return "\n".join(lines)

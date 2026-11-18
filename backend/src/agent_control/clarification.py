@@ -11,8 +11,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import json
+import re
+from typing import Literal
 
-from agent_control.channels.quick_answers import clarifying_options
+from agent_control.plans.model import PlanStatus, StepOwner, StepStatus
 from agent_control.plans.runner import is_skip
 from agent_control.schemas import AuditEventType, TaskRecord, TaskStatus, utc_now
 from agent_control.storage.audit import AuditLogger
@@ -25,6 +28,70 @@ CANCEL_WORDS = {"cancel", "stop", "drop it", "never mind", "nevermind", "forget 
 # a question asked weeks ago turned a brand-new request into its "answer" and
 # the bot resumed the old task instead.
 CLARIFICATION_MAX_AGE = timedelta(hours=24)
+_DELEGATE_CHOICE = re.compile(
+    r"^(?:please\s+)?(?:(?:(?:can|could|would)\s+)?you\s+(?:choose|decide|pick)(?:\s+(?:it|one|for\s+me))?|"
+    r"(?:choose|decide|pick)(?:\s+(?:it|one))?\s+(?:for\s+me|yourself)|"
+    r"(?:it(?:'s|\s+is)|that(?:'s|\s+is))\s+up\s+to\s+you|your\s+choice|use\s+your\s+(?:judg(?:e)?ment|discretion))\s*[.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def delegates_choice(text: str) -> bool:
+    """Recognize an explicit handoff of a pending choice, not an unrelated request."""
+    return bool(_DELEGATE_CHOICE.fullmatch(" ".join((text or "").split())))
+
+
+def defers_plan_step(text: str) -> bool:
+    """A short deferral leaves a user-owned step waiting rather than skipping it."""
+    value = " ".join((text or "").casefold().split()).rstrip(".!?")
+    return value in {"no", "no thanks", "not yet", "not now", "not now, later", "i need more time", "cancel", "stop"}
+
+
+def explicit_question_answer(task: TaskRecord, text: str) -> bool:
+    """Replies with an unambiguous built-in meaning need no model call."""
+    from agent_control.channels.quick_answers import clarifying_options
+
+    answer = " ".join((text or "").casefold().split()).strip(".!?")
+    options = {" ".join(option.casefold().split()).strip(".!?") for option in clarifying_options(task)}
+    if answer in options or answer in CANCEL_WORDS or answer in {"yes", "yes please", "no thanks", "no thank you"}:
+        return True
+    if delegates_choice(text):
+        return True
+    if task.metadata.get("plan_id") and defers_plan_step(text):
+        return True
+    offer = task.metadata.get("claude_code_offer")
+    return bool(isinstance(offer, dict) and offer.get("state") == "pending" and re.fullmatch(
+        r"no[, ]+\s*(?:(?:i want )?you (?:to )?(?:do (?:it|this)|keep trying|continue)|"
+        r"keep trying(?: locally)?|continue(?: locally)?|try again|do it yourself|use (?:another|a different) (?:method|approach|route))",
+        answer,
+    ))
+
+
+async def assess_unaddressed_reply(task: TaskRecord, text: str, decision: object | None) -> Literal["reply", "new", "uncertain"]:
+    """Separate a free-form answer from a new request; unavailable or weak opinions remain unresolved."""
+    if explicit_question_answer(task, text):
+        return "reply"
+    if decision is None or getattr(decision, "mode", "off") not in {"cascade", "decision"}:
+        return "uncertain"
+    from agent_control.llm.decision import DecisionModelClient
+
+    state = json.dumps({"pending_task": task.objective[:1000],
+                        "pending_question": str(task.metadata.get("clarifying_question") or "")[:1000],
+                        "user_message": text[:2000]}, ensure_ascii=False)
+    try:
+        answers = await DecisionModelClient(decision).yes_no(state, {
+            "reply": "Is the user message an answer or instruction about the pending question?",
+            "unrelated": "Is the user message a new unrelated request?",
+        })
+        reply, unrelated = answers.get("reply"), answers.get("unrelated")
+        if reply is not None and unrelated is not None:
+            if reply >= 0.9 and unrelated <= 0.1:
+                return "reply"
+            if unrelated >= 0.9 and reply <= 0.1:
+                return "new"
+    except Exception:  # noqa: BLE001 - an unavailable classifier cannot safely choose either target
+        pass
+    return "uncertain"
 
 
 def objective_with_answer(objective: str, question: str | None, answer: str) -> str:
@@ -59,37 +126,64 @@ class ClarificationResumeResult:
     cancelled: bool
     #: The question was a step of a plan (plans/runner.py), answered or skipped, not a task that goes on working.
     plan_step: bool = False
+    accepted: bool = True
+    delegated: bool = False
+    reason: str | None = None
 
 
-def is_plan_step(task: TaskRecord) -> bool:
-    return bool(task.metadata.get("plan_step_id"))
+def _same_conversation(task: TaskRecord, conversation_id: str | None, chat_id: str | None) -> bool:
+    """Use the conversation identity when known; chat IDs alone can overlap across channels."""
+    if conversation_id is not None:
+        if task.conversation_id is not None:
+            return task.conversation_id == conversation_id
+        channel = task.metadata.get("source_channel")
+        return bool(channel and chat_id is not None and conversation_id == f"conv_{channel}_{chat_id}"
+                    and str(task.metadata.get("source_chat_id")) == str(chat_id))
+    return chat_id is not None and str(task.metadata.get("source_chat_id")) == str(chat_id)
 
 
-def find_clarifying_task(
+def is_user_plan_step(repositories: Repositories, task: TaskRecord) -> bool:
+    """Only a plan step actually waiting for the person is completed by their reply.
+
+    An assistant-owned step may itself ask a question. Its answer belongs to the
+    running task and must not be mistaken for a report that the step is done.
+    """
+    plan_id = task.metadata.get("plan_id")
+    step_id = task.metadata.get("plan_step_id")
+    plan = repositories.plans.get(str(plan_id)) if plan_id and step_id else None
+    return bool(plan and any(
+        step.id == step_id and step.task_id == task.id
+        and step.owner != StepOwner.YBM and step.status == StepStatus.WAITING
+        for step in plan.steps
+    ))
+
+
+def find_clarifying_tasks(
     repositories: Repositories,
     *,
     conversation_id: str | None,
     chat_id: str | None,
     max_age: timedelta = CLARIFICATION_MAX_AGE,
     now: datetime | None = None,
-) -> TaskRecord | None:
-    """The task in this conversation waiting on an answer, if its question is recent."""
+) -> list[TaskRecord]:
+    """Recent ordinary questions belonging to this conversation."""
     cutoff = (now or utc_now()) - max_age
-    return next(
-        (
-            candidate
-            for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=20)
+    return [
+            candidate for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=200)
             # A step of a plan that waits for the user is not an open question for whatever they say next: it waits for days, and is
             # answered by its own buttons or by the words it offered (find_plan_step_answer), so it never takes an unrelated message.
-            if not is_plan_step(candidate)
+            if not is_user_plan_step(repositories, candidate)
             and candidate.updated_at >= cutoff
-            and (
-                (conversation_id is not None and candidate.conversation_id == conversation_id)
-                or (chat_id is not None and str(candidate.metadata.get("source_chat_id")) == str(chat_id))
-            )
-        ),
-        None,
-    )
+            and _same_conversation(candidate, conversation_id, chat_id)
+    ]
+
+
+def find_clarifying_task(
+    repositories: Repositories, *, conversation_id: str | None, chat_id: str | None,
+    max_age: timedelta = CLARIFICATION_MAX_AGE, now: datetime | None = None,
+) -> TaskRecord | None:
+    candidates = find_clarifying_tasks(repositories, conversation_id=conversation_id, chat_id=chat_id, max_age=max_age, now=now)
+    return candidates[0] if len(candidates) == 1 else None
 
 
 def expire_stale_clarifications(
@@ -108,9 +202,13 @@ def expire_stale_clarifications(
     cutoff = (now or utc_now()) - max_age
     expired: list[TaskRecord] = []
     for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=200):
-        if candidate.updated_at >= cutoff or is_plan_step(candidate):
+        if candidate.updated_at >= cutoff or is_user_plan_step(repositories, candidate):
             continue
-        expired.append(repositories.tasks.update_status(candidate.id, TaskStatus.CANCELLED))
+        updated = repositories.tasks.answer_clarification(candidate, objective=candidate.objective, metadata=candidate.metadata,
+                                                          status=TaskStatus.CANCELLED, user_plan_step=False)
+        if updated is None:
+            continue
+        expired.append(updated)
         audit.append(
             AuditEventType.TASK_STATE_CHANGED,
             actor="system",
@@ -124,26 +222,48 @@ def expire_stale_clarifications(
     return expired
 
 
-def find_plan_step_answer(
+def find_plan_step_answers(
     repositories: Repositories, *, conversation_id: str | None, chat_id: str | None, text: str
-) -> TaskRecord | None:
+) -> list[TaskRecord]:
     """The open step of a plan in this chat that `text` answers: exactly one of the words its buttons offer, or "skip".
 
     A step waits for the user for as long as the thing it asks for takes, so it cannot take whatever they say next as its answer the way a
     question about one task does. What it takes is what a tap on its buttons would have sent.
     """
-    wanted = " ".join((text or "").lower().split())
+    # Import after module initialization: channels.base also uses this module.
+    from agent_control.channels.quick_answers import clarifying_options
+
+    wanted = " ".join((text or "").lower().split()).rstrip(".!?")
     if not wanted:
-        return None
-    for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=50):
-        if not is_plan_step(candidate):
+        return []
+    answers = []
+    for candidate in repositories.tasks.list_by_statuses([TaskStatus.CLARIFYING], limit=200):
+        if not is_user_plan_step(repositories, candidate):
             continue
-        same_chat = (conversation_id is not None and candidate.conversation_id == conversation_id) or (
-            chat_id is not None and str(candidate.metadata.get("source_chat_id")) == str(chat_id)
-        )
-        if same_chat and (is_skip(wanted) or wanted in {option.lower() for option in clarifying_options(candidate)}):
-            return candidate
-    return None
+        same_chat = _same_conversation(candidate, conversation_id, chat_id)
+        if same_chat and (is_skip(wanted) or delegates_choice(wanted) or defers_plan_step(wanted)
+                          or wanted in {option.lower().rstrip(".!?") for option in clarifying_options(candidate)}):
+            answers.append(candidate)
+    return answers
+
+
+def find_plan_step_answer(
+    repositories: Repositories, *, conversation_id: str | None, chat_id: str | None, text: str,
+) -> TaskRecord | None:
+    answers = find_plan_step_answers(repositories, conversation_id=conversation_id, chat_id=chat_id, text=text)
+    return answers[0] if len(answers) == 1 else None
+
+
+def reply_candidates(repositories: Repositories, *, conversation_id: str | None, chat_id: str | None, text: str) -> list[TaskRecord]:
+    """All plausible targets; never choose arbitrarily when more than one is open."""
+    plans = find_plan_step_answers(repositories, conversation_id=conversation_id, chat_id=chat_id, text=text)
+    ordinary = find_clarifying_tasks(repositories, conversation_id=conversation_id, chat_id=chat_id)
+    return list({task.id: task for task in [*plans, *ordinary]}.values())
+
+
+def explicit_reply_task(repositories: Repositories, *, task_id: str, conversation_id: str | None, chat_id: str | None) -> TaskRecord | None:
+    task = repositories.tasks.get(task_id)
+    return task if task is not None and task.status == TaskStatus.CLARIFYING and _same_conversation(task, conversation_id, chat_id) else None
 
 
 def resume_clarifying_task(
@@ -158,10 +278,20 @@ def resume_clarifying_task(
     correlation_id: str | None = None,
 ) -> ClarificationResumeResult:
     """Route a reply to the task waiting on a question instead of spawning a new task."""
-    if is_plan_step(task):
+    if is_user_plan_step(repositories, task):
+        if delegates_choice(text):
+            return _delegate_plan_step(repositories, audit, task, text=text, actor=actor, message_id=message_id,
+                                       received_at=received_at, correlation_id=correlation_id)
         return _answer_plan_step(repositories, audit, task, text=text, actor=actor, correlation_id=correlation_id)
-    if text.lower() in CANCEL_WORDS:
-        repositories.tasks.update_status(task.id, TaskStatus.CANCELLED)
+    offer = task.metadata.get("claude_code_offer")
+    declining_offer = isinstance(offer, dict) and offer.get("state") == "pending" and text.strip().lower() == "no"
+    from agent_control.channels.quick_answers import clarifying_options
+    no_is_offered_answer = text.strip().casefold() == "no" and any(option.casefold() == "no" for option in clarifying_options(task))
+    if text.lower() in CANCEL_WORDS and not declining_offer and not no_is_offered_answer:
+        updated = repositories.tasks.answer_clarification(task, objective=task.objective, metadata=task.metadata,
+                                                          status=TaskStatus.CANCELLED, user_plan_step=False)
+        if updated is None:
+            return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=False, accepted=False)
         audit.append(
             AuditEventType.TASK_STATE_CHANGED,
             actor=actor,
@@ -169,13 +299,11 @@ def resume_clarifying_task(
             correlation_id=correlation_id,
             payload={"reason": "clarification_cancelled", "status": TaskStatus.CANCELLED.value},
         )
-        updated = repositories.tasks.get(task.id)
-        return ClarificationResumeResult(task=updated or task, cancelled=True)
+        return ClarificationResumeResult(task=updated, cancelled=True)
 
     # Fold the answer into the objective so replanning sees it, and reset
     # the attempt counters - the user's input makes this a fresh attempt.
     objective = objective_after_answer(task, text)
-    repositories.tasks.update_objective(task.id, objective)
     answers = list(task.metadata.get("clarification_answers") or [])
     answers.append(
         {
@@ -203,7 +331,10 @@ def resume_clarifying_task(
         "fulfillment_retry_count": 0,
     }
     metadata.pop("clarifying_question", None)
-    updated = repositories.tasks.update_metadata(task.id, metadata, TaskStatus.RECEIVED)
+    updated = repositories.tasks.answer_clarification(task, objective=objective, metadata=metadata,
+                                                      status=TaskStatus.RECEIVED, user_plan_step=False)
+    if updated is None:
+        return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=False, accepted=False)
     audit.append(
         AuditEventType.TASK_STATE_CHANGED,
         actor=actor,
@@ -214,23 +345,72 @@ def resume_clarifying_task(
     return ClarificationResumeResult(task=updated, cancelled=False)
 
 
+def _delegate_plan_step(
+    repositories: Repositories, audit: AuditLogger, task: TaskRecord, *, text: str, actor: str,
+    message_id: str, received_at: datetime, correlation_id: str | None,
+) -> ClarificationResumeResult:
+    plan = repositories.plans.get(str(task.metadata.get("plan_id") or ""))
+    step = next((item for item in plan.steps if item.id == task.metadata.get("plan_step_id")), None) if plan else None
+    if plan is None or step is None:
+        return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=False, accepted=False)
+    if plan.status != PlanStatus.ACTIVE:
+        return ClarificationResumeResult(task=task, cancelled=False, accepted=False,
+                                         reason="The plan is paused. Resume it before delegating this step.")
+    objective = (f"Choose an option for this plan step: {step.title}\n"
+                 f"Context: {step.detail}\nPlan goal: {plan.goal}\n"
+                 f"The user delegated the choice: {text}. Explain the choice and any remaining prerequisites. "
+                 "The choice does not itself complete other parts of the step. Follow the existing approval policy.")
+    answers = list(task.metadata.get("clarification_answers") or [])
+    answers.append({"question": task.metadata.get("clarifying_question"), "answer": text, "message_id": message_id,
+                    "created_at": received_at.isoformat()})
+    metadata = {**task.metadata, "clarification_answer": text, "clarification_answers": answers,
+                "answered_clarifying_question": task.metadata.get("clarifying_question"), "plan_delegated_from_owner": step.owner.value,
+                "delegated_choice_contract": {"title": step.title, "detail": step.detail, "needs": step.needs,
+                                              "choice_only": step.choice_only},
+                "original_message_text": f"Choose an option for: {step.title}"}
+    metadata.pop("clarifying_question", None)
+    metadata.pop("clarifying_options", None)
+    updated = repositories.plans.delegate_waiting_step(plan, step, task, objective=objective, metadata=metadata)
+    if updated is None:
+        return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=False, accepted=False)
+    audit.append(AuditEventType.TASK_STATE_CHANGED, actor=actor, task_id=task.id, correlation_id=correlation_id,
+                 payload={"reason": "plan_step_delegated", "previous_owner": step.owner.value})
+    return ClarificationResumeResult(task=updated, cancelled=False, plan_step=True, delegated=True)
+
+
 def _answer_plan_step(
     repositories: Repositories, audit: AuditLogger, task: TaskRecord, *, text: str, actor: str, correlation_id: str | None
 ) -> ClarificationResumeResult:
-    """The user's answer to a step of a plan that is theirs: skip leaves it out, anything else is that step done.
+    """Accept explicit completion or skip for a step that belongs to the user.
 
     The task ends here (nothing is left for the Operator to do with it) and the plan runner reads how it ended on its next pass: completed is
     a step done, with the answer kept as its result, and cancelled is a step skipped.
     """
-    skipped = is_skip(text) or text.lower() in CANCEL_WORDS
+    skipped = is_skip(text)
+    answer_text = " ".join((text or "").casefold().split()).rstrip(".!?")
+    completion_reports = {"done", "finished", "completed", "ready", "it's ready", "it is ready"}
+    if not skipped and answer_text not in completion_reports:
+        if answer_text in {"cancel", "stop"}:
+            return ClarificationResumeResult(task=task, cancelled=False, plan_step=True, accepted=False,
+                                             reason="The step is still waiting. Use Pause or Cancel on the plan to stop it, "
+                                                    "or say Skip to leave out only this step.")
+        return ClarificationResumeResult(task=task, cancelled=False, plan_step=True, accepted=False,
+                                         reason="I have not marked this step done. Reply Done when it is complete, "
+                                                "or say Skip to leave it out. Say 'you choose' to delegate a choice.")
     if skipped:
-        repositories.tasks.update_status(task.id, TaskStatus.CANCELLED)
+        metadata, status = task.metadata, TaskStatus.CANCELLED
     else:
-        metadata = {**task.metadata, "plan_step_answer": text, "synthesized_answer": text}
+        prior_choice = str(task.metadata.get("delegated_choice_result") or "")
+        answer = f"{text}\nChoice: {prior_choice}" if prior_choice else text
+        metadata = {**task.metadata, "plan_step_answer": answer, "synthesized_answer": answer}
         metadata.pop("clarifying_question", None)
-        repositories.tasks.update_metadata(task.id, metadata, TaskStatus.COMPLETED)
+        status = TaskStatus.COMPLETED
+    updated = repositories.tasks.answer_clarification(task, objective=task.objective, metadata=metadata,
+                                                      status=status, user_plan_step=True)
+    if updated is None:
+        return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=False, plan_step=True, accepted=False)
     audit.append(
         AuditEventType.TASK_STATE_CHANGED, actor=actor, task_id=task.id, correlation_id=correlation_id,
         payload={"reason": "plan_step_skipped" if skipped else "plan_step_answered", "answer": text[:400]},
     )
-    return ClarificationResumeResult(task=repositories.tasks.get(task.id) or task, cancelled=skipped, plan_step=True)
+    return ClarificationResumeResult(task=updated, cancelled=skipped, plan_step=True)

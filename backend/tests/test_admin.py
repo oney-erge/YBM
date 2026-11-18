@@ -2893,13 +2893,14 @@ def test_admin_chat_send_resumes_a_clarifying_task_instead_of_spawning_a_new_one
     closed for that channel."""
     client, repositories = _chat_client(monkeypatch, tmp_path)
     original = client.post("/admin/api/chat/messages", json={"text": "organize my files"}).json()["task"]
-    repositories.tasks.update_metadata(
+    waiting = repositories.tasks.update_metadata(
         original["id"],
         {**original["metadata"], "clarifying_question": "Which folder?"},
         TaskStatus.CLARIFYING,
     )
-
-    response = client.post("/admin/api/chat/messages", json={"text": "the Downloads folder"})
+    from agent_control.channels.quick_answers import clarification_token
+    response = client.post("/admin/api/chat/messages", json={"text": "the Downloads folder", "reply_to_task_id": waiting.id,
+                                                               "question_token": clarification_token(waiting)})
 
     assert response.status_code == 200
     body = response.json()["task"]
@@ -2911,17 +2912,91 @@ def test_admin_chat_send_resumes_a_clarifying_task_instead_of_spawning_a_new_one
     assert len(listed) == 1
 
 
+def test_admin_chat_can_answer_a_waiting_user_plan_step(monkeypatch, tmp_path) -> None:
+    from agent_control.plans.model import Plan, PlanStatus, PlanStep, StepOwner, StepStatus
+    from agent_control.schemas import ChannelType
+
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    conversation = repositories.conversations.get_or_create(ChannelType.WEB, "local")
+    task = repositories.tasks.create("Choose a drive", conversation_id=conversation,
+                                     metadata={"clarifying_question": "Is the drive ready?", "clarifying_options": ["Done", "Skip this step"]})
+    step = PlanStep(position=1, title="Choose a drive", owner=StepOwner.USER, status=StepStatus.WAITING, task_id=task.id)
+    plan = repositories.plans.create(Plan(goal="Back up photos", status=PlanStatus.ACTIVE, conversation_id=conversation, steps=[step]))
+    repositories.tasks.update_metadata(task.id, {**task.metadata, "plan_id": plan.id, "plan_step_id": plan.steps[0].id}, TaskStatus.CLARIFYING)
+    response = client.post("/admin/api/chat/messages", json={"text": "Done"})
+    assert response.status_code == 200
+    assert response.json()["task"]["id"] == task.id and response.json()["task"]["status"] == "completed"
+    assert repositories.tasks.get(task.id).metadata["plan_step_answer"] == "Done"
+
+
+def test_admin_reply_targets_the_shown_question_when_multiple_tasks_are_waiting(monkeypatch, tmp_path) -> None:
+    from agent_control.schemas import ChannelType
+
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    conversation = repositories.conversations.get_or_create(ChannelType.WEB, "local")
+    tasks = []
+    for question in ("Which drive?", "Which format?"):
+        task = repositories.tasks.create(question, conversation_id=conversation, metadata={"clarifying_question": question})
+        tasks.append(repositories.tasks.update_status(task.id, TaskStatus.CLARIFYING))
+    rows = client.get("/admin/api/chat/messages").json()["tasks"]
+    token = next(row["clarification_token"] for row in rows if row["id"] == tasks[0].id)
+    assert client.post("/admin/api/chat/messages", json={"text": "The first one"}).status_code == 409
+    assert all(repositories.tasks.get(task.id).status == TaskStatus.CLARIFYING for task in tasks)
+    response = client.post("/admin/api/chat/messages", json={"text": "The first one", "reply_to_task_id": tasks[0].id, "question_token": token})
+    assert response.status_code == 200 and response.json()["task"]["id"] == tasks[0].id
+    assert repositories.tasks.get(tasks[1].id).status == TaskStatus.CLARIFYING
+    assert client.post("/admin/api/chat/messages", json={"text": "Again", "reply_to_task_id": tasks[0].id, "question_token": token}).status_code == 409
+    assert repositories.tasks.get(tasks[1].id).status == TaskStatus.CLARIFYING
+
+
+def test_admin_unaddressed_message_preserves_the_question_when_model_is_unavailable(monkeypatch, tmp_path) -> None:
+    from agent_control.schemas import ChannelType
+
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    conversation = repositories.conversations.get_or_create(ChannelType.WEB, "local")
+    task = repositories.tasks.create("Connect the TV", conversation_id=conversation,
+                                     metadata={"clarifying_question": "Which casting library?"})
+    repositories.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    ambiguous = client.post("/admin/api/chat/messages", json={"text": "What is the weather?"})
+    assert ambiguous.status_code == 409 and "new:" in ambiguous.json()["detail"]
+    assert repositories.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    created = client.post("/admin/api/chat/messages", json={"text": "new: What is the weather?"})
+    assert created.status_code == 200 and created.json()["task"]["id"] != task.id
+    assert created.json()["task"]["objective"] == "What is the weather?"
+    assert repositories.tasks.get(task.id).status == TaskStatus.CLARIFYING
+
+
+def test_admin_reply_rejects_a_changed_question_and_another_conversation(monkeypatch, tmp_path) -> None:
+    from agent_control.schemas import ChannelType
+
+    client, repositories = _chat_client(monkeypatch, tmp_path)
+    conversation = repositories.conversations.get_or_create(ChannelType.WEB, "local")
+    task = repositories.tasks.create("Question", conversation_id=conversation, metadata={"clarifying_question": "First?"})
+    first = repositories.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    token = next(row["clarification_token"] for row in client.get("/admin/api/chat/messages").json()["tasks"] if row["id"] == task.id)
+    repositories.tasks.update_metadata(task.id, {**first.metadata, "clarifying_question": "Second?"}, TaskStatus.CLARIFYING)
+    assert client.post("/admin/api/chat/messages", json={"text": "Yes", "reply_to_task_id": task.id, "question_token": token}).status_code == 409
+    assert repositories.tasks.get(task.id).status == TaskStatus.CLARIFYING
+    from agent_control.channels.quick_answers import clarification_token
+    foreign_conversation = repositories.conversations.get_or_create(ChannelType.TELEGRAM, "local")
+    foreign = repositories.tasks.create("Other", conversation_id=foreign_conversation, metadata={"clarifying_question": "Other?"})
+    foreign = repositories.tasks.update_status(foreign.id, TaskStatus.CLARIFYING)
+    assert client.post("/admin/api/chat/messages", json={"text": "Yes", "reply_to_task_id": foreign.id,
+                                                         "question_token": clarification_token(foreign)}).status_code == 409
+
+
 def test_admin_chat_send_resume_also_attaches_a_file_sent_with_the_reply(monkeypatch, tmp_path) -> None:
     """An attachment sent alongside a clarification reply was silently
     dropped: the resume branch only ever looked at payload.text, never
     payload.attachment_ids."""
     client, repositories = _chat_client(monkeypatch, tmp_path)
     original = client.post("/admin/api/chat/messages", json={"text": "organize my files"}).json()["task"]
-    repositories.tasks.update_metadata(
+    waiting = repositories.tasks.update_metadata(
         original["id"],
         {**original["metadata"], "clarifying_question": "Which files?"},
         TaskStatus.CLARIFYING,
     )
+    from agent_control.channels.quick_answers import clarification_token
     uploaded = client.post(
         "/admin/api/chat/attachments",
         files={"file": ("list.txt", b"a,b,c", "text/plain")},
@@ -2929,7 +3004,8 @@ def test_admin_chat_send_resume_also_attaches_a_file_sent_with_the_reply(monkeyp
 
     response = client.post(
         "/admin/api/chat/messages",
-        json={"text": "these ones", "attachment_ids": [uploaded["artifact_id"]]},
+        json={"text": "these ones", "attachment_ids": [uploaded["artifact_id"]], "reply_to_task_id": waiting.id,
+              "question_token": clarification_token(waiting)},
     )
 
     assert response.status_code == 200

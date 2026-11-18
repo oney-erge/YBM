@@ -592,6 +592,7 @@ class TaskRecord(StrictBaseModel):
     conversation_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    revision: int = Field(default=0, ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

@@ -35,7 +35,7 @@ from agent_control.schemas import (
     utc_now,
 )
 from agent_control.jobs.model import Job, JobStatus
-from agent_control.plans.model import Plan, PlanStatus, PlanStep, StepOwner, StepStatus
+from agent_control.plans.model import MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus
 from agent_control.storage.database import Database
 from agent_control.storage.redaction import redact_text
 
@@ -75,6 +75,18 @@ def _check_worker_claim(database: Database, row: sqlite3.Row, now: str) -> None:
 
 def _dump(value: Any) -> str:
     return json.dumps(value, default=str, sort_keys=True)
+
+
+def _question_metadata(metadata: dict[str, Any]) -> dict[str, Any]:
+    """Notification bookkeeping is not part of the question or its authority."""
+    return {key: value for key, value in metadata.items() if key != "notified_statuses"}
+
+
+def _retain_notified(metadata: dict[str, Any], current: dict[str, Any]) -> dict[str, Any]:
+    result = dict(metadata)
+    if "notified_statuses" in current:
+        result["notified_statuses"] = current["notified_statuses"]
+    return result
 
 
 def _load(value: str | None, default: Any) -> Any:
@@ -405,7 +417,7 @@ class TaskRepository:
         # calls without re-racing for its own task).
         sql = f"""
             UPDATE tasks
-            SET claimed_by = ?, claim_expires_at = ?, updated_at = ?
+            SET claimed_by = ?, claim_expires_at = ?, updated_at = ?, revision = revision + 1
             WHERE id = (
                 SELECT id FROM tasks
                 WHERE status IN ({placeholders})
@@ -535,7 +547,7 @@ class TaskRepository:
             else:
                 metadata, status = decide(previous)
             connection.execute(
-                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, "
+                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1, "
                 "claimed_by = NULL, claim_expires_at = NULL WHERE id = ?",
                 (_dump(_redact_answer_fields(metadata)), status.value, now, task_id),
             )
@@ -546,7 +558,7 @@ class TaskRepository:
         now = utc_now()
         with self.database.connect() as connection:
             connection.execute(
-                "UPDATE tasks SET status = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                 (status.value, _dt(now), task_id),
             )
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -558,13 +570,48 @@ class TaskRepository:
         now = utc_now()
         with self.database.connect() as connection:
             connection.execute(
-                "UPDATE tasks SET objective = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET objective = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                 (objective, _dt(now), task_id),
             )
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         if row is None:
             raise KeyError(f"task not found: {task_id}")
         return self._row_to_task(row)
+
+    def answer_clarification(
+        self, expected: TaskRecord, *, objective: str, metadata: dict[str, Any], status: TaskStatus,
+        user_plan_step: bool,
+    ) -> TaskRecord | None:
+        """Commit an answer only to the same still-open question and plan step."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (expected.id,)).fetchone()
+            if row is None:
+                return None
+            current = self._row_to_task(row)
+            if (current.status != TaskStatus.CLARIFYING or current.revision != expected.revision
+                    or current.objective != expected.objective or _question_metadata(current.metadata) != _question_metadata(expected.metadata)):
+                return None
+            plan_id, step_id = current.metadata.get("plan_id"), current.metadata.get("plan_step_id")
+            step = connection.execute(
+                "SELECT owner, status, task_id FROM project_plan_steps WHERE plan_id = ? AND id = ?",
+                (plan_id, step_id),
+            ).fetchone() if plan_id and step_id else None
+            if plan_id and step_id:
+                if step is None or step["task_id"] != current.id:
+                    return None
+                expected_step_status = StepStatus.RUNNING if step["owner"] == StepOwner.YBM.value else StepStatus.WAITING
+                if step["status"] != expected_step_status.value:
+                    return None
+            waiting_for_user = bool(step and step["task_id"] == current.id
+                                    and step["owner"] != StepOwner.YBM.value and step["status"] == StepStatus.WAITING.value)
+            if waiting_for_user != user_plan_step:
+                return None
+            connection.execute(
+                "UPDATE tasks SET objective = ?, metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (objective, _dump(_redact_answer_fields(_retain_notified(metadata, current.metadata))), status.value, _dt(utc_now()), expected.id),
+            )
+            return self._row_to_task(connection.execute("SELECT * FROM tasks WHERE id = ?", (expected.id,)).fetchone())
 
     def update_metadata(
         self,
@@ -601,6 +648,11 @@ class TaskRepository:
                 return current
             if current.status != TaskStatus.CANCELLED:
                 metadata = _keep_notes_that_arrived(dict(metadata), current.metadata)
+                notified = current.metadata.get("notified_statuses")
+                if isinstance(notified, list):
+                    pending = metadata.get("notified_statuses")
+                    metadata["notified_statuses"] = sorted({item for item in [*notified, *(pending if isinstance(pending, list) else [])]
+                                                            if isinstance(item, str)})
                 if "last_control_signal" in current.metadata:
                     metadata["last_control_signal"] = current.metadata["last_control_signal"]
                 if current.status == TaskStatus.PAUSED:
@@ -615,11 +667,25 @@ class TaskRepository:
                     metadata.pop("paused_from_status", None)
                     target = status or current.status
                 connection.execute(
-                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                     (_dump(metadata), target.value, _dt(now), task_id),
                 )
             row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
         return self._row_to_task(row)
+
+    def mark_notified(self, task_id: str, status_key: str) -> None:
+        """Record delivery bookkeeping without changing the identity of a displayed question."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            if row is None:
+                return
+            _check_worker_claim(self.database, row, _dt(utc_now()))
+            metadata = _load(row["metadata_json"], {})
+            existing = metadata.get("notified_statuses")
+            metadata["notified_statuses"] = sorted({item for item in [*(existing if isinstance(existing, list) else []), status_key]
+                                                    if isinstance(item, str)})
+            connection.execute("UPDATE tasks SET metadata_json = ? WHERE id = ?", (_dump(metadata), task_id))
 
     def admit_operator_call(
         self, task_id: str, in_flight: dict[str, Any], *, allow_awaiting_approval: bool = False
@@ -639,7 +705,7 @@ class TaskRepository:
                 return task, False
             metadata = {**task.metadata, "operator_in_flight": in_flight}
             connection.execute(
-                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                 (_dump(_redact_answer_fields(metadata)), TaskStatus.RUNNING.value, _dt(utc_now()), task_id),
             )
             updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -696,7 +762,7 @@ class TaskRepository:
                 else:
                     target = TaskStatus.RUNNING
                 connection.execute(
-                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                    "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                     (_dump(_redact_answer_fields(metadata)), target.value, _dt(utc_now()), task_id),
                 )
                 notification_id = None
@@ -780,7 +846,7 @@ class TaskRepository:
                 target = TaskStatus.CANCELLED
             metadata["last_control_signal"] = action
             connection.execute(
-                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ? WHERE id = ?",
+                "UPDATE tasks SET metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
                 (_dump(metadata), target.value, _dt(utc_now()), task_id),
             )
             updated = connection.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -796,6 +862,7 @@ class TaskRepository:
             metadata=_load(row["metadata_json"], {}),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            revision=row["revision"],
         )
 
 
@@ -1503,6 +1570,19 @@ class ArtifactRepository:
             for row in rows
         ]
 
+    def list_recent_for_conversation(self, conversation_id: str, limit: int = 6) -> list[Artifact]:
+        """Recent recorded artifacts in this conversation, newest first."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT a.* FROM artifacts a JOIN tasks t ON t.id = a.task_id "
+                "WHERE t.conversation_id = ? ORDER BY a.created_at DESC, a.rowid DESC LIMIT ?",
+                (conversation_id, max(1, min(limit, 20))),
+            ).fetchall()
+        return [Artifact(
+            id=row["id"], task_id=row["task_id"], type=row["artifact_type"], uri=row["uri"],
+            content_preview=row["content_preview"], metadata=_load(row["metadata_json"], {}), created_at=row["created_at"],
+        ) for row in rows]
+
     def list_recent(self, limit: int = 20, artifact_type: str | None = None) -> list[Artifact]:
         query = "SELECT * FROM artifacts"
         params: list[object] = []
@@ -1973,6 +2053,15 @@ class JobRepository:
             row = connection.execute("SELECT * FROM background_jobs WHERE id = ?", (job_id,)).fetchone()
         return self._row_to_job(row) if row is not None else None
 
+    def pending_delivery(self) -> Job | None:
+        """Find the oldest unsent report without scanning a fixed number of old jobs."""
+        with self.database.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM background_jobs WHERE status = ? AND json_extract(state_json, '$.delivery.status') = ? "
+                "ORDER BY created_at, rowid LIMIT 1", (JobStatus.DONE.value, "pending"),
+            ).fetchone()
+        return self._row_to_job(row) if row is not None else None
+
     def list(self, *, statuses: list[JobStatus] | None = None, chat_id: str | None = None, limit: int = 50) -> list[Job]:
         clauses, params = [], []
         if statuses:
@@ -1998,13 +2087,56 @@ class JobRepository:
         if not columns:
             return
         with self.database.connect() as connection:
-            connection.execute(f"UPDATE background_jobs SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(utc_now()), job_id))
+            connection.execute(f"UPDATE background_jobs SET {', '.join(columns)}, updated_at = ?, revision = revision + 1 WHERE id = ?", (*params, _dt(utc_now()), job_id))
+
+    def save_if_revision(
+        self, job_id: str, revision: int, *, allowed: tuple[JobStatus, ...],
+        state: dict[str, Any] | None = None, status: JobStatus | None = None,
+    ) -> bool:
+        """Apply a transition only if the saved generation and status still match."""
+        if not allowed or (state is None and status is None):
+            raise ValueError("A conditional job update needs a status guard and a change")
+        columns, params = [], []
+        if state is not None:
+            columns.append("state_json = ?")
+            params.append(_dump(state))
+        if status is not None:
+            columns.append("status = ?")
+            params.append(status.value)
+        placeholders = ",".join("?" for _ in allowed)
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE background_jobs SET {', '.join(columns)}, updated_at = ?, revision = revision + 1 "
+                f"WHERE id = ? AND revision = ? AND status IN ({placeholders})",
+                (*params, _dt(utc_now()), job_id, revision, *(item.value for item in allowed)),
+            )
+            return cursor.rowcount == 1
+
+    def finish_if_running(
+        self, job_id: str, revision: int, state: dict[str, Any], write_report: Callable[[], None],
+    ) -> bool:
+        """Publish a local report only if no control or competing completion won first.
+
+        The callback must only write the local report, never call a model or network.
+        A crash after the file write but before commit can leave an orphan report.
+        """
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT status, revision FROM background_jobs WHERE id = ?", (job_id,)).fetchone()
+            if row is None or row["status"] != JobStatus.RUNNING.value or row["revision"] != revision:
+                return False
+            write_report()
+            connection.execute(
+                "UPDATE background_jobs SET state_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                (_dump(state), JobStatus.DONE.value, _dt(utc_now()), job_id),
+            )
+            return True
 
     @staticmethod
     def _row_to_job(row: Any) -> Job:
         return Job(
             id=row["id"], kind=row["kind"], goal=row["goal"], status=JobStatus(row["status"]), state=_load(row["state_json"], {}),
-            routing=_load(row["routing_json"], {}), created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
+            revision=row["revision"], routing=_load(row["routing_json"], {}), created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
         )
 
 
@@ -2060,7 +2192,175 @@ class PlanRepository:
 
     def set_status(self, plan_id: str, status: PlanStatus) -> None:
         with self.database.connect() as connection:
-            connection.execute("UPDATE project_plans SET status = ?, updated_at = ? WHERE id = ?", (status.value, _dt(utc_now()), plan_id))
+            connection.execute("UPDATE project_plans SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (status.value, _dt(utc_now()), plan_id))
+
+    def transition_status(self, plan_id: str, status: PlanStatus, allowed: tuple[PlanStatus, ...], *, expected_revision: int | None = None) -> bool:
+        placeholders = ",".join("?" for _ in allowed)
+        version_check = " AND revision = ?" if expected_revision is not None else ""
+        params = (status.value, _dt(utc_now()), plan_id, *(item.value for item in allowed))
+        if expected_revision is not None:
+            params += (expected_revision,)
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE project_plans SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND status IN ({placeholders}){version_check}",
+                params,
+            )
+            return cursor.rowcount == 1
+
+    def cancel_active(self, plan_id: str) -> bool:
+        """Cancel a plan and its unfinished children in the same write transaction."""
+        now = _dt(utc_now())
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            plan = connection.execute("SELECT status FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            if plan is None or plan["status"] in (PlanStatus.DONE.value, PlanStatus.CANCELLED.value):
+                return False
+            steps = connection.execute(
+                "SELECT * FROM project_plan_steps WHERE plan_id = ? AND status IN (?, ?, ?)",
+                (plan_id, StepStatus.PENDING.value, StepStatus.RUNNING.value, StepStatus.WAITING.value),
+            ).fetchall()
+            for step in steps:
+                task = connection.execute("SELECT * FROM tasks WHERE id = ?", (step["task_id"],)).fetchone() if step["task_id"] else None
+                target, result = StepStatus.SKIPPED, step["result"]
+                if task is not None and task["status"] == TaskStatus.COMPLETED.value:
+                    metadata = _load(task["metadata_json"], {})
+                    answer = str(metadata.get("plan_step_answer") or metadata.get("synthesized_answer") or "done")
+                    if metadata.get("plan_delegated_from_owner"):
+                        target, result = StepStatus.SKIPPED, ("Choice only: " + answer)[:1500]
+                    elif step["owner"] != StepOwner.YBM.value and metadata.get("plan_step_answer"):
+                        answer = f"User reported: {answer}"
+                        target, result = StepStatus.DONE, answer[:1500]
+                    else:
+                        target, result = StepStatus.DONE, answer[:1500]
+                elif task is not None and task["status"] in (TaskStatus.FAILED.value, TaskStatus.BLOCKED.value):
+                    metadata = _load(task["metadata_json"], {})
+                    target = StepStatus.FAILED
+                    result = str(metadata.get("last_worker_error") or metadata.get("last_error") or task["status"])[:1500]
+                elif task is not None and task["status"] != TaskStatus.CANCELLED.value:
+                    connection.execute("UPDATE tasks SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                                       (TaskStatus.CANCELLED.value, now, task["id"]))
+                connection.execute("UPDATE project_plan_steps SET status = ?, result = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                                   (target.value, result, now, step["id"]))
+            connection.execute("UPDATE project_plans SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (PlanStatus.CANCELLED.value, now, plan_id))
+            return True
+
+    def begin_step(self, plan: Plan, step: PlanStep, task: TaskRecord) -> bool:
+        """Atomically admit a still-ready step and insert its one linked child task."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT * FROM project_plans WHERE id = ?", (plan.id,)).fetchone()
+            if row is None or row["status"] != PlanStatus.ACTIVE.value or row["revision"] != plan.revision:
+                return False
+            rows = connection.execute("SELECT * FROM project_plan_steps WHERE plan_id = ? ORDER BY position", (plan.id,)).fetchall()
+            current = self._row_to_plan(row, rows)
+            if any(item.status in (StepStatus.RUNNING, StepStatus.WAITING) for item in current.steps):
+                return False
+            if not any(item.id == step.id and item.revision == step.revision for item in current.ready_steps()):
+                return False
+            TaskRepository.insert(connection, task)
+            target = StepStatus.WAITING if step.owner != StepOwner.YBM else StepStatus.RUNNING
+            now = _dt(utc_now())
+            connection.execute("UPDATE project_plan_steps SET status = ?, task_id = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND plan_id = ?",
+                               (target.value, task.id, now, step.id, plan.id))
+            connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan.id))
+            return True
+
+    def delegate_waiting_step(
+        self, plan: Plan, step: PlanStep, task: TaskRecord, *, objective: str, metadata: dict[str, Any],
+    ) -> TaskRecord | None:
+        """Transfer one waiting user step to its existing task without marking it done."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current_plan = connection.execute("SELECT * FROM project_plans WHERE id = ?", (plan.id,)).fetchone()
+            current_step = connection.execute("SELECT * FROM project_plan_steps WHERE id = ? AND plan_id = ?", (step.id, plan.id)).fetchone()
+            current_task = connection.execute("SELECT * FROM tasks WHERE id = ?", (task.id,)).fetchone()
+            if (current_plan is None or current_plan["status"] != PlanStatus.ACTIVE.value
+                    or current_plan["revision"] != plan.revision or current_step is None
+                    or current_step["status"] != StepStatus.WAITING.value or current_step["task_id"] != task.id
+                    or current_step["revision"] != step.revision or current_step["owner"] == StepOwner.YBM.value
+                    or current_task is None or current_task["status"] != TaskStatus.CLARIFYING.value
+                    or current_task["revision"] != task.revision
+                    or _question_metadata(TaskRepository._row_to_task(current_task).metadata) != _question_metadata(task.metadata)):
+                return None
+            now = _dt(utc_now())
+            connection.execute("UPDATE project_plan_steps SET owner = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                               (StepOwner.YBM.value, StepStatus.RUNNING.value, now, step.id))
+            connection.execute("UPDATE tasks SET objective = ?, metadata_json = ?, status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                               (objective, _dump(_redact_answer_fields(_retain_notified(metadata, TaskRepository._row_to_task(current_task).metadata))),
+                                TaskStatus.RECEIVED.value, now, task.id))
+            connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan.id))
+            return TaskRepository._row_to_task(connection.execute("SELECT * FROM tasks WHERE id = ?", (task.id,)).fetchone())
+
+    def finish_if_complete(self, plan_id: str) -> bool:
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute("SELECT status FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            if row is None or row["status"] != PlanStatus.ACTIVE.value:
+                return False
+            steps = connection.execute("SELECT status FROM project_plan_steps WHERE plan_id = ?", (plan_id,)).fetchall()
+            if not steps or any(step["status"] not in (StepStatus.DONE.value, StepStatus.SKIPPED.value) for step in steps):
+                return False
+            connection.execute("UPDATE project_plans SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (PlanStatus.DONE.value, _dt(utc_now()), plan_id))
+            return True
+
+    def return_delegated_choice(self, plan_id: str, step: PlanStep, task: TaskRecord, *, question: str) -> TaskRecord | None:
+        """Keep a choice separate from the rest of the user's original step."""
+        owner = task.metadata.get("plan_delegated_from_owner")
+        if owner not in (StepOwner.USER.value, StepOwner.ACCESS.value):
+            return None
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            plan = connection.execute("SELECT status FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            row = connection.execute("SELECT * FROM project_plan_steps WHERE id = ? AND plan_id = ?", (step.id, plan_id)).fetchone()
+            current = connection.execute("SELECT * FROM tasks WHERE id = ?", (task.id,)).fetchone()
+            if (plan is None or plan["status"] != PlanStatus.ACTIVE.value or row is None
+                    or row["status"] != StepStatus.RUNNING.value or row["task_id"] != task.id
+                    or row["revision"] != step.revision or current is None
+                    or current["status"] != TaskStatus.COMPLETED.value or current["revision"] != task.revision
+                    or _question_metadata(TaskRepository._row_to_task(current).metadata) != _question_metadata(task.metadata)):
+                return None
+            answer = str(task.metadata.get("synthesized_answer") or "No choice was recorded.")
+            metadata = {key: task.metadata[key] for key in ("source_channel", "source_chat_id", "source_sender_id", "plan_id", "plan_step_id")
+                        if key in task.metadata}
+            metadata.update({"delegated_choice_result": answer, "delegated_choice_task_id": task.id,
+                             "original_message_text": step.title, "clarifying_question": question,
+                             "clarifying_options": ["It's ready" if owner == StepOwner.ACCESS.value else "Done", "Skip this step"]})
+            waiting = TaskRecord(objective=f"Plan step {step.position}: {step.title}", conversation_id=task.conversation_id,
+                                 status=TaskStatus.CLARIFYING, metadata=metadata)
+            TaskRepository.insert(connection, waiting)
+            now = _dt(utc_now())
+            connection.execute("UPDATE project_plan_steps SET owner = ?, status = ?, result = ?, task_id = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                               (owner, StepStatus.WAITING.value, ("Choice: " + answer)[:1500], waiting.id, now, step.id))
+            connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan_id))
+            return TaskRepository._row_to_task(connection.execute("SELECT * FROM tasks WHERE id = ?", (waiting.id,)).fetchone())
+
+    def settle_step(
+        self, plan_id: str, step: PlanStep, task: TaskRecord | None, *, status: StepStatus,
+        result: str | None = None, clear_task: bool = False, pause: bool = False,
+    ) -> bool:
+        """Apply an observed child outcome only while its plan and step still match."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            plan = connection.execute("SELECT status FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            row = connection.execute("SELECT * FROM project_plan_steps WHERE id = ? AND plan_id = ?", (step.id, plan_id)).fetchone()
+            if (plan is None or plan["status"] != PlanStatus.ACTIVE.value or row is None
+                    or row["status"] != step.status.value or row["task_id"] != step.task_id
+                    or row["revision"] != step.revision):
+                return False
+            task_row = connection.execute("SELECT * FROM tasks WHERE id = ?", (step.task_id,)).fetchone() if step.task_id else None
+            if task is None:
+                if task_row is not None:
+                    return False
+            elif task_row is None or task_row["status"] != task.status.value or task_row["revision"] != task.revision:
+                return False
+            elif _question_metadata(TaskRepository._row_to_task(task_row).metadata) != _question_metadata(task.metadata) or task_row["objective"] != task.objective:
+                return False
+            now = _dt(utc_now())
+            connection.execute("UPDATE project_plan_steps SET status = ?, result = ?, task_id = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                               (status.value, row["result"] if result is None else result, None if clear_task else step.task_id, now, step.id))
+            connection.execute("UPDATE project_plans SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                               (PlanStatus.PAUSED.value if pause else PlanStatus.ACTIVE.value, now, plan_id))
+            return True
 
     def update_plan(self, plan_id: str, **fields: Any) -> None:
         """Change what a plan keeps beside its steps: notes, check_in_days, last_check_in_at."""
@@ -2071,23 +2371,35 @@ class PlanRepository:
         columns = [f"{name} = ?" for name in fields]
         params = [_dt(value) if name == "last_check_in_at" and value is not None else value for name, value in fields.items()]
         with self.database.connect() as connection:
-            connection.execute(f"UPDATE project_plans SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(utc_now()), plan_id))
+            connection.execute(f"UPDATE project_plans SET {', '.join(columns)}, updated_at = ?, revision = revision + 1 WHERE id = ?", (*params, _dt(utc_now()), plan_id))
 
-    def shift_dates(self, plan_id: str, days: int) -> int:
-        """Move the day of every step that is not finished by `days` (negative: earlier). Returns how many steps moved."""
-        plan = self.get(plan_id)
-        if plan is None:
-            return 0
-        moved = 0
-        for step in plan.steps:
-            if step.due is not None and step.status not in (StepStatus.DONE, StepStatus.SKIPPED):
-                self.update_step(step.id, due=step.due + timedelta(days=days))
-                moved += 1
-        return moved
+    def shift_dates(self, plan_id: str, days: int, *, expected_revision: int | None = None) -> int:
+        """Move unfinished due dates together, only while the observed plan is still open."""
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            plan = connection.execute("SELECT status, revision FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            if plan is None:
+                return 0
+            if (plan["status"] not in (PlanStatus.PROPOSED.value, PlanStatus.ACTIVE.value, PlanStatus.PAUSED.value)
+                    or (expected_revision is not None and plan["revision"] != expected_revision)):
+                raise ValueError("the plan changed or is no longer open; check it before moving dates")
+            rows = connection.execute("SELECT id, due FROM project_plan_steps WHERE plan_id = ? AND due IS NOT NULL "
+                                      "AND status NOT IN (?, ?)", (plan_id, StepStatus.DONE.value, StepStatus.SKIPPED.value)).fetchall()
+            now = _dt(utc_now())
+            for row in rows:
+                try:
+                    due = (datetime.fromisoformat(row["due"]).date() + timedelta(days=days)).isoformat()
+                except (ValueError, OverflowError) as exc:
+                    raise ValueError("a due date cannot be shifted by that amount") from exc
+                connection.execute("UPDATE project_plan_steps SET due = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                                   (due, now, row["id"]))
+            if rows:
+                connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan_id))
+            return len(rows)
 
     def update_step(self, step_id: str, **fields: Any) -> None:
         """Change a step: status, task_id, result, title, detail, owner, needs, depends_on, ability, due."""
-        allowed = {"status", "task_id", "result", "title", "detail", "owner", "needs", "depends_on", "ability", "due"}
+        allowed = {"status", "task_id", "result", "title", "detail", "owner", "choice_only", "needs", "depends_on", "ability", "due"}
         unknown = set(fields) - allowed
         if unknown:
             raise ValueError(f"cannot update plan step fields: {sorted(unknown)}")
@@ -2101,34 +2413,93 @@ class PlanRepository:
                 params.append(_dump(value) if name in ("needs", "depends_on") else getattr(value, "value", value))
         now = utc_now()
         with self.database.connect() as connection:
-            connection.execute(f"UPDATE project_plan_steps SET {', '.join(columns)}, updated_at = ? WHERE id = ?", (*params, _dt(now), step_id))
+            connection.execute(f"UPDATE project_plan_steps SET {', '.join(columns)}, updated_at = ?, revision = revision + 1 WHERE id = ?", (*params, _dt(now), step_id))
             connection.execute(
-                "UPDATE project_plans SET updated_at = ? WHERE id = (SELECT plan_id FROM project_plan_steps WHERE id = ?)", (_dt(now), step_id)
+                "UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = (SELECT plan_id FROM project_plan_steps WHERE id = ?)", (_dt(now), step_id)
             )
+
+    def edit_pending_step(self, plan: Plan, step: PlanStep, **fields: Any) -> bool:
+        """Edit an unstarted step only if its plan and step still match the caller's snapshot."""
+        allowed = {"status", "title", "detail", "owner", "choice_only", "needs", "depends_on", "ability", "due"}
+        if not fields or set(fields) - allowed:
+            raise ValueError("unsupported plan step edit")
+        if fields.get("status") not in (None, StepStatus.PENDING, StepStatus.SKIPPED):
+            raise ValueError("completion is recorded by the plan runner")
+        candidate = PlanStep.model_validate({**step.model_dump(), **fields})
+        if any(dep < 1 or dep >= step.position for dep in candidate.depends_on):
+            raise ValueError("a step can depend only on earlier steps")
+        if fields.get("choice_only") is True and (candidate.owner != StepOwner.USER or candidate.needs):
+            raise ValueError("a decision-only step must be user-owned and need no separate access or action")
+        columns, params = [], []
+        for name, value in fields.items():
+            columns.append(f"{ {'needs': 'needs_json', 'depends_on': 'depends_json'}.get(name, name) } = ?")
+            if name == "due":
+                params.append(value.isoformat() if value is not None else None)
+            else:
+                params.append(_dump(value) if name in ("needs", "depends_on") else getattr(value, "value", value))
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            current_plan = connection.execute("SELECT status, revision FROM project_plans WHERE id = ?", (plan.id,)).fetchone()
+            current_step = connection.execute("SELECT status, task_id, revision FROM project_plan_steps WHERE id = ? AND plan_id = ?",
+                                              (step.id, plan.id)).fetchone()
+            if (current_plan is None or current_plan["status"] not in (PlanStatus.PROPOSED.value, PlanStatus.ACTIVE.value, PlanStatus.PAUSED.value)
+                    or current_plan["revision"] != plan.revision or current_step is None
+                    or current_step["status"] != StepStatus.PENDING.value or current_step["task_id"] is not None
+                    or current_step["revision"] != step.revision):
+                return False
+            now = _dt(utc_now())
+            connection.execute(f"UPDATE project_plan_steps SET {', '.join(columns)}, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                               (*params, now, step.id))
+            connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan.id))
+            return True
 
     def claim_step(self, step_id: str, status: StepStatus) -> bool:
         """Move a pending step to `status` if it is still pending: true for exactly one of several workers that try at once."""
         with self.database.connect() as connection:
             cursor = connection.execute(
-                "UPDATE project_plan_steps SET status = ?, updated_at = ? WHERE id = ? AND status = ?",
+                "UPDATE project_plan_steps SET status = ?, updated_at = ?, revision = revision + 1 WHERE id = ? AND status = ?",
                 (status.value, _dt(utc_now()), step_id, StepStatus.PENDING.value),
             )
+            if cursor.rowcount:
+                connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 "
+                                   "WHERE id = (SELECT plan_id FROM project_plan_steps WHERE id = ?)", (_dt(utc_now()), step_id))
         return cursor.rowcount == 1
 
-    def add_step(self, plan_id: str, step: PlanStep) -> PlanStep:
-        """Append a step at `step.position`, moving later steps down so positions stay 1..n."""
+    def add_step(self, plan_id: str, step: PlanStep, *, expected_revision: int | None = None) -> PlanStep:
+        """Insert an unstarted step while preserving the identities of explicit prerequisites."""
         with self.database.connect() as connection:
-            connection.execute("UPDATE project_plan_steps SET position = position + 1 WHERE plan_id = ? AND position >= ?", (plan_id, step.position))
+            connection.execute("BEGIN IMMEDIATE")
+            plan = connection.execute("SELECT status, revision FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            if (plan is None or plan["status"] not in (PlanStatus.PROPOSED.value, PlanStatus.ACTIVE.value, PlanStatus.PAUSED.value)
+                    or (expected_revision is not None and plan["revision"] != expected_revision)):
+                raise ValueError("the plan changed or is no longer open; check it before adding a step")
+            rows = connection.execute("SELECT * FROM project_plan_steps WHERE plan_id = ? ORDER BY position", (plan_id,)).fetchall()
+            if len(rows) >= MAX_STEPS or step.position > len(rows) + 1:
+                raise ValueError("the plan is full or the insertion position is invalid")
+            if step.status != StepStatus.PENDING or step.task_id is not None:
+                raise ValueError("a new step must be unstarted")
+            if any(dep < 1 or dep >= step.position for dep in step.depends_on):
+                raise ValueError("a step can depend only on earlier steps")
+            if any(row["position"] >= step.position and (row["status"] != StepStatus.PENDING.value or row["task_id"] is not None) for row in rows):
+                raise ValueError("cannot insert before a step that has already started")
+            now = _dt(utc_now())
+            for row in rows:
+                dependencies = _load(row["depends_json"], [])
+                shifted = [dep + 1 if dep >= step.position else dep for dep in dependencies]
+                position = row["position"] + (1 if row["position"] >= step.position else 0)
+                if position != row["position"] or shifted != dependencies:
+                    connection.execute("UPDATE project_plan_steps SET position = ?, depends_json = ?, updated_at = ?, revision = revision + 1 WHERE id = ?",
+                                       (position, _dump(shifted), now, row["id"]))
             self._insert_step(connection, plan_id, step)
-            connection.execute("UPDATE project_plans SET updated_at = ? WHERE id = ?", (_dt(utc_now()), plan_id))
+            connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan_id))
         return step
 
     @staticmethod
     def _insert_step(connection: sqlite3.Connection, plan_id: str, step: PlanStep) -> None:
         connection.execute(
-            "INSERT INTO project_plan_steps (id, plan_id, position, title, detail, owner, needs_json, depends_json, ability, due, status, task_id, "
-            "result, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            (step.id, plan_id, step.position, step.title, step.detail, step.owner.value, _dump(step.needs), _dump(step.depends_on),
+            "INSERT INTO project_plan_steps (id, plan_id, position, title, detail, owner, choice_only, needs_json, depends_json, ability, due, status, task_id, "
+            "result, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (step.id, plan_id, step.position, step.title, step.detail, step.owner.value, int(step.choice_only), _dump(step.needs), _dump(step.depends_on),
              step.ability, step.due.isoformat() if step.due else None, step.status.value, step.task_id, step.result, _dt(step.updated_at)),
         )
 
@@ -2137,16 +2508,16 @@ class PlanRepository:
         steps = [
             PlanStep(
                 id=s["id"], plan_id=s["plan_id"], position=s["position"], title=s["title"], detail=s["detail"],
-                owner=StepOwner(s["owner"]), needs=_load(s["needs_json"], []), depends_on=_load(s["depends_json"], []),
+                owner=StepOwner(s["owner"]), choice_only=bool(s["choice_only"]), needs=_load(s["needs_json"], []), depends_on=_load(s["depends_json"], []),
                 ability=s["ability"], due=s["due"], status=StepStatus(s["status"]), task_id=s["task_id"], result=s["result"],
-                updated_at=datetime.fromisoformat(s["updated_at"]),
+                revision=s["revision"], updated_at=datetime.fromisoformat(s["updated_at"]),
             )
             for s in step_rows
         ]
         return Plan(
             id=row["id"], conversation_id=row["conversation_id"], goal=row["goal"], summary=row["summary"],
             status=PlanStatus(row["status"]), source_task_id=row["source_task_id"], routing=_load(row["routing_json"], {}), steps=steps,
-            notes=row["notes"], check_in_days=row["check_in_days"],
+            notes=row["notes"], check_in_days=row["check_in_days"], revision=row["revision"],
             last_check_in_at=datetime.fromisoformat(row["last_check_in_at"]) if row["last_check_in_at"] else None,
             created_at=datetime.fromisoformat(row["created_at"]), updated_at=datetime.fromisoformat(row["updated_at"]),
         )

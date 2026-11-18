@@ -18,6 +18,8 @@ from agent_control.channels.base import (
 )
 from agent_control.channels.memory import memory_context
 from agent_control.schemas import (
+    Artifact,
+    ArtifactType,
     AuditEventType,
     ChannelType,
     InboundMessage,
@@ -65,6 +67,25 @@ async def test_classify_and_spawn_task_creates_a_task_for_a_non_telegram_channel
     # assume Telegram (docs/archive/UI_UX_AUDIT.md Phase 16's whole point).
     events = repos.audit.list_for_task(result.task.id)
     assert any(event.actor.startswith("discord:user:") for event in events)
+
+
+@pytest.mark.asyncio
+async def test_followup_task_receives_exact_artifact_from_its_conversation(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    conversation_id = repos.conversations.get_or_create(ChannelType.DISCORD, "chat-1")
+    prior = repos.tasks.create("Make a document", conversation_id=conversation_id)
+    path = r"C:\User Documents\travel\checklist.docx"
+    repos.artifacts.create(Artifact(task_id=prior.id, type=ArtifactType.DOCUMENT, uri=path))
+    classifier = _StaticClassifier(MessageClassification(
+        is_task=True, task_type=TaskType.OTHER, normalized_objective="Read that document", reason="follow-up",
+    ))
+
+    result = await classify_and_spawn_task(
+        _message("Read that document"), conversation_id,
+        repositories=repos, audit=audit, classifier=classifier, send_progress=_noop_progress,
+    )
+
+    assert path in result.task.metadata["memory_context"]
 
 
 @pytest.mark.asyncio

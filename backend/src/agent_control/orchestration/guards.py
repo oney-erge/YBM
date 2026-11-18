@@ -12,7 +12,7 @@ from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_STRATEGY,
     CHECK_ENTRY_STUCK,
 )
-from agent_control.orchestration.finishing import operator_transition_error_message
+from agent_control.orchestration.finishing import current_recovery_history, operator_transition_error_message
 from agent_control.orchestration.fulfillment import (
     validate_fulfillment,
 )
@@ -23,7 +23,7 @@ from agent_control.orchestration.number_check import (
 )
 from agent_control.orchestration.repeats import repeated_no_progress_call
 from agent_control.orchestration.request_facts import RequestFacts
-from agent_control.orchestration.task_record import claude_code_decision
+from agent_control.orchestration.task_record import claude_code_decision, steps_used
 from agent_control.schemas import (
     AuditEventType,
     OperatorDecision,
@@ -125,7 +125,22 @@ class GuardStage:
         tells it so and, when the Operator's reply is held to a schema, the next reply can only finish or ask. If it
         still calls tools and gets the same result, the task stops as before.
         """
-        if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history if isinstance(entry, dict)):
+        current = current_recovery_history(history)
+        recent = next((entry for entry in reversed(current) if isinstance(entry, dict)
+                       and entry.get("tool_name") not in CHECK_ENTRY_NAMES), {})
+        level = task.metadata.get("initiative_level")
+        budget = max(self.operator_max_steps, int(task.metadata.get("local_recovery_step_limit") or 0))
+        if (isinstance(level, int) and not isinstance(level, bool) and level >= 4
+                and recent.get("status") in ("failed", "denied") and steps_used(history) < budget
+                and not any(entry.get("hint_id") == "alternative_after_repeat" for entry in current if isinstance(entry, dict))):
+            history.append({
+                "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "alternative_after_repeat",
+                "error": (f"{called} has repeatedly failed. Do not repeat it; use the remaining budget for a materially different "
+                          "available local method within policy, or explain the blocker and an evidence-based next action. "
+                          "Treat untested ideas as possibilities, not proven capabilities."),
+            })
+            return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
+        if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in current if isinstance(entry, dict)):
             if task.metadata.get("claude_code_offer") is None and self._claude_code_ready():
                 return self._offer_claude_code(task, history)
             return self._transition_operator(
@@ -144,7 +159,8 @@ class GuardStage:
             "error": (
                 f"{called} has returned the same result several times, so calling it again will not help. Answer now with "
                 "what you have: say plainly what you found and what you could not do (action done), or ask the user one "
-                "question (action ask_user). Do not call that tool again."
+                "question (action ask_user). If the objective remains unfinished, give an evidence-based next action or "
+                "an available alternative, and label an untested idea as such. Do not call that tool again."
             ),
         })
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
@@ -296,11 +312,15 @@ class GuardStage:
                     history.append({
                         "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "declined", "step_id": step_id,
                         "error": (
-                            "The user did not agree to hand this to Claude Code, so do not offer it again. Answer now with what "
-                            "you have (action done): what you found, and plainly what you could not do."
+                            "The user declined the handoff, not the goal. Do not offer Claude Code again. Using the evidence "
+                            "above, try a materially different local approach within the available tools and policy. "
+                            "Do not repeat a failed call. If no feasible approach remains, explain the blocker and a concrete next step."
                         ),
                     })
-                    return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history}, TaskStatus.RUNNING)
+                    return self.repositories.tasks.update_metadata(task.id, {
+                        **task.metadata, "operator_history": history,
+                        "local_recovery_step_limit": max(self.operator_max_steps, steps_used(history)) + 3,
+                    }, TaskStatus.RUNNING)
             offer = task.metadata.get("claude_code_offer")
             if isinstance(offer, dict) and offer.get("state") == "accepted" and not any(
                 isinstance(e, dict) and e.get("tool_name") == "coding.agent" for e in history
@@ -333,7 +353,7 @@ class GuardStage:
         question = (
             "I tried several ways to do this on my own and could not finish it. Do you want me to hand it to Claude Code on this "
             "computer? It would see your request and what I tried, and it uses your Claude account. Reply yes to hand it over, "
-            "or no and I will tell you what I found."
+            "or no and I will try another local approach if one is available."
         )
         updated = self.repositories.tasks.update_metadata(
             task.id, {**task.metadata, "operator_history": history, "claude_code_offer": {"question": question, "state": "pending"}}

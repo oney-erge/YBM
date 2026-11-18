@@ -247,6 +247,7 @@ def test_the_day_is_required_in_the_schema_the_model_is_held_to_but_a_draft_with
     from agent_control.plans.planner import PlanDraft, StepDraft
 
     assert "due" in PlanDraft.model_json_schema()["$defs"]["StepDraft"]["required"]
+    assert "choice_only" in PlanDraft.model_json_schema()["$defs"]["StepDraft"]["required"]
     assert StepDraft(title="a step").due == "" and PlanDraft(steps=[StepDraft(title="a step")]).steps[0].due == ""
 
 

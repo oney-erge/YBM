@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import hashlib
+
 from agent_control.schemas import TaskRecord, TaskStatus
 
 #: The most buttons a question carries, and the longest label: a phone shows a few short choices, not a menu.
 MAX_OPTIONS = 4
 MAX_OPTION_CHARS = 40
+
+
+def clarification_token(task: TaskRecord) -> str:
+    """Bind a button to the exact saved question snapshot within Telegram's size limit."""
+    value = f"{task.id}\0{task.revision}\0{task.metadata.get('clarifying_question', '')}"
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:12]
 
 
 def clarifying_options(task: TaskRecord) -> list[str]:

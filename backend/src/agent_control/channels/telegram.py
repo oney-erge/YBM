@@ -14,7 +14,7 @@ from agent_control.channels.base import (
     answer_status_question,
     approve_latest_pending,
     classify_and_spawn_task,
-    resume_clarifying_reply,
+    route_clarifying_reply,
     status_summary,
 )
 from agent_control.config import AppSettings, TelegramConfig
@@ -26,7 +26,7 @@ from agent_control.approval_actions import decide_with_children, grant_for_task
 from agent_control.channels.profile_facts import describe_pairs, learn_sender_name, profile_pairs, store_profile_facts
 from agent_control.channels.account_commands import account_command_reply
 from agent_control.channels.undo_command import start_undo, undo_command_reply
-from agent_control.channels.quick_answers import clarifying_options
+from agent_control.channels.quick_answers import clarification_token, clarifying_options
 from agent_control.learning_cards import decide as learning_decide
 from agent_control.llm.decision import DecisionModelClient
 from agent_control.preference_watch import PreferenceWatch
@@ -53,9 +53,11 @@ from agent_control.schemas import (
     MemorySource,
     MessageKind,
     OutboundMessage,
+    TaskRecord,
     TaskSignal,
     TaskStatus,
     VoiceAttachment,
+    channel_chat_id,
     utc_now,
 )
 from agent_control.clarification import resume_clarifying_task
@@ -517,10 +519,10 @@ class TelegramAdapter:
             return {"kind": "approval", "approval_id": parts[1], "decision": parts[2]}
         if len(parts) == 3 and parts[0] == "task":
             return {"kind": "task", "task_id": parts[1], "action": parts[2]}
-        if len(parts) == 3 and parts[0] == "answer" and parts[2] in {"yes", "no"}:
-            return {"kind": "answer", "task_id": parts[1], "answer": parts[2]}
-        if len(parts) == 3 and parts[0] == "answer" and parts[2][:1] == "o" and parts[2][1:].isdigit():
-            return {"kind": "answer", "task_id": parts[1], "option": int(parts[2][1:])}
+        if len(parts) in (3, 4) and parts[0] == "answer" and parts[2] in {"yes", "no"}:
+            return {"kind": "answer", "task_id": parts[1], "answer": parts[2], "question_token": parts[3] if len(parts) == 4 else ""}
+        if len(parts) in (3, 4) and parts[0] == "answer" and parts[2][:1] == "o" and parts[2][1:].isdigit():
+            return {"kind": "answer", "task_id": parts[1], "option": int(parts[2][1:]), "question_token": parts[3] if len(parts) == 4 else ""}
         if len(parts) == 3 and parts[0] == "plan" and parts[2] in {"start", "resume", "pause", "cancel"}:
             return {"kind": "plan", "plan_id": parts[1], "action": parts[2]}
         if len(parts) == 4 and parts[0] == "learn" and parts[1] in {"s", "p"} and parts[3] in {"k", "d"}:
@@ -683,13 +685,15 @@ class TelegramIntakeService:
                 command_reply = chat_command_reply(self.repositories, inbound, conversation_id)
                 if command_reply is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=command_reply)
-                clarify_response = resume_clarifying_reply(self.repositories, self.audit, inbound, conversation_id)
+                clarify_response = await route_clarifying_reply(self.repositories, self.audit, inbound, conversation_id, self.settings)
                 if clarify_response is not None:
                     return ChannelUpdateResult(
                         authorized=True,
                         inbound_message=inbound,
                         outbound_message=clarify_response,
                     )
+                if inbound.text and re.match(r"(?is)^new\s*:\s*\S", inbound.text.strip()):
+                    inbound = inbound.model_copy(update={"text": re.sub(r"(?is)^new\s*:\s*", "", inbound.text.strip(), count=1)})
                 gaming_hold = while_gaming_reply(inbound)  # a message that needs the model waits while the person is gaming
                 if gaming_hold is not None:
                     return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=gaming_hold)
@@ -1170,11 +1174,17 @@ class TelegramIntakeService:
         if task is None or task.status != TaskStatus.CLARIFYING or not 0 <= index < len(options):
             self._callback_ack = "That question was already answered."
             return
-        resume_clarifying_task(
+        if not self._callback_matches_task(payload, task):
+            self._callback_ack = "That question is not open in this chat."
+            return
+        if payload.get("question_token") != clarification_token(task):
+            self._callback_ack = "This button is out of date. Reply to the current question."
+            return
+        result = resume_clarifying_task(
             self.repositories, self.audit, task, text=options[index],
             actor=actor, message_id=str(payload.get("callback_query_id") or "button"), received_at=utc_now(),
         )
-        self._callback_ack = f"Okay: {options[index]}"[:190]
+        self._callback_ack = f"Okay: {options[index]}"[:190] if result.accepted else "That question was already answered."
 
     def _plan_button(self, payload: dict[str, Any], actor: str) -> None:
         """Start, pause, continue or cancel a plan from its card, and show the card again as it now stands."""
@@ -1184,17 +1194,17 @@ class TelegramIntakeService:
             return
         action = str(payload.get("action"))
         if action in ("start", "resume"):
-            if plan.status in (PlanStatus.PROPOSED, PlanStatus.PAUSED):
-                self.repositories.plans.set_status(plan.id, PlanStatus.ACTIVE)  # the worker starts the next step within a second
+            if self.repositories.plans.transition_status(plan.id, PlanStatus.ACTIVE, (PlanStatus.PROPOSED, PlanStatus.PAUSED)):
                 self._callback_ack = "Starting." if action == "start" else "Carrying on."
             else:
-                self._callback_ack = f"The plan is {plan.status.value}."
+                current = self.repositories.plans.get(plan.id)
+                self._callback_ack = f"The plan is {current.status.value}." if current else "I cannot find that plan any more."
         elif action == "pause":
-            pause_plan(self.repositories, self.audit, plan.id)
-            self._callback_ack = "Paused after the step in progress."
+            current = pause_plan(self.repositories, self.audit, plan.id)
+            self._callback_ack = "Paused after the step in progress." if current and current.status == PlanStatus.PAUSED else "The plan is no longer active."
         else:
-            cancel_plan(self.repositories, self.audit, plan.id)
-            self._callback_ack = "Plan cancelled."
+            current = cancel_plan(self.repositories, self.audit, plan.id)
+            self._callback_ack = "Plan cancelled." if current and current.status == PlanStatus.CANCELLED else "The plan has already finished."
         self.audit.append(AuditEventType.TASK_STATE_CHANGED, actor=actor, task_id=plan.source_task_id,
                           payload={"reason": f"plan_{action}_button", "plan_id": plan.id})
         raw = (payload.get("raw") or {}).get("callback_query", {}).get("message") or {}
@@ -1224,13 +1234,26 @@ class TelegramIntakeService:
         if task is None or task.status != TaskStatus.CLARIFYING or not isinstance(offer, dict) or offer.get("state") != "pending":
             self._callback_ack = "That question was already answered."
             return
+        if not self._callback_matches_task(payload, task):
+            self._callback_ack = "That question is not open in this chat."
+            return
+        if payload.get("question_token") != clarification_token(task):
+            self._callback_ack = "This button is out of date. Reply to the current question."
+            return
         yes = payload.get("answer") == "yes"
-        resume_clarifying_task(
+        result = resume_clarifying_task(
             self.repositories, self.audit, task,
-            text="Yes, please ask Claude Code" if yes else "No thanks",
+            text="Yes" if yes else "No thanks",
             actor=actor, message_id=str(payload.get("callback_query_id") or "button"), received_at=utc_now(),
         )
-        self._callback_ack = "Okay, asking Claude Code." if yes else "Okay, I'll answer with what I have."
+        self._callback_ack = ("Okay, asking Claude Code." if yes else "Okay, I'll look for another local approach.") if result.accepted else "That question was already answered."
+
+    @staticmethod
+    def _callback_matches_task(payload: dict[str, Any], task: TaskRecord) -> bool:
+        message = ((payload.get("raw") or {}).get("callback_query") or {}).get("message") or {}
+        chat_id = (message.get("chat") or {}).get("id")
+        target = channel_chat_id(task, ChannelType.TELEGRAM)
+        return target is not None and chat_id is not None and target == str(chat_id)
 
     def _create_task_signal(
         self,

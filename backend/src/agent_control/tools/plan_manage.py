@@ -13,6 +13,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agent_control.config import AppSettings
+from agent_control.orchestration.initiative import initiative_guidance
 from agent_control.plans.model import MAX_CHECK_IN_DAYS, MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus, in_date_order
 from agent_control.plans.planner import can_do_text, draft_plan
 from agent_control.plans.runner import audit_plan, cancel_plan, pause_plan, render_plan, routing_of
@@ -45,7 +46,7 @@ def _steps_from(raw: list[dict[str, Any]]) -> list[PlanStep]:
     return in_date_order(steps)
 
 
-_STEP_FIELDS = {"title", "detail", "owner", "needs", "depends_on", "ability", "due"}
+_STEP_FIELDS = {"title", "detail", "owner", "choice_only", "needs", "depends_on", "ability", "due"}
 #: Each line a person tells the assistant about the project, and how many lines a plan keeps (the oldest go first).
 NOTE_CHARS = 300
 
@@ -119,7 +120,8 @@ class PlanManageAdapter:
         """The steps for a goal the Operator gave no steps for: the planner's draft, from what the user said and what the assistant can do."""
         if self.provider is None:
             raise ValueError("give the steps yourself: no planner model is available here")
-        said = str(getattr(task, "objective", "") or "")
+        metadata = getattr(task, "metadata", {}) or {}
+        said = initiative_guidance(metadata.get("initiative_level")) + "\n" + str(getattr(task, "objective", "") or "")
         try:
             draft = await draft_plan(self.provider, goal, said, self._can_do())
         except Exception as exc:  # noqa: BLE001 - say what happened; the Operator can write the steps itself
@@ -151,8 +153,11 @@ class PlanManageAdapter:
             raise ValueError(f"a plan has at most {MAX_STEPS} steps")
         data = request.input
         position = min(int(data.get("position") or len(plan.steps) + 1), len(plan.steps) + 1)
-        step = _steps_from([{k: v for k, v in data.items() if k in _STEP_FIELDS}])[0].model_copy(update={"position": position})
-        self.repositories.plans.add_step(plan.id, step)
+        try:
+            step = PlanStep(position=position, **{k: v for k, v in data.items() if k in _STEP_FIELDS})
+        except ValidationError as exc:
+            raise ValueError(f"step is not valid: {exc.errors()[0]['msg']}") from exc
+        self.repositories.plans.add_step(plan.id, step, expected_revision=plan.revision)
         updated = self.repositories.plans.get(plan.id) or plan
         return updated, f"Step added.\n{render_plan(updated)}"
 
@@ -166,6 +171,14 @@ class PlanManageAdapter:
         for name in ("title", "detail", "needs", "depends_on", "ability"):
             if data.get(name) is not None:
                 fields[name] = data[name]
+        if any(name in fields for name in ("title", "detail", "needs")) or data.get("owner"):
+            fields["choice_only"] = False
+        if data.get("choice_only") is not None:
+            if step.status != StepStatus.PENDING:
+                raise ValueError("change the decision-only marker before the step starts")
+            if not isinstance(data["choice_only"], bool):
+                raise ValueError("choice_only must be true or false")
+            fields["choice_only"] = data["choice_only"]
         if data.get("due") is not None:
             wanted_day = PlanStep(position=1, title="x", due=data["due"]).due
             if wanted_day is None and str(data["due"]).strip():
@@ -177,12 +190,13 @@ class PlanManageAdapter:
             wanted = StepStatus(data["status"])
             if wanted not in (StepStatus.DONE, StepStatus.SKIPPED, StepStatus.PENDING):
                 raise ValueError("a step can be set to done, skipped or pending")
+            if wanted == StepStatus.DONE:
+                raise ValueError("completion is recorded by the plan runner after its linked task finishes or the user reports their step done")
             fields["status"] = wanted
-            if wanted == StepStatus.DONE and not step.result:
-                fields["result"] = "marked done"
         if not fields:
             raise ValueError("nothing to change: give a title, detail, owner, needs, depends_on, ability, due or status")
-        self.repositories.plans.update_step(step.id, **fields)
+        if not self.repositories.plans.edit_pending_step(plan, step, **fields):
+            raise ValueError("the plan changed or the step has already started; check its status before editing")
         updated = self.repositories.plans.get(plan.id) or plan
         return updated, f"Step {step.position} updated.\n{render_plan(updated)}"
 
@@ -205,7 +219,7 @@ class PlanManageAdapter:
         days = request.input.get("days")
         if days is None or not -MAX_SHIFT_DAYS <= int(days) <= MAX_SHIFT_DAYS or int(days) == 0:
             raise ValueError(f"days is how far to move the unfinished steps, between -{MAX_SHIFT_DAYS} and {MAX_SHIFT_DAYS}, not 0")
-        moved = self.repositories.plans.shift_dates(plan.id, int(days))
+        moved = self.repositories.plans.shift_dates(plan.id, int(days), expected_revision=plan.revision)
         if not moved:
             raise ValueError("no unfinished step has a day to move")
         updated = self.repositories.plans.get(plan.id) or plan
@@ -234,7 +248,8 @@ class PlanManageAdapter:
         else:
             if plan.status not in (PlanStatus.PROPOSED, PlanStatus.PAUSED):
                 raise ValueError(f"the plan is {plan.status.value}, so it cannot be started")
-            self.repositories.plans.set_status(plan.id, PlanStatus.ACTIVE)  # the runner starts its first step on its next pass
+            if not self.repositories.plans.transition_status(plan.id, PlanStatus.ACTIVE, (PlanStatus.PROPOSED, PlanStatus.PAUSED)):
+                raise ValueError("the plan changed before it could be started; check its status and retry")
             updated = self.repositories.plans.get(plan.id) or plan
         return updated, f"The plan is now {updated.status.value}.\n{render_plan(updated)}"
 
@@ -257,7 +272,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "goal and a planner drafts the steps, each owned by you (ybm), by the user (user) or by you once the user gives you something "
                 "(access), each with a day when the goal has a date or a stretch of time; the plan is saved and the user starts it. Also: check in "
                 "every N days (set_check_in), move the unfinished days when the project slips (shift_dates), keep a fact the user told you with "
-                "the plan (add_note). Use this instead of asking a list of questions: at most one question first"
+                "the plan (add_note). Edit unstarted steps only; the runner records completion from the linked task or user report. "
+                "Use this instead of asking a list of questions: at most one question first"
             ),
             operations=("create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"),
             input_schema=PlanManageInput,
@@ -269,7 +285,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             examples=(
                 {"operation": "create", "goal": "Build a small indoor quadcopter with a camera and a small language model on it, about 300 dollars"},
                 {"operation": "show"},
-                {"operation": "update_step", "position": 1, "status": "done"},
+                {"operation": "update_step", "position": 1, "title": "Compare the available options"},
                 {"operation": "set_check_in", "days": 7},
                 {"operation": "shift_dates", "days": 14},
                 {"operation": "add_note", "note": "The plot is 600 square meters outside Bursa; the budget is 250,000 euros."},
