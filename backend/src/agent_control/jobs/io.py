@@ -219,5 +219,10 @@ def build_io(provider: Any, search_adapter: Any, http_adapter: Any, *, browser_s
             return None
         return visible_text(str(output.get("text") or ""))
 
-    return ResearchIO(think=think, write=write, search=search, fetch=fetch)
+    async def probe(op: str, args: dict[str, Any]) -> Any:
+        from agent_control.diagnose import run_probe
+
+        return await run_probe(op, **args)
+
+    return ResearchIO(think=think, write=write, search=search, fetch=fetch, probe=probe)
 

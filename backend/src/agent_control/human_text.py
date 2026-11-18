@@ -370,6 +370,8 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
     if tool == "image.describe":
         name = str(data.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1] or "a picture"
         return f"Load a vision model to look at {name} (about 3 GB of GPU memory; the picture stays on this computer)"
+    if tool == "job.manage" and operation == "start_investigation":
+        return f"Work this out: run read-only checks of this computer and your network, look up what is known, and tell you what I find and the ways forward: {' '.join(str(data.get('goal') or '').split())[:160]}"
     if tool == "job.manage" and operation == "start_research":
         from agent_control.jobs.research import time_estimate
 

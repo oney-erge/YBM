@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_control.config import AppSettings
-from agent_control.jobs import research
+from agent_control.jobs import engines, investigate, research
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.jobs.runner import cancel_job, pause_job, resume_job
 from agent_control.plans.runner import routing_of
@@ -19,7 +19,7 @@ from agent_control.storage.repositories import Repositories
 from agent_control.tools.contracts import JobManageInput, JobManageOutput
 from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDefinition, failed_result, same_output_schema
 
-OPERATIONS = ("start_research", "status", "pause", "resume", "stop")
+OPERATIONS = ("start_research", "start_investigation", "status", "pause", "resume", "stop")
 #: Jobs open at once in one chat. The one local model serves one request at a time, so a third job would only slow the other two.
 MAX_OPEN_JOBS = 2
 
@@ -29,7 +29,7 @@ def job_line(job: Job) -> str:
     failure = (
         "Could not save the report; a partial file may exist. Check it before resuming."
         if job.state.get("stop_reason") == "report_write_failed"
-        else f"Stopped after repeated errors. {research.progress_text(job.state)} 'Resume' tries again."
+        else f"Stopped after repeated errors. {engines.progress_text(job)} 'Resume' tries again."
     )
     delivery = job.state.get("delivery") or {}
     delivery_text = {
@@ -41,8 +41,8 @@ def job_line(job: Job) -> str:
         "missing": " The saved report is missing; check the report location.",
     }.get(delivery.get("status"), "")
     where = {
-        JobStatus.RUNNING: research.progress_text(job.state) if job.state else "Starting.",
-        JobStatus.PAUSED: f"Paused. {research.progress_text(job.state)}" if job.state else "Paused.",
+        JobStatus.RUNNING: engines.progress_text(job) if job.state else "Starting.",
+        JobStatus.PAUSED: f"Paused. {engines.progress_text(job)}" if job.state else "Paused.",
         JobStatus.DONE: "Done: the report was saved." + delivery_text,
         JobStatus.FAILED: failure,
         JobStatus.CANCELLED: "Stopped.",
@@ -63,6 +63,8 @@ class JobManageAdapter:
         try:
             if operation == "start_research":
                 output = self._start(request, routing)
+            elif operation == "start_investigation":
+                output = self._start_investigation(request, routing, task)
             elif operation == "status":
                 output = self._status(request, routing)
             elif operation in ("pause", "resume", "stop"):
@@ -98,6 +100,28 @@ class JobManageAdapter:
                 f"Started the research on: {goal[:200]}. It reads up to {job.state['max_pages']} pages, one at a time, in the background; "
                 "the person's messages are answered first. Progress messages come to this chat, and the report comes at the end. Tell the person "
                 "in one or two sentences, without any job number, that it has started and that they can ask 'how far are you?', pause it or stop it at any time."
+            ),
+        }
+
+    def _start_investigation(self, request: ToolCallRequest, routing: dict[str, str], task: Any) -> dict[str, Any]:
+        goal = " ".join(str(request.input.get("goal") or "").split())
+        if not goal:
+            raise ValueError("start_investigation requires a goal")
+        open_jobs = self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED])
+        if len(open_jobs) >= MAX_OPEN_JOBS:
+            raise ValueError(f"{len(open_jobs)} jobs are already open in this chat; pause or stop one first, or wait for it to finish")
+        # The goal this belongs to travels with the job, so that when it ends what it found goes to the goal (orchestration/goal_routing.py).
+        goal_id = str((task.metadata or {}).get("goal_id") or "") if task is not None else ""
+        job = self.repositories.jobs.create(Job(kind="investigate", goal=goal, state=investigate.new_state(), routing={**routing, **({"goal_id": goal_id} if goal_id else {})}))
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor="job", task_id=request.task_id, payload={"reason": "job_started", "job_id": job.id, "kind": "investigate"}
+        )
+        return {
+            "job_id": job.id, "jobs": [{"id": job.id, "status": job.status.value}],
+            "summary": (
+                f"Started working out: {goal[:200]}. It runs read-only checks of this computer and the home network, one at a time, looks up what is known, and then "
+                "messages the person what it found and the ways forward. Tell the person in one or two sentences, without any job number, that it has started and that they "
+                "can ask 'how far are you?', pause it or stop it at any time."
             ),
         }
 
@@ -159,7 +183,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             named_when_disabled=False,
             description=(
-                "start and control a long job that runs in the background for hours: start_research reads many web pages one at a time, keeps the "
+                "start and control a long job that runs in the background: start_investigation works out why something on this computer or the home network does not work (it reads the network, services, firewall and devices, then looks up what is known) and reports what it found with ways forward; start_research reads many web pages one at a time, keeps the "
                 "quotations from pages, messages the person as it goes and ends with a cited report that needs source review; status says how far it is; pause, "
                 "resume and stop control it. Use it when the person asks for thorough research, many sources, or to be told when it is done"
             ),
@@ -169,10 +193,14 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_output_schemas=same_output_schema(OPERATIONS, JobManageOutput),
             default_operation="status",
             # Hours of work and many web requests start only when the person says so, with a sentence that says what it will do.
-            approval_required_operations=("start_research",),
-            approval_reasons={"start_research": "Starts a long research job that reads many web pages over several hours."},
+            approval_required_operations=("start_research", "start_investigation"),
+            approval_reasons={
+                "start_research": "Starts a long research job that reads many web pages over several hours.",
+                "start_investigation": "Runs read-only checks of this computer and the home network to work out a problem, and looks up what is known.",
+            },
             examples=(
                 {"operation": "start_research", "goal": "Which heat pump is best for a 150 square meter house in Chicago? Costs, running costs, reliability.", "max_pages": 60},
+                {"operation": "start_investigation", "goal": "My TV will not take a cast from this computer; find out why."},
                 {"operation": "status"},
                 {"operation": "pause"},
             ),

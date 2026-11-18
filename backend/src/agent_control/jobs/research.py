@@ -40,12 +40,17 @@ class Page:
 Fetch = Callable[[str], Awaitable[Page | None]]  # url -> the page's visible text, or None when it cannot be read
 
 
+#: One read-only check of this computer or its network (diagnose.py): name and arguments in, a result with `ok` and `summary` out. Only a job that investigates has one.
+ProbeRun = Callable[[str, dict[str, Any]], Awaitable[Any]]
+
+
 @dataclass(frozen=True)
 class ResearchIO:
     think: Think
     write: Write
     search: Search
     fetch: Fetch
+    probe: ProbeRun | None = None
 
 
 # --- the limits that keep one unit small enough for a small model -------------------------------------------------------------------------------

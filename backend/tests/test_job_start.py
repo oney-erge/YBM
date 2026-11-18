@@ -228,7 +228,7 @@ def test_the_operator_is_told_a_job_is_running_in_the_chat_and_that_a_message_ab
     assert open_job_note(repos.jobs, "42") == "" and open_job_note(repos.jobs, None) == ""
     job = repos.jobs.create(Job(kind="research", goal="how people heat old stone houses without making them damp", state=research.new_state(12), routing=dict(ROUTING)))
     note = open_job_note(repos.jobs, "42")
-    assert "## Research is running for this person in this chat" in note and "how people heat old stone houses" in note and "(running)" in note
+    assert "## A long job is running for this person in this chat" in note and "how people heat old stone houses" in note and "(running)" in note
     assert "Never start another research for a message like that." in note and "job.manage" in note
     assert open_job_note(repos.jobs, "other-chat") == ""  # another chat's job is not shown
     repos.jobs.save(job.id, status=JobStatus.DONE)

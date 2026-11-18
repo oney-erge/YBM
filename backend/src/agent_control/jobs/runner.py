@@ -15,7 +15,7 @@ from pathlib import Path
 
 import structlog
 
-from agent_control.jobs import research
+from agent_control.jobs import engines, research
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.schemas import AuditEventType, TaskStatus
 from agent_control.storage.audit import AuditLogger
@@ -88,7 +88,8 @@ class JobRunner:
         return 0
 
     async def _unit(self, job: Job) -> None:
-        state = job.state or research.new_state()
+        engine = engines.engine_for(job.kind)
+        state = job.state or engine.new_state()
         # Admission and control updates share the same revision. A control that
         # wins first prevents this snapshot from starting another unit.
         if not self.repositories.jobs.save_if_revision(
@@ -97,7 +98,7 @@ class JobRunner:
             return
         job = job.model_copy(update={"revision": job.revision + 1})
         try:
-            unit = await asyncio.wait_for(research.advance(job.goal, state, self.io_for(job)), timeout=self.unit_seconds)
+            unit = await asyncio.wait_for(engine.advance(job.goal, state, self.io_for(job)), timeout=self.unit_seconds)
         except Exception as exc:  # noqa: BLE001 - counted, and said once it has failed too often
             await self._failed_unit(job, state, exc)
             return
@@ -115,7 +116,7 @@ class JobRunner:
             due = False
             previous = None
         if notice is None and due and not self._quiet_now():
-            notice = research.progress_text(unit.state)
+            notice = engine.progress_text(unit.state)
         if notice or not previous:
             unit.state["progress_notice_at"] = now.isoformat()
         if not self.repositories.jobs.save_if_revision(
@@ -152,7 +153,7 @@ class JobRunner:
         await self._tell(
             job,
             f"I had to stop the research: {reason[:200]} ({errors} tries in a row). What I had by then is saved. "
-            f"{research.progress_text(state)} Say 'resume the research' to try again.",
+            f"{engines.progress_text(job)} Say 'resume' to try again.",
         )
 
     async def _finish(self, job: Job, unit: research.Unit) -> None:
@@ -190,14 +191,35 @@ class JobRunner:
                 await self._tell(job, "I could not save the research report, so I stopped. A partial file may exist; check before resuming.")
             return
         self._audit(job, "job_done", path=str(delivery_path))
+        self._hand_to_goal(job, final_state)
         if word_failed:
             await self._tell(job, "I could not make the Word copy. The report is available as Markdown instead.")
         delivery = "I will try to send it next." if self.send_file is not None else "This channel cannot send it automatically."
-        await self._tell(job, f"The research is done.\n\n{unit.state.get('summary', '')}\n\nThe full report, with every source, was saved. {delivery}")
+        await self._tell(job, f"The {unit.state.get('noun', 'research')} is done.\n\n{unit.state.get('summary', '')}\n\nThe full report, with every source, was saved. {delivery}")
         if self.send_file is not None:
             saved = self.repositories.jobs.get(job.id)
             if saved is not None:
                 await self._deliver(saved)
+
+    def _hand_to_goal(self, job: Job, state: dict) -> None:
+        """When the job worked out a problem for a goal, give the goal what was found and what can be done, and make it wait for the person's pick."""
+        goal_id = job.routing.get("goal_id")
+        if job.kind != "investigate" or not goal_id:
+            return
+        from agent_control.goals import Goal, GoalStatus, attempt_entry
+        from agent_control.jobs.investigate import goal_evidence
+
+        def change(goal: Goal) -> Goal:
+            goal.status = GoalStatus.WAITING if state.get("options") else GoalStatus.BLOCKED
+            goal.waiting = {"question": "Which way forward should I try?"} if state.get("options") else {}
+            goal.evidence = [*goal.evidence, *goal_evidence(state)][-20:]
+            goal.attempts = [*goal.attempts, attempt_entry("job", job.id, outcome="investigated", note=str(state.get("summary") or "")[:200])]
+            return goal
+
+        try:
+            self.repositories.goals.update(str(goal_id), change)
+        except Exception:  # noqa: BLE001 - the record of what was found is help for the next attempt, not a reason to fail the job
+            logger.warning("goal_not_given_the_findings", job_id=job.id, exc_info=True)
 
     async def _deliver(self, job: Job) -> None:
         delivery = dict(job.state.get("delivery") or {})
