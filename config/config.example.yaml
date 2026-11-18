@@ -292,6 +292,17 @@ jobs:
   quiet_start: 23     # progress messages use scheduler.default_timezone
   quiet_end: 8        # equal hours disable quiet time; completion and failures still notify
 
+# The assistant's own mailbox (read mail, follow a confirmation link, draft a reply, send after you approve a card). Set it up with the skill
+# "Make a mailbox of my own": the sign-up needs you for a puzzle or a code, and the login is kept in the account vault, never here.
+mail:
+  enabled: false
+  address: ""             # the mailbox, for example assistant@gmail.com
+  account_host: gmail.com # the vault entry that holds its password (an app password for Gmail)
+  imap_host: imap.gmail.com
+  imap_port: 993
+  smtp_host: smtp.gmail.com
+  smtp_port: 465
+
 # Looking at pictures (a photo you send, a screenshot) with a local vision model through LocalDeploy. The assistant's own model reads
 # text only. Each use asks you first, because it loads a model of about 3 GB. Nothing leaves this computer.
 vision:

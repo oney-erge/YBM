@@ -761,6 +761,24 @@ class PlansConfig(StrictBaseModel):
     enabled: bool = False
 
 
+class MailConfig(StrictBaseModel):
+    """The assistant's own mailbox (tools/mail_manage.py). Off in the code's defaults for the same reason as `jobs.enabled`: a new tool line changes the Operator's prompt.
+
+    The password is not here: it is kept in the account vault (accounts.py) under `account_host`, the way the browser tool's logins are.
+    """
+
+    enabled: bool = False
+    #: The mailbox's address, for example the one made with the person's help.
+    address: str = ""
+    #: The host the mailbox's login is kept under in the vault (for Gmail, gmail.com).
+    account_host: str = "gmail.com"
+    imap_host: str = "imap.gmail.com"
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+    drafts_dir: str = ".agent_control/mail_drafts"
+
+
 class JobsConfig(StrictBaseModel):
     """Jobs that take hours (jobs/): the `job.manage` tool and the runner that carries a started job out one unit at a time. Research is the first kind.
 
@@ -826,6 +844,7 @@ class AppSettings(BaseSettings):
     abilities: AbilitiesConfig = Field(default_factory=AbilitiesConfig)
     plans: PlansConfig = Field(default_factory=PlansConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
+    mail: MailConfig = Field(default_factory=MailConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @classmethod
