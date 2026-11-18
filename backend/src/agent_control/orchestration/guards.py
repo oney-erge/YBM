@@ -141,7 +141,7 @@ class GuardStage:
             })
             return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
         if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in current if isinstance(entry, dict)):
-            if task.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+            if task.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (task.metadata.get("declined_methods") or []):
                 return self._offer_claude_code(task, history)
             return self._transition_operator(
                 task,
@@ -329,7 +329,7 @@ class GuardStage:
             if offer.get("state") != "pending":
                 return None
         steps = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
-        if offer is None and ladder.exhausted(steps) and self._claude_code_ready():
+        if offer is None and ladder.exhausted(steps) and self._claude_code_ready() and "claude_code" not in (task.metadata.get("declined_methods") or []):
             return self._offer_claude_code(task, history)
         given = {
             str(e.get("hint_id")) for e in history

@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Goals. What a person wants is kept apart from any one attempt at it: a `goals` table (objective in resolved words, the person's own words, status, what it waits on, methods the person declined, one line per attempt with how it ended), updated by code when each attempt (task) ends. The 2026-11-16 TV chain is why: a task that ended without the result ended the goal, so "write me a plan for it" became a plan titled with those words, "you choose" started an unrelated plan, and a declined Claude Code hand-over ended the work. Now the open goals of a chat are shown to the Concierge with the message, in the same call that already classifies it (no extra call), and it returns `goal_ref` (which goal) and `act` (answer, delegate, decline, continue, plan, control, chat, new). Intake carries it out in code: an answer, a delegation ("You choose.") or a decline goes to the task the goal waits on; "continue" and "plan" make a new attempt with the goal's own objective and what was tried, not repeating a method that failed; a follow-up with several candidate goals asks once ("Which one do you mean?", answered with a number, and the message that could not be placed is read again with the pick); a hand-over the person declined is not offered again for that goal. The fields are in the structured-output schema, not in the prompt text, so no recorded fixture changed. Measured on the running 9B on 28 labeled messages twice (56 readings): goal right in 53, act right in 52; a "yes" to a hand-over offer is always passed on as the person's own words.
+
 ### Changed
 
 - A declined external coding handoff permits a bounded local continuation. Assistant-owned plan steps resume after clarification instead of treating the reply as proof of completion; explicit skipped prerequisites block dependent steps.

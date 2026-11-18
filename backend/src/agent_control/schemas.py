@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -399,6 +399,12 @@ class MessageClassification(StrictBaseModel):
     # spawning a second task for "make it five, not three", which is how a
     # running task came to be unsteerable in the first place.
     steers_active_task: bool = False
+    # Which open goal of the chat this message belongs to (its label, G1, G2...) and what the message does to it. Filled only when the context lists open goals
+    # (goals.py); in the structured-output schema, not in the prompt text, so adding them changes no recorded fixture key.
+    goal_ref: str | None = Field(default=None, description="the label (G1, G2...) of the open goal this message answers, continues, plans for or declines something in; null for a new request")
+    act: Literal["new", "answer", "delegate", "decline", "continue", "plan", "control", "chat"] | None = Field(
+        default=None, description="what the message does: new request, answer to a goal's question, delegate the choice, decline an offered method, continue, plan for the goal, control a job, chat"
+    )
     # Populated only when is_task=False (see prompts/base/concierge_system.md) -
     # the Concierge composes the chat reply in the same call it classifies, so
     # a non-task message doesn't need a second LLM round trip. None/empty falls

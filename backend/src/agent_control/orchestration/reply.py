@@ -5,6 +5,7 @@ import asyncio
 import logging
 
 from agent_control.channels.memory import ConversationMemoryService
+from agent_control.orchestration import goal_routing
 from agent_control.orchestration.task_record import task_memory_summary
 from agent_control.schemas import (
     AuditEventType,
@@ -59,6 +60,7 @@ class ReplyStage:
     async def _notify_if_needed(self, task: TaskRecord) -> None:
         if task.status not in NOTIFIABLE_STATUSES:
             return
+        goal_routing.sync_from_task(self.repositories, task)
         # CLARIFYING can happen more than once per task; key by question number
         # so the second question is not swallowed by the dedupe set.
         status_key = task.status.value

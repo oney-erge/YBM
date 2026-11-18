@@ -698,7 +698,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 return self.repositories.tasks.update_metadata(
                     latest.id, metadata, TaskStatus.RUNNING
                 )
-            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (latest.metadata.get("declined_methods") or []):
                 return self._offer_claude_code(latest, history)
             return self._transition_operator(
                 latest, {**latest.metadata, "operator_history": history},
@@ -788,7 +788,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         decision = await self.operator.decide(
                             latest.objective,
                             self._planner_context(
-                                self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or "")
+                                self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or "") + str(latest.metadata.get("goal_notes") or "")
                                 + today_note(latest.metadata.get(CHECKS_KEY)),
                                 metadata=latest.metadata,
                             ),
@@ -961,7 +961,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         "so please double-check it.)"
                     )
                 else:
-                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (latest.metadata.get("declined_methods") or []):
                         return self._offer_claude_code(latest, history)
                     metadata = {
                         **latest.metadata,

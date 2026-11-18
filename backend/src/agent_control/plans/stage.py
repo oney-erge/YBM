@@ -43,7 +43,7 @@ async def run_plan_stage(
     # as the goal that every future step will receive.
     original = str(task.metadata.get("original_message_text") or "").strip()
     goal = task.objective.split("\n[Question to the user:", 1)[0].strip() or original
-    context = initiative_guidance(task.metadata.get("initiative_level"))
+    context = initiative_guidance(task.metadata.get("initiative_level")) + str(task.metadata.get("goal_notes") or "")
     if original and original != goal:
         context += f"\nThe user's message: {original}"
     context += "\n" + task.objective
