@@ -119,10 +119,20 @@ def objective_for(route: GoalRoute, classification: MessageClassification, words
     return (said or words).strip()
 
 
-def prepare_attempt(route: GoalRoute, conversation_id: str) -> tuple[str, dict[str, Any]]:
+def prepare_attempt(route: GoalRoute, conversation_id: str, words: str = "") -> tuple[str, dict[str, Any]]:
     """The goal id for the task about to be made, and the metadata that carries the goal to it: known before the task exists, so the worker never sees the task without it."""
     if route.goal is not None and route.act in ("continue", "plan"):
-        return route.goal.id, {"goal_id": route.goal.id, "goal_act": route.act, "declined_methods": list(route.goal.declined), "goal_notes": goal_notes_for_operator(route.goal)}
+        notes = goal_notes_for_operator(route.goal)
+        if (route.goal.waiting or {}).get("question") and not (route.goal.waiting or {}).get("task_id") and route.goal.evidence:
+            # The goal waited for the person to pick a way forward (an investigation ended with options). Say what they answered, and what to do with it: the first attempt after
+            # "You choose" looked at the graphics card instead of doing any of the options (live 11/18).
+            notes += (
+                f"\nThe person was asked which way forward to try and answered: \"{' '.join(words.split())[:200]}\". If they named one (by its number or by what it does), carry out that one. "
+                "If they left it to you, carry out Option 1, the one the evidence supports most. Do it now with the tools you have (computer.use can open Windows Settings and Services; "
+                "a change comes to the person as a card to approve), then check that it worked the way the investigation's own check would show it, and say what you did and what you saw. "
+                "If it cannot be done with your tools, say exactly why and take the next option."
+            )
+        return route.goal.id, {"goal_id": route.goal.id, "goal_act": route.act, "declined_methods": list(route.goal.declined), "goal_notes": notes}
     goal_id = new_id("goal")
     return goal_id, {"goal_id": goal_id}
 
