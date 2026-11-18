@@ -95,7 +95,8 @@ ANALYZE_SYSTEM = (
     "You read the results of checks run on a person's computer to find out why their problem happens. Write findings: things the results show, each with the name of the "
     "check whose result shows it. Never write a finding the results do not show; a guess is not a finding. Mark each likely cause supported (a result shows it), refuted (a "
     "result shows it is not the cause) or open. If one more check would settle an open cause, name it; for host_check give an address that appears in the results. Set enough "
-    "to true when the results explain the problem or no listed check would add anything.\n\nThe checks:\n{menu}"
+    "to true when the results explain the problem or no listed check would add anything. If the problem is about one particular device or program, write a finding that says "
+    "whether it appears in the results (by its name, brand or model) and which devices or programs do appear; when it does not appear, say so plainly.\n\nThe checks:\n{menu}"
 )
 QUERY_SYSTEM = (
     "You write web searches for what is known about the possible causes of a computer problem that the checks could not settle. Write at most 2, each specific (the product, "
@@ -278,7 +279,9 @@ async def _options(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
     options = []
     for option in getattr(answer, "options", []):
         cited = [ident.strip().upper() for ident in option.evidence if ident.strip().upper() in known]
-        if cited and option.title.strip() and option.how.strip():  # a way forward nothing found supports is a guess, and is not offered
+        # A way forward must rest on something found on this computer (an F). What the web says about someone else's machine supports a finding; it does not stand in for one:
+        # on the first live run an option about a firewall port came only from forum notes about a different problem, and no check of this computer had looked at the firewall.
+        if any(ident.startswith("F") for ident in cited) and option.title.strip() and option.how.strip():
             options.append({
                 "title": " ".join(option.title.split())[:120], "why": " ".join(option.why.split())[:300], "how": " ".join(option.how.split())[:600],
                 "changes_something": bool(option.changes_something), "undo": " ".join(option.undo.split())[:300], "evidence": cited,
@@ -304,9 +307,9 @@ def render_summary(state: dict[str, Any]) -> str:
         lines += [f"- {finding['text']}" for finding in state["findings"]]
     else:
         lines.append("The checks did not settle anything.")
-    open_causes = [item["text"] for item in state["hypotheses"] if item["status"] == "open"]
+    open_causes = [item["text"].rstrip(". ") for item in state["hypotheses"] if item["status"] == "open"]
     if open_causes:
-        lines += ["", "What I could not tell: " + "; ".join(open_causes[:3]) + "."]
+        lines += ["", "No check settled these, so I do not know whether they are true:"] + [f"- {cause}" for cause in open_causes[:3]]
     if state["options"]:
         lines += ["", "Ways forward:"]
         for number, option in enumerate(state["options"], 1):
