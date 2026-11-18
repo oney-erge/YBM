@@ -594,7 +594,7 @@ async def classify_and_spawn_task(
         return _spawn_failed(audit, inbound, classification.reason, actor, classification)
 
     objective = goal_routing.objective_for(route, classification, inbound.text)
-    goal_id, goal_metadata = goal_routing.prepare_attempt(route, conversation_id)
+    goal_id, goal_metadata = goal_routing.prepare_attempt(route, conversation_id, inbound.text or "")
     voice_attachment = next((a for a in inbound.attachments if isinstance(a, VoiceAttachment)), None)
     voice_metadata = (
         {"voice_file_id": voice_attachment.file_id, "voice_transcript": voice_attachment.transcript}

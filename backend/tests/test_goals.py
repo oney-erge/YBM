@@ -249,3 +249,24 @@ async def test_to_a_pending_handover_offer_the_persons_own_yes_is_the_answer_eve
         classifier=_Classifier(goal_ref="G1", act="delegate"), send_progress=_no_progress,
     )
     assert repos.tasks.get(asking.id).metadata["clarification_answer"] == "Yes, please hand it over"  # not "You choose."
+
+
+@pytest.mark.asyncio
+async def test_after_an_investigation_a_pick_or_a_you_choose_tells_the_next_attempt_which_option_to_carry_out(tmp_path) -> None:
+    """Live 11/18: "You choose." after the TV investigation's options started an attempt that looked at the graphics card and did none of them."""
+    repos, audit = make_repos(tmp_path)
+    conversation_id = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    tv = repos.goals.create(Goal(
+        conversation_id=conversation_id, objective="Get the TV to take casts", status=GoalStatus.WAITING, waiting={"question": "Which way forward should I try?"},
+        evidence=["Found: Ethernet is on a Public network", "Option 1: Set the network to Private - Settings, Network"],
+    ))
+    result = await classify_and_spawn_task(
+        _inbound("You choose."), conversation_id, repositories=repos, audit=audit, classifier=_Classifier(goal_ref="G1", act="delegate"), send_progress=_no_progress,
+    )
+    notes = result.task.metadata["goal_notes"]
+    assert result.task.metadata["goal_id"] == tv.id and "Option 1: Set the network to Private" in notes
+    assert 'answered: "You choose."' in notes and "carry out Option 1" in notes and "computer.use can open Windows Settings" in notes
+    # a goal that waits on nothing of the kind gets no such instruction
+    plain = repos.goals.create(Goal(conversation_id=conversation_id, objective="Fix the printer", status=GoalStatus.BLOCKED, attempts=[attempt_entry("task", "t1", outcome="blocked")]))
+    other = await classify_and_spawn_task(_inbound("keep trying"), conversation_id, repositories=repos, audit=audit, classifier=_Classifier(goal_ref="G2", act="continue"), send_progress=_no_progress)
+    assert "carry out Option 1" not in other.task.metadata["goal_notes"] and plain.id
