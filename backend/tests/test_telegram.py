@@ -1281,3 +1281,46 @@ def test_a_remember_message_the_profile_parser_does_not_know_stays_one_note(tmp_
 def test_remember_to_do_something_is_still_not_a_memory(tmp_path) -> None:
     result, repos = _say(tmp_path, "Remember to call the plumber")
     assert repos.memory_facts.list_all() == []
+
+
+class _ChatClassifier:
+    async def classify(self, message, context=None) -> MessageClassification:
+        return MessageClassification(is_task=False, task_type=TaskType.QUESTION, reason="chat", reply="The capital of Portugal is Lisbon.")
+
+
+@pytest.mark.asyncio
+async def test_through_the_polling_loop_the_reply_is_sent_before_the_summary_is_written_and_typing_comes_first(tmp_path) -> None:
+    """Live 11/18: a chat reply took 23 s and 13 of them were the conversation summary, written before the first word; "typing" showed 14 s after the message."""
+    order: list[str] = []
+
+    class _Provider:
+        async def generate_text(self, system, user):
+            order.append("summary")
+            return "A summary written by the model."
+
+    class _Client(FakeTelegramClient):
+        async def send_chat_action(self, chat_id, action="typing"):
+            order.append("typing")
+            return {"ok": True}
+
+        async def send_message(self, chat_id, text, **kwargs):
+            order.append("reply")
+            return await super().send_message(chat_id, text)
+
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    audit = AuditLogger(repos.audit)
+    client = _Client([{"update_id": 10, "message": {"message_id": 6, "from": {"id": 42}, "chat": {"id": 100}, "text": "What is the capital of Portugal?"}}])
+    service = TelegramIntakeService(
+        TelegramAdapter(TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100]), audit), repos, audit,
+        bot_api=client, classifier=_ChatClassifier(), memory_service=ConversationMemoryService(repos, provider=_Provider()),  # type: ignore[arg-type]
+    )
+    await TelegramPollingRunner(client, service).poll_once()  # type: ignore[arg-type]
+    assert order.index("typing") < order.index("reply") < order.index("summary"), order
+    assert repos.conversation_memory.get("conv_telegram_100")["summary"] == "A summary written by the model."
+    # a caller that handles one update itself (no loop to run the work after the reply) still gets the summary written, as before
+    other = TelegramIntakeService(
+        TelegramAdapter(TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100]), audit), repos, audit, memory_service=ConversationMemoryService(repos, provider=_Provider()),
+    )
+    assert other.defer_summary is False
