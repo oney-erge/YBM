@@ -104,6 +104,11 @@ FACT_QUESTIONS: dict[str, str] = {
 ADDED_FACT_QUESTIONS: dict[str, str] = {
     "counts_things": "Does answering this request mean counting or adding up several things (words, lines, files, amounts, or how many times something appears)?",
     "depends_on_today": "Does this request refer to a time relative to now, such as today, yesterday, tomorrow, last week, recently, the last few days, or in two weeks?",
+    # Measured on the running decision model (11/18): 7 of 7 requests to install something clear 0.93, none of 14 ordinary requests clears 0.17; of 251 messages in the e2e
+    # suites 9 clear 0.5, and the ones between 0.5 and 0.9 are asks to a coding agent to build something ("scaffold a minimal VS Code extension", "create a job that runs every
+    # day"), which are not installs: the mark is 0.9. Asked about every request in the call that is already made, so a plan step "Install the required packages" and a request
+    # "install ffmpeg" are known to need an install without a list of words for it.
+    "installs_software": "Does the request ask for something to be installed or added to this computer (a package, library, program or tool)?",
 }
 #: Every fact the decision model is asked about, with its question.
 ALL_FACT_QUESTIONS: dict[str, str] = {**FACT_QUESTIONS, **ADDED_FACT_QUESTIONS}
@@ -112,7 +117,7 @@ FACT_CONFIRM_AT = 0.5
 #: A fact whose "yes" costs almost nothing (a line of date in the prompt) is read at a lower mark, so that the requests it should reach are reached.
 #: depends_on_today, measured on the running decision model: 11 of 12 phrasings of a relative time clear 0.35 (the one that does not is "what day of the week
 #: is it?", 0.11), none of 12 ordinary requests does (the highest is 0.30), and 19 of 251 messages in the e2e suites clear 0.5, nearly all of them about a time.
-FACT_CONFIRM_AT_BY_NAME = {"depends_on_today": 0.35}
+FACT_CONFIRM_AT_BY_NAME = {"depends_on_today": 0.35, "installs_software": 0.9}
 #: Where the answers are kept: a task's metadata, `{fact: bool}`, written once before its first step (orchestration/planning.py).
 CHECKS_KEY = "fact_checks"
 
@@ -233,6 +238,11 @@ class RequestFacts:
     def providers(self) -> tuple[str, ...]:
         text = self.both.casefold()
         return tuple(name for name, pattern in _PROVIDERS if pattern.search(text))
+
+    @property
+    def installs_software(self) -> bool:
+        """The decision model said the request is to install something (no pattern: with the model off or unsure it is False)."""
+        return bool(self.confirmed.get("installs_software", False))
 
     @property
     def counts_things(self) -> bool:
