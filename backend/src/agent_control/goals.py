@@ -113,8 +113,8 @@ def goal_notes_for_operator(goal: Goal) -> str:
     lines = [f"\n\nThis continues a goal the person still wants: {_short(goal.objective, 300)}"]
     for attempt in goal.attempts[-4:]:
         lines.append(f"- An earlier {attempt.get('kind', 'task')} {attempt.get('outcome', 'started')}" + (f": {_short(attempt['note'], 160)}" if attempt.get("note") else ""))
-    for fact in goal.evidence[-5:]:
-        lines.append(f"- Known: {_short(fact, 160)}")
+    for fact in goal.evidence[-9:]:
+        lines.append(f"- Known: {_short(fact, 200)}")
     if goal.declined:
         lines.append("- The person declined: " + ", ".join(goal.declined) + ". Do not offer it again; find another way.")
     lines.append("Do not repeat a method that already failed. Do not end the goal because one method failed: try a different one or say exactly what blocks it and what would unblock it.")

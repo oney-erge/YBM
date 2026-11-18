@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import timedelta
 from pathlib import Path
 
-from agent_control.jobs import research
+from agent_control.jobs import engines
 from agent_control.jobs.model import OPEN_STATUSES, JobStatus
 from agent_control.schemas import utc_now
 from agent_control.storage.repositories import JobRepository
@@ -56,9 +56,9 @@ def _running(jobs: JobRepository, chat_id: str) -> str:
     found = jobs.list(statuses=list(OPEN_STATUSES), chat_id=chat_id, limit=MAX_JOBS_SHOWN)
     if not found:
         return ""
-    lines = ["\n\n## Research is running for this person in this chat"]
+    lines = ["\n\n## A long job is running for this person in this chat (research, or working out a problem)"]
     for job in found:
-        lines.append(f"- {job.goal[:140]} ({job.status.value}): {research.progress_text(job.state)}")
+        lines.append(f"- {job.goal[:140]} ({job.status.value}): {engines.progress_text(job)}")
     lines.append(
         "If the message is about it (how far it is, whether the report is ready, pause it, resume it, stop it, what it has found so far), call job.manage with "
         "operation status, pause, resume or stop: it is about this job, not a new one. Never start another research for a message like that."

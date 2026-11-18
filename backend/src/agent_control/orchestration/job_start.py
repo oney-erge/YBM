@@ -22,13 +22,13 @@ MIN_PAGES, MAX_PAGES = 5, 1000
 
 SYSTEM = """You prepare a message about research for a program that reads many web pages and writes a report. You are given what the person wrote.
 
-- `action`: what they want. "start" when they ask for research on a topic to be done. "status" when they ask how far it is, whether the report is ready, or what it has found so far. "pause", "resume" or "stop" when they say so about research that is already under way. "other" when the message is about something else.
+- `action`: what they want. "investigate" when they describe something that does not work on their computer, network or a device (a TV that will not take a cast, a printer that stopped, a Wi-Fi that drops) and want it found out or fixed; their `goal` is then the problem in their own words with what they tried. "start" when they ask for research on a topic to be done. "status" when they ask how far it is, whether the report is ready, or what it has found so far. "pause", "resume" or "stop" when they say so about research that is already under way. "other" when the message is about something else.
 - `goal` (for "start" only): what they want found out, as one clear request with everything they said that matters (the topic, the place, the budget, what they care about, what they will use it for). Leave out how to work: how many sources, "take your time", "send me a report", "tell me when it is done". Do not add anything they did not say.
 - `pages` (for "start" only): how many sources or pages they asked to read, as a number ("about twelve sources" is 12, "a hundred websites" is 100). Leave it empty when they gave no number."""
 
 
 class _Start(BaseModel):
-    action: Literal["start", "status", "pause", "resume", "stop", "other"] = Field(description="what the person wants done with research")
+    action: Literal["start", "investigate", "status", "pause", "resume", "stop", "other"] = Field(description="what the person wants done with research or with a problem to find out")
     goal: str = Field(default="", description="for start: what to find out, with everything the person said that matters, and nothing about how to work")
     pages: int | None = Field(default=None, description="for start: how many sources or pages the person asked to read; empty when they gave no number")
 
@@ -61,6 +61,8 @@ async def start_research_call(provider: Any, request: str) -> dict[str, Any] | N
         raise JobIntentUnavailable("Research action is unavailable") from exc
     if action == "other":
         return None
+    if action == "investigate":
+        return {"operation": "start_investigation", "goal": " ".join((answer.goal or "").split())[:2000] or words}
     if action != "start":
         return {"operation": action}
     goal = " ".join((answer.goal or "").split())[:2000] or words
