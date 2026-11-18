@@ -53,7 +53,7 @@ from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
 from agent_control.jobs.io import build_io as build_job_io
 from agent_control.jobs.io import make_browser_search
-from agent_control.jobs.runner import JobRunner
+from agent_control.jobs.runner import DeliveryUnavailable, JobRunner
 from agent_control.plans.context import open_plan_note
 from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
@@ -500,6 +500,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
             else None
         ),
         "operator_max_steps": settings.operator.max_steps,
+        "initiative_level": settings.operator.initiative_level,
         "auto_close_blocked_hours": settings.limits.auto_close_blocked_hours,
         "fulfillment_mode": settings.operator.fulfillment_mode,
         "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
@@ -556,7 +557,13 @@ def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditL
     if not settings.jobs.enabled or provider is None or search is None or fetch is None:
         return None
     io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser))
-    return JobRunner(repositories, audit, lambda _job: io, say=sink.say, send_file=sink.send_file, reports_dir=settings.jobs.reports_dir)
+    from agent_control.scheduler import resolve_timezone
+    from agent_control.schemas import utc_now
+
+    timezone = resolve_timezone(settings.scheduler.default_timezone)
+    return JobRunner(repositories, audit, lambda _job: io, say=sink.say, send_file=sink.send_file,
+                     reports_dir=settings.jobs.reports_dir, quiet_hours=(settings.jobs.quiet_start, settings.jobs.quiet_end),
+                     clock=lambda: utc_now().astimezone(timezone))
 
 
 def _gpu_hold(settings: AppSettings) -> Callable[[], bool]:
@@ -850,10 +857,10 @@ class RoutingNotificationSink:
     async def send_file(self, routing: dict[str, str], path: str, caption: str = "") -> None:
         """A file to the chat a job belongs to (the report a research job ends with). Best effort, like every notification."""
         if routing.get("source_channel", ChannelType.TELEGRAM.value) != ChannelType.TELEGRAM.value or not routing.get("source_chat_id"):
-            return
+            raise DeliveryUnavailable("This channel cannot send research reports automatically")
         client = _telegram_client(self.settings, self.audit)
         if client is None:
-            return
+            raise DeliveryUnavailable("Telegram is not configured for report delivery")
         try:
             await client.send_document_file(routing["source_chat_id"], path, caption)
         except Exception as exc:  # noqa: BLE001

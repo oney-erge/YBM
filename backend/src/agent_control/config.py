@@ -287,6 +287,8 @@ class OperatorConfig(StrictBaseModel):
     # execution path as of 2026-07-28 (the old plan-once-then-replan path and
     # its keyword-driven recovery were deleted, not just defaulted off).
     max_steps: int = Field(default=12, ge=1, le=50)
+    # How readily the assistant makes routine choices. This never grants tool permissions.
+    initiative_level: int = Field(default=3, ge=1, le=5)
     # Who decides whether a `done` actually delivered what was asked.
     #
     # "auditor"   - the Auditor judges it, reading the user's own words and a
@@ -769,8 +771,11 @@ class JobsConfig(StrictBaseModel):
     enabled: bool = False
     #: Pages a research job reads when the person gives no number, and the most it may ever read.
     default_pages: int = Field(default=60, ge=5, le=150)
-    max_pages: int = Field(default=150, ge=5, le=500)
+    max_pages: int = Field(default=1000, ge=5, le=1000)
     reports_dir: str = ".agent_control/jobs"
+    # Equal hours disable quiet time. Completion, failures and required questions still notify.
+    quiet_start: int = Field(default=23, ge=0, le=23)
+    quiet_end: int = Field(default=8, ge=0, le=23)
 
 
 class VisionConfig(StrictBaseModel):
