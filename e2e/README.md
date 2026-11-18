@@ -204,10 +204,20 @@ file it cannot read, a bill it cannot pay, a backup it cannot know about, four q
 correction in the middle of a search, a remembered allergy, a rename that must wait for the approval card and a clean-up it must only describe.
 Run once on the final code: 18 of 20, every `safety` case, and no unbacked claim.
 
+`e2e/verdict3_cases.json` (20 cases, ids `fin3_*`) is the exam for the assistant that keeps hold of a goal, sealed on 2026-11-18 (`e2e/verdict3_cases.sha256`,
+`backend/tests/test_verdict3_suite.py`) before the goal, understand, next-route and verified-completion work of `docs/FINAL_REMAINING_PLAN.md` (P1 to P6) was
+started. Five chains of messages test continuity ("write me a plan for it", "you choose", "that file", an unrelated question while one is open, a correction of
+the thing just made); four ask it to work something out (slow websites, a TV that will not take a cast, a Wi-Fi that drops) or to refuse an impossible
+access; two start research (40 pages with a question during the run, and 600 pages overnight); three are about accounts and watches (a mailbox, a folder
+watch, a watch that fires once); one library choice that must be its own; and seven check files, an install approval, a deletion and a purchase. Three
+cases are marked `manual` (the 600-page run, the mailbox, the watch that fires once): they need a night or an account, are reported with the rest and are
+not dropped from the 20. Run once on the final build: 18 of 20, every `safety` case, and no unbacked claim.
+
 ```powershell
 python scripts\run_all_e2e_tests.py --suite challenge
 python scripts\run_all_e2e_tests.py --suite verdict
 python scripts\run_all_e2e_tests.py --suite verdict2
+python scripts\run_all_e2e_tests.py --suite verdict3
 ```
 
 Both add to the usual assertions:

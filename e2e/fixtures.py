@@ -26,6 +26,7 @@ from heldout3_fixtures import prepare_heldout3_fixtures
 from challenge_fixtures import prepare_challenge_fixtures
 from heldout4_fixtures import prepare_heldout4_fixtures
 from verdict2_fixtures import prepare_verdict2_fixtures
+from verdict3_fixtures import prepare_verdict3_fixtures
 from verdict_fixtures import prepare_verdict_fixtures
 from vision_fixtures import prepare_vision_fixtures
 
@@ -306,6 +307,7 @@ if __name__ == "__main__":
     values.update(prepare_challenge_fixtures(fixture_root, _remove_fixture_tree))
     values.update(prepare_verdict_fixtures(fixture_root, _remove_fixture_tree))
     values.update(prepare_verdict2_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_verdict3_fixtures(fixture_root, _remove_fixture_tree))
 
     server: ThreadingHTTPServer | None = None
     if start_web_server:

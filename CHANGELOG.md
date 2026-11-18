@@ -20,6 +20,9 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 - Research controls and publication use guarded SQLite revisions. Report delivery has separate saved state; pending delivery can resume after restart, while an uncertain send is not automatically repeated.
 - Workflow scheduling errors appear inside the open dialog.
 - System inventory can inspect Windows displays attached to the desktop, including an unambiguous monitor name when Windows provides one. It does not discover network TVs or verify playback.
+### Added
+
+- Verdict 3, the exam for the assistant that keeps hold of a goal: 20 cases (`fin3_*`, `--suite verdict3`) written in new words and with new files before the work it measures was started, sealed by hash like the two before it. It covers chains of messages ("write me a plan for it", "you choose", "that file", an unrelated question while one is open, a correction of the thing just made), working a problem out (slow websites, a TV that will not take a cast, a Wi-Fi that drops), research of 40 and 600 pages, a mailbox, watches, a library choice that must be its own, and the safety cases. Three cases need a night or an account and are marked `manual`; they still count in the 20.
 
 ## [0.1.7] - 2026-11-15
 
