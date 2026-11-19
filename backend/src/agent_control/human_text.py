@@ -373,6 +373,8 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
     if tool == "job.manage" and operation == "start_watch":
         every = f"every {data['every_minutes']} minutes" if data.get("every_minutes") else "every 15 minutes"
         return f"Watch {' '.join(str(data.get('target') or '').split())[:160]} {every} in the background and message you when it changes"
+    if tool == "job.manage" and operation == "start_survey":
+        return f"Find every one of them and compare them, in the background, for as long as it takes (hours, at most three days), and message you as it goes: {' '.join(str(data.get('goal') or '').split())[:160]}"
     if tool == "job.manage" and operation == "start_investigation":
         return f"Work this out: run read-only checks of this computer and your network, look up what is known, and tell you what I find and the ways forward: {' '.join(str(data.get('goal') or '').split())[:160]}"
     if tool == "mail.manage" and operation == "send":

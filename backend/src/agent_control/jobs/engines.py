@@ -5,14 +5,14 @@ from __future__ import annotations
 from types import ModuleType
 from typing import Any
 
-from agent_control.jobs import investigate, research, watch
+from agent_control.jobs import investigate, research, survey, watch
 from agent_control.jobs.model import Job
 
-KINDS = ("research", "investigate", "watch")
+KINDS = ("research", "investigate", "watch", "survey")
 
 
 def engine_for(kind: str) -> ModuleType:
-    return {"investigate": investigate, "watch": watch}.get(kind, research)
+    return {"investigate": investigate, "watch": watch, "survey": survey}.get(kind, research)
 
 
 def progress_text(job: Job) -> str:

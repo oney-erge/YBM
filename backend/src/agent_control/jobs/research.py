@@ -44,6 +44,8 @@ Fetch = Callable[[str], Awaitable[Page | None]]  # url -> the page's visible tex
 ProbeRun = Callable[[str, dict[str, Any]], Awaitable[Any]]
 #: A folder's files for a watch: (name, size, modified) for each file directly in it. The folder must be one the assistant may read (jobs/io.py, folder_triggers.validate_watch_folder).
 ListFolder = Callable[[str], Awaitable[list[tuple[str, int, int]]]]
+#: The output of a saved monitor script (jobs/watch.py, "script:<name>"): one line per thing it saw. It runs under tools/job_manage.py's rules for saving a script.
+RunMonitor = Callable[[str], Awaitable[str]]
 
 
 @dataclass(frozen=True)
@@ -54,6 +56,7 @@ class ResearchIO:
     fetch: Fetch
     probe: ProbeRun | None = None
     list_folder: ListFolder | None = None
+    run_monitor: RunMonitor | None = None
 
 
 # --- the limits that keep one unit small enough for a small model -------------------------------------------------------------------------------

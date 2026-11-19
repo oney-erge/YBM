@@ -800,6 +800,8 @@ class JobsConfig(StrictBaseModel):
     default_pages: int = Field(default=60, ge=5, le=150)
     max_pages: int = Field(default=1000, ge=5, le=1000)
     reports_dir: str = ".agent_control/jobs"
+    # Where the scripts a monitor runs are kept (jobs/monitors.py). Only a script saved here by `job.manage start_watch` is ever run by a monitor.
+    monitors_dir: str = ".agent_control/monitors"
     # Equal hours disable quiet time. Completion, failures and required questions still notify.
     quiet_start: int = Field(default=23, ge=0, le=23)
     quiet_end: int = Field(default=8, ge=0, le=23)
