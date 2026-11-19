@@ -549,8 +549,8 @@ class BrowserClickInput(ToolInputModel):
         return self
 
 
-_FIELD_NAMES = ("field", "field_name", "name", "label", "input", "key", "selector")
-_FIELD_VALUES = ("value", "text", "content")
+_FIELD_NAMES = ("field", "field_name", "form_field", "field_id", "field_label", "input_name", "name", "label", "input", "key", "selector")
+_FIELD_VALUES = ("value", "field_value", "input_value", "form_value", "text", "content")
 
 
 def _fields_from_dialect(data: Any) -> Any:
