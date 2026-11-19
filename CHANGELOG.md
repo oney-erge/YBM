@@ -7,6 +7,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A task that cannot go on ends with a blocker report, not a bare "I could not": after the reason it says what was tried (each distinct step and whether it worked), then ways forward with a pick (turn the missing access on, say "try again" and a different way is used, hand it to Claude Code unless that was declined, or tell me what you see) and that the goal stays open. It is made from the task's own record (`channels/task_notify.py`), so it claims only what happened.
 - A message that arrives while a background job is open, and that no skill took for a request for one, can only control that job (status, pause, resume, stop). Before, every such message went to the model that writes the job call, and a count of ERROR lines in log files was read as "investigate" and an investigation was asked for (sealed exam, 11/18). A message a skill does route to a job starts one as before.
 - The end-to-end runner cancels open jobs, as it already closed goals, before each case: a research or investigation job one case started was still running in the next, which answered a status question with the other case's investigation and refused a plain question for "2 jobs open".
 - "Resume the research" goes to the job that can be resumed (paused, then failed), not to whatever job is running in the chat. It answered "the research is running, not paused" while the failed 600-page research waited, because a watch from an earlier case was running (live, 11/19).
