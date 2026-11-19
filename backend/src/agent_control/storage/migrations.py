@@ -199,6 +199,18 @@ SCHEMA_STATEMENTS = [
     """,
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_answer ON episodes(task_id) WHERE kind = 'answer'",
     "CREATE INDEX IF NOT EXISTS idx_episodes_at ON episodes(at)",
+    """
+    CREATE TABLE IF NOT EXISTS project_notes (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        task_id TEXT,
+        at TEXT NOT NULL,
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+    )
+    """,
+    "CREATE INDEX IF NOT EXISTS idx_project_notes ON project_notes(project_id, at)",
     "CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(text, content='episodes', content_rowid='rowid', tokenize='porter unicode61')",
     """
     CREATE TRIGGER IF NOT EXISTS episodes_ai AFTER INSERT ON episodes BEGIN
@@ -357,6 +369,8 @@ ADDITIVE_MIGRATIONS = [
     ("memory_facts", "about", "ALTER TABLE memory_facts ADD COLUMN about TEXT"),
     ("memory_facts", "valid_from", "ALTER TABLE memory_facts ADD COLUMN valid_from TEXT"),
     ("memory_facts", "valid_to", "ALTER TABLE memory_facts ADD COLUMN valid_to TEXT"),
+    ("projects", "hooks_json", "ALTER TABLE projects ADD COLUMN hooks_json TEXT NOT NULL DEFAULT '[]'"),
+    ("projects", "status", "ALTER TABLE projects ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"),
 ]
 
 

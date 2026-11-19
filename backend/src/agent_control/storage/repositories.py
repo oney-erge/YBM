@@ -1334,15 +1334,24 @@ class ProjectRepository:
             connection.execute(
                 """
                 INSERT INTO projects (
-                    id, name, instructions, root_paths_json, criteria_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, name, instructions, root_paths_json, criteria_json, created_at, updated_at, hooks_json, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project.id, project.name, project.instructions, _dump(project.root_paths), _dump(project.criteria),
-                    _dt(project.created_at), _dt(project.updated_at),
+                    _dt(project.created_at), _dt(project.updated_at), _dump(project.hooks), project.status,
                 ),
             )
         return project
+
+    def set_memory(self, project_id: str, *, hooks: list[str] | None = None, status: str | None = None) -> None:
+        """What the assistant remembers of a project (its hooks and whether it is still going); the console's own fields are untouched."""
+        with self.database.connect() as connection:
+            if hooks is not None:
+                connection.execute("UPDATE projects SET hooks_json = ?, updated_at = ? WHERE id = ?", (_dump(hooks), _dt(utc_now()), project_id))
+            if status is not None:
+                connection.execute("UPDATE projects SET status = ? WHERE id = ?", (status, project_id))
+            connection.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (_dt(utc_now()), project_id))
 
     def get(self, project_id: str) -> ProjectRecord | None:
         with self.database.connect() as connection:
@@ -1382,7 +1391,32 @@ class ProjectRepository:
             id=row["id"], name=row["name"], instructions=row["instructions"],
             root_paths=_load(row["root_paths_json"], []), criteria=_load(row["criteria_json"], []),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            hooks=_load(row["hooks_json"], []) if "hooks_json" in row.keys() else [],
+            status=row["status"] if "status" in row.keys() else "active",
         )
+
+
+class ProjectNoteRepository:
+    """The notebook of a project: dated entries of what was decided, found, asked, bought, done (projects_memory.py)."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def add(self, project_id: str, kind: str, text: str, *, task_id: str | None = None, at: datetime | None = None) -> str:
+        note_id = new_id("note")
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO project_notes (id, project_id, kind, text, task_id, at) VALUES (?, ?, ?, ?, ?, ?)",
+                (note_id, project_id, kind, " ".join(text.split())[:600], task_id, _dt(at or utc_now())),
+            )
+            connection.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (_dt(utc_now()), project_id))
+        return note_id
+
+    def list(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """The newest entries first, with `at` as a time."""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT id, kind, text, task_id, at FROM project_notes WHERE project_id = ? ORDER BY at DESC LIMIT ?", (project_id, limit)).fetchall()
+        return [{**dict(row), "at": datetime.fromisoformat(row["at"])} for row in rows]
 
 
 class ToolInvocationRepository:
@@ -1653,7 +1687,7 @@ class MemoryFactRepository:
                     fact.about, _dt(fact.valid_from or fact.created_at), _dt(fact.valid_to) if fact.valid_to else None,
                 ),
             )
-        return fact
+        return fact.model_copy(update={"valid_from": fact.valid_from or fact.created_at})
 
     def get(self, fact_id: str) -> MemoryFact | None:
         with self.database.connect() as connection:
@@ -2675,6 +2709,7 @@ class Repositories:
     llm_calls: LLMCallRepository
     workflows: WorkflowRepository
     projects: ProjectRepository
+    project_notes: ProjectNoteRepository
     folder_watches: FolderWatchRepository
     plans: PlanRepository
     jobs: JobRepository
@@ -2699,6 +2734,7 @@ class Repositories:
             llm_calls=LLMCallRepository(database),
             workflows=WorkflowRepository(database),
             projects=ProjectRepository(database),
+            project_notes=ProjectNoteRepository(database),
             folder_watches=FolderWatchRepository(database),
             plans=PlanRepository(database),
             jobs=JobRepository(database),

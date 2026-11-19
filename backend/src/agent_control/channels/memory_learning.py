@@ -43,7 +43,8 @@ SYSTEM = """You keep a list of facts about one person for their assistant. You a
 - change: a fact on the list that is no longer true, and what is true now (they moved, the budget changed). Give the id of the old fact and the new sentence.
 - end: a fact on the list that is simply no longer true, with nothing replacing it. Give its id.
 - Write nothing for a question, a request, a command or thanks. Write nothing the person did not say about themselves. Never write a password, a card number, a code or any secret. Never write what the assistant said.
-- If nothing lasting was said, return no changes. Most messages have none."""
+- notes: when the person speaks of something they are working on over time (building, buying, searching for, planning, learning), write one notebook entry for it: the project's short name, a few hooks (words and names that point to it), the kind (decision, fact, question, purchase, step, result) and one sentence. Reuse the name of a project already listed. A one-off request is not a project.
+- If nothing lasting was said, return no changes and no notes. Most messages have none."""
 
 
 class _Change(BaseModel):
@@ -53,8 +54,16 @@ class _Change(BaseModel):
     id: str = Field(default="", description="for change and end: the id of the fact on the list")
 
 
+class _Note(BaseModel):
+    project: str = Field(description="a short name for the long-lived thing the person is working on (a pool, a robot, a daycare search)")
+    hooks: list[str] = Field(default_factory=list, description="3 to 6 words or names that point to it")
+    kind: Literal["decision", "fact", "question", "purchase", "step", "result"]
+    text: str = Field(description="one sentence: what was decided, found, asked, bought, done or achieved")
+
+
 class _Changes(BaseModel):
     changes: list[_Change] = Field(default_factory=list)
+    notes: list[_Note] = Field(default_factory=list)
 
 
 def worth_asking(text: str) -> bool:
@@ -84,15 +93,29 @@ class FactLearner:
             current = self.repositories.memory_facts.list_all()
             related = _related(current, said)
             listing = "\n".join(f"{fact.id}: [{fact.about or fact.category}] {fact.content}" for fact in related) or "(nothing yet)"
+            projects = "\n".join(f"- {project.name} ({', '.join(project.hooks[:4])})" for project in self.repositories.projects.list_all(limit=30) if project.status != "done") or "(none yet)"
             answer = await self.provider.generate_structured(
-                SYSTEM, f"The facts already on the list:\n{listing}\n\nWhat the person just said:\n{said}", _Changes, temperature=0.0,
+                SYSTEM, f"The facts already on the list:\n{listing}\n\nThe projects already known:\n{projects}\n\nWhat the person just said:\n{said}", _Changes, temperature=0.0,
             )
             if not isinstance(answer, _Changes):
                 return []
-            return self.apply(answer.changes, said, current, conversation_id)
+            kept = self.apply(answer.changes, said, current, conversation_id)
+            return kept + self.apply_notes(answer.notes, conversation_id)
         except Exception:  # noqa: BLE001 - remembering is never worth a failed message
             logger.warning("fact learning failed", exc_info=True)
             return []
+
+    def apply_notes(self, notes: list[_Note], conversation_id: str | None = None) -> list[str]:
+        from agent_control.projects_memory import note_to_project
+
+        kept = []
+        for note in notes[:3]:
+            if _SECRET.search(note.text) or _SECRET.search(note.project):
+                continue
+            project = note_to_project(self.repositories, note.project, note.hooks, note.kind, note.text, conversation_id=conversation_id)
+            if project is not None:
+                kept.append(f"noted in {project.name}: {note.kind}: {note.text}")
+        return kept
 
     def apply(self, changes: list[_Change], said: str, current: list[MemoryFact], conversation_id: str | None = None) -> list[str]:
         by_id = {fact.id: fact for fact in current}

@@ -865,6 +865,10 @@ class ProjectRecord(StrictBaseModel):
     criteria: list[str] = Field(default_factory=list, max_length=30)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    # What the assistant remembers of the project (projects_memory.py): the words and names that point to it, and whether it is still being worked on.
+    # Its notebook is in `project_notes`. Never "closed": a project left alone is simply old, and is picked up again when it is mentioned.
+    hooks: list[str] = Field(default_factory=list, max_length=12)
+    status: str = Field(default="active", max_length=12)
 
 
 class Artifact(StrictBaseModel):
