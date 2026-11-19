@@ -24,7 +24,7 @@ class ComparisonOperator:
         self.contexts: list[str] = []
 
     async def decide(self, objective, config_context, history, **kwargs):
-        self.contexts.append(config_context)
+        self.contexts.append(config_context + kwargs.get("situation", ""))
         if self.ask_first:
             self.ask_first = False
             return OperatorDecision(action=OperatorAction.ASK_USER, question="Which criteria should I use?")

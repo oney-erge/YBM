@@ -24,7 +24,7 @@ class QueueOperator:
     def __init__(self, decisions: list[OperatorDecision]) -> None:
         self.decisions = list(decisions)
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, situation=""):
         return self.decisions.pop(0)
 
 

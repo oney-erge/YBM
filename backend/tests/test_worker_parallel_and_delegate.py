@@ -39,9 +39,9 @@ class QueueOperator:
         self.contexts: list[str] = []
         self.last_usage: dict | None = None
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False, situation=""):
         self.calls += 1
-        self.contexts.append(config_context)
+        self.contexts.append(config_context + situation)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
         return self.decisions.pop(0)

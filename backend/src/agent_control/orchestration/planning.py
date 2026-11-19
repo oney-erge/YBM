@@ -5,14 +5,14 @@ import logging
 import re
 from typing import Any
 
-from agent_control.orchestration import planner
+from agent_control.orchestration import context, planner
 from agent_control.orchestration.asking import users_own_words
 from agent_control.orchestration.initiative import initiative_guidance
 from agent_control.orchestration.job_start import JobPageLimitExceeded
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_STRATEGY,
 )
-from agent_control.orchestration.request_facts import ADDED_FACT_QUESTIONS, CHECKS_KEY, RequestFacts
+from agent_control.orchestration.request_facts import ADDED_FACT_QUESTIONS, CHECKS_KEY, RequestFacts, today_note
 from agent_control.orchestration.tool_scope import scope_catalog_text, scope_for_task
 from agent_control.plans.stage import answer_for as plan_answer
 from agent_control.schemas import (
@@ -215,7 +215,23 @@ class PlanningStage:
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "ability_notes": notes, "task_route": route})
 
     def _planner_context(self, extra: str = "", *, metadata: dict[str, Any] | None = None) -> str:
-        """The tool catalog and advice for an Operator step, narrowed to the task's route when ``metadata`` is given."""
+        """The tool catalog and advice for an Operator step, narrowed to the task's route when ``metadata`` is given, and then `extra`."""
+        return self._catalog_context(metadata) + extra
+
+    def _situation(self, task: TaskRecord) -> str:
+        """What this person and this moment add to the tool list, in an order of importance (orchestration/context.py): the project, what bears on the request
+        (with the open plan and job first), the goal this continues, today's date, and what was said just before."""
+        metadata = task.metadata
+        return context.fit([
+            (context.PROJECT, self._project_planner_context(metadata)),
+            (context.ABILITIES, str(metadata.get("ability_notes") or "")),
+            (context.GOAL, str(metadata.get("goal_notes") or "")),
+            (context.TODAY, today_note(metadata.get(CHECKS_KEY))),
+            (context.LAST_EXCHANGE, context.last_exchange(self.repositories.episodes, task.conversation_id, str(metadata.get("original_message_text") or ""))),
+        ])
+
+    def _catalog_context(self, metadata: dict[str, Any] | None = None) -> str:
+        """The decision preference and the tool catalog with its advice: what an Operator step reads before anything about this person or this moment."""
         if self.config_context_factory is None:
             base = self.config_context
         else:
@@ -229,7 +245,7 @@ class PlanningStage:
             base = scope_catalog_text(
                 base, scope_for_task(metadata), intent.get("route") if isinstance(intent, dict) else None
             )
-        return initiative_guidance(metadata.get("initiative_level") if metadata else None) + base + extra
+        return initiative_guidance(metadata.get("initiative_level") if metadata else None) + base
 
     @staticmethod
     def _project_planner_context(metadata: dict[str, Any]) -> str:

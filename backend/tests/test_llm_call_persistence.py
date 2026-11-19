@@ -35,7 +35,7 @@ class OneShotOperator:
         self.last_started_at = llm_fields.get("started_at", datetime(2026, 1, 1, tzinfo=timezone.utc))
         self.last_latency_ms = llm_fields.get("latency_ms", 123.4)
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, situation=""):
         return self.decision
 
 

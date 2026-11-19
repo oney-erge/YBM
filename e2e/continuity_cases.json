@@ -398,5 +398,109 @@
         "expects_task": "auto"
       }
     ]
+  },
+  {
+    "id": "cont_plan_revised_twice_stays_the_plan",
+    "requirement": "continuity",
+    "message": "I want a one page website that shows how many cups of water a person should drink for their weight, and I want it to look nice. Make me a plan first and do not build anything yet.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup",
+      "plan"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "The first reply is a plan of steps and nothing is built",
+      "Each revision changes the same plan; no second plan, no search of the disk for a file, no question about a coding agent",
+      "The last revision says where the images and the animation come from"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:",
+        "Claude Code",
+        "hand it to",
+        "hand it over"
+      ],
+      "bot_reply_contains_any": [
+        "plan",
+        "step"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "revise",
+        "message": "Good plan. Revise it so the numbers count up with a small animation.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:",
+            "Claude Code",
+            "hand it to",
+            "hand it over"
+          ],
+          "bot_reply_contains_any": [
+            "animat",
+            "count"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "assets",
+        "message": "I do not see where the images and the animation come from. Say it in the plan.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:",
+            "Claude Code",
+            "hand it to",
+            "hand it over"
+          ],
+          "bot_reply_contains_any": [
+            "icon",
+            "image",
+            "asset",
+            "CSS",
+            "library",
+            "svg",
+            "SVG"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
   }
 ]
