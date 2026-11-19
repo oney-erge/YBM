@@ -18,7 +18,7 @@ that stops new work from landing outside a home.
 | **What the model sees** | `orchestration/context.py`: the notes about this person and this moment, in an order of importance, with their own room | The conversation summary and the recent turns (`channels/memory.py`) and skill text pasted whole into the prompt (`abilities/context.py`), until D5b gives them a place |
 | **Asking the person** | `orchestration/autonomy.py`: one `may_ask` decision for every place that can ask | `orchestration/initiative.py` (a sentence in the prompt), `orchestration/asking.py` as a separate path, the hand-over offer in `orchestration/guards.py`, repeated-question recovery in `worker.py` |
 | **Done, and true** | `orchestration/proof.py` (planned): one check over one record of what ran and changed, for a task, a plan step, a goal and a job | `auditor.py`, `claims.py`, `fulfillment.py` keyword checks, `answer_checks.py`, `number_check.py`, `grounding.py`, `plans/review.py`, `page_check.py` |
-| **After a failure** | `orchestration/retry.py` (planned): detect stuck, diagnose, change the kind of approach, a fresh attempt, an honest report | The fixed hint ladder in `ladder.py` and `guards.py`, `repeats.py` stop rules, the hand-over offer, `alternative_after_repeat`, `local_recovery_step_limit` |
+| **After a failure** | `orchestration/retry.py`: notice it is stuck, diagnose once, change the kind of approach, start the next attempt from a short list of what failed; then the blocker report | The evidence hints of `ladder.py` stay (they are facts about files and forms); `repeats.py` stop rules and the hand-over question for the levels that ask are still separate until D3 and D1 |
 | **Remembering** | `memory/` (planned): files you can read (`about-you.md`, one folder per project) with the database holding only status, hooks, dates and search | The conversation summary, `channels/profile_facts.py`, `channels/memory_learning.py`, `preference_watch.py`, `persona_learning.py`, `projects_memory.py`, `tools/memory_manage.py` |
 | **Turning the model's call into a real call** | `tools/call_schema.py` with the tool's own contract in `tools/contracts.py`, checked per operation | `orchestration/call_rewrites.py` keeps only rules that carry policy; alias tables that only fix the shape of a call are deleted |
 | **Long work** | `jobs/` (one runner, one `Unit`, kinds: research, investigate, watch, survey, monitors) | Nothing: new long work is a new kind of job, not a new loop |
@@ -93,3 +93,18 @@ that wrote the plan is given the plan as it stands and the instruction, and rewr
 plan keeps its id, a "Revised (version N)" line is kept with it). The plan card of a proposed plan, the plan the stage shows and `show` carry each step's detail (the
 sentence that says how it will be done). **What it replaces and deletes.** Nothing is deleted: `add_step` and `update_step` stay for one small edit, and the open-plan
 note now says when to use which. **Measured.** Unit tests (`test_plan_revise.py`); live, `cont_plan_revised_twice_stays_the_plan` before and after.
+
+### D4. After a failure: try differently before giving up (2026-11-19)
+
+**What failed.** A plan edit failed twice with the same wrong call and the task went on the way a fixed ladder goes: search the disk with other spellings, three sub-tasks
+that ran out of steps, "write a Python program", then a question to the owner. Nothing asked why it was failing: the person meant the plan in the last reply, and every
+attempt assumed a file. The ladder was a list of hints for finding files; the same list was shown for every kind of task. **Home.** `orchestration/retry.py`, called by
+the guards before each model decision. **What it adds.** (1) Noticing in plain code: the same call failing with the same error twice, two lookups in a row that found
+nothing, three failed steps, a sub-task out of steps. (2) One short model call, once for those steps, that says what the person asked, what the attempts assumed and which
+assumption was the first wrong one, with a cause. (3) A kind of approach chosen by code from that cause, never one already tried, only one that fits this task: answer
+from the conversation, use the part that owns it (the planner for a plan), fix the call from its error, do one small part, another tool, a short program, look it up, or
+step back and say what result would satisfy the person. (4) A note in the history that says what went wrong, what to do instead and what already failed; the prompt then
+shows what came before it as a short list of what failed, not as the transcript. At most three changes; then the task ends as it always did, with the blocker report.
+**What it replaces and deletes.** The generic "write a short program after three failures" hint (`try_code`) and the "use a materially different method" nudge
+(`alternative_after_repeat`); the evidence hints about files and forms stay. **Measured.** Unit tests (`test_retry.py`), including the 11/19 chain; live, the continuity case
+`cont_plan_revised_twice_stays_the_plan` and the stuck set before and after.

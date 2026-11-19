@@ -61,7 +61,8 @@ async def test_file_find_and_read_rejects_path_outside_allowed_roots(tmp_path, m
     scenario = build_scenario(settings, tmp_path=tmp_path, fixture_name="file_find_and_read")
 
     task = await run_task_to_completion(
-        scenario, f"Find a .txt file in {desktop_dir} and read me its contents"
+        scenario, f"Find a .txt file in {desktop_dir} and read me its contents",
+        metadata={"retry_changes": [{"kind": "step_back"}] * 3},  # a refusal is what is tested here: the retry loop (orchestration/retry.py) has had its turns
     )
 
     assert_rejected(task)

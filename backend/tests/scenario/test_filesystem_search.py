@@ -61,7 +61,8 @@ async def test_filesystem_search_rejects_path_outside_allowed_roots(tmp_path, mo
     scenario = build_scenario(settings, tmp_path=tmp_path, fixture_name="filesystem_search")
 
     task = await run_task_to_completion(
-        scenario, f"look in the folder {docs_dir} and find which file mentions a resume"
+        scenario, f"look in the folder {docs_dir} and find which file mentions a resume",
+        metadata={"retry_changes": [{"kind": "step_back"}] * 3},  # a refusal is what is tested here: the retry loop (orchestration/retry.py) has had its turns
     )
 
     assert_rejected(task)

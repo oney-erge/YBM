@@ -57,7 +57,7 @@ def _failed(step: dict[str, Any]) -> bool:
     return str(step.get("status") or "") in {"failed", "denied"}
 
 
-def _found_nothing(step: dict[str, Any]) -> bool:
+def found_nothing(step: dict[str, Any]) -> bool:
     if (step.get("tool_name"), _operation(step)) not in LOOKUPS or str(step.get("status") or "") != "succeeded":
         return False
     return bool(_EMPTY_RESULT.search(str(step.get("output_summary") or "").lstrip()))
@@ -99,7 +99,7 @@ def proven_absent(request: str, steps: list[dict[str, Any]]) -> str | None:
     asked = _norm(request)
     for step in steps:
         summary = str(step.get("output_summary") or "")
-        if _found_nothing(step) and NOT_ANYWHERE_MARK in summary:
+        if found_nothing(step) and NOT_ANYWHERE_MARK in summary:
             query_words = re.findall(r"[a-z0-9]+", str((step.get("input") or {}).get("query") or "").casefold())
             if query_words and all(word in asked for word in query_words):
                 # Only what was covered: the "No file matching" part repeats what the answer already says.
@@ -181,12 +181,6 @@ CODE_SEARCH_TEXT = (
 FIND_FILES_TEXT = (
     "That search ran out of time inside one big folder. Use system.inventory with operation find_files and the file name as the "
     "query: it looks at the top folders of every drive first and says how much it covered."
-)
-
-TRY_CODE_TEXT = (
-    "Several steps in a row did not work. If the tools above cannot do this, you can write a short Python program and run it "
-    "with code.interpreter (operation run_python, the program in `code`). It runs on this computer, can read and write any "
-    "folder, and needs no approval. Print what it did, so the answer comes from what it printed."
 )
 
 
@@ -339,7 +333,7 @@ def next_hint(
             f"That is settled: {absent} Do not search for it again. Tell the user plainly that it is not there (action done), "
             "saying what you looked at; you may add the closest names one look at the parent folder shows.",
         )
-    empty = [step for step in steps if _found_nothing(step)]
+    empty = [step for step in steps if found_nothing(step)]
     if empty and NOT_ANYWHERE_MARK in str(empty[-1].get("output_summary") or "") and "complete" not in given and not absent:
         return Hint(
             "complete",
@@ -357,7 +351,7 @@ def next_hint(
     if code_enabled and not used_code and "tally" not in given and tally_hint_due(request, steps):
         return Hint("tally", TALLY_TEXT)
     incomplete_walk = any(
-        _found_nothing(step)
+        found_nothing(step)
         and ("does not prove" in str(step.get("output_summary") or "") or SEARCH_STOPPED_MARK in str(step.get("output_summary") or ""))
         for step in steps
     )
@@ -366,9 +360,6 @@ def next_hint(
         return Hint("find_files", FIND_FILES_TEXT)
     if code_enabled and not used_code and "code_search" not in given and (len(empty) >= 2 or incomplete_walk):
         return Hint("code_search", CODE_SEARCH_TEXT)
-    recent_failures = sum(1 for step in steps[-5:] if _failed(step))
-    if code_enabled and not used_code and "try_code" not in given and recent_failures >= 3:
-        return Hint("try_code", TRY_CODE_TEXT)
     return None
 
 
@@ -378,9 +369,9 @@ def exhausted(steps: list[dict[str, Any]]) -> bool:
     code_failed = sum(1 for step in code_steps if _failed(step))
     if code_failed >= 2:
         return True
-    if code_steps and _failed(code_steps[-1]) and sum(1 for step in steps if _failed(step) or _found_nothing(step)) >= 5:
+    if code_steps and _failed(code_steps[-1]) and sum(1 for step in steps if _failed(step) or found_nothing(step)) >= 5:
         return True
-    return sum(1 for step in steps if _failed(step) or _found_nothing(step)) >= 8
+    return sum(1 for step in steps if _failed(step) or found_nothing(step)) >= 8
 
 
 FEASIBILITY_TEXT = (

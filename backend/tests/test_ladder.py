@@ -148,9 +148,9 @@ def test_a_locked_folder_is_said_to_be_skipped():
     assert next_hint("find a thing", steps, set(), code_enabled=False).id == "locked"
 
 
-def test_three_failures_in_a_row_suggest_a_script():
+def test_three_failures_in_a_row_are_for_the_retry_loop_not_a_fixed_hint_to_write_a_script():
     failing = {"tool_name": "browser.open", "input": {}, "status": "failed", "error": "boom"}
-    assert next_hint("do it", [failing, failing, failing], set(), code_enabled=True).id == "try_code"
+    assert next_hint("do it", [failing, failing, failing], set(), code_enabled=True) is None  # orchestration/retry.py notices it and chooses a kind of approach
 
 
 def test_nothing_is_said_when_nothing_has_happened():
@@ -208,6 +208,8 @@ def _worker(repos, audit, operator, *, auditor=None, with_code=True):
 
 
 def _task_with_history(repos, message, history, **metadata):
+    # These tests are about what comes after the retry loop has had its turns (orchestration/retry.py; test_retry.py tests the loop itself).
+    metadata.setdefault("retry_changes", [{"kind": "step_back"}] * 3)
     task = repos.tasks.create(message, metadata={"original_message_text": message, **metadata})
     return repos.tasks.update_metadata(
         task.id, {**task.metadata, "operator_loop": True, "operator_history": history}, TaskStatus.RUNNING)
@@ -347,17 +349,15 @@ async def test_a_no_stops_the_offer_and_preserves_a_bounded_local_attempt(tmp_pa
     assert result.metadata["local_recovery_step_limit"] == worker.operator_max_steps + 3
 
 
-def test_proactive_recovery_offers_one_local_alternative_within_the_existing_budget(tmp_path):
+def test_the_same_call_returning_the_same_result_goes_straight_to_the_offer_to_finish_because_the_retry_loop_has_already_had_its_turn(tmp_path):
     repos, audit = make_repos(tmp_path)
     history = [_read_failed() for _ in range(3)]
     task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
     worker = _worker(repos, audit, _Seen([]))
     result = worker._offer_finish_or_block(task, history, called="filesystem.manage:read_file", blocked_message="stuck")
-    marker = result.metadata["operator_history"][-1]
-    assert marker["hint_id"] == "alternative_after_repeat" and "materially different" in marker["error"]
+    assert result.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+    assert not any(entry.get("hint_id") == "alternative_after_repeat" for entry in result.metadata["operator_history"])
     assert "local_recovery_step_limit" not in result.metadata
-    again = worker._offer_finish_or_block(result, result.metadata["operator_history"], called="filesystem.manage:read_file", blocked_message="stuck")
-    assert again.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
 
 
 def test_proactive_recovery_does_not_extend_an_exhausted_budget(tmp_path):
@@ -371,15 +371,16 @@ def test_proactive_recovery_does_not_extend_an_exhausted_budget(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_proactive_recovery_can_run_a_different_permitted_tool(tmp_path):
+async def test_after_a_tool_keeps_failing_the_next_attempt_can_run_a_different_permitted_tool(tmp_path):
     repos, audit = make_repos(tmp_path)
     history = [{"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"} for _ in range(3)]
-    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4, retry_changes=[])
     operator = _Seen([OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
                                        tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW)])
     worker = _worker(repos, audit, operator)
-    recovered = worker._offer_finish_or_block(task, history, called="other.tool", blocked_message="stuck")
-    result = await worker.process_task(recovered.id)
+    noted = await worker.process_task(task.id)  # the tick that notices it and changes the approach (orchestration/retry.py); the model is not asked yet
+    assert operator.calls == 0 and noted.metadata["operator_history"][-1]["tool_name"] == "_approach_check"
+    result = await worker.process_task(noted.id)
     assert any(entry.get("tool_name") == "filesystem.manage" for entry in result.metadata["operator_history"])
     assert operator.finish_only_calls == [False]
 

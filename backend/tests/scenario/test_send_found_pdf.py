@@ -83,7 +83,7 @@ async def test_send_found_pdf_rejects_path_outside_allowed_roots(tmp_path, monke
     settings = filesystem_settings(monkeypatch, tmp_path, str(tmp_path / "somewhere_else"))
     scenario = build_scenario(settings, tmp_path=tmp_path, fixture_name="send_found_pdf")
 
-    task = await run_task_to_completion(scenario, f"Send me the PDF file at {pdf_path}.")
+    task = await run_task_to_completion(scenario, f"Send me the PDF file at {pdf_path}.", metadata={"retry_changes": [{"kind": "step_back"}] * 3})
 
     assert_rejected(task)
     assert not scenario.telegram.documents

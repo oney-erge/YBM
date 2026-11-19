@@ -954,7 +954,8 @@ async def test_after_the_offer_the_model_can_finish_with_what_it_has(tmp_path) -
 async def test_repeated_identical_failures_without_an_operation_are_stopped(tmp_path) -> None:
     # Live: a scheduled run sent {"query": ...} to web.search ten times and got the same error each time.
     repos, audit = make_repos(tmp_path)
-    task = repos.tasks.create("check for new episodes")
+    # What happens once the retry loop has used its three changes of approach (orchestration/retry.py, test_retry.py): the old stop.
+    task = repos.tasks.create("check for new episodes", metadata={"retry_changes": [{"kind": "step_back"}] * 3})
     executor = _executor_with_adapter(_settings(), audit, repos, FailingAdapter(), tool_name="web.search")
     search = OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="web.search",
                               tool_input={"query": "new episodes"}, risk_level=RiskLevel.LOW)

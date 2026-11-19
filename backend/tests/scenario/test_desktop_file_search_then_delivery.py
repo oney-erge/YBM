@@ -49,7 +49,8 @@ async def test_desktop_file_search_then_delivery_rejects_path_outside_allowed_ro
     scenario = build_scenario(settings, tmp_path=tmp_path, fixture_name="desktop_file_search_then_delivery")
 
     task = await run_task_to_completion(
-        scenario, f"Find me the file named agent-control-sample from {desktop_dir} and send it to me."
+        scenario, f"Find me the file named agent-control-sample from {desktop_dir} and send it to me.",
+        metadata={"retry_changes": [{"kind": "step_back"}] * 3},  # a refusal is what is tested here: the retry loop (orchestration/retry.py) has had its turns
     )
 
     assert_rejected(task)

@@ -752,6 +752,10 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
             if isinstance(steered, TaskRecord):
                 return steered
             forced_decision = steered
+            if forced_decision is None:
+                changed = await self._retry_step(latest, history, step_id)
+                if changed is not None:
+                    return changed
         if forced_decision is None and self.plan_parts and not (isinstance(replay_plan, list) and replay_plan) and self.operator is not None:
             planned = await self._plan_step(latest, history, step_id)
             if isinstance(planned, TaskRecord):
