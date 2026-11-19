@@ -291,6 +291,13 @@ jobs:
   max_pages: 1000     # the most it ever reads; individual jobs still require approval
   quiet_start: 23     # progress messages use scheduler.default_timezone
   quiet_end: 8        # equal hours disable quiet time; completion and failures still notify
+  monitors_dir: .agent_control/monitors  # where the scripts a monitor runs are kept (a script the assistant wrote, tested once)
+
+# What the assistant remembers across every chat. Both are on: it keeps what you say about yourself, your family, your home, your plans and your projects without
+# being asked, closes a fact that stops being true instead of deleting it, and can search everything said in any chat. Turn either off here.
+memory:
+  enabled: true
+  auto_remember: true
 
 # The assistant's own mailbox (read mail, follow a confirmation link, draft a reply, send after you approve a card). Set it up with the skill
 # "Make a mailbox of my own": the sign-up needs you for a puzzle or a code, and the login is kept in the account vault, never here.
