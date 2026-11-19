@@ -49,6 +49,7 @@ from agent_control.orchestration.worker import TaskNotificationSink
 from agent_control.policy import PolicyEngine
 from agent_control.recovery import RetryPolicy
 from agent_control.heartbeat import run_heartbeat_forever
+from agent_control.plans.runner import routing_of
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
 from agent_control.jobs.io import build_io as build_job_io
@@ -740,6 +741,55 @@ async def run_worker() -> None:
         raise
 
 
+def run_health() -> int:
+    """Print the morning line now (upkeep.py): whether the model answers, the disk, the jobs and the last backup."""
+    from agent_control.upkeep import morning_line
+
+    settings = load_settings()
+    repositories, _audit = build_repositories()
+    line, problems = morning_line(settings, repositories)
+    print(line)
+    return 1 if problems else 0
+
+
+def run_restore_check() -> int:
+    """Open the newest backup in a scratch folder and count what it holds (upkeep.py): a backup that cannot be read is found now, not when it is needed."""
+    from agent_control.upkeep import newest_backup, restore_check
+
+    latest = newest_backup()
+    if latest is None:
+        print("There is no backup yet: run `ybm backup` first.")
+        return 1
+    result = restore_check(latest)
+    if result["ok"]:
+        print(f"{result['archive']} restores: " + ", ".join(f"{count} {table}" for table, count in result["counts"].items()))
+        return 0
+    print(f"{result['archive']} does NOT restore: {result['problem']}")
+    return 1
+
+
+async def run_calibrate() -> int:
+    """Check that the decision model's yes/no questions still separate what the skills' marks assume (calibrate.py); exit 1 when one no longer does."""
+    from agent_control.calibrate import calibrate, render
+    from agent_control.llm.decision import DecisionModelClient
+
+    settings = load_settings()
+    client = DecisionModelClient(settings.decision)
+    root = Path(__file__).resolve().parents[3]
+    results = await calibrate(root / "skills" / "starter", root / "e2e" / "calibration_cases.json", client.yes_no)
+    print(render(results))
+    return 0 if all(result.ok for result in results) else 1
+
+
+async def _morning_say(settings, repositories, audit, text: str) -> None:
+    """The morning line goes to the chat the owner last used."""
+    notifier = _telegram_notifier(settings, audit)
+    recent = repositories.tasks.list_recent(1)
+    routing = routing_of(recent[0]) if recent else {}
+    if notifier is not None and routing.get("source_chat_id"):
+        await notifier.say(routing, text)
+
+
 async def run_scheduler() -> None:
     settings = load_settings()
     repositories, audit = build_repositories()
@@ -750,7 +800,17 @@ async def run_scheduler() -> None:
         max_consecutive_failures=settings.scheduler.max_consecutive_failures,
         retention_days=settings.storage.retention_days,
         settings_loader=load_settings,
+        daily=lambda current: _daily_upkeep(current, repositories, audit),
     )
+
+
+async def _daily_upkeep(settings, repositories, audit) -> None:
+    from agent_control.upkeep import run_daily
+
+    async def say(text: str) -> None:
+        await _morning_say(settings, repositories, audit, text)
+
+    await run_daily(settings, repositories, say)
 
 
 async def run_coding_agent_session(session_root: str, session_id: str) -> None:
@@ -1018,6 +1078,9 @@ def main() -> None:
             "run-coding-agent-session",
             "run-coding-session-watcher",
             "backup",
+            "health",
+            "calibrate",
+            "restore-check",
             "check-updates",
             "admin-url",
         ],
@@ -1140,6 +1203,12 @@ def main() -> None:
         asyncio.run(run_coding_session_watcher(args.poll_interval_seconds))
     elif args.command == "backup":
         raise SystemExit(run_backup(args.out))
+    elif args.command == "health":
+        raise SystemExit(run_health())
+    elif args.command == "restore-check":
+        raise SystemExit(run_restore_check())
+    elif args.command == "calibrate":
+        raise SystemExit(asyncio.run(run_calibrate()))
     elif args.command == "check-updates":
         result = check_for_updates()
         if result.status == "update_available":

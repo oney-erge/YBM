@@ -299,6 +299,15 @@ memory:
   enabled: true
   auto_remember: true
 
+# The daily chores that keep the assistant alive: a backup when the last is a day old, a monthly check that the newest backup can be restored, and one morning message
+# saying whether all is well (model, disk, jobs, backup). `ybm health`, `ybm restore-check` and `ybm calibrate` do the same by hand.
+upkeep:
+  enabled: true
+  hour: 8
+  backup: true
+  restore_check_days: 30
+  message: true
+
 # The assistant's own mailbox (read mail, follow a confirmation link, draft a reply, send after you approve a card). Set it up with the skill
 # "Make a mailbox of my own": the sign-up needs you for a puzzle or a code, and the login is kept in the account vault, never here.
 mail:

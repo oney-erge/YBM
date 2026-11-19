@@ -770,6 +770,16 @@ class PlansConfig(StrictBaseModel):
     enabled: bool = False
 
 
+class UpkeepConfig(StrictBaseModel):
+    """The daily chores that keep the assistant alive (upkeep.py): a backup, a monthly check that a backup can be restored, and one message each morning saying whether all is well."""
+
+    enabled: bool = True
+    hour: int = Field(default=8, ge=0, le=23)  # local time; the chores run once on the first pass after this hour
+    backup: bool = True  # a backup when the last is older than a day
+    restore_check_days: int = Field(default=30, ge=1, le=365)
+    message: bool = True  # the morning line to the chat
+
+
 class MemoryConfig(StrictBaseModel):
     """What the assistant remembers across every chat (channels/memory_learning.py). Both on by default: it remembers what the owner says without being asked to."""
 
@@ -864,6 +874,7 @@ class AppSettings(BaseSettings):
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    upkeep: UpkeepConfig = Field(default_factory=UpkeepConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @classmethod
