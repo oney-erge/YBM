@@ -306,7 +306,7 @@
         "completed"
       ],
       "tools_all": [
-        "code.interpreter:generate_and_run"
+        "code.interpreter"
       ],
       "metadata_any": [
         "workspace_dir",
