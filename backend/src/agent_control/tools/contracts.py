@@ -341,7 +341,7 @@ class AbilitiesInput(ToolInputModel):
 
 
 class PlanManageInput(ToolInputModel):
-    operation: Literal["create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"] = "show"
+    operation: Literal["create", "show", "revise", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"] = "show"
     # create: the goal; the steps are optional, and when omitted a planner drafts them. Each step: title, detail, owner (ybm, user or
     # access), needs (what the user must give or do first), depends_on (positions of earlier steps it waits for), ability.
     goal: str | None = None
@@ -364,11 +364,15 @@ class PlanManageInput(ToolInputModel):
     note: str | None = None
     # update_step: skipped or pending for an unstarted step. Completion belongs to the plan runner.
     status: Literal["skipped", "pending", "active", "paused", "cancelled"] | None = None
+    # revise: what the user wants changed in the plan, in their own words. The planner rewrites the unstarted steps.
+    instruction: str | None = None
 
     @model_validator(mode="after")
     def needs_its_arguments(self) -> "PlanManageInput":
         if self.operation == "create" and not (self.goal or "").strip():
             raise ValueError("operation=create requires 'goal'")
+        if self.operation == "revise" and not (self.instruction or "").strip():
+            raise ValueError("operation=revise requires 'instruction': what the user wants changed, in their words")
         if self.operation in ("update_step",) and self.position is None:
             raise ValueError("operation=update_step requires 'position'")
         if self.operation == "add_step" and not (self.title or "").strip():

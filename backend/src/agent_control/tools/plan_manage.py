@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from agent_control.config import AppSettings
 from agent_control.orchestration.initiative import initiative_guidance
 from agent_control.plans.model import MAX_CHECK_IN_DAYS, MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus, in_date_order
-from agent_control.plans.planner import can_do_text, draft_plan
+from agent_control.plans.planner import can_do_text, draft_plan, revise_plan
 from agent_control.plans.runner import audit_plan, cancel_plan, pause_plan, render_plan, routing_of
 from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus, utc_now
 from agent_control.storage.audit import AuditLogger
@@ -71,7 +71,7 @@ class PlanManageAdapter:
         task = self.repositories.tasks.get(request.task_id)
         try:
             handler = {
-                "create": self._create, "show": self._show, "add_step": self._add_step,
+                "create": self._create, "show": self._show, "revise": self._revise, "add_step": self._add_step,
                 "update_step": self._update_step, "set_status": self._set_status, "set_check_in": self._set_check_in,
                 "shift_dates": self._shift_dates, "add_note": self._add_note,
             }.get(operation)
@@ -143,7 +143,46 @@ class PlanManageAdapter:
 
     def _show(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
         plan = self._find(request, task)
-        return plan, f"{render_plan(plan, results=True)}\nStatus: {plan.status.value}."
+        return plan, f"{render_plan(plan, results=True, details=True)}\nStatus: {plan.status.value}."
+
+    async def _revise(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
+        """The user wants the plan changed ("revise it", "add X", "I do not see Y in it"): the planner, which wrote it, rewrites the steps that have not started, from the
+        plan as it stands and the user's words. Steps that started stay. This is one call with one argument; editing steps one by one is for small changes."""
+        plan = self._find(request, task)
+        if plan.status in (PlanStatus.DONE, PlanStatus.CANCELLED):
+            raise ValueError(f"the plan is {plan.status.value}")
+        instruction = " ".join(str(request.input.get("instruction") or "").split())[:800]
+        if not instruction:
+            raise ValueError("give the instruction: what the user wants changed, in their words")
+        if self.provider is None:
+            raise ValueError("no planner model is available here to revise the plan; change it with update_step and add_step")
+        kept = sum(1 for step in plan.steps if step.status != StepStatus.PENDING or step.task_id is not None)
+        try:
+            draft = await revise_plan(self.provider, plan.goal, render_plan(plan, results=True, details=True), instruction, self._can_do(), kept=kept)
+        except Exception as exc:  # noqa: BLE001 - say what happened; the Operator can change the steps itself
+            raise ValueError(f"the planner could not revise the plan ({type(exc).__name__}); change it with update_step and add_step") from exc
+        if not draft.steps:
+            raise ValueError("the planner gave no steps; say the change in other words")
+        steps = []
+        for index, item in enumerate(draft.steps, start=1):
+            fields = {k: v for k, v in item.model_dump().items() if k in _STEP_FIELDS}
+            fields["depends_on"] = [kept + dep for dep in fields.get("depends_on") or [] if 1 <= dep < index]
+            try:
+                steps.append(PlanStep(position=kept + index, **fields))
+            except ValidationError as exc:
+                raise ValueError(f"revised step {index} is not valid: {exc.errors()[0]['msg']}") from exc
+        self.repositories.plans.replace_unstarted_steps(plan.id, steps, summary=draft.summary or plan.summary, expected_revision=plan.revision)
+        version = 2 + sum(1 for line in plan.notes.splitlines() if line.startswith("- Revised"))
+        notes = [*[line for line in plan.notes.splitlines() if line.strip()], f"- Revised (version {version}): {instruction[:200]}"]
+        while len("\n".join(notes)) > 2000:
+            notes.pop(0)
+        self.repositories.plans.update_plan(plan.id, notes="\n".join(notes))
+        updated = self.repositories.plans.get(plan.id) or plan
+        return updated, (
+            f"Plan revised (version {version}); it is the same plan, changed.\n{render_plan(updated, details=True)}\n"
+            "Answer the user with a short message that says what changed in the plan and where to read it: the card with Start and Cancel is attached. "
+            "Do not start any step yourself."
+        )
 
     def _add_step(self, request: ToolCallRequest, task: Any) -> tuple[Plan, str]:
         plan = self._find(request, task)
@@ -270,21 +309,24 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             description=(
                 "turn a goal too big for one task (build something, set something up, plan a trip) into a plan the user can start: give the "
                 "goal and a planner drafts the steps, each owned by you (ybm), by the user (user) or by you once the user gives you something "
-                "(access), each with a day when the goal has a date or a stretch of time; the plan is saved and the user starts it. Also: check in "
+                "(access), each with a day when the goal has a date or a stretch of time; the plan is saved and the user starts it. To change the plan the "
+                "user is looking at (\"revise it\", \"add X\", \"I do not see Y in it\") use revise with the user's words as the instruction: the planner rewrites the steps "
+                "that have not started and the plan stays the same plan. Also: check in "
                 "every N days (set_check_in), move the unfinished days when the project slips (shift_dates), keep a fact the user told you with "
                 "the plan (add_note). Edit unstarted steps only; the runner records completion from the linked task or user report. "
                 "Use this instead of asking a list of questions: at most one question first"
             ),
-            operations=("create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"),
+            operations=("create", "show", "revise", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"),
             input_schema=PlanManageInput,
             output_schema=PlanManageOutput,
             operation_output_schemas=same_output_schema(
-                ("create", "show", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"), PlanManageOutput
+                ("create", "show", "revise", "add_step", "update_step", "set_status", "set_check_in", "shift_dates", "add_note"), PlanManageOutput
             ),
             default_operation="show",
             examples=(
                 {"operation": "create", "goal": "Build a small indoor quadcopter with a camera and a small language model on it, about 300 dollars"},
                 {"operation": "show"},
+                {"operation": "revise", "instruction": "Add a short animation when the result appears, and say where the images come from."},
                 {"operation": "update_step", "position": 1, "title": "Compare the available options"},
                 {"operation": "set_check_in", "days": 7},
                 {"operation": "shift_dates", "days": 14},

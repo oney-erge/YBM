@@ -79,4 +79,4 @@ async def run_plan_stage(
 def answer_for(plan: Plan) -> str:
     """The text the task finishes with: the plan, short. (The chat shows the card, with its buttons, in its place.)"""
     offer = f"It runs for about {plan.weeks_ahead()} weeks: say \"check in every week\" and I will tell you how it stands.\n\n" if plan.weeks_ahead() else ""
-    return f"{render_plan(plan)}\n\n{offer}Start it when you are ready, or tell me what to change."
+    return f"{render_plan(plan, details=True)}\n\n{offer}Start it when you are ready, or tell me what to change."

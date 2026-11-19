@@ -2671,6 +2671,36 @@ class PlanRepository:
             connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan_id))
         return step
 
+    def replace_unstarted_steps(self, plan_id: str, steps: list[PlanStep], *, summary: str | None = None, expected_revision: int | None = None) -> int:
+        """Rewrite the part of an open plan that has not started: the steps that started stay where they are, the rest are replaced by `steps`, in order.
+
+        A revision of a plan (tools/plan_manage.py, `revise`): one transaction, so the plan is never seen half changed. Returns how many steps were kept.
+        """
+        with self.database.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            plan = connection.execute("SELECT status, revision FROM project_plans WHERE id = ?", (plan_id,)).fetchone()
+            if (plan is None or plan["status"] not in (PlanStatus.PROPOSED.value, PlanStatus.ACTIVE.value, PlanStatus.PAUSED.value)
+                    or (expected_revision is not None and plan["revision"] != expected_revision)):
+                raise ValueError("the plan changed or is no longer open; look at it again before revising it")
+            rows = connection.execute("SELECT * FROM project_plan_steps WHERE plan_id = ? ORDER BY position", (plan_id,)).fetchall()
+            unstarted = [r for r in rows if r["status"] == StepStatus.PENDING.value and r["task_id"] is None]
+            kept = len(rows) - len(unstarted)
+            if any(r["position"] > kept for r in rows if r not in unstarted):
+                raise ValueError("a step after an unstarted one has already started, so the plan cannot be rewritten as a whole; change its steps one at a time")
+            if not steps or kept + len(steps) > MAX_STEPS:
+                raise ValueError(f"a plan has between 1 and {MAX_STEPS} steps")
+            connection.execute("DELETE FROM project_plan_steps WHERE plan_id = ? AND status = ? AND task_id IS NULL", (plan_id, StepStatus.PENDING.value))
+            for index, step in enumerate(steps, start=kept + 1):
+                if any(dep < 1 or dep >= index for dep in step.depends_on):
+                    raise ValueError("a step can depend only on earlier steps")
+                self._insert_step(connection, plan_id, step.model_copy(update={"position": index, "plan_id": plan_id}))
+            now = _dt(utc_now())
+            if summary is not None:
+                connection.execute("UPDATE project_plans SET summary = ?, updated_at = ?, revision = revision + 1 WHERE id = ?", (summary, now, plan_id))
+            else:
+                connection.execute("UPDATE project_plans SET updated_at = ?, revision = revision + 1 WHERE id = ?", (now, plan_id))
+        return kept
+
     @staticmethod
     def _insert_step(connection: sqlite3.Connection, plan_id: str, step: PlanStep) -> None:
         connection.execute(

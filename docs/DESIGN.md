@@ -82,3 +82,14 @@ on the request, with the open plan and job first inside it), shortened from the 
 word for word (what they said, what was answered) when it was within six hours. **What it replaces and deletes.** The notes no longer travel inside `config_context`
 (`_planner_context` is kept only for sub-tasks); the one-size cut of the notes is gone. **Measured.** Unit tests reproduce the failure (a 70-tool catalog and an open
 plan: the plan is whole, the preference is whole, every tool is named). The live case is `cont_plan_revised_twice_stays_the_plan` in the continuity suite.
+
+### P1. Revising a plan (2026-11-19)
+
+**What failed.** "Revise the plan" had no operation. The Operator had to edit steps one at a time with exact field names (`position`, `title`), and on 11/19 it wrote
+`step_id` and `step_text`, was refused twice, repeated the same call, and gave up; the plan it had saved never changed, and what it showed in the chat was text it
+wrote on the side. The plan card showed step titles only, so even a good revision could not show "how" (the owner asked where the pictures and the animation come from).
+**Home.** `plan.manage`, the planner (`plans/planner.py`) and the plan store. **What it adds.** One operation, `revise`, with one argument, the user's words: the planner
+that wrote the plan is given the plan as it stands and the instruction, and rewrites the steps that have not started in one transaction (steps that started stay, the
+plan keeps its id, a "Revised (version N)" line is kept with it). The plan card of a proposed plan, the plan the stage shows and `show` carry each step's detail (the
+sentence that says how it will be done). **What it replaces and deletes.** Nothing is deleted: `add_step` and `update_step` stay for one small edit, and the open-plan
+note now says when to use which. **Measured.** Unit tests (`test_plan_revise.py`); live, `cont_plan_revised_twice_stays_the_plan` before and after.

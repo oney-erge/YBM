@@ -94,6 +94,23 @@ def user_prompt(goal: str, context: str, can_do: str, *, may_ask: bool, today: d
     return "\n\n".join(parts)
 
 
+REVISE_NOTE = """You are revising a plan that already exists, not writing a new one.
+- Write the whole revised plan as steps. Keep every step the user did not ask to change, with the same title and owner.
+- What the user asked for must be visible in the plan itself: put in the step's `detail` what will be done and how (which tools, libraries or files, and where
+  any picture, icon, font or animation comes from and how it gets onto the computer), in one or two plain sentences, so the user can read it.
+- If the user says they cannot see something in the plan, the plan was missing it: add it as a step or as the detail of a step."""
+
+
+async def revise_plan(provider: Any, goal: str, plan_text: str, instruction: str, can_do: str, *, kept: int = 0) -> PlanDraft:
+    """Ask the model for the plan again, with the plan as it stands and what the user wants changed. `kept` steps at the front have already started and stay as they are."""
+    context = f"The plan as it stands:\n{plan_text.strip()[:3500]}\n\nThe user asks for this change: {instruction.strip()[:800]}"
+    if kept:
+        context += f"\nThe first {kept} steps have already started and cannot change: write only the steps after them."
+    return await provider.generate_structured(
+        SYSTEM_PROMPT + "\n\n" + REVISE_NOTE, user_prompt(goal, context, can_do, may_ask=False), PlanDraft, temperature=0.2
+    )
+
+
 async def draft_plan(provider: Any, goal: str, context: str, can_do: str, *, may_ask: bool = False) -> PlanDraft:
     """Ask the model for the steps (or, when allowed, for the one question). Raises when it cannot be reached or does not answer with a draft."""
     return await provider.generate_structured(
