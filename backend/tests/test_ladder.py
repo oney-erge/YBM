@@ -707,21 +707,25 @@ async def test_a_final_answer_that_writes_out_a_wrong_total_is_sent_back_once_wi
 
 
 @pytest.mark.asyncio
-async def test_at_the_higher_initiative_levels_a_choice_among_options_is_the_assistants_to_make_and_a_fact_is_still_asked(tmp_path):
-    """11/16: "Google Cast, Chromecast or PyChromecast?" went to the person, who said "you choose"."""
+async def test_at_the_autonomous_level_a_question_is_the_assistants_to_answer_twice_and_then_goes_through(tmp_path):
+    """11/16: "Google Cast, Chromecast or PyChromecast?" went to the person, who said "you choose". 11/19: "do not ask me"."""
     repos, audit = make_repos(tmp_path)
-    task = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=4)
+    task = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
     choice = OperatorDecision(action=OperatorAction.ASK_USER, question="Which casting library should I use?", options=["pychromecast", "google cast sdk", "catt"])
     worker = _worker(repos, audit, _Seen([choice, choice, choice]))
     first = await worker.process_task(task.id)
     assert first.status == TaskStatus.RUNNING  # not asked: told to choose
     entry = [item for item in first.metadata["operator_history"] if item.get("tool_name") == "_clarification_check"][-1]
-    assert "At initiative level 4 the routine choices are yours" in entry["error"] and "pychromecast" in entry["error"]
+    assert "At the autonomous level the choices are yours" in entry["error"] and "pychromecast" in entry["error"]
     assert first.metadata["operator_optional_question_recovery_count"] == 1
-    # at level 3 (the default) the same question goes to the person, as it always did
-    balanced = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
+    # at level 2 (the default) the same question goes to the person, as it always did
+    balanced = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=2)
     assert (await _worker(repos, audit, _Seen([choice])).process_task(balanced.id)).status == TaskStatus.CLARIFYING
-    # a fact only the person has (no options) is asked at any level
-    fact = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=5)
+    # a question with no options is sent back too (nothing is asked that the assistant can decide), twice; the third time it is a fact only the person has and it goes through
+    fact = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
     ask = OperatorDecision(action=OperatorAction.ASK_USER, question="What is the name of the TV in the living room?")
-    assert (await _worker(repos, audit, _Seen([ask])).process_task(fact.id)).status == TaskStatus.CLARIFYING
+    worker = _worker(repos, audit, _Seen([ask, ask, ask]))
+    one = await worker.process_task(fact.id)
+    two = await worker.process_task(one.id)
+    three = await worker.process_task(two.id)
+    assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING and three.status == TaskStatus.CLARIFYING

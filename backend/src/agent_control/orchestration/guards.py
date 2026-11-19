@@ -7,6 +7,7 @@ from typing import Any
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, is_yes
 from agent_control.orchestration import call_policy, ladder
 from agent_control.orchestration.asking import users_own_words
+from agent_control.orchestration.autonomy import AUTONOMOUS, autonomy_of
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_NAMES,
     CHECK_ENTRY_STRATEGY,
@@ -128,9 +129,8 @@ class GuardStage:
         current = current_recovery_history(history)
         recent = next((entry for entry in reversed(current) if isinstance(entry, dict)
                        and entry.get("tool_name") not in CHECK_ENTRY_NAMES), {})
-        level = task.metadata.get("initiative_level")
         budget = max(self.operator_max_steps, int(task.metadata.get("local_recovery_step_limit") or 0))
-        if (isinstance(level, int) and not isinstance(level, bool) and level >= 4
+        if (autonomy_of(task.metadata) >= AUTONOMOUS
                 and recent.get("status") in ("failed", "denied") and steps_used(history) < budget
                 and not any(entry.get("hint_id") == "alternative_after_repeat" for entry in current if isinstance(entry, dict))):
             history.append({

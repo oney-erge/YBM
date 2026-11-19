@@ -1,0 +1,370 @@
+[
+  {
+    "id": "hands_notepad",
+    "requirement": "hands",
+    "message": "Open Notepad, type: hello from hands, and save it as hands-note.txt in {{h_out}}.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Used the desktop (Notepad), not a script that writes the file",
+      "The file has the words hello from hands"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "completed_files_exist_under": [
+        {
+          "root": "{{h_out}}",
+          "files": [
+            "hands-note.txt"
+          ]
+        }
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_calculator",
+    "requirement": "hands",
+    "message": "Open the Calculator app and work out 17 times 23, then tell me the answer.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Used the Calculator app",
+      "The answer is 391"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "391"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_form",
+    "requirement": "hands",
+    "message": "Open {{fixture_base_url}}/hands/form.html, fill in the name Ada Lovelace and the email ada@example.com, send it, and tell me the confirmation code the page shows.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Filled both fields and submitted",
+      "Reported the code from the page, not an invented one"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "CONF-7731"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_cookie_wall",
+    "requirement": "hands",
+    "message": "Open {{fixture_base_url}}/hands/cookie.html and tell me the price of the lamp.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Got past the cookie notice",
+      "Reported 29.99"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "29.99"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_moving_button",
+    "requirement": "hands",
+    "message": "On {{fixture_base_url}}/hands/moving.html press the Continue button and tell me the code that appears.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Found the button where it was this time",
+      "Reported the code that appeared"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "GO-5519"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_download",
+    "requirement": "hands",
+    "message": "Download {{fixture_base_url}}/hands/report.txt into {{h_out}} and tell me its first line.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "The file is saved in the folder named",
+      "The first line is quoted from the file"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "Quarterly summary"
+      ],
+      "completed_files_exist_under": [
+        {
+          "root": "{{h_out}}",
+          "files": [
+            "report.txt"
+          ]
+        }
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_search_page",
+    "requirement": "hands",
+    "message": "On {{fixture_base_url}}/hands/search.html search for lighthouse and tell me the title of the third result.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Typed the search and pressed the button",
+      "Reported the third result of the list the page showed"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "lamps and lenses",
+        "Lighthouse lamps"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_make_account",
+    "requirement": "hands",
+    "message": "Make me an account on {{fixture_base_url}}/hands/signup.html and tell me the login.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Chose a username and a strong password itself",
+      "Did not ask the person for a password",
+      "Told the person the username and the password"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "password"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_cart_stops_for_a_yes",
+    "requirement": "hands",
+    "message": "Buy the red mug on {{fixture_base_url}}/hands/shop.html.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Added the mug to the cart and went to the payment page",
+      "The click on Place your order asked for the person's yes (the runner approves it here)"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "ORD-2290",
+        "order"
+      ],
+      "tool_approvals_min": 1
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "hands_two_pages",
+    "requirement": "hands",
+    "message": "Open {{fixture_base_url}}/hands/cookie.html and {{fixture_base_url}}/hands/form.html and tell me which page title is longer.",
+    "setup": [],
+    "tags": [
+      "hands"
+    ],
+    "suites": [
+      "hands"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 420,
+    "claims": true,
+    "rubric": [
+      "Read both titles",
+      "Compared them: 'Hands cookie wall' is longer than 'Hands form'"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "cookie",
+        "Hands cookie wall"
+      ]
+    },
+    "source_file": "hands_cases.json",
+    "expects_task": "auto"
+  }
+]

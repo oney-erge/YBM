@@ -7,11 +7,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { ApiError, fetchInitiativeConfig, updateInitiativeConfig } from "@/lib/api"
 
 const LEVELS = [
-  { value: "1", label: "1 - Guided", detail: "Ask before meaningful implementation choices." },
-  { value: "2", label: "2 - Collaborative", detail: "Choose minor details and ask about substantial changes." },
-  { value: "3", label: "3 - Balanced", detail: "Choose routine details and ask when important information is missing." },
-  { value: "4", label: "4 - Proactive", detail: "Choose routine methods and try reasonable alternatives." },
-  { value: "5", label: "5 - Delegated", detail: "Handle routine choices and ask when input or approval is necessary." },
+  { value: "1", label: "1 - Ask", detail: "Ask before meaningful implementation choices." },
+  { value: "2", label: "2 - Balanced", detail: "Choose routine details and ask only when a missing fact blocks the work." },
+  { value: "3", label: "3 - Autonomous", detail: "Do not ask: work out what is meant, say what was assumed, choose methods, grant routine approvals. Payments and anything unrecoverable still wait for you." },
 ]
 
 export function InitiativeSettingsCard() {
@@ -44,7 +42,7 @@ export function InitiativeSettingsCard() {
     <Card>
       <CardHeader>
         <CardTitle>Decision preference</CardTitle>
-        <CardDescription>Choose how much judgment YBM should use for routine decisions. Permissions and approvals stay separate.</CardDescription>
+        <CardDescription>Choose how much YBM does without asking. Tool access stays as configured; payments always wait for your yes.</CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
         {error ? <p role="alert">{error}</p> : level && (

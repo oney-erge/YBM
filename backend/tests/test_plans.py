@@ -594,7 +594,7 @@ def _draft():
 @pytest.mark.asyncio
 async def test_a_goal_without_steps_is_planned_by_the_planner_from_what_the_user_said_and_what_the_assistant_can_do(tmp_path):
     repos, audit, adapter, task = _adapter(tmp_path)
-    repos.tasks.update_metadata(task.id, {**task.metadata, "initiative_level": 4})
+    repos.tasks.update_metadata(task.id, {**task.metadata, "initiative_level": 3})
     planner = _Planner(_draft())
     adapter.provider = planner
     adapter._catalog = type("Catalog", (), {"index": lambda self: _Index()})()
@@ -608,7 +608,7 @@ async def test_a_goal_without_steps_is_planned_by_the_planner_from_what_the_user
     system, user, schema = planner.asked[0]
     assert schema == "PlanDraft" and "never pays" in system and "Do not ask questions." in user  # a tool call is never a place to ask
     assert "Goal: Build a small indoor drone" in user and "Build me a drone" in user  # the goal and what the user said
-    assert "Decision preference (4 of 5)" in user and "does not grant access" in user
+    assert "Decision preference (Autonomous, level 3 of 3)" in user and "does not grant access" in user
     assert "Routine implementation choices" in system
     assert "- can: files: read and move files" in user and "- cannot: order and pay. never pays" in user
 

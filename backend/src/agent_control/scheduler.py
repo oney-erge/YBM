@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from agent_control import cadence as calendar
@@ -237,6 +237,7 @@ async def run_scheduler_forever(
     max_consecutive_failures: int = 5,
     retention_days: int | None = None,
     settings_loader: Callable[[], AppSettings] | None = None,
+    daily: Callable[[Any], Awaitable[None]] | None = None,
 ) -> None:
     # None (the default, config.py's storage.retention_days) means task/audit
     # history is never automatically deleted - unchanged from before this
@@ -264,6 +265,11 @@ async def run_scheduler_forever(
                         deleted_tasks, deleted_orphan_audit, retention_days,
                     )
                 last_retention_sweep = now
+        if daily is not None and settings is not None:
+            try:
+                await daily(settings)  # the day's upkeep (upkeep.py): runs once a day, after the configured hour
+            except Exception:  # noqa: BLE001 - a chore that fails is tried again on the next pass and never stops the scheduler
+                logger.warning("daily upkeep failed", exc_info=True)
         await asyncio.sleep(poll_interval_seconds)
 
 

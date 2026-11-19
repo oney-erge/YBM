@@ -339,3 +339,38 @@ def test_research_finished_in_the_last_week_is_told_to_the_operator_with_its_sum
     assert "an old one" not in note  # a month ago is not "the last week"
     assert "## Research is running" not in note  # nothing is running
     assert open_job_note(repos.jobs, "other", reports_dir=".agent_control/jobs") == ""
+
+
+@pytest.mark.asyncio
+async def test_a_list_to_find_is_a_survey_and_something_to_keep_watching_is_a_monitor_with_its_script():
+    survey = await start_research_call(_Provider(_Start(action="survey", goal="Find all the daycares around Pearland and compare them")), "Go search all the daycares around me and do a large comparative analysis.")
+    assert survey == {"operation": "start_survey", "goal": "Find all the daycares around Pearland and compare them"}
+    script = "import subprocess\nout = subprocess.run(['arp', '-a'], capture_output=True, text=True).stdout\nprint(out)\n"
+    monitor = await start_research_call(
+        _Provider(_Start(action="monitor", name="network-devices", script=script, every_minutes=10, goal="Tell me when a new device shows up")),
+        "Connect to every device on my network and tell me when a new one shows up.",
+    )
+    assert monitor == {"operation": "start_watch", "script": script, "name": "network-devices", "goal": "Tell me when a new device shows up", "every_minutes": 10}
+    # no script written: the Operator takes it with the skill instead of a call that cannot work
+    assert await start_research_call(_Provider(_Start(action="monitor", name="x")), "Watch my network.") is None
+    system = _Provider(_Start(action="other"))
+    await start_research_call(system, "hello")
+    assert "all the daycares around me and compare them" in system.asked[0][0] and "ONLY when they ask for research on a topic" in system.asked[0][0]
+
+
+@pytest.mark.asyncio
+async def test_a_monitor_script_that_failed_its_test_goes_back_to_the_operator_to_be_fixed_and_one_that_passed_is_answered_in_code(tmp_path):
+    from agent_control.orchestration.job_start import SYSTEM
+
+    assert 'subprocess.run(["arp", "-a"]' in SYSTEM and "01-00-5e" in SYSTEM  # the stage is given a script that was tried on a real PC
+    repos, audit = make_repos(tmp_path)
+    worker = TaskWorker(repos, audit, job_stage=_stage([]))
+    failed = [{"tool_name": "job.manage", "input": {"operation": "start_watch", "script": "print()", "name": "d"}, "status": "failed", "error": "the script printed nothing"}]
+    task = _task(repos, task_route="job", job_forced_call="start_watch", job_start_done=True)
+    assert await worker._started_job(task, failed) is None  # the Operator fixes it with the reason in front of it
+    passed = [{"tool_name": "job.manage", "input": {"operation": "start_watch"}, "status": "succeeded", "output_summary": "Started watching script:d every 10 minutes."}]
+    decision = await worker._started_job(task, passed)
+    assert decision is not None and decision.action == OperatorAction.DONE
+    refused = [{"tool_name": "job.manage", "input": {"operation": "start_research"}, "status": "failed", "error": "2 researches are already open"}]
+    research = _task(repos, task_route="job", job_forced_call="start_research", job_start_done=True)
+    assert (await worker._started_job(research, refused)).action == OperatorAction.DONE  # a refused research is still said in code

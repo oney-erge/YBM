@@ -233,6 +233,16 @@ _INSTALLED = re.compile(
     r"|\b(?:model|package|library|tool|server|software|voice|engine)\b[^.!?\n]{0,30}?\b"
     r"(?:has been|have been|is now|are now|was|were)\s+(?:installed|downloaded|loaded|enabled|set up)\b"
 )
+def _records_a_payment(history: list[dict[str, Any]]) -> bool:
+    """A step that would spend money (orchestration/autonomy.py) ran and succeeded: it was asked for, approved by the person, and carried out. The page it left says the rest."""
+    from agent_control.orchestration.autonomy import payment_in
+
+    return any(
+        isinstance(entry, dict) and entry.get("status") == ToolResultStatus.SUCCEEDED.value and payment_in(str(entry.get("tool_name") or ""), entry.get("input")) is not None
+        for entry in history
+    )
+
+
 _PAID = re.compile(
     r"(?i)\b(?:i(?:'ve| have)?|we)\s+(?:just\s+)?(?:bought|purchased|ordered|booked|paid|reserved|subscribed)\b"
     r"|\b(?:your\s+|the\s+|an?\s+)?(?:order|purchase|booking|payment|reservation|subscription)\b[^.!?\n]{0,30}?\b"
@@ -306,7 +316,7 @@ def unbacked_claims(answer: str | None, history: list[dict[str, Any]], metadata:
         "deleted": _records_a_deletion(history),
         "sent_elsewhere": _records_a_message_to_someone(history),
         "installed": _records_an_install(history),
-        "paid": False,
+        "paid": _records_a_payment(history),
     }
     for kind, pattern in _CLAIM_PATTERNS:
         if backed[kind]:

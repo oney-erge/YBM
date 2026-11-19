@@ -291,6 +291,23 @@ jobs:
   max_pages: 1000     # the most it ever reads; individual jobs still require approval
   quiet_start: 23     # progress messages use scheduler.default_timezone
   quiet_end: 8        # equal hours disable quiet time; completion and failures still notify
+  monitors_dir: .agent_control/monitors  # where the scripts a monitor runs are kept (a script the assistant wrote, tested once)
+  keep_awake: true    # ask Windows not to sleep while a research, survey or investigation runs (the screen may still turn off)
+
+# What the assistant remembers across every chat. Both are on: it keeps what you say about yourself, your family, your home, your plans and your projects without
+# being asked, closes a fact that stops being true instead of deleting it, and can search everything said in any chat. Turn either off here.
+memory:
+  enabled: true
+  auto_remember: true
+
+# The daily chores that keep the assistant alive: a backup when the last is a day old, a monthly check that the newest backup can be restored, and one morning message
+# saying whether all is well (model, disk, jobs, backup). `ybm health`, `ybm restore-check` and `ybm calibrate` do the same by hand.
+upkeep:
+  enabled: true
+  hour: 8
+  backup: true
+  restore_check_days: 30
+  message: true
 
 # The assistant's own mailbox (read mail, follow a confirmation link, draft a reply, send after you approve a card). Set it up with the skill
 # "Make a mailbox of my own": the sign-up needs you for a puzzle or a code, and the login is kept in the account vault, never here.
@@ -318,7 +335,7 @@ operator:
   max_steps: 12
   # 1 asks about meaningful choices; 5 chooses routine details whenever possible.
   # This does not change approval requirements or tool permissions.
-  initiative_level: 3
+  autonomy_level: 2  # 1 Ask, 2 Balanced, 3 Autonomous (never asks; payments and unrecoverable changes still wait for you)
 
 adapters:
   vscode:

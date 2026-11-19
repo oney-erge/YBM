@@ -865,6 +865,10 @@ class ProjectRecord(StrictBaseModel):
     criteria: list[str] = Field(default_factory=list, max_length=30)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    # What the assistant remembers of the project (projects_memory.py): the words and names that point to it, and whether it is still being worked on.
+    # Its notebook is in `project_notes`. Never "closed": a project left alone is simply old, and is picked up again when it is mentioned.
+    hooks: list[str] = Field(default_factory=list, max_length=12)
+    status: str = Field(default="active", max_length=12)
 
 
 class Artifact(StrictBaseModel):
@@ -901,6 +905,15 @@ class MemoryFact(StrictBaseModel):
     supersedes_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    # What the fact is about ("home address", "daughter"): a newer fact about the same thing closes this one instead of deleting it, so "where did we live
+    # before" still has an answer. `valid_from` is when it became true (what the person said and when), `valid_to` when it stopped (None: still true).
+    about: str | None = Field(default=None, max_length=80)
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+    @property
+    def is_current(self) -> bool:
+        return self.valid_to is None
 
 
 class AuditEvent(StrictBaseModel):

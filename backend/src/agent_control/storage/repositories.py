@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 import json
 import logging
+import re
 import sqlite3
 from typing import Any, Callable
 
@@ -32,6 +33,7 @@ from agent_control.schemas import (
     ToolCallRequest,
     ToolCallResult,
     ToolResultStatus,
+    new_id,
     utc_now,
 )
 from agent_control.goals import MAX_ATTEMPTS as GOAL_MAX_ATTEMPTS
@@ -197,6 +199,12 @@ class MessageRepository:
                     _dt(message.received_at),
                 ),
             )
+            if cursor.rowcount > 0 and (message.text or "").strip():
+                # What the owner says is searchable from every chat ("what did I say about the daycare?"): the same transaction as the message.
+                connection.execute(
+                    "INSERT OR IGNORE INTO episodes (id, kind, conversation_id, task_id, project_id, text, at) VALUES (?, 'said', ?, NULL, NULL, ?, ?)",
+                    (f"ep_{message.id}", conversation_id, " ".join((message.text or "").split())[:4000], _dt(message.received_at)),
+                )
             return cursor.rowcount > 0
 
 
@@ -1326,15 +1334,24 @@ class ProjectRepository:
             connection.execute(
                 """
                 INSERT INTO projects (
-                    id, name, instructions, root_paths_json, criteria_json, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    id, name, instructions, root_paths_json, criteria_json, created_at, updated_at, hooks_json, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     project.id, project.name, project.instructions, _dump(project.root_paths), _dump(project.criteria),
-                    _dt(project.created_at), _dt(project.updated_at),
+                    _dt(project.created_at), _dt(project.updated_at), _dump(project.hooks), project.status,
                 ),
             )
         return project
+
+    def set_memory(self, project_id: str, *, hooks: list[str] | None = None, status: str | None = None) -> None:
+        """What the assistant remembers of a project (its hooks and whether it is still going); the console's own fields are untouched."""
+        with self.database.connect() as connection:
+            if hooks is not None:
+                connection.execute("UPDATE projects SET hooks_json = ?, updated_at = ? WHERE id = ?", (_dump(hooks), _dt(utc_now()), project_id))
+            if status is not None:
+                connection.execute("UPDATE projects SET status = ? WHERE id = ?", (status, project_id))
+            connection.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (_dt(utc_now()), project_id))
 
     def get(self, project_id: str) -> ProjectRecord | None:
         with self.database.connect() as connection:
@@ -1374,7 +1391,32 @@ class ProjectRepository:
             id=row["id"], name=row["name"], instructions=row["instructions"],
             root_paths=_load(row["root_paths_json"], []), criteria=_load(row["criteria_json"], []),
             created_at=row["created_at"], updated_at=row["updated_at"],
+            hooks=_load(row["hooks_json"], []) if "hooks_json" in row.keys() else [],
+            status=row["status"] if "status" in row.keys() else "active",
         )
+
+
+class ProjectNoteRepository:
+    """The notebook of a project: dated entries of what was decided, found, asked, bought, done (projects_memory.py)."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def add(self, project_id: str, kind: str, text: str, *, task_id: str | None = None, at: datetime | None = None) -> str:
+        note_id = new_id("note")
+        with self.database.connect() as connection:
+            connection.execute(
+                "INSERT INTO project_notes (id, project_id, kind, text, task_id, at) VALUES (?, ?, ?, ?, ?, ?)",
+                (note_id, project_id, kind, " ".join(text.split())[:600], task_id, _dt(at or utc_now())),
+            )
+            connection.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (_dt(utc_now()), project_id))
+        return note_id
+
+    def list(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
+        """The newest entries first, with `at` as a time."""
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT id, kind, text, task_id, at FROM project_notes WHERE project_id = ? ORDER BY at DESC LIMIT ?", (project_id, limit)).fetchall()
+        return [{**dict(row), "at": datetime.fromisoformat(row["at"])} for row in rows]
 
 
 class ToolInvocationRepository:
@@ -1635,25 +1677,27 @@ class MemoryFactRepository:
                 """
                 INSERT INTO memory_facts (
                     id, category, content, source, confidence, task_id,
-                    supersedes_id, created_at, updated_at
+                    supersedes_id, created_at, updated_at, about, valid_from, valid_to
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     fact.id, fact.category, fact.content, fact.source.value, fact.confidence,
                     fact.task_id, fact.supersedes_id, _dt(fact.created_at), _dt(fact.updated_at),
+                    fact.about, _dt(fact.valid_from or fact.created_at), _dt(fact.valid_to) if fact.valid_to else None,
                 ),
             )
-        return fact
+        return fact.model_copy(update={"valid_from": fact.valid_from or fact.created_at})
 
     def get(self, fact_id: str) -> MemoryFact | None:
         with self.database.connect() as connection:
             row = connection.execute("SELECT * FROM memory_facts WHERE id = ?", (fact_id,)).fetchone()
         return self._row_to_fact(row) if row is not None else None
 
-    def list_all(self, *, category: str | None = None, query: str | None = None) -> list[MemoryFact]:
+    def list_all(self, *, category: str | None = None, query: str | None = None, include_closed: bool = False) -> list[MemoryFact]:
+        """The facts that are true now; with `include_closed`, the ones that stopped being true too (newest first)."""
         sql = "SELECT * FROM memory_facts"
-        clauses: list[str] = []
+        clauses: list[str] = [] if include_closed else ["valid_to IS NULL"]
         params: list[object] = []
         if category:
             clauses.append("category = ?")
@@ -1678,6 +1722,14 @@ class MemoryFactRepository:
             )
         return self.get(fact_id)
 
+    def close(self, fact_id: str, *, at: datetime | None = None) -> bool:
+        """The fact stopped being true: it is kept, with when, and no longer offered as what is known."""
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE memory_facts SET valid_to = ?, updated_at = ? WHERE id = ? AND valid_to IS NULL", (_dt(at or utc_now()), _dt(utc_now()), fact_id),
+            )
+        return cursor.rowcount > 0
+
     def delete(self, fact_id: str) -> bool:
         with self.database.connect() as connection:
             cursor = connection.execute("DELETE FROM memory_facts WHERE id = ?", (fact_id,))
@@ -1695,7 +1747,57 @@ class MemoryFactRepository:
             supersedes_id=row["supersedes_id"],
             created_at=row["created_at"],
             updated_at=row["updated_at"],
+            about=row["about"] if "about" in row.keys() else None,
+            valid_from=row["valid_from"] if "valid_from" in row.keys() else None,
+            valid_to=row["valid_to"] if "valid_to" in row.keys() else None,
         )
+
+
+class EpisodeRepository:
+    """Everything the owner said and everything the assistant answered, searchable in plain words across every chat (SQLite full text, no extra dependency)."""
+
+    def __init__(self, database: Database) -> None:
+        self.database = database
+
+    def add(self, kind: str, text: str, *, conversation_id: str | None = None, task_id: str | None = None, project_id: str | None = None, at: datetime | None = None) -> bool:
+        """Keep one episode. An answer is kept once per task (a second call for the same task is ignored); an empty text is not kept."""
+        text = " ".join((text or "").split())[:4000]
+        if not text:
+            return False
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "INSERT OR IGNORE INTO episodes (id, kind, conversation_id, task_id, project_id, text, at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (new_id("ep"), kind, conversation_id, task_id, project_id, text, _dt(at or utc_now())),
+            )
+        return cursor.rowcount > 0
+
+    def search(self, query: str, *, limit: int = 8, kind: str | None = None) -> list[dict[str, Any]]:
+        """The best matches for the words in `query` (every word must be in the episode, best match first), with when they were said."""
+        words = [w for w in re.findall(r"[A-Za-z0-9]+", query or "") if len(w) > 1][:8]
+        if not words:
+            return []
+        match = " ".join(f'"{w}"*' if len(w) > 3 else f'"{w}"' for w in words)
+        sql = (
+            "SELECT e.id, e.kind, e.conversation_id, e.task_id, e.project_id, e.text, e.at, bm25(episodes_fts) AS rank "
+            "FROM episodes_fts JOIN episodes e ON e.rowid = episodes_fts.rowid WHERE episodes_fts MATCH ?"
+        )
+        params: list[Any] = [match]
+        if kind:
+            sql += " AND e.kind = ?"
+            params.append(kind)
+        sql += " ORDER BY rank LIMIT ?"
+        params.append(limit)
+        with self.database.connect() as connection:
+            try:
+                rows = connection.execute(sql, tuple(params)).fetchall()
+            except sqlite3.OperationalError:
+                return []
+        return [dict(row) for row in rows]
+
+    def recent(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        with self.database.connect() as connection:
+            rows = connection.execute("SELECT id, kind, conversation_id, task_id, project_id, text, at FROM episodes ORDER BY at DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
 
 class ScheduleRepository:
@@ -2601,11 +2703,13 @@ class Repositories:
     tool_invocations: ToolInvocationRepository
     artifacts: ArtifactRepository
     memory_facts: MemoryFactRepository
+    episodes: EpisodeRepository
     schedules: ScheduleRepository
     audit: AuditRepository
     llm_calls: LLMCallRepository
     workflows: WorkflowRepository
     projects: ProjectRepository
+    project_notes: ProjectNoteRepository
     folder_watches: FolderWatchRepository
     plans: PlanRepository
     jobs: JobRepository
@@ -2624,11 +2728,13 @@ class Repositories:
             tool_invocations=ToolInvocationRepository(database),
             artifacts=ArtifactRepository(database),
             memory_facts=MemoryFactRepository(database),
+            episodes=EpisodeRepository(database),
             schedules=ScheduleRepository(database),
             audit=AuditRepository(database),
             llm_calls=LLMCallRepository(database),
             workflows=WorkflowRepository(database),
             projects=ProjectRepository(database),
+            project_notes=ProjectNoteRepository(database),
             folder_watches=FolderWatchRepository(database),
             plans=PlanRepository(database),
             jobs=JobRepository(database),

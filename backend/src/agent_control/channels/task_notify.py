@@ -78,6 +78,7 @@ def _format_task_message(task: TaskRecord) -> str:
         attempt = _last_attempt_sentence(task)
         if attempt:
             lines.append(attempt)
+        lines.extend(_blocker_report(task, error))
         return _trim("\n".join(lines), 3900)
     if task.status != TaskStatus.COMPLETED:
         return f"Status: {task.status.value}."
@@ -383,6 +384,47 @@ def _failure_headline(task: TaskRecord, error: str | None) -> str:
     if "capability" in low or "disabled" in low or "not enabled" in low:
         return "A required capability is not enabled for this task."
     return "I could not complete this request."
+
+
+def _tried(task: TaskRecord, limit: int = 6) -> list[str]:
+    """What was tried, one short line each, from the task's own record: the distinct steps and how each ended."""
+    history = task.metadata.get("operator_history")
+    if not isinstance(history, list):
+        return []
+    seen: dict[str, str] = {}
+    for item in history:
+        if not isinstance(item, dict) or str(item.get("tool_name") or "").startswith("_") or not item.get("tool_name"):
+            continue
+        phrase = _step_phrase(item)
+        status = str(item.get("status") or "")
+        seen[phrase] = "worked" if status in {"succeeded", "ok", "completed"} else "did not work" if status in {"failed", "denied", "timeout", "rate_limited"} else status or "ran"
+    return [f"- {phrase}: {result}" for phrase, result in list(seen.items())[-limit:]]
+
+
+def _blocker_report(task: TaskRecord, error: str | None) -> list[str]:
+    """The standard ending when a task cannot go on: what was tried, and the ways forward with a pick, so the person never gets a bare "I could not".
+
+    The goal stays open (orchestration/goal_routing.py): "try again", or any of the routes below, continues it. The routes are a menu made from facts: what is switched off, what
+    was declined, what the record shows; the first line of a route is the thing the person says.
+    """
+    lines: list[str] = []
+    tried = _tried(task)
+    if tried:
+        lines.extend(["", "What I tried:", *tried])
+    metadata = task.metadata if isinstance(task.metadata, dict) else {}
+    low = (error or "").lower()
+    routes: list[str] = []
+    if any(word in low for word in ("capability", "disabled", "not enabled", "capability_disabled")):
+        routes.append("Turn the missing access on in Settings, then say 'try again' and I will carry on from here.")
+    if any(marker in low for marker in ("devtools", "remote debugging", "chrome is not")):
+        routes.append("Start Chrome with remote debugging (the command above), then say 'try again'.")
+    routes.append("Say 'try again' and I will keep working on it from where it stopped, using a different way than the ones above.")
+    if "claude_code" not in (metadata.get("declined_methods") or []):
+        routes.append("Say 'hand it to Claude Code' and a coding agent on this computer takes it, with what I learned.")
+    routes.append("Tell me what you see or what you would change (a name, a place, a folder), and I will use it.")
+    lines.extend(["", "Ways forward:", *(f"{chr(65 + index)}. {route}" for index, route in enumerate(routes[:4]))])
+    lines.append("My pick: A. I am keeping this open, so any of these continues it.")
+    return lines
 
 
 def _failure_lines(task: TaskRecord) -> list[str]:

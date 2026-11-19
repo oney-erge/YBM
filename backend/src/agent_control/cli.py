@@ -49,6 +49,7 @@ from agent_control.orchestration.worker import TaskNotificationSink
 from agent_control.policy import PolicyEngine
 from agent_control.recovery import RetryPolicy
 from agent_control.heartbeat import run_heartbeat_forever
+from agent_control.plans.runner import routing_of
 from agent_control.scheduler import run_scheduler_forever
 from agent_control.schemas import AuditEventType, ChannelType, TaskRecord, TaskStatus
 from agent_control.jobs.io import build_io as build_job_io
@@ -59,6 +60,7 @@ from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
 from agent_control.jobs.context import has_open_job, open_job_note
 from agent_control.orchestration.asking import users_own_words
+from agent_control.jobs.awake import KeepAwake
 from agent_control.orchestration.job_start import start_research_call
 from agent_control.plans.stage import run_plan_stage
 from agent_control.storage import ApprovalRepository, AuditLogger, Database, Repositories
@@ -252,8 +254,13 @@ def _concierge_parts(
             is not None,
         )
     responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
+    learner = None
+    if concierge_provider is not None and settings.memory.enabled and settings.memory.auto_remember:
+        from agent_control.channels.memory_learning import FactLearner
+
+        learner = FactLearner(repositories, concierge_provider)
     return classifier, responder, ConversationMemoryService(
-        repositories, provider=concierge_provider, summarize_in_background=settings.llm.summarize_memory_in_background,
+        repositories, provider=concierge_provider, summarize_in_background=settings.llm.summarize_memory_in_background, learner=learner,
     )
 
 
@@ -500,7 +507,7 @@ def _worker_kwargs(settings: AppSettings, repositories: Repositories, audit: Aud
             else None
         ),
         "operator_max_steps": settings.operator.max_steps,
-        "initiative_level": settings.operator.initiative_level,
+        "initiative_level": settings.operator.effective_autonomy,
         "auto_close_blocked_hours": settings.limits.auto_close_blocked_hours,
         "fulfillment_mode": settings.operator.fulfillment_mode,
         "audit_min_tool_calls": settings.operator.audit_min_tool_calls,
@@ -576,14 +583,22 @@ def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditL
                     found.append((entry.name, info.st_size, info.st_mtime_ns))
         return found
 
-    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser), list_folder=list_folder)
+    async def run_monitor(name: str) -> str:
+        """The output of a saved monitor script (jobs/monitors.py): only a script in the monitors folder is ever run."""
+        import asyncio
+
+        from agent_control.jobs import monitors
+
+        return await asyncio.to_thread(monitors.run_script, settings.jobs.monitors_dir, name)
+
+    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser), list_folder=list_folder, run_monitor=run_monitor)
     from agent_control.scheduler import resolve_timezone
     from agent_control.schemas import utc_now
 
     timezone = resolve_timezone(settings.scheduler.default_timezone)
     return JobRunner(repositories, audit, lambda _job: io, say=sink.say, send_file=sink.send_file,
                      reports_dir=settings.jobs.reports_dir, quiet_hours=(settings.jobs.quiet_start, settings.jobs.quiet_end),
-                     clock=lambda: utc_now().astimezone(timezone))
+                     clock=lambda: utc_now().astimezone(timezone), awake=KeepAwake() if settings.jobs.keep_awake else None)
 
 
 def _gpu_hold(settings: AppSettings) -> Callable[[], bool]:
@@ -727,6 +742,55 @@ async def run_worker() -> None:
         raise
 
 
+def run_health() -> int:
+    """Print the morning line now (upkeep.py): whether the model answers, the disk, the jobs and the last backup."""
+    from agent_control.upkeep import morning_line
+
+    settings = load_settings()
+    repositories, _audit = build_repositories()
+    line, problems = morning_line(settings, repositories)
+    print(line)
+    return 1 if problems else 0
+
+
+def run_restore_check() -> int:
+    """Open the newest backup in a scratch folder and count what it holds (upkeep.py): a backup that cannot be read is found now, not when it is needed."""
+    from agent_control.upkeep import newest_backup, restore_check
+
+    latest = newest_backup()
+    if latest is None:
+        print("There is no backup yet: run `ybm backup` first.")
+        return 1
+    result = restore_check(latest)
+    if result["ok"]:
+        print(f"{result['archive']} restores: " + ", ".join(f"{count} {table}" for table, count in result["counts"].items()))
+        return 0
+    print(f"{result['archive']} does NOT restore: {result['problem']}")
+    return 1
+
+
+async def run_calibrate() -> int:
+    """Check that the decision model's yes/no questions still separate what the skills' marks assume (calibrate.py); exit 1 when one no longer does."""
+    from agent_control.calibrate import calibrate, render
+    from agent_control.llm.decision import DecisionModelClient
+
+    settings = load_settings()
+    client = DecisionModelClient(settings.decision)
+    root = Path(__file__).resolve().parents[3]
+    results = await calibrate(root / "skills" / "starter", root / "e2e" / "calibration_cases.json", client.yes_no)
+    print(render(results))
+    return 0 if all(result.ok for result in results) else 1
+
+
+async def _morning_say(settings, repositories, audit, text: str) -> None:
+    """The morning line goes to the chat the owner last used."""
+    notifier = _telegram_notifier(settings, audit)
+    recent = repositories.tasks.list_recent(1)
+    routing = routing_of(recent[0]) if recent else {}
+    if notifier is not None and routing.get("source_chat_id"):
+        await notifier.say(routing, text)
+
+
 async def run_scheduler() -> None:
     settings = load_settings()
     repositories, audit = build_repositories()
@@ -737,7 +801,17 @@ async def run_scheduler() -> None:
         max_consecutive_failures=settings.scheduler.max_consecutive_failures,
         retention_days=settings.storage.retention_days,
         settings_loader=load_settings,
+        daily=lambda current: _daily_upkeep(current, repositories, audit),
     )
+
+
+async def _daily_upkeep(settings, repositories, audit) -> None:
+    from agent_control.upkeep import run_daily
+
+    async def say(text: str) -> None:
+        await _morning_say(settings, repositories, audit, text)
+
+    await run_daily(settings, repositories, say)
 
 
 async def run_coding_agent_session(session_root: str, session_id: str) -> None:
@@ -1005,6 +1079,9 @@ def main() -> None:
             "run-coding-agent-session",
             "run-coding-session-watcher",
             "backup",
+            "health",
+            "calibrate",
+            "restore-check",
             "check-updates",
             "admin-url",
         ],
@@ -1127,6 +1204,12 @@ def main() -> None:
         asyncio.run(run_coding_session_watcher(args.poll_interval_seconds))
     elif args.command == "backup":
         raise SystemExit(run_backup(args.out))
+    elif args.command == "health":
+        raise SystemExit(run_health())
+    elif args.command == "restore-check":
+        raise SystemExit(run_restore_check())
+    elif args.command == "calibrate":
+        raise SystemExit(asyncio.run(run_calibrate()))
     elif args.command == "check-updates":
         result = check_for_updates()
         if result.status == "update_available":

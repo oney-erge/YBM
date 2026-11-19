@@ -287,8 +287,17 @@ class OperatorConfig(StrictBaseModel):
     # execution path as of 2026-07-28 (the old plan-once-then-replan path and
     # its keyword-driven recovery were deleted, not just defaulted off).
     max_steps: int = Field(default=12, ge=1, le=50)
-    # How readily the assistant makes routine choices. This never grants tool permissions.
+    # How much the assistant does without asking: 1 Ask, 2 Balanced (the default), 3 Autonomous (never asks, grants routine approvals itself; a payment and a
+    # critical-risk call still wait for the owner). Capabilities stay as configured; this never turns one on.
+    autonomy_level: int | None = Field(default=None, ge=1, le=3)
+    # The earlier five-level setting. Read only when `autonomy_level` is not set (1-2 became Ask, 3 Balanced, 4-5 Autonomous).
     initiative_level: int = Field(default=3, ge=1, le=5)
+
+    @property
+    def effective_autonomy(self) -> int:
+        from agent_control.orchestration.autonomy import level_from_legacy
+
+        return self.autonomy_level if self.autonomy_level is not None else level_from_legacy(self.initiative_level)
     # Who decides whether a `done` actually delivered what was asked.
     #
     # "auditor"   - the Auditor judges it, reading the user's own words and a
@@ -761,6 +770,23 @@ class PlansConfig(StrictBaseModel):
     enabled: bool = False
 
 
+class UpkeepConfig(StrictBaseModel):
+    """The daily chores that keep the assistant alive (upkeep.py): a backup, a monthly check that a backup can be restored, and one message each morning saying whether all is well."""
+
+    enabled: bool = True
+    hour: int = Field(default=8, ge=0, le=23)  # local time; the chores run once on the first pass after this hour
+    backup: bool = True  # a backup when the last is older than a day
+    restore_check_days: int = Field(default=30, ge=1, le=365)
+    message: bool = True  # the morning line to the chat
+
+
+class MemoryConfig(StrictBaseModel):
+    """What the assistant remembers across every chat (channels/memory_learning.py). Both on by default: it remembers what the owner says without being asked to."""
+
+    enabled: bool = True  # remembered facts are offered to every task, and past conversations can be searched
+    auto_remember: bool = True  # facts the owner states about themselves, their family, home, plans and projects are kept as they say them
+
+
 class MailConfig(StrictBaseModel):
     """The assistant's own mailbox (tools/mail_manage.py). Off in the code's defaults for the same reason as `jobs.enabled`: a new tool line changes the Operator's prompt.
 
@@ -791,6 +817,10 @@ class JobsConfig(StrictBaseModel):
     default_pages: int = Field(default=60, ge=5, le=150)
     max_pages: int = Field(default=1000, ge=5, le=1000)
     reports_dir: str = ".agent_control/jobs"
+    # Where the scripts a monitor runs are kept (jobs/monitors.py). Only a script saved here by `job.manage start_watch` is ever run by a monitor.
+    monitors_dir: str = ".agent_control/monitors"
+    # While a research, survey or investigation is running, ask Windows not to sleep (jobs/awake.py); the screen may still turn off. A watch does not count.
+    keep_awake: bool = True
     # Equal hours disable quiet time. Completion, failures and required questions still notify.
     quiet_start: int = Field(default=23, ge=0, le=23)
     quiet_end: int = Field(default=8, ge=0, le=23)
@@ -845,6 +875,8 @@ class AppSettings(BaseSettings):
     plans: PlansConfig = Field(default_factory=PlansConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
+    upkeep: UpkeepConfig = Field(default_factory=UpkeepConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @classmethod

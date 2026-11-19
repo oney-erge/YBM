@@ -139,6 +139,8 @@ class PlanningStage:
             entry = _job_call_entry(history, forced)
             if entry is None:
                 return None  # the call has not run yet (it waits for an approval) or went another way: the loop is the Operator's
+            if forced == "start_watch" and entry.get("status") != "succeeded":
+                return None  # a monitor script that failed its test is the Operator's to fix, with the reason in its history and the skill in front of it
             # The call has run and the person has what they need to know. The answer is written here, not by the Operator: in live runs it went on
             # calling the job tool with an id from an earlier job (or from a task), offered a hand-over to Claude Code, asked whether to wait or pause,
             # and once said "has been stopped" about a job it had not stopped.
