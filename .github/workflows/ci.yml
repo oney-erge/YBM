@@ -9,6 +9,10 @@ on:
   # every job below succeeds.
   workflow_call:
   workflow_dispatch:
+  # The Windows and macOS backend jobs are not required to merge (they report on the pull request and decide nothing); the whole matrix also runs every night, so a
+  # platform-only break is seen the next morning even if nobody pushes.
+  schedule:
+    - cron: "17 7 * * *"
 
 permissions:
   contents: read
@@ -100,9 +104,10 @@ jobs:
   backend-tests:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # The Windows run takes about 15 minutes of pytest alone (2,350 tests); a 15 minute limit cancelled it at 91% with no failing test.
-    # With about 3,400 tests the same Windows run reached 30 minutes and was cancelled with no failing test, so the limit is 60.
-    timeout-minutes: 60
+    # Required to merge: the Linux job. Windows and macOS run for the same change and report, but do not block it (branch protection on main).
+    # The suite runs in parallel (pytest-xdist, one worker per core) with throwaway databases that skip the disk flush (backend/tests/conftest.py): the
+    # Windows run was 23 to 30 minutes in one process, and a 15 and then a 30 minute limit each cancelled it with no failing test.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -119,8 +124,15 @@ jobs:
           python-version: "3.12"
           working-directory: backend
           cache-suffix: backend-tests-${{ matrix.os }}
+      - name: Keep Windows temp files on the fast drive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force D:\tmp | Out-Null
+          "TEMP=D:\tmp" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "TMP=D:\tmp" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: uv sync --frozen --extra test --extra dev
-      - run: uv run --frozen pytest
+      - run: uv run --frozen pytest -n auto --dist loadfile
 
   backend-quality:
     runs-on: ubuntu-latest

@@ -164,6 +164,19 @@ def test_fixture_key_normalizes_pytest_tmp_path_across_runs_and_platforms() -> N
     assert key == fixture_key("generate_structured", "sys", on_linux)
 
 
+def test_fixture_key_ignores_the_worker_folder_pytest_xdist_adds_to_a_temp_path() -> None:
+    """Under pytest-xdist each worker has its own base folder, `popen-gw<N>`, between the run counter and the test's folder; the same test keys the same on every
+    worker and without xdist."""
+    serial = r"C:\Temp\pytest-of-u\pytest-1\test_alpha0\somewhere_else"
+    worker_3 = r"C:\Temp\pytest-of-u\pytest-1\popen-gw3\test_alpha0\somewhere_else"
+    worker_15_linux = "/tmp/pytest-of-u/pytest-8/popen-gw15/test_alpha0/somewhere_else"
+    other_test = r"C:\Temp\pytest-of-u\pytest-1\popen-gw3\test_beta0\somewhere_else"
+
+    key = fixture_key("generate_structured", "sys", serial)
+    assert key == fixture_key("generate_structured", "sys", worker_3) == fixture_key("generate_structured", "sys", worker_15_linux)
+    assert key != fixture_key("generate_structured", "sys", other_test)
+
+
 def test_fixture_key_still_separates_different_pytest_test_directories() -> None:
     """Only the volatile prefix is collapsed; the per-test directory name is
     stable and must keep two different tests keyed apart."""

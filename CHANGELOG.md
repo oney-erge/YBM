@@ -5,6 +5,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- The backend tests run in parallel and take about 35 seconds on 16 cores instead of 7 minutes or more (`uv run --frozen pytest -n auto --dist loadfile`; `ybm test` does it by default when pytest-xdist is installed). Three causes were found and fixed: every test's throwaway SQLite database flushed to disk on each commit, which cost nothing alone but made 16 parallel workers queue behind the disk on Windows (ordinary half-second tests took 25 seconds), so test connections now skip the flush (`backend/tests/conftest.py`; the product database is untouched); each worker gets a temp folder of its own, because the scenario scratch root is one fixed path per machine; and the e2e fixtures folder (`e2e/fixtures.py`, now movable with `YBM_E2E_FIXTURE_ROOT`) is a private folder per test process, so the unit tests no longer delete the fixtures a live e2e run is using. The scripted-LLM fixture key ignores the `popen-gw<N>` folder pytest-xdist adds to temp paths. `pytest --testmon` runs only the tests a change can affect (a change to one source file reran in 5.5 seconds).
+- CI: the Windows and macOS backend jobs no longer block a merge (branch protection on `main` requires the Linux job and the other fast checks); they run for the same change, on every push to main, on release tags and every night. The backend job runs the suite in parallel, the Windows job keeps its temp files on the D: drive, and its limit is 20 minutes.
+
 ## [0.1.8] - 2026-11-19
 
 ### Changed

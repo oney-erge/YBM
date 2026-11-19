@@ -142,7 +142,9 @@ Choose checks in proportion to the change:
 - Backend behavior: `.\scripts\ybm.ps1 test` and the focused affected test. On a
   checkout where `ybm setup`/`ybm.ps1 setup` has not run (`backend/.venv` doesn't
   exist yet), first run `uv sync --frozen --extra test --extra dev` from
-  `backend` - matches what CI does before `uv run --frozen pytest`. Without
+  `backend` - matches what CI does before `uv run --frozen pytest -n auto --dist loadfile`
+  (the whole suite in parallel, about 35 seconds on 16 cores; while editing, add `--testmon` to run only
+  the tests a change can affect). Without
   that sync, a bare `uv run --frozen pytest` can silently resolve to a
   system-installed `pytest` outside the project's `.venv` and fail with
   `ModuleNotFoundError` instead of running the suite.
