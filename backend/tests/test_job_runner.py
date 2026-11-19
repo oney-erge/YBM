@@ -795,3 +795,39 @@ async def test_a_job_id_the_model_made_up_does_not_stop_a_control_and_status_sho
     refused = await call(operation="resume")
     assert refused.status == ToolResultStatus.FAILED and "the research is running, not paused" in (refused.error_message or "") and "job_" not in (refused.error_message or "")
     assert (await call(operation="status")).output["summary"].count("The running one") == 1
+
+
+def test_the_computer_is_kept_awake_while_a_long_job_runs_and_let_go_when_none_does(tmp_path) -> None:
+    from agent_control.jobs.awake import ES_CONTINUOUS, ES_SYSTEM_REQUIRED, KeepAwake
+    from agent_control.jobs.watch import new_state as watch_state
+
+    calls: list[int] = []
+    awake = KeepAwake(setter=calls.append)
+    awake.want(False)
+    assert calls == []  # nothing asked, nothing changed
+    awake.want(True)
+    awake.want(True)
+    assert calls == [ES_CONTINUOUS | ES_SYSTEM_REQUIRED] and awake.holding  # asked once, not on every look
+    awake.want(False)
+    assert calls[-1] == ES_CONTINUOUS and not awake.holding
+
+    broken = KeepAwake(setter=lambda flags: (_ for _ in ()).throw(OSError("no api")))
+    broken.want(True)  # a call that fails is not a failed job
+    assert not broken.holding
+
+    repos, audit = make_repos(tmp_path)
+    seen: list[bool] = []
+
+    class Spy(KeepAwake):
+        def want(self, awake: bool) -> None:
+            seen.append(awake)
+
+    runner = JobRunner(repos, audit, lambda _job: _Io().io, say=_Chat().say, reports_dir=tmp_path / "jobs", awake=Spy())
+    asyncio.run(runner.tick())
+    assert seen == [False]  # no job: no hold
+    repos.jobs.create(Job(kind="watch", goal="w", state=watch_state("C:/x", 5), routing=ROUTING))
+    asyncio.run(runner.tick())
+    assert seen[-1] is False  # a watch is asleep most of the time and does not keep the computer awake
+    _job(repos)
+    asyncio.run(runner.tick())
+    assert seen[-1] is True

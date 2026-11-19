@@ -16,6 +16,7 @@ from pathlib import Path
 import structlog
 
 from agent_control.jobs import engines, research, watch
+from agent_control.jobs.awake import KeepAwake
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.schemas import AuditEventType, TaskStatus
 from agent_control.storage.audit import AuditLogger
@@ -64,6 +65,7 @@ class JobRunner:
         unit_seconds: float = UNIT_SECONDS,
         quiet_hours: tuple[int, int] | None = None,
         clock: Callable[[], datetime] | None = None,
+        awake: KeepAwake | None = None,
     ) -> None:
         self.repositories = repositories
         self.audit = audit
@@ -76,9 +78,13 @@ class JobRunner:
         self.clock = clock or (lambda: datetime.now().astimezone())
         # One unit at a time in this process, whoever asks: the worker runs several loops that all call tick() on this one runner.
         self._unit_lock = asyncio.Lock()
+        # The computer is kept awake while a long job runs (jobs/awake.py); None leaves it to sleep as it likes.
+        self.awake = awake
 
     async def tick(self) -> int:
         """Do one unit of the oldest running job, if nobody is waiting. Returns 1 when a unit ran."""
+        if self.awake is not None:
+            self.awake.want(any(job.kind != "watch" for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=20)))
         if self._unit_lock.locked() or self.repositories.tasks.list_by_statuses(_ACTIVE, limit=1):
             return 0
         # The worker runs max_parallel_tasks loops, each calling tick(). Without this, two of them read the same saved state and did the same unit

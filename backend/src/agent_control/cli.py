@@ -60,6 +60,7 @@ from agent_control.plans.planner import can_do_text
 from agent_control.plans.runner import PlanRunner
 from agent_control.jobs.context import has_open_job, open_job_note
 from agent_control.orchestration.asking import users_own_words
+from agent_control.jobs.awake import KeepAwake
 from agent_control.orchestration.job_start import start_research_call
 from agent_control.plans.stage import run_plan_stage
 from agent_control.storage import ApprovalRepository, AuditLogger, Database, Repositories
@@ -597,7 +598,7 @@ def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditL
     timezone = resolve_timezone(settings.scheduler.default_timezone)
     return JobRunner(repositories, audit, lambda _job: io, say=sink.say, send_file=sink.send_file,
                      reports_dir=settings.jobs.reports_dir, quiet_hours=(settings.jobs.quiet_start, settings.jobs.quiet_end),
-                     clock=lambda: utc_now().astimezone(timezone))
+                     clock=lambda: utc_now().astimezone(timezone), awake=KeepAwake() if settings.jobs.keep_awake else None)
 
 
 def _gpu_hold(settings: AppSettings) -> Callable[[], bool]:
