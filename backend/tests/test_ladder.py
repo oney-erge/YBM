@@ -284,6 +284,25 @@ async def test_when_the_local_model_has_run_out_of_ways_the_user_is_offered_clau
 
 
 @pytest.mark.asyncio
+async def test_at_the_autonomous_level_the_assistant_never_asks_to_hand_over_and_keeps_going(tmp_path, monkeypatch):
+    repos, audit = make_repos(tmp_path)
+    code_failed = {"tool_name": "code.interpreter", "input": {"operation": "run_python"}, "status": "failed", "error": "boom"}
+    task = _task_with_history(repos, "Find my annual thing", [code_failed, code_failed], initiative_level=3)
+    operator = _Seen([OperatorDecision(action=OperatorAction.DONE, final_answer="I could not find it; here is what I tried.")])
+    worker = _worker(repos, audit, operator)
+    monkeypatch.setattr(worker, "_claude_code_ready", lambda: True)
+    result = await worker.process_task(task.id)
+    assert result.status != TaskStatus.CLARIFYING and "claude_code_offer" not in result.metadata and operator.calls == 1
+
+
+@pytest.mark.parametrize(("level", "asks"), [(1, True), (2, True), (3, False), (4, False), (5, False), (None, True)])
+def test_only_the_levels_that_ask_may_ask_to_hand_over(level, asks):
+    from agent_control.orchestration.autonomy import may_ask_to_hand_over
+
+    assert may_ask_to_hand_over({} if level is None else {"initiative_level": level}) is asks
+
+
+@pytest.mark.asyncio
 async def test_the_offer_is_not_made_when_claude_code_is_not_installed(tmp_path, monkeypatch):
     repos, audit = make_repos(tmp_path)
     code_failed = {"tool_name": "code.interpreter", "input": {"operation": "run_python"}, "status": "failed", "error": "boom"}

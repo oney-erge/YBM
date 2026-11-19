@@ -7,7 +7,7 @@ from typing import Any
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, is_yes
 from agent_control.orchestration import call_policy, ladder
 from agent_control.orchestration.asking import users_own_words
-from agent_control.orchestration.autonomy import AUTONOMOUS, autonomy_of
+from agent_control.orchestration.autonomy import AUTONOMOUS, autonomy_of, may_ask_to_hand_over
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_NAMES,
     CHECK_ENTRY_STRATEGY,
@@ -141,7 +141,7 @@ class GuardStage:
             })
             return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
         if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in current if isinstance(entry, dict)):
-            if task.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (task.metadata.get("declined_methods") or []):
+            if self._may_offer_claude_code(task):
                 return self._offer_claude_code(task, history)
             return self._transition_operator(
                 task,
@@ -283,6 +283,16 @@ class GuardStage:
         metadata = {**task.metadata, "operator_history": history, "synthesized_answer": answer}
         return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "operator_redundant_read_finished")
 
+    def _may_offer_claude_code(self, task: TaskRecord) -> bool:
+        """The one test for asking the person whether to hand the task to Claude Code: not offered or declined before, a coding agent is there, and the
+        person's autonomy level is one that asks (orchestration/autonomy.py). Four places asked this in four ways."""
+        return (
+            task.metadata.get("claude_code_offer") is None
+            and "claude_code" not in (task.metadata.get("declined_methods") or [])
+            and may_ask_to_hand_over(task.metadata)
+            and self._claude_code_ready()
+        )
+
     def _claude_code_ready(self) -> bool:
         """Claude Code can be offered: its tool is on and the command is installed on this computer."""
         if self.executor is None:
@@ -329,7 +339,7 @@ class GuardStage:
             if offer.get("state") != "pending":
                 return None
         steps = [e for e in history if isinstance(e, dict) and e.get("tool_name") not in CHECK_ENTRY_NAMES]
-        if offer is None and ladder.exhausted(steps) and self._claude_code_ready() and "claude_code" not in (task.metadata.get("declined_methods") or []):
+        if offer is None and ladder.exhausted(steps) and self._may_offer_claude_code(task):
             return self._offer_claude_code(task, history)
         given = {
             str(e.get("hint_id")) for e in history

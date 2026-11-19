@@ -79,6 +79,15 @@ def payment_in(tool_name: str, tool_input: Mapping[str, Any] | None) -> str | No
     return None
 
 
+# --- the hand-over question -------------------------------------------------------------------------------------------------------------
+
+def may_ask_to_hand_over(metadata: Mapping[str, Any] | None) -> bool:
+    """Whether the assistant may ask "hand this to a coding agent?". At the autonomous level it never asks a question like that: when its own ways have run
+    out the task ends with the blocker report, which names the hand-over as a route the person can pick ("say 'hand it to Claude Code'").
+    On 11/19 it asked at the top level, about a text edit of a plan."""
+    return autonomy_of(metadata) < AUTONOMOUS
+
+
 # --- approvals the assistant grants itself ----------------------------------------------------------------------------------------------
 
 def grants_itself(metadata: Mapping[str, Any] | None, request: ToolCallRequest) -> bool:
