@@ -340,8 +340,9 @@ def check_in_text(plan: Plan, today: date | None = None) -> str:
     return "\n".join(lines)
 
 
-def render_plan(plan: Plan, *, results: bool = False) -> str:
-    """The plan as text for a chat: the goal, one line per step with where it stands and who does it."""
+def render_plan(plan: Plan, *, results: bool = False, details: bool = False) -> str:
+    """The plan as text for a chat: the goal, one line per step with where it stands and who does it. With `details`, the sentence under a step that says how it
+    will be done: a plan the person is still reading has to show it (on 11/19 they could not see how outside pictures and animation would be added)."""
     marks = {
         StepStatus.PENDING: "[ ]", StepStatus.RUNNING: "[...]", StepStatus.WAITING: "[you]", StepStatus.DONE: "[x]",
         StepStatus.FAILED: "[!]", StepStatus.SKIPPED: "[-]",
@@ -353,6 +354,8 @@ def render_plan(plan: Plan, *, results: bool = False) -> str:
     for step in sorted(plan.steps, key=lambda s: s.position):
         when = f"{day_text(step.due)} - " if step.due is not None else ""
         lines.append(f"{marks[step.status]} {step.position}. {when}{step.title}{owners[step.owner]}")
+        if details and step.detail.strip():
+            lines.append("      " + " ".join(step.detail.split())[:300])
         if step.needs and step.status in (StepStatus.PENDING, StepStatus.WAITING):
             lines.append("      needs: " + "; ".join(step.needs))
         if results and step.result and step.status == StepStatus.DONE:

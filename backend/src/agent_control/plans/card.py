@@ -42,7 +42,7 @@ def _footer(plan: Plan) -> str:
 
 
 def card_text(plan: Plan) -> str:
-    return f"{render_plan(plan, results=plan.status != PlanStatus.PROPOSED)}\n\n{_footer(plan)}"[:3900]
+    return f"{render_plan(plan, results=plan.status != PlanStatus.PROPOSED, details=plan.status == PlanStatus.PROPOSED)}\n\n{_footer(plan)}"[:3900]
 
 
 def card_keyboard(plan: Plan) -> dict[str, Any] | None:
