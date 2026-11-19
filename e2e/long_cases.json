@@ -1,0 +1,88 @@
+[
+  {
+    "id": "long_research_600_pages",
+    "requirement": "long",
+    "message": "Research heat pumps for a house in Chicago and read about 600 pages: what they cost installed, what owners say goes wrong, which brands are reliable and what incentives exist. Take your time and give me a Word report.",
+    "setup": [],
+    "tags": [
+      "long",
+      "jobs"
+    ],
+    "suites": [
+      "long"
+    ],
+    "heldout": false,
+    "size": "long-running",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Starts the research as a background job and says how long it expects",
+      "Later: the job finishes with a cited Word report; each question is answered or says plainly why not; a restart in the middle loses nothing"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "tools_all": [
+        "job.manage"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "estimate",
+        "pages",
+        "overnight"
+      ]
+    },
+    "source_file": "long_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "long_survey_pearland_daycares",
+    "requirement": "long",
+    "message": "Find all the licensed daycares in Pearland, Texas and the towns next to it, compare them on hours, price, adult-to-child ratio and reviews, and keep going until you stop finding new ones. Take your time.",
+    "setup": [],
+    "tags": [
+      "long",
+      "jobs"
+    ],
+    "suites": [
+      "long"
+    ],
+    "heldout": false,
+    "size": "long-running",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Starts a survey as a background job and says how long it expects",
+      "Later: at least 90 percent of the registry's entries for the area, a source for every row, and it stops by itself"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "tools_all": [
+        "job.manage"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "estimate",
+        "daycare",
+        "overnight"
+      ]
+    },
+    "source_file": "long_cases.json",
+    "expects_task": "auto"
+  }
+]
