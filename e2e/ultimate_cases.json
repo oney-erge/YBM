@@ -357,7 +357,10 @@
         "overnight",
         "keep going",
         "as it goes",
-        "message you"
+        "message you",
+        "started working out",
+        "read-only",
+        "checks"
       ],
       "tools_all": [
         "job.manage:start_investigation"
@@ -446,7 +449,8 @@
     ],
     "assertions": {
       "final_status_in": [
-        "completed"
+        "completed",
+        "blocked"
       ],
       "bot_reply_excludes_all": [
         "task_",
@@ -459,7 +463,9 @@
         "can't",
         "unable",
         "not able",
-        "no way"
+        "no way",
+        "none provide",
+        "no capability"
       ]
     },
     "source_file": "ultimate_cases.json",
