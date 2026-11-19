@@ -207,10 +207,12 @@ class CachedOperatorSchema:
         self._key: tuple | None = None
         self._schema: dict[str, Any] = {}
         self._finish_only = operator_response_schema([], actions=FINISH_ACTIONS)
+        # The same, for a step where the person may not be asked anything more (the autonomous level, after its question was sent back twice).
+        self._finish_without_asking = operator_response_schema([], actions=[a for a in FINISH_ACTIONS if a != OperatorAction.ASK_USER.value])
 
-    def __call__(self, *, finish_only: bool = False) -> dict[str, Any]:
+    def __call__(self, *, finish_only: bool = False, may_ask: bool = True) -> dict[str, Any]:
         if finish_only:
-            return self._finish_only
+            return self._finish_only if may_ask else self._finish_without_asking
         definitions = tuple(self._registry.definitions)
         key = tuple((d.name, d.enabled, tuple(d.operations or ())) for d in definitions)
         if key != self._key:

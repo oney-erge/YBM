@@ -138,11 +138,13 @@ class QueueOperator:
         # can assert exactly when the caller asked for the stronger model.
         self.prefer_major_calls: list[bool] = []
         self.finish_only_calls: list[bool] = []
+        self.may_ask_calls: list[bool] = []
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False, situation=""):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False, situation="", may_ask=True):
         self.calls += 1
         self.prefer_major_calls.append(prefer_major)
         self.finish_only_calls.append(finish_only)
+        self.may_ask_calls.append(may_ask)
         if self._usages is not None:
             self.last_usage = self._usages.pop(0)
         if self._fallback_flags is not None:
@@ -4240,3 +4242,46 @@ async def test_an_answer_written_while_the_person_added_something_is_not_deliver
     assert operator.calls == 2 and asked_with == [0, 1]  # the second time the note is in front of the model
     assert finished.status == TaskStatus.COMPLETED
     assert "resume.docx." in str(finished.metadata.get("synthesized_answer") or finished.metadata) and "resume.pdf" not in str(finished.metadata.get("synthesized_answer") or "")
+
+
+@pytest.mark.asyncio
+async def test_at_the_autonomous_level_a_question_that_comes_a_third_time_becomes_a_step_that_may_only_answer(tmp_path) -> None:
+    """Frozen case v_cannot_order (11/18, 11/19): "which shop?" was sent back twice, came a third time and waited for the person until the run cancelled it. The answer owed was "I cannot order"."""
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Order me a large pizza from the shop on the corner.", metadata={"initiative_level": 3, "retry_changes": [{"kind": "step_back"}] * 3})
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="Which shop on the corner, and which toppings?")
+    answer = OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot order a pizza: I have no way to place orders or pay. The nearest thing I can do is find the shop's number.")
+    operator = QueueOperator([ask, ask, ask, answer])
+    worker = TaskWorker(repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, StaticToolAdapter({"summary": "ok"}), tool_name="filesystem.manage"), operator=operator)
+
+    result = task
+    for _ in range(6):
+        result = await worker.process_task(result.id)
+        if result.status not in (TaskStatus.RUNNING, TaskStatus.RECEIVED):
+            break
+
+    assert result.status == TaskStatus.COMPLETED and "I cannot order a pizza" in result.metadata["synthesized_answer"]
+    assert operator.finish_only_calls == [False, False, False, True] and operator.may_ask_calls == [True, True, True, False]  # the person was never asked
+    assert any(entry.get("no_questions") is True for entry in result.metadata["operator_history"])
+
+
+@pytest.mark.asyncio
+async def test_at_the_levels_that_ask_a_question_is_still_asked(tmp_path) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Order me a large pizza from the shop on the corner.", metadata={"initiative_level": 2})
+    operator = QueueOperator([OperatorDecision(action=OperatorAction.ASK_USER, question="Which shop?")])
+    worker = TaskWorker(repos, audit, executor=_executor_with_adapter(_settings(), audit, repos, StaticToolAdapter({"summary": "ok"}), tool_name="filesystem.manage"), operator=operator)
+    result = await worker.process_task(task.id)
+    assert result.status == TaskStatus.CLARIFYING and operator.may_ask_calls == [True]
+
+
+def test_the_schema_of_a_step_that_may_not_ask_has_no_ask_branch() -> None:
+    from agent_control.tools.call_schema import CachedOperatorSchema
+
+    class _NoTools:
+        definitions: tuple = ()
+
+    cached = CachedOperatorSchema(_NoTools())
+    actions = {action for branch in cached(finish_only=True, may_ask=False)["anyOf"] for action in branch["properties"]["action"]["enum"]}
+    assert actions == {"done", "blocked"}
+    assert {action for branch in cached(finish_only=True)["anyOf"] for action in branch["properties"]["action"]["enum"]} == {"done", "ask_user", "blocked"}

@@ -70,6 +70,7 @@ class OperatorLoopService:
         prefer_major: bool = False,
         finish_only: bool = False,
         situation: str = "",
+        may_ask: bool = True,
     ) -> OperatorDecision:
         """`situation` is what this person and this moment add to the tool list (orchestration/context.py): it is shown whole and the catalog is cut to what is
         left, never the other way round.
@@ -100,8 +101,10 @@ class OperatorLoopService:
             try:
                 # finish_only: this step may only answer, ask or stop. Held to the schema when there is one; the history
                 # entry that caused it says the same in words for a server that cannot enforce a schema.
+                # may_ask=False: a step that may only answer or stop, never ask (the autonomous level, after its question was sent back twice).
                 strict = (
-                    {} if self.response_schema is None else {"response_schema": self.response_schema(finish_only=finish_only)}
+                    {} if self.response_schema is None
+                    else {"response_schema": self.response_schema(finish_only=finish_only, **({} if may_ask else {"may_ask": False}))}
                 )
                 candidate = await provider.generate_structured(
                     OPERATOR_SYSTEM_PROMPT, current_prompt, OperatorDecision, temperature=0.1, **strict
