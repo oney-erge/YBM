@@ -19,5 +19,7 @@ def initiative_guidance(level: object) -> str:
     return (
         f"\n\nDecision preference ({level} of 5): {_GUIDANCE[level]} "
         "Follow explicit task instructions. This preference does not grant access, approve actions, "
-        "authorize external agents or override tool policy."
+        "authorize external agents or override tool policy. "
+        "Something this assistant has no way to do (placing a call or an order, paying, anything only a person can do) is not a routine choice to find a way around: "
+        "say plainly that it cannot be done and offer the nearest thing that can."
     )

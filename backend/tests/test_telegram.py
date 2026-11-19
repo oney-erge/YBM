@@ -1324,3 +1324,29 @@ async def test_through_the_polling_loop_the_reply_is_sent_before_the_summary_is_
         TelegramAdapter(TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100]), audit), repos, audit, memory_service=ConversationMemoryService(repos, provider=_Provider()),
     )
     assert other.defer_summary is False
+
+
+@pytest.mark.asyncio
+async def test_a_message_that_becomes_a_task_has_its_summary_written_before_the_task_takes_its_memory_snapshot(tmp_path) -> None:
+    """11/18: with every summary left for after the reply, a task started on a stale summary browsed for a shop it should have said it could not order from (two frozen cases failed)."""
+    class _Provider:
+        async def generate_text(self, system, user):
+            return "SUMMARY WRITTEN BY THE MODEL"
+
+    class _Client(FakeTelegramClient):
+        async def send_chat_action(self, chat_id, action="typing"):
+            return {"ok": True}
+
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    audit = AuditLogger(repos.audit)
+    client = _Client([{"update_id": 10, "message": {"message_id": 6, "from": {"id": 42}, "chat": {"id": 100}, "text": "Build a todo app"}}])
+    service = TelegramIntakeService(
+        TelegramAdapter(TelegramConfig(enabled=True, allowed_user_ids=[42], allowed_chat_ids=[100]), audit), repos, audit,
+        bot_api=client, classifier=StaticMessageClassifier(), memory_service=ConversationMemoryService(repos, provider=_Provider()),  # type: ignore[arg-type]
+    )
+    _next, results = await TelegramPollingRunner(client, service).poll_once()  # type: ignore[arg-type]
+    task = results[0].task
+    assert task is not None and "SUMMARY WRITTEN BY THE MODEL" in task.metadata["memory_context"]
+    assert service._after_reply == []  # nothing is left to do again after the reply

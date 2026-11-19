@@ -8,6 +8,11 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - At initiative level 4 or 5 a question that offers options is not asked: it is a choice, and the Operator is told to choose the best-supported option, say which and why, and go on (the same bounded rejection as for any optional question, at most twice). On 2026-11-16 "Google Cast, Chromecast or PyChromecast?" went to the person, who answered "you choose", while the setting was only a sentence in the prompt. A question with no options (a fact only the person has) is asked at every level, approvals stay cards, and at level 3 (the default) nothing changes.
+### Fixed
+
+- A task is started on a summary written for it. Leaving every conversation summary for after the reply (the fast-reply change) made two frozen cases fail on the live build (11/18, 28 of 32; both pass again with the summary written first): a task was handed a stale summary and browsed for a shop it should have said it could not order from. A message that turns out to be a task now has its summary written before the task takes its memory snapshot (`classify_and_spawn_task(before_task=...)`); a chat message still gets its reply first.
+- The `job.manage` line in the Operator's catalog is shorter than before the investigation was added to it, and its extra example is gone: the catalog shares a prompt that is already at its size limit.
+- The higher initiative levels say that what the assistant has no way to do (a call, an order, a payment) is said plainly, not worked around: at level 4, two frozen cases (`v_script_total`, `h4_cannot_phone`) failed that had passed at level 3.
 
 ### Added
 
