@@ -1,0 +1,616 @@
+[
+  {
+    "id": "mem_one_fact_comes_back",
+    "requirement": "memory",
+    "message": "My daughter's name is Maya.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the name",
+      "Gives it back after another topic"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "other",
+        "message": "Unrelated: what is 12 times 12?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "144"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "ask",
+        "message": "What is my daughter's name?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "Maya"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_two_sessions_are_combined",
+    "requirement": "memory",
+    "message": "My daughter's name is Maya.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps both facts and puts them together"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "born",
+        "message": "She was born in October.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "both",
+        "message": "Tell me her name and the month she was born.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "Maya",
+            "October"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_a_changed_fact_is_the_current_one",
+    "requirement": "memory",
+    "message": "I live in Houston.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "The move closes the first home and the current home is the new one"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "moved",
+        "message": "Update: we moved to Plano last month.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "where",
+        "message": "Where do I live?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "Plano"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_what_was_never_said_is_not_invented",
+    "requirement": "memory",
+    "message": "What is my cat's name?",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Says it has not been told and does not guess a name"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "again",
+        "message": "And what is my cat's favourite food?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "don't know",
+            "do not know",
+            "haven't told",
+            "have not told",
+            "never told",
+            "not told",
+            "don't have",
+            "do not have",
+            "no record",
+            "haven't mentioned",
+            "have not mentioned"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_a_date_is_kept_and_found",
+    "requirement": "memory",
+    "message": "Remember that the pest control visit is on March 3.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the date"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "other",
+        "message": "Unrelated: what is the capital of Italy?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "Rome"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "when",
+        "message": "When is the pest control visit?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "March 3"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_a_preference_is_used_without_being_asked_again",
+    "requirement": "memory",
+    "message": "I prefer metric units for everything.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the preference and answers in metric"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "far",
+        "message": "How far is 10 miles?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "16 km",
+            "16.09",
+            "16.1",
+            "kilomet"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_a_project_decision_comes_back_with_its_reason",
+    "requirement": "memory",
+    "message": "For the herb garden on the balcony I decided on terracotta pots because they let the roots breathe.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the decision and the reason with the project"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "other",
+        "message": "Different thing: how many days are there in a week?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "7",
+            "seven"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "recall",
+        "message": "What did we decide about the pots for the herb garden, and why?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "terracotta"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "mem_a_number_said_once_is_found_later",
+    "requirement": "memory",
+    "message": "The plumber's number is 555-0142.",
+    "setup": [],
+    "tags": [
+      "memory",
+      "followup"
+    ],
+    "suites": [
+      "memory"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the number"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "memory_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "other",
+        "message": "Unrelated: what is 9 plus 8?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "17"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "number",
+        "message": "What was the plumber's number?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "555-0142"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  }
+]
