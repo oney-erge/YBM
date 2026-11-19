@@ -416,6 +416,10 @@ class JobManageInput(ToolInputModel):
     # start_watch: what to watch (a folder path or an http(s) address) and how often to look.
     target: str | None = None
     every_minutes: int | None = Field(default=None, ge=1, le=1440)
+    # start_watch with a script: the Python the assistant wrote (read only: it prints one line for each thing it sees) and a plain name for it. The tool saves it, runs it once
+    # as a test, and watches what it prints; `target` is then made from the name.
+    script: str | None = Field(default=None, max_length=20_000)
+    name: str | None = Field(default=None, max_length=60)
     # status, pause, resume, stop: which job (default: the newest of this chat that has not ended).
     job_id: str | None = None
 
@@ -423,8 +427,8 @@ class JobManageInput(ToolInputModel):
     def needs_its_arguments(self) -> "JobManageInput":
         if self.operation in ("start_research", "start_investigation", "start_survey") and not (self.goal or "").strip():
             raise ValueError(f"operation={self.operation} requires 'goal'")
-        if self.operation == "start_watch" and not (self.target or "").strip():
-            raise ValueError("operation=start_watch requires 'target'")
+        if self.operation == "start_watch" and not (self.target or "").strip() and not ((self.script or "").strip() and (self.name or "").strip()):
+            raise ValueError("operation=start_watch requires 'target', or 'script' with a 'name'")
         return self
 
 

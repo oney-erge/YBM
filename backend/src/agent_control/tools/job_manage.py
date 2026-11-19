@@ -6,10 +6,11 @@ the work itself (jobs/runner.py does, one unit at a time, when nobody is waiting
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from agent_control.config import AppSettings
-from agent_control.jobs import engines, investigate, research, survey, watch
+from agent_control.jobs import engines, investigate, monitors, research, survey, watch
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.jobs.runner import cancel_job, pause_job, resume_job
 from agent_control.plans.runner import routing_of
@@ -66,7 +67,7 @@ class JobManageAdapter:
             elif operation == "start_investigation":
                 output = self._start_investigation(request, routing, task)
             elif operation == "start_watch":
-                output = self._start_watch(request, routing)
+                output = await self._start_watch(request, routing)
             elif operation == "start_survey":
                 output = self._start_survey(request, routing)
             elif operation == "status":
@@ -149,10 +150,21 @@ class JobManageAdapter:
             ),
         }
 
-    def _start_watch(self, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
+    async def _start_watch(self, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
         target = " ".join(str(request.input.get("target") or "").split())
+        script = str(request.input.get("script") or "")
+        tested = ""
+        if script.strip():
+            # A monitor: the script is saved and run once at once; a script that fails its test is not kept and the reason goes back to the model.
+            name = str(request.input.get("name") or "")
+            try:
+                path, first = await asyncio.to_thread(monitors.save_and_test, self.config.monitors_dir, name, script)
+            except (RuntimeError, ValueError) as exc:
+                raise ValueError(f"the monitor script did not pass its test run: {exc}. Fix the script and try again.") from exc
+            target = f"script:{path.stem}"
+            tested = f" It was run once as a test and printed {len([line for line in first.splitlines() if line.strip()])} line(s)."
         if not target:
-            raise ValueError("start_watch requires a target: a folder path or a web page address")
+            raise ValueError("start_watch requires a target: a folder path or a web page address, or a script with a name")
         open_jobs = self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED])
         if len([job for job in open_jobs if job.kind != "watch"]) >= MAX_OPEN_JOBS:
             raise ValueError("two long jobs are already open in this chat; pause or stop one first (a watch does not count)")
@@ -167,7 +179,7 @@ class JobManageAdapter:
         return {
             "job_id": job.id, "jobs": [{"id": job.id, "status": job.status.value}],
             "summary": (
-                f"Started watching {target} every {job.state['every_minutes']} minutes. The first look only records what is there; after that the person is told once about each change, "
+                f"Started watching {target} every {job.state['every_minutes']} minutes.{tested} The first look only records what is there; after that the person is told once about each change, "
                 "and about nothing else. Tell the person in one or two sentences, without any job number, that it is watching, how often it looks, and that they can pause or stop it."
             ),
         }

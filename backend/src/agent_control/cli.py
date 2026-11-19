@@ -576,7 +576,15 @@ def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditL
                     found.append((entry.name, info.st_size, info.st_mtime_ns))
         return found
 
-    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser), list_folder=list_folder)
+    async def run_monitor(name: str) -> str:
+        """The output of a saved monitor script (jobs/monitors.py): only a script in the monitors folder is ever run."""
+        import asyncio
+
+        from agent_control.jobs import monitors
+
+        return await asyncio.to_thread(monitors.run_script, settings.jobs.monitors_dir, name)
+
+    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser), list_folder=list_folder, run_monitor=run_monitor)
     from agent_control.scheduler import resolve_timezone
     from agent_control.schemas import utc_now
 

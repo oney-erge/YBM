@@ -27,7 +27,7 @@ KEPT_PAGE_CHARS = 6_000
 
 
 def new_state(target: str = "", every_minutes: int = DEFAULT_EVERY_MINUTES) -> dict[str, Any]:
-    kind = "page" if target.lower().startswith(("http://", "https://")) else "folder"
+    kind = "page" if target.lower().startswith(("http://", "https://")) else "script" if target.lower().startswith("script:") else "folder"
     return {
         "kind": "watch", "target": target, "target_kind": kind, "every_minutes": max(MIN_EVERY_MINUTES, min(int(every_minutes), MAX_EVERY_MINUTES)),
         "baseline": False, "seen": {}, "page_text": "", "failures": 0, "said_failing": False, "changes_told": 0, "looks": 0, "sleep_until": "", "noun": "watch",
@@ -63,7 +63,7 @@ async def advance(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
     state["looks"] = int(state.get("looks", 0)) + 1
     state["sleep_until"] = (datetime.now(timezone.utc) + timedelta(minutes=int(state["every_minutes"]))).isoformat()
     try:
-        say = await (_look_at_folder(state, io) if kind == "folder" else _look_at_page(state, io))
+        say = await (_look_at_folder(state, io) if kind == "folder" else _look_at_script(state, io) if kind == "script" else _look_at_page(state, io))
     except Exception as exc:  # noqa: BLE001 - a look that fails is counted and said, never taken for "nothing changed"
         state["failures"] = int(state.get("failures", 0)) + 1
         if state["failures"] >= FAILURES_BEFORE_SAYING and not state.get("said_failing"):
@@ -98,6 +98,27 @@ async def _look_at_folder(state: dict[str, Any], io: ResearchIO) -> str | None:
             shown = ", ".join(names[:MAX_NAMES_SHOWN]) + (f" and {len(names) - MAX_NAMES_SHOWN} more" if len(names) > MAX_NAMES_SHOWN else "")
             parts.append(f"{label}: {shown}.")
     return f"Something changed in {state['target']}. " + " ".join(parts)
+
+
+async def _look_at_script(state: dict[str, Any], io: ResearchIO) -> str | None:
+    """A monitor: a saved script the assistant wrote prints one line per thing it sees (a device on the network, a service and its state). New lines and missing lines are the changes."""
+    if io.run_monitor is None:
+        raise RuntimeError("monitors cannot run here")
+    output = await io.run_monitor(state["target"].split(":", 1)[1].strip())
+    now = {line.strip() for line in output.splitlines() if line.strip()}
+    before, first = set(state["seen"].get("lines") or []), not state["baseline"]
+    state["seen"], state["baseline"] = {"lines": sorted(now)[:500]}, True
+    if first:
+        return None
+    appeared, gone = sorted(now - before), sorted(before - now)
+    if not (appeared or gone):
+        return None
+    parts = []
+    for label, lines in (("New", appeared), ("Gone", gone)):
+        if lines:
+            shown = "; ".join(line[:140] for line in lines[:MAX_NAMES_SHOWN]) + (f"; and {len(lines) - MAX_NAMES_SHOWN} more" if len(lines) > MAX_NAMES_SHOWN else "")
+            parts.append(f"{label}: {shown}.")
+    return f"Something changed in what {state['target'].split(':', 1)[1].strip()} sees. " + " ".join(parts)
 
 
 async def _look_at_page(state: dict[str, Any], io: ResearchIO) -> str | None:
