@@ -24,6 +24,9 @@ from agent_control.schemas import (
     TaskStatus,
 )
 
+
+#: What a message may do to a job that is open when nothing about it asked for a new one.
+JOB_CONTROLS = ("status", "pause", "resume", "stop")
 logger = logging.getLogger(__name__)
 
 
@@ -128,7 +131,8 @@ class PlanningStage:
         are taken from a model that, live, chose another tool, made up a job id, and claimed a stop that had not happened. None for a message that
         turns out to be about something else, for a task that is past its first step, and when there is no job stage.
         """
-        if self.job_stage is None or task.metadata.get("task_route") != "job":
+        route = task.metadata.get("task_route")
+        if self.job_stage is None or route not in ("job", "job_open"):
             return None
         forced = str(task.metadata.get("job_forced_call") or "")
         if forced:
@@ -144,13 +148,18 @@ class PlanningStage:
         try:
             call = await self.job_stage(task)
         except JobPageLimitExceeded as exc:
-            return OperatorDecision(action=OperatorAction.BLOCKED, reason=f"{exc} Please choose a supported size; no research job was started.")
+            if route == "job_open":
+                call = None  # nothing asked for research: a number in some other question is not a size
+            else:
+                return OperatorDecision(action=OperatorAction.BLOCKED, reason=f"{exc} Please choose a supported size; no research job was started.")
         except Exception as exc:  # noqa: BLE001 - an unknown research action must not become a different action
             logger.warning("job intent unavailable for %s: %s", task.id, type(exc).__name__)
             return OperatorDecision(
                 action=OperatorAction.BLOCKED,
                 reason="I could not determine the research action, so I did not issue a research command for this request. Check its status and try again.",
             )
+        if call is not None and route == "job_open" and call.get("operation") not in JOB_CONTROLS:
+            call = None  # a job is open, but no skill took this for a request for one: only a control of the open job is made here
         if call is None:  # about something else: the Operator takes it
             self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
             return None
