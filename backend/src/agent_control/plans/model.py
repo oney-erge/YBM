@@ -60,6 +60,8 @@ class PlanStep(StrictBaseModel):
     title: str = Field(min_length=1, max_length=160)
     detail: str = Field(default="", max_length=2000)
     owner: StepOwner = StepOwner.YBM
+    #: True only when choosing an option is the entire step; older steps default to unknown.
+    choice_only: bool = False
     #: What the user has to give or do first, in words ("an Amazon account", "the budget"). For ACCESS and USER steps this is the question.
     needs: list[str] = Field(default_factory=list)
     #: Positions of the steps that must be done first. Empty means "the one before it".
@@ -71,6 +73,7 @@ class PlanStep(StrictBaseModel):
     status: StepStatus = StepStatus.PENDING
     task_id: str | None = None
     result: str = ""
+    revision: int = Field(default=0, ge=0)
     updated_at: datetime = Field(default_factory=utc_now)
 
     @field_validator("title", "detail", mode="before")
@@ -111,6 +114,7 @@ class Plan(StrictBaseModel):
     #: Tell the user how the plan stands every this many days while it is active; 0 is never. The user asks for it, nothing sets it by itself.
     check_in_days: int = Field(default=0, ge=0, le=MAX_CHECK_IN_DAYS)
     last_check_in_at: datetime | None = None
+    revision: int = Field(default=0, ge=0)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
 
@@ -125,14 +129,27 @@ class Plan(StrictBaseModel):
 
     def _unblocked(self) -> list[PlanStep]:
         finished = {step.position for step in self.steps if step.status in (StepStatus.DONE, StepStatus.SKIPPED)}
+        done = {step.position for step in self.steps if step.status == StepStatus.DONE}
         return [
             step
             for step in sorted(self.steps, key=lambda s: s.position)
-            if step.status == StepStatus.PENDING and all(dep in finished for dep in self.dependencies_of(step))
+            if step.status == StepStatus.PENDING
+            and all(dep in (done if step.depends_on else finished) for dep in self.dependencies_of(step))
         ]
 
+    def skipped_prerequisite(self) -> tuple[PlanStep, PlanStep] | None:
+        """Find an explicit prerequisite that was skipped rather than completed."""
+        for step in sorted(self.steps, key=lambda item: item.position):
+            if step.status != StepStatus.PENDING:
+                continue
+            for position in step.depends_on:
+                dependency = self.step(position)
+                if dependency is not None and dependency.status == StepStatus.SKIPPED:
+                    return step, dependency
+        return None
+
     def ready_steps(self, today: date | None = None) -> list[PlanStep]:
-        """Pending steps whose dependencies are done or skipped and whose day is near, in order. A skipped step does not hold up what follows it."""
+        """Pending steps whose prerequisites are met and whose day is near."""
         horizon = (today or date.today()) + timedelta(days=HOLD_DAYS)
         return [step for step in self._unblocked() if step.due is None or step.due <= horizon]
 

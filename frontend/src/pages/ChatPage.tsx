@@ -401,7 +401,7 @@ function ChatExchange({ task }: { task: TaskRecord }) {
     event.preventDefault()
     const trimmed = clarifyDraft.trim()
     if (!trimmed || sendMessage.isPending) return
-    sendMessage.mutate({ text: trimmed, projectId }, {
+    sendMessage.mutate({ text: trimmed, projectId, replyToTaskId: task.id, questionToken: task.clarification_token }, {
       onSuccess: () => setClarifyDraft(""),
       onError: (error) => toast.error(error.message),
     })

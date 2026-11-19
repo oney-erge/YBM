@@ -42,6 +42,25 @@ def _clean_env(monkeypatch, tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_decision_preference_reloads_for_subsequent_work(monkeypatch, tmp_path) -> None:
+    _clean_env(monkeypatch, tmp_path)
+    monkeypatch.delenv("AGENT_OPERATOR__INITIATIVE_LEVEL", raising=False)
+    config_path = tmp_path / "config" / "config.yaml"
+    _write_config(config_path, {"filesystem": CapabilityAccessMode.OFF})
+    repos, audit = make_repos(tmp_path)
+    reloader = cli.WorkerRuntimeReloader(lambda: cli._worker_kwargs(cli.load_settings(), repos, audit), audit)
+    worker = TaskWorker(repos, audit, **reloader.kwargs, runtime_refresh=reloader)
+    assert worker.initiative_level == 2
+    config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    config["operator"] = {"autonomy_level": 3}
+    config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
+    _bump_mtime(config_path)
+    await worker.process_next()
+    assert worker.initiative_level == 3
+    assert not worker.executor.tool_definitions["filesystem.manage"].enabled
+
+
+@pytest.mark.asyncio
 async def test_switching_file_access_on_reaches_a_worker_that_is_already_running(monkeypatch, tmp_path) -> None:
     _clean_env(monkeypatch, tmp_path)
     config_path = tmp_path / "config" / "config.yaml"

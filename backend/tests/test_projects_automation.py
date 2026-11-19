@@ -74,11 +74,13 @@ def test_projects_do_not_resume_each_others_questions_and_validate_schedules(mon
         a = client.post("/admin/api/projects", json={"name": "A"}).json()["project"]["id"]
         b = client.post("/admin/api/projects", json={"name": "B"}).json()["project"]["id"]
         first = client.post("/admin/api/chat/messages", json={"text": "First task", "project_id": a}).json()["task"]
-        repos.tasks.update_status(first["id"], TaskStatus.CLARIFYING)
+        waiting = repos.tasks.update_status(first["id"], TaskStatus.CLARIFYING)
         second = client.post("/admin/api/chat/messages", json={"text": "Second task", "project_id": b}).json()["task"]
         assert first["id"] != second["id"]
         assert repos.tasks.get(first["id"]).status == TaskStatus.CLARIFYING
-        resumed = client.post("/admin/api/chat/messages", json={"text": "Answer A", "project_id": a}).json()["task"]
+        from agent_control.channels.quick_answers import clarification_token
+        resumed = client.post("/admin/api/chat/messages", json={"text": "Answer A", "project_id": a,
+                              "reply_to_task_id": waiting.id, "question_token": clarification_token(waiting)}).json()["task"]
         assert resumed["id"] == first["id"]
         for invalid in ({"cadence": "tomorrow at 9"}, {"cadence": "daily", "timezone": "Wrong/Zone"}):
             assert client.post("/admin/api/workflows/unknown/schedule", json=invalid).status_code == 422

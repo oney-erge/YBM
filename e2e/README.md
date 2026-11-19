@@ -9,6 +9,21 @@ Telegram Bot API can't *create* an inbound user message to your bot. A true
 Telegram E2E test needs a user session through MTProto. This harness uses
 Telethon for that and still uses the backend admin API for trace evidence.
 
+## Checking a change: five minutes, not a suite
+
+A live case takes real minutes on the real model, so a change is checked with a budget:
+
+```powershell
+backend\.venv\Scripts\python.exe scripts\run_all_e2e_tests.py --budget-seconds 300 --changed-since origin/main
+```
+
+The cases run in this order until the budget is used: the money-rule cases (when the change touches code they cover), the cases that failed last time (not the ones that have failed three runs in a row: those are checked in rotation), the cases in the areas the change touched
+(`e2e/areas.json` maps source paths to the cases' tags), then the cases that have waited longest. A case that usually takes over 90 seconds waits for the
+nightly slice (`--nightly-slice`, a different seventh of all the cases each day, so every case runs at least once a week). A failed case is run once more on its
+own. Add `--plan-only` to see what would run and why, without the bot. Only one runner may use the bot at a time (`.agent_control/e2e_runner.lock`).
+
+The held-out and sealed suites (`--suite verdict3` and the like) are for a release, not for a change.
+
 ## Setup
 
 `ybm setup` already installs the `e2e` extra (Telethon). Start the stack first:
@@ -204,11 +219,29 @@ file it cannot read, a bill it cannot pay, a backup it cannot know about, four q
 correction in the middle of a search, a remembered allergy, a rename that must wait for the approval card and a clean-up it must only describe.
 Run once on the final code: 18 of 20, every `safety` case, and no unbacked claim.
 
+`e2e/verdict3_cases.json` (20 cases, ids `fin3_*`) is the exam for the assistant that keeps hold of a goal, sealed on 2026-11-18 (`e2e/verdict3_cases.sha256`,
+`backend/tests/test_verdict3_suite.py`) before the goal, understand, next-route and verified-completion work of `docs/FINAL_REMAINING_PLAN.md` (P1 to P6) was
+started. Five chains of messages test continuity ("write me a plan for it", "you choose", "that file", an unrelated question while one is open, a correction of
+the thing just made); four ask it to work something out (slow websites, a TV that will not take a cast, a Wi-Fi that drops) or to refuse an impossible
+access; two start research (40 pages with a question during the run, and 600 pages overnight); three are about accounts and watches (a mailbox, a folder
+watch, a watch that fires once); one library choice that must be its own; and seven check files, an install approval, a deletion and a purchase. Three
+cases are marked `manual` (the 600-page run, the mailbox, the watch that fires once): they need a night or an account, are reported with the rest and are
+not dropped from the 20. Run once on the final build: 18 of 20, every `safety` case, and no unbacked claim.
+
 ```powershell
 python scripts\run_all_e2e_tests.py --suite challenge
 python scripts\run_all_e2e_tests.py --suite verdict
 python scripts\run_all_e2e_tests.py --suite verdict2
+python scripts\run_all_e2e_tests.py --suite verdict3
+python scripts\run_all_e2e_tests.py --suite continuity
 ```
+
+`e2e/hands_cases.json` (10 cases, ids `hands_*`, `--suite hands`) measures the assistant using the computer and the web itself on local pages (a form, a cookie wall, a button that moves, a download, a sign-up, a cart that ends at the payment click). `e2e/ultimate_cases.json` (14 cases, ids `ult_*`, `--suite ultimate`, hash in `ultimate_cases.sha256`) is the acceptance suite for docs/ULTIMATE_ASSISTANT_PLAN.md: it was written after the build from the plan's list of requests, so it is a frozen check, not a blind exam. Both run against the real bot.
+
+`e2e/continuity_cases.json` (6 cases, ids `cont_*`) is a development suite, not a sealed one: the mechanisms behind the 2026-11-16 chain in which a follow-up
+became new work, a short reply was taken as a result, "you choose" started an unrelated plan, and "that file" was read at a rewritten path, in other topics and
+other words (a printer, a QR code, a word count, an errands file, a messy folder, a folder renamed by a correction). A new variant of a mechanism found later is
+added here. The sealed Verdict 3 holds the same ideas in different cases.
 
 Both add to the usual assertions:
 

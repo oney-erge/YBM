@@ -18,10 +18,12 @@ from agent_control.orchestration.asking import (
     clarification_recovery_reason,
     named_target_not_found,
     post_clarification_history_offset,
+    repeats_an_answered_question,
     still_asking_after_the_work_is_done,
     users_own_words,
 )
-from agent_control.orchestration.auditor import AuditorService
+from agent_control.orchestration.auditor import AuditorService, AuditResult
+from agent_control.orchestration.autonomy import AUTONOMOUS, autonomy_of
 from agent_control.orchestration.call_rewrites import (
     ALREADY_DONE_STATUS,
     exact_delivery_call,
@@ -39,6 +41,7 @@ from agent_control.orchestration.delegation import DelegationStage
 from agent_control.orchestration.executor import ToolExecutor
 from agent_control.orchestration.external import ExternalStage
 from agent_control.orchestration.finishing import (
+    current_recovery_history,
     finish_named_as_a_tool,
     finish_offer_pending,
     fulfilled_step_budget_answer,
@@ -180,6 +183,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         task_budget_seconds: float | None = None,
         operator: OperatorLoopService | None = None,
         operator_max_steps: int = 12,
+        initiative_level: int = 2,
         auto_close_blocked_hours: int = 0,
         auditor: AuditorService | None = None,
         persist_llm_calls: bool = True,
@@ -235,6 +239,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         # execution path. See orchestration/operator.py.
         self.operator = operator
         self.operator_max_steps = operator_max_steps
+        self.initiative_level = initiative_level
         self.auto_close_blocked_hours = auto_close_blocked_hours
         self._last_stale_sweep: float | None = None  # the first poll sweeps (monotonic time can be small on a fresh boot)
         # The Auditor (docs/archive/HISTORY.md P3 §2.1) - grounds a `done` decision
@@ -589,6 +594,10 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
             return latest
 
         history: list[dict[str, Any]] = list(latest.metadata.get("operator_history") or [])
+        if "initiative_level" not in latest.metadata:
+            latest = self.repositories.tasks.update_metadata(
+                latest.id, {**latest.metadata, "initiative_level": self.initiative_level}
+            )
         # A task is RUNNING while this loop works on it. It is not yet when the loop starts, and it is not again after a question was
         # answered (clarification.resume_clarifying_task puts it back to RECEIVED, with the loop flag still set): a call is only
         # admitted for a RUNNING task, so the first call after an answer was never run and the model was asked again, every poll.
@@ -601,16 +610,33 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
             self.audit.task_state_changed("worker", task.id, task.status, TaskStatus.RUNNING)
 
         tool_call_count = steps_used(history)
+        pending_offer = latest.metadata.get("claude_code_offer")
+        if (
+            isinstance(pending_offer, dict)
+            and pending_offer.get("state") == "pending"
+            and pending_offer.get("question")
+            and latest.metadata.get("answered_clarifying_question") == pending_offer.get("question")
+            and not is_yes(latest.metadata.get("clarification_answer"))
+        ):
+            # Process the refusal before the budget gate: the offer itself can be
+            # made after the ordinary budget is exhausted.
+            continued = self._ladder_step(latest, history, new_id("step"))
+            if isinstance(continued, TaskRecord):
+                return continued
         fulfillment_repair_count = sum(
             1 for entry in history if entry.get("tool_name") == CHECK_ENTRY_FULFILLMENT
         )
-        budget_reached = tool_call_count >= self.operator_max_steps + fulfillment_repair_count
+        budget_limit = max(
+            self.operator_max_steps + fulfillment_repair_count,
+            int(latest.metadata.get("local_recovery_step_limit") or 0),
+        )
+        budget_reached = tool_call_count >= budget_limit
         offer_pending = finish_offer_pending(history)
         if budget_reached and not offer_pending:
             fulfillment = validate_fulfillment(latest)
             repair_possible = bool(fulfillment.first_gap) and fulfillment_repair_count < 2
             if not repair_possible and not any(
-                isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in history
+                isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in current_recovery_history(history)
             ):
                 # Out of steps with nothing left to repair. Ending now gave the user a canned line ("Completed the requested
                 # work in <folder>") when the work was done and "Blocked" when it was not, although the model usually knows
@@ -623,7 +649,8 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     "error": (
                         "The step budget is used up. Answer now with what you have: state what you found, and say plainly "
                         "anything you could not do (action done), or ask the user one question (action ask_user). "
-                        "Do not call another tool."
+                        "If the objective remains unfinished, suggest an evidence-based next action or available alternative; "
+                        "label an untested idea as such. Do not call another tool."
                     ),
                 })
                 return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history})
@@ -673,7 +700,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 return self.repositories.tasks.update_metadata(
                     latest.id, metadata, TaskStatus.RUNNING
                 )
-            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (latest.metadata.get("declined_methods") or []):
                 return self._offer_claude_code(latest, history)
             return self._transition_operator(
                 latest, {**latest.metadata, "operator_history": history},
@@ -763,7 +790,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         decision = await self.operator.decide(
                             latest.objective,
                             self._planner_context(
-                                self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or "")
+                                self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or "") + str(latest.metadata.get("goal_notes") or "")
                                 + today_note(latest.metadata.get(CHECKS_KEY)),
                                 metadata=latest.metadata,
                             ),
@@ -903,6 +930,12 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         fallback_used=getattr(self.auditor, "last_fallback_used", False),
                     )
                     self._record_llm_call(latest.id, "auditor", len(history), self.auditor, step_id=step_id)
+                    if not audit_result.sufficient and audit_gap_count >= 1 and await self._answer_declines(final_answer):
+                        # The audit asks whether the tool output proves the request was done. An answer that says plainly it was not done, or cannot be,
+                        # claims nothing to prove: sent back a second time, the model asked a question instead ("Which pizza shop?") and the task waited
+                        # until it was cancelled (frozen suite v_cannot_order, 11/18, at every initiative level). Once sent back, a "cannot" that comes
+                        # again is the answer.
+                        audit_result = AuditResult(sufficient=True, answer=None, reason="the answer says it was not done")
                     if not audit_result.sufficient:
                         history.append({
                             "tool_name": CHECK_ENTRY_AUDIT,
@@ -936,7 +969,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         "so please double-check it.)"
                     )
                 else:
-                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready():
+                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (latest.metadata.get("declined_methods") or []):
                         return self._offer_claude_code(latest, history)
                     metadata = {
                         **latest.metadata,
@@ -1038,10 +1071,30 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
             clarification_recovery = clarification_recovery_reason(candidate, history, decision.question)
-            if clarification_recovery:
-                recovery_count = int(
-                    latest.metadata.get("operator_optional_question_recovery_count", 0)
+            level = autonomy_of(latest.metadata)
+            if (
+                not clarification_recovery and level >= AUTONOMOUS
+                and int(latest.metadata.get("operator_optional_question_recovery_count", 0)) < 2
+            ):
+                # At the autonomous level the person has said not to ask (11/16: "Google Cast, Chromecast or PyChromecast?" and then "you choose"; 11/19: "do not ask me"). A question
+                # is sent back twice with the instruction to decide it and say what was chosen; a fact only the person has (a code sent to their phone) comes again and goes through.
+                # An approval is a card, not a question, and is not touched.
+                offered = f" you were going to ask the person to choose among {', '.join(str(o) for o in decision.options[:5])}." if decision.options else " you were going to ask the person a question."
+                clarification_recovery = (
+                    f"At the autonomous level the choices are yours:{offered} "
+                    "Decide it from the evidence, say in your answer what you chose or assumed and why, and go on. "
+                    "If what was asked cannot be done at all with the tools you have (placing a call, a payment), there is nothing to choose: say so plainly as your answer "
+                    "and name the nearest thing you can do."
                 )
+            if clarification_recovery:
+                # A question the person already answered is sent back on its own count: the two send-backs the autonomous level spent on the first
+                # asking must not let the same question through a second time (11/19, "Call my mom": "text or email?", answered, asked again, waited).
+                recovery_key = (
+                    "operator_repeated_question_recovery_count"
+                    if repeats_an_answered_question(latest, decision.question)
+                    else "operator_optional_question_recovery_count"
+                )
+                recovery_count = int(latest.metadata.get(recovery_key, 0))
                 if offer_pending and sum(
                     1 for entry in history if isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK
                 ) < 2:
@@ -1077,7 +1130,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     metadata = {
                         **latest.metadata,
                         "operator_history": history,
-                        "operator_optional_question_recovery_count": recovery_count + 1,
+                        recovery_key: recovery_count + 1,
                     }
                     return self.repositories.tasks.update_metadata(
                         latest.id, metadata, TaskStatus.RUNNING

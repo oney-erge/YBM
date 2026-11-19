@@ -6,7 +6,7 @@ from typing import Any
 from urllib.parse import unquote, urlparse
 from pathlib import Path
 
-from agent_control.channels.quick_answers import clarifying_options
+from agent_control.channels.quick_answers import clarification_token, clarifying_options
 from agent_control.channels.task_notify import format_task_message
 from agent_control.plans.card import card_keyboard, card_text
 from agent_control.text import trim_text as _trim
@@ -53,8 +53,8 @@ def _claude_code_offer_keyboard(task: TaskRecord) -> dict[str, Any] | None:
         return None
     return {
         "inline_keyboard": [[
-            {"text": "Yes, ask Claude Code", "callback_data": f"answer:{task.id}:yes"},
-            {"text": "No thanks", "callback_data": f"answer:{task.id}:no"},
+            {"text": "Yes, ask Claude Code", "callback_data": f"answer:{task.id}:yes:{clarification_token(task)}"},
+            {"text": "No thanks", "callback_data": f"answer:{task.id}:no:{clarification_token(task)}"},
         ]]
     }
 
@@ -64,7 +64,7 @@ def _options_keyboard(task: TaskRecord) -> dict[str, Any] | None:
     options = clarifying_options(task)
     if not options:
         return None
-    return {"inline_keyboard": [[{"text": text, "callback_data": f"answer:{task.id}:o{index}"}] for index, text in enumerate(options)]}
+    return {"inline_keyboard": [[{"text": text, "callback_data": f"answer:{task.id}:o{index}:{clarification_token(task)}"}] for index, text in enumerate(options)]}
 
 
 #: Telegram allows an edit about once a second per chat; two seconds keeps well inside that and is

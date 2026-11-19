@@ -66,9 +66,10 @@ from agent_control.prompts import render_prompt
 from agent_control.runtime_status import KNOWN_SERVICE_NAMES, service_summary
 from agent_control.supervisor import read_log_tail
 from agent_control.channels.base import remember_standing_instruction
-from agent_control.channels.memory import detect_remember_request, memory_context
+from agent_control.channels.memory import detect_remember_request, memory_context, recent_artifacts_context
+from agent_control.channels.quick_answers import clarification_token
 from agent_control.llm.call_log import record_concierge_call
-from agent_control.clarification import expire_stale_clarifications, find_clarifying_task, resume_clarifying_task
+from agent_control.clarification import assess_unaddressed_reply, expire_stale_clarifications, is_user_plan_step, reply_candidates, resume_clarifying_task
 from agent_control.schemas import (
     ApprovalGrant,
     ApprovalStatus,
@@ -228,6 +229,10 @@ class AdminVoiceConfigRequest(StrictBaseModel):
     model: str | None = Field(default=None, min_length=1, max_length=80)
 
 
+class AdminInitiativeConfigRequest(StrictBaseModel):
+    level: int = Field(ge=1, le=3, strict=True)
+
+
 class AdminDecisionConfigRequest(StrictBaseModel):
     """Which classifier routes incoming messages (config ``decision``). Fields
     left out keep their current value; ``profile`` may be cleared with null."""
@@ -375,6 +380,8 @@ class AdminChatMessageRequest(StrictBaseModel):
     attachment_ids: list[str] = Field(default_factory=list, max_length=10)
     # A project selects reusable work context. It never grants filesystem access.
     project_id: str | None = None
+    reply_to_task_id: str | None = None
+    question_token: str | None = None
 
 
 MAX_CHAT_ATTACHMENT_BYTES = 10 * 1024 * 1024
@@ -458,6 +465,8 @@ def _task_with_artifacts(task: TaskRecord, repositories: Repositories, settings:
     produced was invisible unless you opened its trace.
     """
     dumped = _redact_admin_output(_task_snapshot(task), settings)
+    if task.status == TaskStatus.CLARIFYING:
+        dumped["clarification_token"] = clarification_token(task)
     dumped["artifacts"] = [
         _redact_admin_output(artifact.model_dump(mode="json"), settings)
         for artifact in repositories.artifacts.list_for_task(task.id)
@@ -2565,6 +2574,22 @@ def create_admin_router(
         _audit_config_update(repositories_loader(), loaded, "voice", {"enabled": payload.enabled})
         return {"config_file": str(CONFIG_FILE_PATH), "stt": stt}
 
+    @router.get("/api/config/initiative")
+    def admin_get_initiative_config(request: Request) -> dict[str, Any]:
+        loaded = require_admin(request)
+        return {"level": loaded.operator.effective_autonomy}
+
+    @router.post("/api/config/initiative")
+    def admin_update_initiative_config(request: Request, payload: AdminInitiativeConfigRequest) -> dict[str, Any]:
+        loaded = require_admin(request)
+        config = _read_config_file(config_manager)
+        operator = config.setdefault("operator", {})
+        operator["autonomy_level"] = payload.level
+        operator.pop("initiative_level", None)  # the earlier five-level key; the new one is read first
+        _write_config_file(config_manager, config)
+        _audit_config_update(repositories_loader(), loaded, "initiative", {"level": payload.level})
+        return {"config_file": str(CONFIG_FILE_PATH), "level": payload.level}
+
     @router.get("/api/config/decision")
     def admin_get_decision_config(request: Request) -> dict[str, Any]:
         """Which classifier routes incoming messages, and what the decision model has done so far.
@@ -2884,6 +2909,9 @@ def create_admin_router(
         audit = AuditLogger(repositories.audit, loaded.logging.redact_patterns)
 
         text = payload.text.strip()
+        explicitly_new = bool(re.match(r"(?is)^new\s*:\s*\S", text)) and not payload.reply_to_task_id
+        if explicitly_new:
+            text = re.sub(r"(?is)^new\s*:\s*", "", text, count=1)
         attached = [
             artifact for artifact_id in payload.attachment_ids
             if (artifact := repositories.artifacts.get(artifact_id)) is not None
@@ -2899,13 +2927,39 @@ def create_admin_router(
             project_metadata = _project_task_metadata(project)
 
         expire_stale_clarifications(repositories, audit)
-        clarifying = find_clarifying_task(repositories, conversation_id=conversation_id, chat_id=None)
+        if payload.reply_to_task_id:
+            clarifying = repositories.tasks.get(payload.reply_to_task_id)
+            if (clarifying is None or clarifying.conversation_id != conversation_id or clarifying.status != TaskStatus.CLARIFYING
+                    or payload.question_token != clarification_token(clarifying)):
+                raise HTTPException(status_code=409, detail="The question changed or is no longer available. Refresh the task and try again.")
+        else:
+            if payload.question_token:
+                raise HTTPException(status_code=422, detail="A question token requires its task ID.")
+            candidates = [] if explicitly_new else reply_candidates(repositories, conversation_id=conversation_id, chat_id=None, text=text)
+            if len(candidates) > 1:
+                raise HTTPException(status_code=409, detail="More than one question is open. Use Reply on the relevant task.")
+            clarifying = candidates[0] if candidates and text else None
+            if clarifying is not None:
+                token = clarification_token(clarifying)
+                disposition = await assess_unaddressed_reply(clarifying, text, loaded.decision)
+                current = repositories.tasks.get(clarifying.id)
+                if current is None or current.status != TaskStatus.CLARIFYING or clarification_token(current) != token:
+                    raise HTTPException(status_code=409, detail="The question changed while checking your message. Refresh and try again.")
+                latest = reply_candidates(repositories, conversation_id=conversation_id, chat_id=None, text=text)
+                if len(latest) != 1 or latest[0].id != clarifying.id:
+                    raise HTTPException(status_code=409, detail="The open questions changed while checking your message. Refresh and choose a target.")
+                if disposition == "new":
+                    clarifying = None
+                elif disposition == "uncertain":
+                    raise HTTPException(status_code=409, detail="Is this an answer to the open question or a new request? Use Reply on the task or start your message with 'new:'.")
         if clarifying is not None and text:
-            reply_text = f"{text}\n\n[Attached files: {attachment_note}]" if attachment_note else text
+            reply_text = f"{text}\n\n[Attached files: {attachment_note}]" if attachment_note and not is_user_plan_step(repositories, clarifying) else text
             result = resume_clarifying_task(
                 repositories, audit, clarifying,
                 text=reply_text, actor="admin_chat", message_id="", received_at=utc_now(),
             )
+            if not result.accepted:
+                raise HTTPException(status_code=409, detail=result.reason or "The question changed or was already answered. Refresh the task and try again.")
             for artifact in attached:
                 repositories.artifacts.link_to_task(artifact.id, result.task.id)
             return {
@@ -2913,7 +2967,7 @@ def create_admin_router(
                 "task": _task_with_artifacts(result.task, repositories, loaded),
             }
 
-        objective = payload.text
+        objective = text
         if attachment_note:
             objective = f"{objective}\n\n[Attached files: {attachment_note}]"
 
@@ -2925,7 +2979,7 @@ def create_admin_router(
             repositories.conversation_memory.get(conversation_id),
             remembered_facts=repositories.memory_facts.list_all(),
             objective=objective,
-        )
+        ) + recent_artifacts_context(repositories, conversation_id)
         # Web chat had no classifier at all: every message became a task,
         # including "hi" and questions the model could simply answer. Asking
         # "what is the capital of France?" sent the Operator to knowledge.search,

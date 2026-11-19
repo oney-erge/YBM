@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 from agent_control.jobs import research
@@ -23,6 +25,8 @@ class _Fake:
         self.calls: list[tuple[str, str]] = []
 
     async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
         self.calls.append(("think", user[:60]))
         if schema is research._Questions:
             return research._Questions(questions=self.questions)
@@ -90,13 +94,54 @@ async def test_a_fact_whose_quotation_is_not_in_the_page_is_dropped() -> None:
     assert facts == [{"claim": "Real fact.", "quote": real}]  # the invented quotation and the one-word quotation are gone
 
 
+def test_quote_matching_preserves_punctuation_signs_and_units() -> None:
+    page = "The 4.0 kW unit costs $1,200; the change is -5 percent."
+    facts = [research._Fact(claim="reported", quote=quote) for quote in (
+        "4.0 kW unit costs $1,200", "4 0 kW unit costs $1,200", "change is 5 percent", "change is -5 percent",
+    )]
+    kept = research.verified_facts(facts, page)
+    assert [item["quote"] for item in kept] == ["4.0 kW unit costs $1,200", "change is -5 percent"]
+
+
+def test_report_distinguishes_found_attempted_read_useful_and_cited() -> None:
+    state = new_state()
+    state.update(sources=[
+        {"id": 1, "status": "read", "facts": [{"quote": "Evidence"}], "title": "One", "url": "https://one.example"},
+        {"id": 2, "status": "read", "facts": [], "title": "Two", "url": "https://two.example"},
+        {"id": 3, "status": "failed", "facts": [], "title": "Three", "url": "https://three.example"},
+        {"id": 4, "status": "new", "facts": [], "title": "Four", "url": "https://four.example"},
+    ], sections=[{"question": "What?", "text": "Evidence [1]."}])
+    report = research.render_report("Coverage", state)
+    assert "4 pages found; 3 attempted; 2 read; 1 with recorded quotations; 1 cited" in report
+
+
+@pytest.mark.asyncio
+async def test_section_writer_receives_source_quote_not_a_misleading_paraphrase() -> None:
+    state = new_state()
+    state.update(stage="write", questions=["What does it cost?"], sources=[{
+        "id": 1, "question": 0, "title": "GPU prices", "status": "read",
+        "facts": [{"claim": "Offloading costs $463.", "quote": "RTX 3080 10 GB Partial offload - $463 used"}],
+    }])
+    seen = []
+    fake = _Fake()
+
+    async def write(system, user):
+        seen.append(user)
+        return "The source lists a used GPU price [1]."
+
+    io = ResearchIO(think=fake.think, write=write, search=fake.search, fetch=fake.fetch)
+    await advance("GPU question", state, io)
+    assert "RTX 3080 10 GB Partial offload - $463 used" in seen[0]
+    assert "Offloading costs $463" not in seen[0]
+
+
 @pytest.mark.asyncio
 async def test_a_page_that_cannot_be_read_is_skipped_not_a_failure_of_the_job() -> None:
     fake = _Fake(pages={"https://gone.example/x": None, "https://tiny.example/y": Page("Tiny", PAGE_EMPTY), "https://a.example/hp": Page("Costs", PAGE_A)})
     state, _said, report = await _run(fake)
     statuses = {source["url"]: source["status"] for source in state["sources"]}
     assert statuses == {"https://gone.example/x": "failed", "https://tiny.example/y": "failed", "https://a.example/hp": "read"}
-    assert report is not None and "1 pages read of 3 found" in report
+    assert report is not None and "3 pages found; 3 attempted; 1 read" in report
 
 
 @pytest.mark.asyncio
@@ -165,6 +210,8 @@ class _Wide:
         self.searched: list[str] = []
 
     async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
         if schema is research._Questions:
             return research._Questions(questions=[f"Question {n}?" for n in range(1, 8)])
         if schema is research._Phrasings:
@@ -229,7 +276,7 @@ async def test_no_second_round_when_the_first_found_enough_or_when_a_round_adds_
 
 @pytest.mark.asyncio
 async def test_the_rounds_never_go_past_the_limit_and_an_older_saved_job_without_them_still_advances() -> None:
-    state = new_state(150)
+    state = new_state(100)
     for key in ("round", "phrasings", "added_this_round"):
         del state[key]  # a job saved before rounds existed
     wide = _Wide()
@@ -238,7 +285,7 @@ async def test_the_rounds_never_go_past_the_limit_and_an_older_saved_job_without
         state = unit.state
         if state["stage"] == "read":
             break
-    assert state["round"] < research.MAX_SEARCH_ROUNDS and len(state["sources"]) <= 150 and state["stage"] == "read"
+    assert state["round"] < research.MAX_SEARCH_ROUNDS and len(state["sources"]) <= 100 and state["stage"] == "read"
 
 
 def test_an_abbreviation_does_not_end_a_sentence_so_a_cited_claim_is_not_cut_in_half() -> None:
@@ -248,3 +295,210 @@ def test_an_abbreviation_does_not_end_a_sentence_so_a_cited_claim_is_not_cut_in_
     assert kept == text  # all three sentences whole, the one that starts with a number too
     assert "Law No. 5403 is required [1]." in kept and "Law No. 4708 [2][4]." in kept
     assert research.only_given_citations("A claim from memory. Art. 21 of the Zoning Law requires a permit [1]. Dr. Smith agrees.", {1}) == "Art. 21 of the Zoning Law requires a permit [1]."
+
+
+class _Big(_Fake):
+    """A job of many pages: the model plans chapters, then different questions for each chapter, and every page is its own."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.chapter_requests = 0
+
+    async def think(self, system, user, schema):
+        if schema is research._Supported:
+            return research._Supported(supported=True)
+        if schema is research._Chapters:
+            self.chapter_requests += 1
+            return research._Chapters(chapters=[f"Area {n}" for n in range(1, 12)])  # more than asked: the extra are cut
+        if schema is research._Questions:
+            number = user.split("chapter ")[1].split(" of")[0]
+            return research._Questions(questions=[f"Chapter {number} question {n}?" for n in range(1, 4)])
+        if schema is research._Phrasings:
+            return research._Phrasings(searches=[])
+        return research._Notes(facts=[research._Fact(claim="A fact the page states.", quote="A sentence long enough to count as the text of a page.")])
+
+    async def write(self, system, user):
+        number = re.search(r"\[(\d+)\]", user).group(1)  # cite the first note (or the first citation of what it is given), as a model asked to would
+        if "Sections:" in user and "Chapter:" in user:
+            return f"The chapter says one thing [{number}]."
+        if "Chapters:" in user:
+            return f"Across the chapters, one thing [{number}]."
+        return f"This section says one thing [{number}]."
+
+    async def search(self, query, count):
+        slug = query.replace(" ", "-").replace("?", "")
+        return [{"title": f"{slug} {i}", "url": f"https://site{i}.example/{slug}", "snippet": ""} for i in range(count)]
+
+    async def fetch(self, url):
+        return Page("page", "A sentence long enough to count as the text of a page. " * 6)
+
+
+@pytest.mark.asyncio
+async def test_a_job_of_many_pages_is_planned_and_written_in_chapters_and_its_summary_comes_from_the_overviews() -> None:
+    fake = _Big()
+    state, said, report = await _run_many(fake, max_pages=300)
+    assert research.chapter_count(300) == 3 and research.chapter_count(100) == 0 and research.chapter_count(5000) == research.MAX_CHAPTERS
+    assert state["stage"] == "done" and [chapter["title"] for chapter in state["chapters"]] == ["Area 1", "Area 2", "Area 3"]  # the model's extra chapters are cut
+    assert fake.chapter_requests == 1  # the chapters are planned once; each chapter's questions in a unit of its own
+    assert [(chapter["first"], chapter["end"]) for chapter in state["chapters"]] == [(0, 3), (3, 6), (6, 9)] and len(state["questions"]) == 9
+    assert said[0].startswith("I am researching this in 3 chapters, up to 300 pages in all:") and "1. Area 1 (3 questions)" in said[0]
+    assert all(chapter["overview"].startswith("The chapter says one thing [") for chapter in state["chapters"])
+    assert report is not None and "## 1. Area 1" in report and "### Chapter 1 question 1?" in report and "## 3. Area 3" in report
+    assert "The chapter says one thing [" in report and state["summary"].startswith("Across the chapters, one thing [")
+    assert "Chapter 2 of 3 written: Area 2." in said
+
+
+async def _run_many(fake: _Fake, goal: str = "a big question", max_pages: int = 300):
+    state, said, report = new_state(max_pages), [], None
+    for _ in range(3000):
+        unit = await advance(goal, state, fake.io)
+        state = unit.state
+        if unit.say:
+            said.append(unit.say)
+        if unit.report is not None:
+            report = unit.report
+            break
+    return state, said, report
+
+
+@pytest.mark.asyncio
+async def test_a_big_job_says_how_far_it_is_and_tells_progress_less_often_and_a_small_job_is_unchanged() -> None:
+    fake = _Big()
+    state, said, _report = await _run_many(fake, max_pages=300)
+    progress = [line for line in said if line.startswith("Read ")]
+    assert 1 <= len(progress) <= 12  # about every tenth of the pages, not every ten
+    assert research.progress_text({**new_state(300), "stage": "plan", "chapter_titles": ["a", "b", "c"], "chapters": [{"title": "a"}]}) == "I am planning the questions to research: 1 of 3 chapters planned."
+    assert research.progress_text({**state, "stage": "chapters"}).startswith("Writing the chapter overviews: 3 of 3 done")
+    small, _said, small_report = await _run(_Fake(facts_for={"Costs": []}))
+    assert small["chapters"] == [] and "## 1." not in (small_report or "")  # 100 pages or fewer: the flow it always had
+
+
+def test_the_time_a_job_takes_is_said_as_a_range_on_the_card() -> None:
+    assert research.time_estimate(10) == "about 5 to 10 minutes"
+    assert research.time_estimate(60) == "about 10 to 15 minutes"
+    assert research.time_estimate(600) == "about 1.5 to 2.5 hours"
+    assert research.time_estimate(1000) == "about 2.5 to 4 hours"
+    from agent_control.human_text import describe_action
+
+    card = describe_action("job.manage", {"operation": "start_research", "goal": "heat pumps", "max_pages": 600})
+    assert "up to 600 pages (about 1.5 to 2.5 hours; actual time varies)" in card and "heat pumps" in card
+
+
+@pytest.mark.asyncio
+async def test_search_rephrasing_is_batched_and_survives_saved_state() -> None:
+    import json
+
+    state = new_state(600)
+    state["questions"] = [f"Question {index}?" for index in range(21)]
+    state["sources"] = [{"url": "https://example.com", "status": "new", "facts": []}]
+    calls = []
+
+    async def think(system, user, schema):
+        lines = user.splitlines()[1:]
+        calls.append(len(lines))
+        return schema(searches=[f"Alternative {line}" for line in lines])
+
+    fake = _Fake()
+    io = research.ResearchIO(think=think, write=fake.write, search=fake.search, fetch=fake.fetch)
+    for _ in range(3):
+        result = await research._more_searches(state, io)
+        state = json.loads(json.dumps(result.state))
+
+    assert calls == [10, 10, 1]
+    assert len(state["phrasings"]) == 21 and state["round"] == 1
+    assert "pending_phrasings" not in state
+
+
+@pytest.mark.asyncio
+async def test_synthetic_600_page_job_keeps_search_history_across_restarts() -> None:
+    import json
+
+    class WideBig(_Big):
+        def __init__(self):
+            super().__init__()
+            self.rewrite_calls = 0
+            self.rewrite_prompts = []
+
+        async def think(self, system, user, schema):
+            if schema is research._Supported:
+                return research._Supported(supported=True)
+            if schema is research._Phrasings:
+                self.rewrite_calls += 1
+                self.rewrite_prompts.append(user)
+                round_number = (self.rewrite_calls - 1) // 2 + 1
+                lines = user.splitlines()[1:]
+                return schema(searches=[f"round {round_number} {line.split(' (previous searches:', 1)[0]}" for line in lines])
+            return await super().think(system, user, schema)
+
+    fake = WideBig()
+    state, report = new_state(600), None
+    for step in range(3000):
+        unit = await advance("a large question", state, fake.io)
+        state = unit.state
+        if step % 25 == 0:
+            state = json.loads(json.dumps(state))  # persisted state after restart
+        if unit.report is not None:
+            report = unit.report
+            break
+    assert report is not None and state["stage"] == "done"
+    assert len(state["sources"]) == 600 and state["pages_read"] == 600
+    assert len({source["url"] for source in state["sources"]}) == 600
+    assert len(state["chapters"]) == 6 and len(state["search_history"]) >= 2
+    assert "previous searches:" in fake.rewrite_prompts[2]
+    assert "600 pages found; 600 attempted; 600 read" in report
+
+
+class _Judge:
+    """A model that judges a sentence against its quotations the way a careful reader would: here, by whether the quotation is about the same thing."""
+
+    def __init__(self, *, fail: bool = False) -> None:
+        self.fail, self.asked = fail, []
+
+    async def think(self, system, user, schema):
+        self.asked.append(user)
+        if self.fail:
+            raise TimeoutError("model busy")
+        sentence = user.split("Sentence: ")[1].split("\n")[0]
+        quotes = user.split("Quotations:\n")[1]
+        return research._Supported(supported=("graphics card" in sentence.lower()) == ("graphics card" in quotes.lower()))
+
+    @property
+    def io(self) -> ResearchIO:
+        return ResearchIO(think=self.think, write=None, search=None, fetch=None)
+
+
+@pytest.mark.asyncio
+async def test_a_sentence_is_kept_only_when_the_quotations_it_cites_say_it() -> None:
+    """11/15: a used graphics card's price in a quotation became "the cost of offloading" in the report's summary. A real quotation is not support."""
+    quotes = {1: ["A used graphics card costs about 700 dollars on the second-hand market, a typical price in 2026."], 2: ["Offloading layers to system memory cut generation speed from 40 to 9 tokens per second."]}
+    judge = _Judge()
+    text = (
+        "A used graphics card costs about 700 dollars [1]. Offloading costs 700 dollars [1]. Offloading cut the speed from 40 to 9 tokens per second [2]. "
+        "Offloading cut the speed from 40 to 12 tokens per second [2]. The sources do not say how it ages."
+    )
+    kept, checked, removed, unchecked = await research.check_claims(text, quotes, judge.io)
+    assert kept == "A used graphics card costs about 700 dollars [1]. Offloading cut the speed from 40 to 9 tokens per second [2]. The sources do not say how it ages."
+    assert (checked, removed, unchecked) == (4, 2, 0)
+    assert len(judge.asked) == 3  # "12" is not in the quotation: removed without asking the model; the one about a card's price was removed by the model, the other two passed
+
+
+@pytest.mark.asyncio
+async def test_numbers_are_compared_without_thousands_separators_and_a_missing_note_removes_the_sentence() -> None:
+    assert research.number_missing("It costs 4,000 dollars [1].", ["installed for 4000 dollars"]) is False
+    assert research.number_missing("It costs 5,000 dollars [1].", ["installed for 4000 dollars"]) is True
+    assert research.number_missing("Owners are happy [1].", ["a quotation with no number at all"]) is False
+    kept, checked, removed, _ = await research.check_claims("It exists [9].", {1: ["It exists"]}, _Judge().io)
+    assert (kept, checked, removed) == ("", 1, 1)  # [9] has no quotation behind it
+
+
+@pytest.mark.asyncio
+async def test_a_check_that_cannot_run_keeps_the_sentence_and_says_it_was_not_checked() -> None:
+    kept, checked, removed, unchecked = await research.check_claims("The card is good [1].", {1: ["The card is good for gaming."]}, _Judge(fail=True).io)
+    assert kept == "The card is good [1]." and (checked, removed, unchecked) == (0, 0, 1)
+
+
+@pytest.mark.asyncio
+async def test_the_report_says_how_many_claims_were_checked_and_removed() -> None:
+    state, _said, report = await _run(_Fake(facts_for={"Costs": [("Air-source units cost 4,000 to 8,000 dollars installed.", "Air-source units cost between 4,000 and 8,000 dollars installed in the Chicago area.")]}))
+    assert state["claims_checked"] >= 1 and state["claims_removed"] >= 0
+    assert "Every cited sentence was checked against the quotations it cites" in report and "A check by a small model is not a proof" in report

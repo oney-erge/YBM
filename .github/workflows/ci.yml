@@ -9,6 +9,9 @@ on:
   # every job below succeeds.
   workflow_call:
   workflow_dispatch:
+  # The whole matrix also runs every night, so a platform-only break is seen the next morning even if nobody pushes.
+  schedule:
+    - cron: "17 7 * * *"
 
 permissions:
   contents: read
@@ -100,8 +103,10 @@ jobs:
   backend-tests:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # The Windows run takes about 15 minutes of pytest alone (2,350 tests); a 15 minute limit cancelled it at 91% with no failing test.
-    timeout-minutes: 30
+    # All three are required to merge. The suite runs in parallel (pytest-xdist, one worker per core) with throwaway databases that skip the disk flush
+    # (backend/tests/conftest.py): measured on the pull request that introduced it, Linux 0.8 minutes, Windows 1.4 and macOS 1.9. Before, the Windows run
+    # was 23 to 30 minutes in one process, and a 15 and then a 30 minute limit each cancelled it with no failing test.
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -118,8 +123,15 @@ jobs:
           python-version: "3.12"
           working-directory: backend
           cache-suffix: backend-tests-${{ matrix.os }}
+      - name: Keep Windows temp files on the fast drive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force D:\tmp | Out-Null
+          "TEMP=D:\tmp" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+          "TMP=D:\tmp" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       - run: uv sync --frozen --extra test --extra dev
-      - run: uv run --frozen pytest
+      - run: uv run --frozen pytest -n auto --dist loadfile
 
   backend-quality:
     runs-on: ubuntu-latest

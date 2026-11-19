@@ -35,6 +35,8 @@ class Job(StrictBaseModel):
     status: JobStatus = JobStatus.RUNNING
     #: Where the job is, as plain data: the engine of its kind reads and writes it (jobs/research.py). Saved after every unit.
     state: dict[str, Any] = Field(default_factory=dict)
+    # Internal optimistic-concurrency token; it is not part of the tool output.
+    revision: int = Field(default=0, ge=0, exclude=True)
     #: Where its messages go: source_channel and source_chat_id, as a plan keeps them.
     routing: dict[str, str] = Field(default_factory=dict)
     created_at: datetime = Field(default_factory=utc_now)

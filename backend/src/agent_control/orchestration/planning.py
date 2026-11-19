@@ -7,6 +7,8 @@ from typing import Any
 
 from agent_control.orchestration import planner
 from agent_control.orchestration.asking import users_own_words
+from agent_control.orchestration.initiative import initiative_guidance
+from agent_control.orchestration.job_start import JobPageLimitExceeded
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_STRATEGY,
 )
@@ -22,6 +24,9 @@ from agent_control.schemas import (
     TaskStatus,
 )
 
+
+#: What a message may do to a job that is open when nothing about it asked for a new one.
+JOB_CONTROLS = ("status", "pause", "resume", "stop")
 logger = logging.getLogger(__name__)
 
 
@@ -126,13 +131,16 @@ class PlanningStage:
         are taken from a model that, live, chose another tool, made up a job id, and claimed a stop that had not happened. None for a message that
         turns out to be about something else, for a task that is past its first step, and when there is no job stage.
         """
-        if self.job_stage is None or task.metadata.get("task_route") != "job":
+        route = task.metadata.get("task_route")
+        if self.job_stage is None or route not in ("job", "job_open"):
             return None
         forced = str(task.metadata.get("job_forced_call") or "")
         if forced:
             entry = _job_call_entry(history, forced)
             if entry is None:
                 return None  # the call has not run yet (it waits for an approval) or went another way: the loop is the Operator's
+            if forced == "start_watch" and entry.get("status") != "succeeded":
+                return None  # a monitor script that failed its test is the Operator's to fix, with the reason in its history and the skill in front of it
             # The call has run and the person has what they need to know. The answer is written here, not by the Operator: in live runs it went on
             # calling the job tool with an id from an earlier job (or from a task), offered a hand-over to Claude Code, asked whether to wait or pause,
             # and once said "has been stopped" about a job it had not stopped.
@@ -141,9 +149,19 @@ class PlanningStage:
             return None
         try:
             call = await self.job_stage(task)
-        except Exception:  # noqa: BLE001 - the Operator loop is the fallback, as with the planner stage
-            logger.warning("job start failed for %s; the Operator takes the request", task.id, exc_info=True)
-            return None
+        except JobPageLimitExceeded as exc:
+            if route == "job_open":
+                call = None  # nothing asked for research: a number in some other question is not a size
+            else:
+                return OperatorDecision(action=OperatorAction.BLOCKED, reason=f"{exc} Please choose a supported size; no research job was started.")
+        except Exception as exc:  # noqa: BLE001 - an unknown research action must not become a different action
+            logger.warning("job intent unavailable for %s: %s", task.id, type(exc).__name__)
+            return OperatorDecision(
+                action=OperatorAction.BLOCKED,
+                reason="I could not determine the research action, so I did not issue a research command for this request. Check its status and try again.",
+            )
+        if call is not None and route == "job_open" and call.get("operation") not in JOB_CONTROLS:
+            call = None  # a job is open, but no skill took this for a request for one: only a control of the open job is made here
         if call is None:  # about something else: the Operator takes it
             self.repositories.tasks.update_metadata(task.id, {**task.metadata, "job_start_done": True})
             return None
@@ -170,6 +188,16 @@ class PlanningStage:
             logger.warning("fact checks failed; the request's facts stay the patterns' words", exc_info=True)
             return task
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, CHECKS_KEY: answers})
+
+    async def _answer_declines(self, answer: str | None) -> bool:
+        """Whether the Operator's answer says the request was not done or cannot be (request_facts.ANSWER_FACT_QUESTIONS). No decision model, no answer."""
+        if self.fact_checks is None or not (answer or "").strip():
+            return False
+        try:
+            return bool((await self.fact_checks(answer or "", ("answer_declines",))).get("answer_declines"))
+        except Exception:  # noqa: BLE001 - the audit's verdict stands when this cannot be asked
+            logger.warning("answer_declines check failed", exc_info=True)
+            return False
 
     async def _with_ability_notes(self, task: TaskRecord) -> TaskRecord:
         """Work out once, before the task's first step, what bears on the request that the Operator cannot see, and keep it with the task.
@@ -201,7 +229,7 @@ class PlanningStage:
             base = scope_catalog_text(
                 base, scope_for_task(metadata), intent.get("route") if isinstance(intent, dict) else None
             )
-        return base + extra
+        return initiative_guidance(metadata.get("initiative_level") if metadata else None) + base + extra
 
     @staticmethod
     def _project_planner_context(metadata: dict[str, Any]) -> str:

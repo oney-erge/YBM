@@ -7,6 +7,7 @@ from typing import Any
 
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_NAMES,
+    CHECK_ENTRY_STRATEGY,
     CHECK_ENTRY_STUCK,
 )
 from agent_control.schemas import (
@@ -38,6 +39,14 @@ def operator_blocked_reason(reason: str | None, history: list[dict[str, Any]]) -
 def finish_offer_pending(history: list[dict[str, Any]]) -> bool:
     """Whether the last thing in the history is an offer to answer, not yet taken up or refused."""
     return bool(history) and history[-1].get("tool_name") == CHECK_ENTRY_STUCK and history[-1].get("status") == "stuck"
+
+
+def current_recovery_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep older evidence, but don't let an earlier stop marker end a new local attempt."""
+    for index in range(len(history) - 1, -1, -1):
+        if history[index].get("tool_name") == CHECK_ENTRY_STRATEGY and history[index].get("hint_id") == "declined":
+            return history[index + 1:]
+    return history
 
 
 #: The lines a tool writes for a program, not for a person: "Code interpreter operation completed: run_python", "Workspace: <folder>",

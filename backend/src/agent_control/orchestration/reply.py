@@ -5,6 +5,7 @@ import asyncio
 import logging
 
 from agent_control.channels.memory import ConversationMemoryService
+from agent_control.orchestration import goal_routing
 from agent_control.orchestration.task_record import task_memory_summary
 from agent_control.schemas import (
     AuditEventType,
@@ -59,6 +60,7 @@ class ReplyStage:
     async def _notify_if_needed(self, task: TaskRecord) -> None:
         if task.status not in NOTIFIABLE_STATUSES:
             return
+        goal_routing.sync_from_task(self.repositories, task)
         # CLARIFYING can happen more than once per task; key by question number
         # so the second question is not swallowed by the dedupe set.
         status_key = task.status.value
@@ -77,15 +79,8 @@ class ReplyStage:
         notified = set(task.metadata.get("notified_statuses", []))
         if self.notification_sink is not None and status_key not in notified:
             await self._send_notification(task)
+            self.repositories.tasks.mark_notified(task.id, status_key)
         await self._remember_task_completion(task)
-        latest = self.repositories.tasks.get(task.id)
-        if latest is None:
-            return
-        updated_notified = sorted({*latest.metadata.get("notified_statuses", []), status_key})
-        self.repositories.tasks.update_metadata(
-            task.id,
-            {**latest.metadata, "notified_statuses": updated_notified},
-        )
 
     async def _remember_task_completion(self, task: TaskRecord) -> None:
         if not task.conversation_id or task.status not in {TaskStatus.COMPLETED, TaskStatus.BLOCKED, TaskStatus.FAILED}:
@@ -94,6 +89,9 @@ class ReplyStage:
         if not summary:
             return
         try:
+            answer = str(task.metadata.get("synthesized_answer") or "").strip()
+            if answer:
+                self.repositories.episodes.add("answer", answer, conversation_id=task.conversation_id, task_id=task.id)  # once per task
             await ConversationMemoryService(self.repositories).update_from_task_summary(task.conversation_id, summary)
         except Exception as exc:
             self.audit.append(

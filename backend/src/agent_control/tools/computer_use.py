@@ -55,6 +55,7 @@ class ComputerUseAdapter:
     ) -> None:
         self.config = config
         self.provider = provider
+        self._blind = False  # set once a call with a picture fails: the rest of the goal is worked from the UI tree
         self.backend = backend or WindowsComputerBackend()
         self.should_continue = should_continue or (lambda task_id: True)
 
@@ -121,7 +122,8 @@ class ComputerUseAdapter:
         objective = str(request.input["objective"])
         max_steps = int(request.input.get("max_steps") or self.config.max_steps)
         include_ui_tree = bool(request.input.get("include_ui_tree", True))
-        if request.input.get("require_vision", True) and not _has_multimodal_provider(self.provider):
+        self._blind = False  # each goal tries the model that sees first; a vision model that was down may be up now
+        if request.input.get("require_vision", False) and not _has_multimodal_provider(self.provider):
             raise RuntimeError("local multimodal LLM is not available for computer-use run_goal")
 
         actions_taken: list[dict[str, Any]] = []
@@ -148,6 +150,7 @@ class ComputerUseAdapter:
                     "completed": True,
                 }
             action = decision.get("action") if isinstance(decision.get("action"), dict) else {"type": "wait", "seconds": 1}
+            action = _named_click(action, observation)
             if not self.should_continue(request.task_id):
                 return _stopped_output(final_observation, actions_taken, screenshots, "Stopped before the next computer-use action.")
             result = await asyncio.to_thread(self.backend.execute_action, action, self.config)
@@ -186,19 +189,24 @@ class ComputerUseAdapter:
             return f"{fallback}\nVision summary unavailable: {exc}"
 
     async def _next_action(self, objective: str, observation: dict[str, Any], step_number: int) -> dict[str, Any]:
-        if not _has_multimodal_provider(self.provider):
-            raise RuntimeError("local multimodal LLM is not available")
-        text = await self.provider.generate_multimodal_text(
-            prompt_text("base/computer_use_system.md"),
-            render_prompt(
-                "tasks/computer_use_decision.md",
-                objective=objective,
-                step_number=step_number,
-                observation=_json_compact(observation),
-            ),
-            [str(observation["screenshot_path"])],
+        system = prompt_text("base/computer_use_system.md")
+        user = render_prompt("tasks/computer_use_decision.md", objective=objective, step_number=step_number, observation=_json_compact(observation))
+        if _has_multimodal_provider(self.provider) and not self._blind:
+            try:
+                return _parse_json_object(await self.provider.generate_multimodal_text(system, user, [str(observation["screenshot_path"])]))
+            except Exception as exc:  # noqa: BLE001 - the model that sees may be down or refuse images (live 11/19: "hosted fallback" with the local vision model not running)
+                self._blind = True
+                logger.info("computer_use_without_vision: %s", str(exc)[:160])
+        # No picture: the goal is worked from the window list and the UI tree (accessibility), which is how a person using a screen reader would. A click can name an element
+        # from the tree instead of giving x and y.
+        blind = (
+            system + "\nYou cannot see the screen. Decide only from the window list and the ui_tree in the observation JSON. To click an element, give its exact `name` from the "
+            "ui_tree (and no x or y); the program finds it. Prefer launch_app and hotkey for opening things and typing."
         )
-        return _parse_json_object(text)
+        generate = getattr(self.provider, "generate_text", None)
+        if generate is None:
+            raise RuntimeError("no model is available for computer-use run_goal")
+        return _parse_json_object(await generate(blind, user))
 
 
 class WindowsComputerBackend:
@@ -458,6 +466,22 @@ def _metadata_summary(observation: dict[str, Any]) -> str:
 
 def _has_multimodal_provider(provider: LLMProvider | None) -> bool:
     return bool(provider and hasattr(provider, "generate_multimodal_text"))
+
+
+def _named_click(action: dict[str, Any], observation: dict[str, Any]) -> dict[str, Any]:
+    """A click that names an element of the UI tree ("name": "Seven") becomes a click at the middle of that element. Without a picture a model cannot give pixels."""
+    kind = str(action.get("type") or action.get("action") or "")
+    name = str(action.get("name") or action.get("element") or action.get("target") or "").strip().lower()
+    if kind not in {"click", "double_click"} or not name or (action.get("x") is not None and action.get("y") is not None):
+        return action
+    elements = [item for item in observation.get("ui_tree") or [] if isinstance(item, dict) and isinstance(item.get("rectangle"), dict)]
+    exact = [item for item in elements if str(item.get("name") or "").strip().lower() == name]
+    near = [item for item in elements if name and name in str(item.get("name") or "").lower()]
+    found = (exact or near or [None])[0]
+    if found is None:
+        return {"type": "wait", "seconds": 1}  # nothing by that name: look again rather than click somewhere
+    box = found["rectangle"]
+    return {"type": kind, "x": int((box["left"] + box["right"]) / 2), "y": int((box["top"] + box["bottom"]) / 2), "named": name}
 
 
 def _parse_json_object(text: str) -> dict[str, Any]:

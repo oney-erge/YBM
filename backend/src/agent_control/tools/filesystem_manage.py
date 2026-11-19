@@ -284,6 +284,9 @@ class FilesystemManageAdapter:
 
     def _read_file(self, request: ToolCallRequest) -> dict[str, Any]:
         path = self._safe_path(str(request.input["path"]))
+        if path.is_dir():
+            # "file does not exist" for a folder that is there sent the model off to say the folder was missing (frozen suite, v_parts_reports, 11/18).
+            raise ValueError(f"{path} is a folder, not a file. To see the files in it, call inspect_folder with this path as the root, then read_file on one of them.")
         if not path.exists() or not path.is_file():
             raise ValueError(f"file does not exist: {path}")
         max_chars = int(request.input.get("max_chars") or 12000)

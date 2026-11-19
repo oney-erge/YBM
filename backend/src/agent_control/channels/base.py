@@ -37,18 +37,22 @@ from typing import Any, Protocol
 from agent_control.abilities.context import asks_about_the_assistant, asks_for_what_a_recipe_covers
 from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
-from agent_control.channels.memory import memory_context
+from agent_control.projects_memory import project_context
+from agent_control.channels.memory import memory_context, recent_artifacts_context
 from agent_control.channels.responder import ChatResponder, gateway_context
 from agent_control.clarification import (
+    assess_unaddressed_reply,
     expire_stale_clarifications,
-    find_clarifying_task,
-    find_plan_step_answer,
+    explicit_reply_task,
+    reply_candidates,
     resume_clarifying_task,
 )
+from agent_control.channels.quick_answers import clarification_token
 from agent_control.config import AppSettings
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.llm.classifier import MessageClassifier, classification_trace
 from agent_control.llm.decision import DecisionModelClient
+from agent_control.orchestration import goal_routing
 from agent_control.orchestration.signals import requeue_after_approval_decision
 from agent_control.schemas import (
     ApprovalStatus,
@@ -175,7 +179,8 @@ def approve_latest_pending(repositories: Repositories, audit: AuditLogger, inbou
 
 
 def resume_clarifying_reply(
-    repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str
+    repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str,
+    *, expected_task_id: str | None = None, expected_token: str | None = None,
 ) -> OutboundMessage | None:
     """Route a reply to the task waiting on a question instead of spawning a
     new task, or None if no clarification is pending. Core logic lives in
@@ -185,21 +190,72 @@ def resume_clarifying_reply(
     if not text:
         return None
     expire_stale_clarifications(repositories, audit)
-    task = find_plan_step_answer(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text) or find_clarifying_task(
-        repositories, conversation_id=conversation_id, chat_id=inbound.chat_id
-    )
+    directed = re.fullmatch(r"reply\s+(task_[0-9a-f]{32})\s*:\s*(.+)", text, flags=re.IGNORECASE | re.DOTALL)
+    if directed:
+        task = explicit_reply_task(repositories, task_id=directed.group(1), conversation_id=conversation_id, chat_id=inbound.chat_id)
+        if task is None:
+            return _reply(inbound, "That question is no longer open in this chat. Check the current task and try again.")
+        text = directed.group(2).strip()
+    else:
+        candidates = reply_candidates(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text)
+        if len(candidates) > 1:
+            choices = "\n".join(f"- {' '.join(candidate.objective.split())[:100]}: {candidate.id}" for candidate in candidates[:5])
+            return _reply(inbound, "More than one question is open. Use its button, or reply with 'reply TASK_ID: your answer'.\n" + choices)
+        task = candidates[0] if candidates else None
     if task is None:
+        if expected_task_id:
+            return _reply(inbound, "That question changed while I was checking your message. Please reply to the current question.")
         return None
+    if expected_task_id and (task.id != expected_task_id or clarification_token(task) != expected_token):
+        return _reply(inbound, "That question changed while I was checking your message. Please reply to the current question.")
     result = resume_clarifying_task(
         repositories, audit, task,
         text=text, actor=f"{inbound.channel.value}:user:{inbound.sender_id}",
         message_id=inbound.id, received_at=inbound.received_at, correlation_id=inbound.correlation_id,
     )
+    if not result.accepted:
+        return _reply(inbound, result.reason or "That question changed or was already answered. Please check the current task before replying.")
+    if result.delegated:
+        return _reply(inbound, "I'll make the choice and tell you what remains for this step.")
     if result.plan_step:
         return _reply(inbound, "Okay, I'll leave that step out." if result.cancelled else "Noted. On to the next step.")
     if result.cancelled:
         return _reply(inbound, f"Cancelled: {result.task.objective[:200]}")
     return _reply(inbound, "Got it - resuming the task with your answer.")
+
+
+async def route_clarifying_reply(
+    repositories: Repositories, audit: AuditLogger, inbound: InboundMessage, conversation_id: str, settings: AppSettings | None,
+) -> OutboundMessage | None:
+    """Resolve an unaddressed message before allowing it to mutate a waiting task."""
+    text = (inbound.text or "").strip()
+    if not text or re.match(r"(?is)^new\s*:\s*\S", text):
+        return None
+    if re.fullmatch(r"reply\s+task_[0-9a-f]{32}\s*:\s*.+", text, flags=re.IGNORECASE | re.DOTALL):
+        return resume_clarifying_reply(repositories, audit, inbound, conversation_id)
+    expire_stale_clarifications(repositories, audit)
+    candidates = reply_candidates(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text)
+    if len(candidates) != 1:
+        return resume_clarifying_reply(repositories, audit, inbound, conversation_id)
+    task = candidates[0]
+    token = clarification_token(task)
+    disposition = await assess_unaddressed_reply(task, text, settings.decision if settings else None)
+    current = repositories.tasks.get(task.id)
+    if current is None or current.status != TaskStatus.CLARIFYING or clarification_token(current) != token:
+        return _reply(inbound, "That question changed while I was checking your message. Please reply to the current question.")
+    latest = reply_candidates(repositories, conversation_id=conversation_id, chat_id=inbound.chat_id, text=text)
+    if len(latest) != 1 or latest[0].id != task.id:
+        return _reply(inbound, "The open questions changed while I was checking your message. Please choose the current target.")
+    if disposition == "new":
+        return None
+    if disposition == "uncertain":
+        # The decision model could not tell an answer from a new request. Nobody should have to type "reply task_...:" to say it (live 11/18: a plain "Ethernet" to "which
+        # network interface?" was answered with that instruction). When the question belongs to a goal, the one call that reads the message already sees the goal and
+        # what it waits on, and says whether this answers it (orchestration/goal_routing.py): it goes on to that. A question with no goal is answered by the reply, as
+        # it was before there was any doubt about it.
+        if task.metadata.get("goal_id"):
+            return None
+    return resume_clarifying_reply(repositories, audit, inbound, conversation_id, expected_task_id=task.id, expected_token=token)
 
 
 def _spawn_failed(
@@ -361,6 +417,7 @@ async def classify_and_spawn_task(
     responder: ChatResponder | None = None,
     settings: AppSettings | None = None,
     send_progress: Callable[[str, str], Awaitable[Any]],
+    before_task: Callable[[], Awaitable[None]] | None = None,
 ) -> ChannelUpdateResult:
     """Classify one inbound message and either spawn a task or produce a
     chat-only reply - the "classify -> task" half of intake -> classify ->
@@ -378,7 +435,16 @@ async def classify_and_spawn_task(
     if status_answer is not None:
         return ChannelUpdateResult(authorized=True, inbound_message=inbound, outbound_message=status_answer)
 
+    chosen = goal_routing.take_choice(repositories, conversation_id, inbound.text)
+    forced_goal_id: str | None = None
+    forced_act: str | None = None
+    if chosen is not None:
+        # "2" answering "Which one do you mean?": the message that could not be placed is read again, now with the goal the person picked.
+        original, forced_act, forced_goal_id = chosen
+        inbound = inbound.model_copy(update={"text": original})
+
     await send_progress(inbound.chat_id, ACKNOWLEDGMENT_TEXT)
+    goal_labels: dict[str, Any] = {}
     try:
         # The Concierge prompt does double duty (classify + compose a chat
         # reply in one call, see prompts/base/concierge_system.md) - a chat
@@ -393,13 +459,22 @@ async def classify_and_spawn_task(
                 repositories.conversation_memory.get(conversation_id),
                 recent_turns=3,
                 max_chars=900,
-                remembered_facts=repositories.memory_facts.list_all(),
+                remembered_facts=repositories.memory_facts.list_all() if settings is None or settings.memory.enabled else [],
                 objective=inbound.text or "",
             )
         )
+        goals_text, goal_labels = goal_routing.context_for(repositories, conversation_id)
+        if goals_text:
+            classification_context = f"{classification_context}\n\n{goals_text}" if classification_context else goals_text
         classify_started = time.monotonic()
         try:
             classification = await classifier.classify(inbound, context=classification_context)
+            if goal_labels and classification.act is None:
+                # With goals open the call is asked to say what the message does to them. A small model sometimes leaves that out; asking again
+                # costs a second or two and is better than reading "try again" as a request of its own.
+                again = await classifier.classify(inbound, context=classification_context)
+                if again.act is not None:
+                    classification = again
         except TypeError:
             classification = await classifier.classify(inbound)
         # The Concierge was the one agent with no timing anywhere: llm_calls
@@ -468,11 +543,36 @@ async def classify_and_spawn_task(
         # and being classified. Fall through and treat it as a normal request
         # rather than silently dropping what the user asked for.
 
+    route = goal_routing.route_of(classification, goal_labels)
+    if forced_goal_id is not None or (chosen is not None and forced_act):
+        picked = next((goal for goal in goal_labels.values() if goal.id == forced_goal_id), None)
+        route = goal_routing.GoalRoute(picked, forced_act or "continue") if picked is not None else goal_routing.GoalRoute(None, "new")
+    elif route.ambiguous:
+        goal_routing.remember_choice(repositories, conversation_id, inbound, goal_labels, route.act)
+        return ChannelUpdateResult(
+            authorized=True, inbound_message=inbound, classification=classification,
+            outbound_message=OutboundMessage(channel=inbound.channel, chat_id=inbound.chat_id, text=goal_routing.ambiguity_question(goal_labels)),
+        )
+    if route.goal is not None and route.act in ("answer", "delegate", "decline", "continue"):
+        # "continue" is in here on purpose: a goal that waits on a question has nothing to carry on with until the question is answered, and a reply that is about the goal
+        # but that the model did not call an answer ("Yes, go ahead with what you proposed") is the answer. Taken as a fresh attempt, it started a second task next to the one
+        # still asking, which sat there until the frozen suite cancelled it (v_cannot_order, h4_ask_before_moving, 11/18). With nothing waiting the call returns None.
+        said = goal_routing.resume_waiting_task(repositories, audit, route, inbound)
+        if said is not None:
+            return ChannelUpdateResult(
+                authorized=True, inbound_message=inbound, classification=classification,
+                outbound_message=OutboundMessage(channel=inbound.channel, chat_id=inbound.chat_id, text=said),
+            )
+        route = goal_routing.GoalRoute(route.goal, "continue")  # nothing waits for an answer: the message carries the goal on
+
     intent_route = classification.intent.route if classification.intent is not None else None
     if intent_route is None:
         is_chat_only = not classification.is_task and classification.task_type != TaskType.STATUS_REQUEST
     else:
         is_chat_only = intent_route == IntentRoute.CONVERSATION and classification.task_type != TaskType.STATUS_REQUEST
+
+    if route.goal is not None and route.act in ("continue", "plan"):
+        is_chat_only = False  # carrying a goal on is work, whatever the sentence looks like on its own
 
     if is_chat_only and settings is not None and settings.abilities.enabled and settings.decision.mode != "off":
         # A chat reply knows nothing of the ability index. It answers "read that out loud" with "I cannot speak" and offers nothing (or, once the
@@ -502,22 +602,35 @@ async def classify_and_spawn_task(
             )
         return _spawn_failed(audit, inbound, classification.reason, actor, classification)
 
-    objective = (classification.normalized_objective or inbound.text).strip()
+    objective = goal_routing.objective_for(route, classification, inbound.text)
+    goal_id, goal_metadata = goal_routing.prepare_attempt(route, conversation_id, inbound.text or "")
     voice_attachment = next((a for a in inbound.attachments if isinstance(a, VoiceAttachment)), None)
     voice_metadata = (
         {"voice_file_id": voice_attachment.file_id, "voice_transcript": voice_attachment.transcript}
         if voice_attachment is not None else {}
     )
+    if before_task is not None:
+        # The task is given a snapshot of the conversation's memory now, so a summary that was left for after the reply (the polling loop does that for chat) has to be written
+        # first: a task started on a stale summary went browsing for a shop it should have said it could not order from (frozen suite, 11/18).
+        try:
+            await before_task()
+        except Exception:  # noqa: BLE001 - a summary that cannot be written is not a reason to drop the task
+            logger.warning("summary before a task failed", exc_info=True)
     # Snapshot conversation memory so the planner has prior context available.
     mem_ctx = memory_context(
         repositories.conversation_memory.get(conversation_id),
         recent_turns=5, max_chars=1600,
-        remembered_facts=repositories.memory_facts.list_all(),
+        remembered_facts=repositories.memory_facts.list_all() if settings is None or settings.memory.enabled else [],
         objective=objective,
-    )
+    ) + recent_artifacts_context(repositories, conversation_id)
+    if settings is None or settings.memory.enabled:
+        mem_ctx += await project_context(repositories, f"{inbound.text or ''} {objective}", getattr(settings, "decision", None))
     # Sent before the task exists so the id of this one message can be written with the task's first
     # record: every later progress update edits it instead of adding a bubble to the chat.
-    progress_anchor = await send_progress(inbound.chat_id, TASK_STARTED_TEXT)
+    started_text = TASK_STARTED_TEXT
+    if route.goal is not None and len(goal_labels) > 1:
+        started_text = f"Carrying on with: {route.goal.objective[:100]}"  # several goals were open: say which one this was taken to be, so a wrong guess is seen at once
+    progress_anchor = await send_progress(inbound.chat_id, started_text)
     task = repositories.tasks.create(
         objective,
         conversation_id=conversation_id,
@@ -538,16 +651,20 @@ async def classify_and_spawn_task(
             "expected_postconditions": [item.value for item in classification.expected_postconditions],
             "original_message_text": inbound.text,
             "memory_context": mem_ctx,
+            **goal_metadata,
             **({"progress_message_id": progress_anchor} if progress_anchor else {}),
             **voice_metadata,
         },
     )
+    goal_routing.record_attempt(repositories, task, route, goal_id, conversation_id=conversation_id, objective=objective, words=inbound.text or "")
     audit.append(
         AuditEventType.TASK_CREATED,
         actor=actor,
         task_id=task.id,
         correlation_id=inbound.correlation_id,
         payload={
+            "goal_id": goal_id,
+            "goal_act": route.act,
             "objective": task.objective,
             "conversation_id": conversation_id,
             "task_type": classification.task_type.value,

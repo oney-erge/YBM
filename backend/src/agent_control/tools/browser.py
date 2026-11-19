@@ -136,11 +136,36 @@ class BrowserAdapter:
         query = str(input_payload.get("query") or input_payload.get("objective") or "").strip()
         if not query:
             raise ValueError("query or objective is required for browser search")
+        page = str(input_payload.get("url") or "").strip()
+        if page and not self._is_a_search_engine(page):
+            return self._search_on_page(client, request, page, query)
         target = client.open_url(_search_url(self.config.search_url_template, query), new_tab=True)
         client.wait(float(input_payload.get("wait_seconds") or self.config.default_wait_seconds))
         output = self._summarize_target(client, target)
         if bool(input_payload.get("open_first_result", False)):
             output = self._open_first_result(client, target, output)
+        return output
+
+    def _is_a_search_engine(self, url: str) -> bool:
+        """Whether the address is a web search engine (so "search" there is the web search it always was) and not a page with a search box of its own."""
+        host = parse.urlparse(_normalize_url(url)).netloc.lower()
+        template_host = parse.urlparse(self.config.search_url_template).netloc.lower()
+        return bool(host) and (host == template_host or any(name in host for name in ("bing.com", "google.com", "duckduckgo.com")))
+
+    def _search_on_page(self, client: "ChromeDevToolsClient", request: ToolCallRequest, page: str, query: str) -> dict[str, Any]:
+        """"Search for X on <page>": open the page, type X into its own search box and press its search button, then read the results the page shows."""
+        input_payload = request.input
+        target = client.open_url(_normalize_url(page), new_tab=True)
+        client.wait(min(float(input_payload.get("wait_seconds") or self.config.default_wait_seconds), 2.0))
+        done = client.search_on_page(target, query)
+        if not (isinstance(done, dict) and done.get("searched")):
+            raise ValueError(
+                f"I found no search box on {page}, so nothing was searched there. Look at the page's fields and buttons "
+                "(browser fill_form with the field's name, then click its button), or search the web without a url."
+            )
+        client.wait(float(input_payload.get("wait_seconds") or self.config.default_wait_seconds))
+        output = self._summarize_target(client, target)
+        output["browser_state"] = {**(output.get("browser_state") or {}), "searched_on_page": done}
         return output
 
     def _research(self, client: "ChromeDevToolsClient", request: ToolCallRequest) -> dict[str, Any]:
@@ -309,6 +334,11 @@ class BrowserAdapter:
         client.wait(float(input_payload.get("wait_seconds") or self.config.default_wait_seconds))
         output = self._summarize_target(client, target)
         output["browser_state"] = {**(output.get("browser_state") or {}), "filled_fields": filled}
+        if any("{{new_password}}" in str(value) for value in fields.values()) and isinstance(filled, dict) and filled.get("filled"):
+            output["summary"] = (
+                f"{output.get('summary') or ''}\nA password was made for this site and saved in the vault. Do not ask the person about it and do not say it cannot be shown: "
+                "the system sends the person the username and the password in a message of its own right after your answer. Say the account is ready and that the login follows."
+            ).strip()
         filled_items = filled.get("filled") if isinstance(filled, dict) else None
         if isinstance(filled_items, list) and not filled_items:
             summary = str(output.get("summary") or "")
@@ -424,9 +454,18 @@ class BrowserAdapter:
             max_chars=self.config.max_summary_chars,
         )
         forms = page.get("forms") if isinstance(page.get("forms"), list) else []
+        buttons = [str(item) for item in page.get("buttons") or [] if str(item).strip()] if isinstance(page.get("buttons"), list) else []
         output["forms"] = forms
-        output["browser_state"] = {**(output.get("browser_state") or {}), "forms_detected": len(forms)}
-        output["summary"] = f"Detected {len(forms)} form(s) on {output.get('url') or 'the page'}."
+        output["buttons"] = buttons
+        output["browser_state"] = {**(output.get("browser_state") or {}), "forms_detected": len(forms), "buttons": buttons}
+        fields = [item for form in forms if isinstance(form, dict) for item in form.get("inputs") or []]
+        detail = f" Fields: {', '.join(str(f.get('name') or f.get('id') or f.get('placeholder') or f.get('ariaLabel') or f.get('type')) for f in fields[:12] if isinstance(f, dict))}." if fields else ""
+        page_says = str(output.get("summary") or "").strip()
+        output["summary"] = (
+            f"Detected {len(forms)} form(s) on {output.get('url') or 'the page'}.{detail}"
+            + (f" Buttons: {', '.join(buttons[:10])}." if buttons else "")
+            + (f"\n\nWhat the page says now:\n{page_says}" if page_says else "")
+        )
         return output
 
     def _summarize_target(self, client: "ChromeDevToolsClient", target: "BrowserTarget") -> dict[str, Any]:
@@ -631,6 +670,10 @@ class ChromeDevToolsClient:
         value = self._evaluate_value(target, script)
         return value if isinstance(value, dict) else {"clicked": False}
 
+    def search_on_page(self, target: BrowserTarget, query: str) -> dict[str, Any]:
+        value = self._evaluate_value(target, _site_search_script(query))
+        return value if isinstance(value, dict) else {"searched": False}
+
     def fill_form(
         self,
         target: BrowserTarget,
@@ -825,6 +868,9 @@ def _page_summary_text(page: dict[str, Any]) -> str:
     forms = page.get("forms") if isinstance(page.get("forms"), list) else []
     if forms:
         lines.append(f"Forms detected: {len(forms)}")
+    buttons = page.get("buttons") if isinstance(page.get("buttons"), list) else []
+    if buttons:
+        lines.append("Buttons: " + "; ".join(str(item) for item in buttons[:12]))
     text = str(page.get("text") or "").strip()
     if text:
         lines.append("")
@@ -865,18 +911,26 @@ def _summary_script(max_chars: int) -> str:
     }})
     .filter(Boolean)
     .slice(0, 40);
+  const describe = (node) => {{
+    return {{
+      name: node.getAttribute('name') || '',
+      id: node.id || '',
+      placeholder: node.getAttribute('placeholder') || '',
+      ariaLabel: node.getAttribute('aria-label') || '',
+      type: node.getAttribute('type') || node.tagName.toLowerCase()
+    }};
+  }};
   const forms = Array.from(document.querySelectorAll('form')).map((form) => {{
-    const inputs = Array.from(form.querySelectorAll('input, textarea, select')).map((node) => {{
-      return {{
-        name: node.getAttribute('name') || '',
-        id: node.id || '',
-        placeholder: node.getAttribute('placeholder') || '',
-        ariaLabel: node.getAttribute('aria-label') || '',
-        type: node.getAttribute('type') || node.tagName.toLowerCase()
-      }};
-    }});
+    const inputs = Array.from(form.querySelectorAll('input, textarea, select')).map(describe);
     return {{ action: form.action || '', method: form.method || '', inputs }};
   }}).slice(0, 8);
+  // Inputs that are not inside a form (a search box with its own button) are fields too: the fill tool finds them by name, id, placeholder or label.
+  const loose = Array.from(document.querySelectorAll('input, textarea, select')).filter((node) => !node.closest('form') && node.type !== 'hidden').map(describe).slice(0, 20);
+  if (loose.length) forms.push({{ action: '', method: '', inputs: loose, not_in_a_form: true }});
+  const buttons = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], input[type="button"]'))
+    .map((node) => normalize(node.innerText || node.value || node.getAttribute('aria-label')))
+    .filter(Boolean)
+    .slice(0, 15);
   return {{
     url: location.href,
     title: document.title || '',
@@ -884,6 +938,7 @@ def _summary_script(max_chars: int) -> str:
     headings,
     links,
     forms,
+    buttons,
     text: normalize(document.body ? document.body.innerText : '').slice(0, {int(max_chars)})
   }};
 }})()"""
@@ -898,8 +953,9 @@ def _click_script(selector: str | None, text: str | None) -> str:
   const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
   let node = null;
   try {{ node = selector ? document.querySelector(selector) : null; }} catch (error) {{ node = null; }}
-  // Words in the selector slot ("Sign me up") are a button's visible text, not CSS: try them as text when no element matches.
-  const spoken = !wantedText && selector && /^[\\w'-]+( [\\w'-]+)+$/.test(selector) ? normalize(selector) : null;
+  // Words in the selector slot ("Sign me up", "Checkout", "text=Checkout") are a button's visible text, not CSS: try them as text when no element matches.
+  const prefixed = !wantedText && selector ? /^text\\s*=\\s*["']?(.+?)["']?$/i.exec(selector.trim()) : null;
+  const spoken = !wantedText && selector && prefixed ? normalize(prefixed[1]) : (!wantedText && selector && /^[\\w'-]+( [\\w'-]+)*$/.test(selector) ? normalize(selector) : null);
   const textToFind = wantedText || spoken;
   if (!node && textToFind) {{
     node = Array.from(document.querySelectorAll('button,a,input,[role="button"]'))
@@ -909,6 +965,63 @@ def _click_script(selector: str | None, text: str | None) -> str:
   node.click();
   return {{ clicked: true, tag: node.tagName, text: (node.innerText || node.value || '').slice(0, 160) }};
 }})()"""
+
+
+def _site_search_script(query: str) -> str:
+    """Types the query into the page's own search box and presses its search button (a form's submit, a button next to the box, or Enter)."""
+    return """(() => {
+  const query = __QUERY__;
+  const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const searchWords = /search|query|keyword|find|lookup/i;
+  const buttonWords = /search|find|go|lookup/i;
+  const visible = (node) => node.getClientRects().length > 0;
+  const fields = Array.from(document.querySelectorAll('input, textarea')).filter((node) => {
+    const type = (node.type || 'text').toLowerCase();
+    return visible(node) && !['hidden', 'checkbox', 'radio', 'password', 'submit', 'button', 'file', 'image', 'reset', 'range', 'color'].includes(type);
+  });
+  const score = (node) => {
+    let points = 0;
+    if ((node.type || '').toLowerCase() === 'search') points += 4;
+    const words = [node.name, node.id, node.placeholder, node.getAttribute('aria-label'), node.title].join(' ');
+    if (searchWords.test(words) || /^q$/i.test(node.name || '')) points += 3;
+    const form = node.closest('form');
+    if (form && (form.getAttribute('role') === 'search' || searchWords.test([form.id, form.action, form.className].join(' ')))) points += 2;
+    if (node.closest('[role="search"]')) points += 2;
+    return points;
+  };
+  const ranked = fields.map((node) => [score(node), node]).filter((pair) => pair[0] > 0).sort((a, b) => b[0] - a[0]);
+  // A page's only text box, with a button named Search, Go or Find beside it, is its search box even when nothing else says so.
+  const guessed = !ranked.length && fields.length === 1;
+  if (!ranked.length && !guessed) return { searched: false, reason: 'no_search_box' };
+  const box = guessed ? fields[0] : ranked[0][1];
+  if (guessed) {
+    let near = box.closest('form') || box.parentElement;
+    let named = false;
+    for (let depth = 0; near && depth < 4 && !named; depth += 1, near = near.parentElement) {
+      named = Array.from(near.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).some((item) => visible(item) && buttonWords.test(normalize(item.innerText || item.value || item.getAttribute('aria-label') || item.title)));
+    }
+    if (!named) return { searched: false, reason: 'no_search_box' };
+  }
+  box.focus();
+  const proto = box.tagName === 'TEXTAREA' ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  Object.getOwnPropertyDescriptor(proto, 'value').set.call(box, query);
+  box.dispatchEvent(new Event('input', { bubbles: true }));
+  box.dispatchEvent(new Event('change', { bubbles: true }));
+  const label = (node) => normalize(node.innerText || node.value || node.getAttribute('aria-label') || node.title);
+  const buttonsIn = (root) => Array.from(root.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).filter(visible);
+  let scope = box.closest('form') || box.parentElement;
+  let button = null;
+  for (let depth = 0; scope && depth < 4 && !button; depth += 1, scope = scope.parentElement) {
+    const buttons = buttonsIn(scope);
+    button = buttons.find((item) => buttonWords.test(label(item))) || (scope.tagName === 'FORM' ? buttons[0] : null) || null;
+  }
+  const name = box.name || box.id || box.type;
+  if (button) { button.click(); return { searched: true, field: name, pressed: label(button) }; }
+  const form = box.closest('form');
+  if (form) { if (form.requestSubmit) form.requestSubmit(); else form.submit(); return { searched: true, field: name, pressed: 'form' }; }
+  for (const kind of ['keydown', 'keypress', 'keyup']) box.dispatchEvent(new KeyboardEvent(kind, { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true }));
+  return { searched: true, field: name, pressed: 'Enter' };
+})()""".replace("__QUERY__", json.dumps(query))
 
 
 def _fill_form_script(fields: dict[str, str], *, submit: bool, submit_selector: str | None) -> str:
@@ -977,12 +1090,26 @@ def _fill_form_script(fields: dict[str, str], *, submit: bool, submit_selector: 
     node.blur();
     filled.push(key);
   }}
+  let pressed = false;
   if (submit) {{
-    const submitNode = submitSelector ? document.querySelector(submitSelector) : document.querySelector('button[type="submit"], input[type="submit"]');
-    if (submitNode) submitNode.click();
-    else if (document.forms[0]) document.forms[0].requestSubmit();
+    const pressable = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).filter((item) => item.getClientRects().length > 0);
+    const label = (item) => normalize(item.innerText || item.value || item.getAttribute('aria-label') || item.title);
+    let submitNode = null;
+    if (submitSelector) {{
+      // The model may give a CSS selector or the button's words ("Search", "text=Search"); both mean the same button.
+      try {{ submitNode = document.querySelector(submitSelector); }} catch (error) {{ submitNode = null; }}
+      if (!submitNode) {{
+        const wantedWords = normalize(submitSelector.replace(/^\\s*text\\s*=\\s*/i, '').replace(/^["']|["']$/g, ''));
+        submitNode = pressable.find((item) => label(item) === wantedWords) || pressable.find((item) => label(item).includes(wantedWords)) || null;
+      }}
+    }}
+    if (!submitNode) submitNode = document.querySelector('button[type="submit"], input[type="submit"]');
+    // A page without a form (a search box and a button side by side): the button named for what the fields are for.
+    if (!submitNode) submitNode = pressable.find((item) => /^(search|find|go|submit|send|save|ok|continue|next|sign in|log in|login|sign up|create)/.test(label(item))) || null;
+    if (submitNode) {{ submitNode.click(); pressed = true; }}
+    else if (document.forms[0]) {{ document.forms[0].requestSubmit(); pressed = true; }}
   }}
-  return {{ filled, submitted: submit }};
+  return {{ filled, submitted: submit && pressed, ...(submit && !pressed ? {{ submit_note: 'No button to press was found, so nothing was submitted. Click the page button by its words.' }} : {{}}) }};
 }})()"""
 
 

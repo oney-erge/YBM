@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import re
+from pathlib import Path, PureWindowsPath
 from typing import Any
 
 from agent_control import gaming
@@ -119,9 +120,13 @@ class ConversationMemoryService:
         summarization_timeout_seconds: int = 20,
         summarize_in_background: bool = False,
         summarize_delay_seconds: float = 15.0,
+        learner: Any = None,
     ) -> None:
         self.repositories = repositories
         self.provider = provider
+        # Keeps what the owner says about their life as facts (channels/memory_learning.py); None when `memory.auto_remember` is off.
+        self.learner = learner
+        self._learned: set[tuple[str, str]] = set()
         self.max_summary_chars = max_summary_chars
         self.max_recent_turns = max_recent_turns
         self.summarization_timeout_seconds = summarization_timeout_seconds
@@ -134,8 +139,8 @@ class ConversationMemoryService:
         self._summarize_again: set[str] = set()
         self._background: set[asyncio.Future[None]] = set()
 
-    async def update_from_user_message(self, conversation_id: str, text: str) -> dict[str, Any]:
-        return await self.update_from_turn(conversation_id, "user", text)
+    async def update_from_user_message(self, conversation_id: str, text: str, *, summarize: bool = True) -> dict[str, Any]:
+        return await self.update_from_turn(conversation_id, "user", text, summarize=summarize)
 
     async def update_from_assistant_message(self, conversation_id: str, text: str) -> dict[str, Any]:
         return await self.update_from_turn(conversation_id, "assistant", text)
@@ -143,7 +148,7 @@ class ConversationMemoryService:
     async def update_from_task_summary(self, conversation_id: str, text: str) -> dict[str, Any]:
         return await self.update_from_turn(conversation_id, "task", text)
 
-    async def update_from_turn(self, conversation_id: str, role: str, text: str) -> dict[str, Any]:
+    async def update_from_turn(self, conversation_id: str, role: str, text: str, *, summarize: bool = True) -> dict[str, Any]:
         existing = self.repositories.conversation_memory.get(conversation_id)
         state = dict((existing or {}).get("facts") or {})
         turns = _recent_turns(state)
@@ -154,7 +159,11 @@ class ConversationMemoryService:
         state["strategy"] = "rolling_summary_with_recent_turns"
 
         existing_summary = str((existing or {}).get("summary") or DEFAULT_SUMMARY)
-        if gaming.is_on():
+        if not summarize:
+            # The turn is kept at once and the summary is written after the reply is sent (refresh_summary): a model call that writes a summary is 5 to 13 seconds
+            # that a person waits through before the first word of the answer, and nothing in this message's own handling needs it.
+            summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
+        elif gaming.is_on():
             # The person said they are gaming: no model is loaded for a summary. The recent turns are kept and the next message after
             # gaming mode ends re-summarizes. (Found live: a held message reloaded the model through this call, 0.8 GB to 6.2 GB of video memory.)
             summary = _fallback_summary(existing_summary, turns, self.max_summary_chars)
@@ -170,6 +179,37 @@ class ConversationMemoryService:
             summary = await self._summarize(existing_summary, turns)
         state["summary"] = summary
         return self.repositories.conversation_memory.upsert(conversation_id, summary, state)
+
+    async def refresh_summary(self, conversation_id: str) -> None:
+        """Write the model's summary of the conversation now, for the turns kept so far. Called after the reply has been sent, so the next message is read with it.
+
+        Never raises, and does nothing while the person is gaming or a task of this conversation is using the model: the summary is a convenience, and one that has to wait is
+        simply written by the next call.
+        """
+        try:
+            record = self.repositories.conversation_memory.get(conversation_id)
+            if record is None or self.provider is None or gaming.is_on() or self._task_in_flight(conversation_id):
+                return
+            turns = _recent_turns(dict(record.get("facts") or {}))
+            summary = await self._summarize(str(record.get("summary") or DEFAULT_SUMMARY), turns)
+            latest = self.repositories.conversation_memory.get(conversation_id) or record  # turns that arrived meanwhile are kept; only the summary is replaced
+            self.repositories.conversation_memory.upsert(conversation_id, summary, dict(latest.get("facts") or {}))
+            await self._learn_from(conversation_id, turns)
+        except Exception:  # noqa: BLE001 - a summary is never worth a failed message
+            logger.warning("conversation summary refresh failed", exc_info=True)
+
+    async def _learn_from(self, conversation_id: str, turns: list[dict[str, str]]) -> None:
+        """Keep what the owner just said about their life, once per message, after the reply."""
+        if self.learner is None:
+            return
+        said = next((turn["text"] for turn in reversed(turns) if turn.get("role") == "user"), "")
+        key = (conversation_id, said)
+        if not said or key in self._learned:
+            return
+        self._learned.add(key)
+        if len(self._learned) > 200:
+            self._learned.clear()
+        await self.learner.learn(said, conversation_id=conversation_id)
 
     def _summarize_later(self, conversation_id: str) -> None:
         """Summarize this conversation after the reply, at most one run at a time per conversation."""
@@ -270,6 +310,28 @@ def memory_context(
         return facts_block + _clean_summary(summary, max_chars)
     recent = "\n".join(f"- {turn['role']}: {turn['text']}" for turn in turns)
     return facts_block + _clean_summary(f"{summary}\nRecent turns:\n{recent}", max_chars)
+
+
+def recent_artifacts_context(repositories: Repositories, conversation_id: str | None) -> str:
+    """Keep recorded artifact identities verbatim instead of reconstructing paths from a summary."""
+    if not conversation_id:
+        return ""
+    artifacts = repositories.artifacts.list_recent_for_conversation(conversation_id, limit=3)
+    lines = []
+    for artifact in artifacts:
+        uri = str(artifact.uri or "")
+        # Avoid presenting a partial path or a multiline value as an authoritative identifier.
+        if (not uri or len(uri) > 400 or "\n" in uri or "\r" in uri
+                or not (Path(uri).is_absolute() or PureWindowsPath(uri).is_absolute())):
+            continue
+        lines.append(f"- {artifact.id}: {uri}")
+    if not lines:
+        return ""
+    return (
+        "\n\nRecent artifacts recorded in this conversation, newest first (paths may no longer exist):\n"
+        + "\n".join(lines)
+        + "\nUse an exact identifier; if the intended artifact is ambiguous, ask. Recheck it before use."
+    )
 
 
 def _summary_system_prompt(max_summary_chars: int) -> str:

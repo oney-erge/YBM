@@ -27,6 +27,31 @@ def _manifest(library: Path, app_id: int, name: str, size: int = 2 * 1024**3) ->
     )
 
 
+def test_displays_report_only_observed_desktop_devices_and_avoid_ambiguous_names(monkeypatch):
+    monkeypatch.setattr(system_inventory.sys, "platform", "win32")
+    monkeypatch.setattr(system_inventory, "_windows_desktop_displays", lambda: [
+        {"device": "DISPLAY1", "adapter": "GPU", "name": "Generic PnP Monitor", "monitor_id": r"MONITOR\ABC123\1", "primary": True},
+        {"device": "DISPLAY2", "adapter": "GPU", "name": "Generic PnP Monitor", "monitor_id": r"MONITOR\DEF456\2", "primary": False},
+    ])
+    monkeypatch.setattr(system_inventory, "_windows_monitor_names", lambda: [
+        {"instance": r"DISPLAY\ABC123\1", "name": "Living room display"},
+        {"instance": r"DISPLAY\DEF456\1", "name": "First"},
+        {"instance": r"DISPLAY\DEF456\2", "name": "Second"},
+    ])
+    result = _run(SystemInventoryAdapter([]), operation="displays")
+    assert result.output["count"] == 2
+    assert result.output["items"][0]["name"] == "Living room display"
+    assert result.output["items"][1]["name"] == "Generic PnP Monitor"
+    assert "does not discover network TVs" in result.output["summary"] and "verify" in result.output["summary"]
+    assert SystemInventoryInput(operation="displays").operation == "displays"
+
+
+def test_display_inspection_says_when_the_platform_is_unsupported(monkeypatch):
+    monkeypatch.setattr(system_inventory.sys, "platform", "unsupported")
+    result = _run(SystemInventoryAdapter([]), operation="displays")
+    assert result.output["count"] == 0 and "not available" in result.output["summary"]
+
+
 @pytest.fixture
 def steam(tmp_path, monkeypatch):
     root = tmp_path / "Steam"

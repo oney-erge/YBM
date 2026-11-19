@@ -317,13 +317,103 @@ async def test_a_yes_becomes_a_claude_code_call_that_carries_the_request_and_wha
 
 
 @pytest.mark.asyncio
-async def test_a_no_stops_the_offer_for_good_and_tells_the_model_to_answer_with_what_it_has(tmp_path):
+async def test_a_no_stops_the_offer_and_preserves_a_bounded_local_attempt(tmp_path):
     repos, audit = make_repos(tmp_path)
     task = _answered(repos, _task_with_history(repos, "Find my annual thing", [_empty("budget")]), "no")
     worker = _worker(repos, audit, _Seen([]))
     result = worker._ladder_step(task, list(task.metadata["operator_history"]), "step_1")
     assert result.status == TaskStatus.RUNNING and result.metadata["claude_code_offer"]["state"] == "declined"
     assert result.metadata["operator_history"][-1]["hint_id"] == "declined"
+    assert "materially different local approach" in result.metadata["operator_history"][-1]["error"]
+    assert result.metadata["local_recovery_step_limit"] == worker.operator_max_steps + 3
+
+
+def test_proactive_recovery_offers_one_local_alternative_within_the_existing_budget(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    history = [_read_failed() for _ in range(3)]
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    worker = _worker(repos, audit, _Seen([]))
+    result = worker._offer_finish_or_block(task, history, called="filesystem.manage:read_file", blocked_message="stuck")
+    marker = result.metadata["operator_history"][-1]
+    assert marker["hint_id"] == "alternative_after_repeat" and "materially different" in marker["error"]
+    assert "local_recovery_step_limit" not in result.metadata
+    again = worker._offer_finish_or_block(result, result.metadata["operator_history"], called="filesystem.manage:read_file", blocked_message="stuck")
+    assert again.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+
+
+def test_proactive_recovery_does_not_extend_an_exhausted_budget(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    history = [_read_failed() for _ in range(3)]
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    worker = _worker(repos, audit, _Seen([]))
+    worker.operator_max_steps = 3
+    result = worker._offer_finish_or_block(task, history, called="filesystem.manage:read_file", blocked_message="stuck")
+    assert result.metadata["operator_history"][-1]["tool_name"] == "_stuck_check"
+
+
+@pytest.mark.asyncio
+async def test_proactive_recovery_can_run_a_different_permitted_tool(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    history = [{"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"} for _ in range(3)]
+    task = _task_with_history(repos, "Investigate a device", history, initiative_level=4)
+    operator = _Seen([OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage",
+                                       tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW)])
+    worker = _worker(repos, audit, operator)
+    recovered = worker._offer_finish_or_block(task, history, called="other.tool", blocked_message="stuck")
+    result = await worker.process_task(recovered.id)
+    assert any(entry.get("tool_name") == "filesystem.manage" for entry in result.metadata["operator_history"])
+    assert operator.finish_only_calls == [False]
+
+
+@pytest.mark.asyncio
+async def test_declined_offer_after_budget_allows_a_different_local_call(tmp_path, monkeypatch):
+    repos, audit = make_repos(tmp_path)
+    prior = {"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"}
+    stuck = {"tool_name": "_stuck_check", "status": "stuck_refused", "error": "budget"}
+    task = _answered(repos, _task_with_history(repos, "Investigate a device", [prior, stuck]), "no")
+    operator = _Seen([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW),
+    ])
+    worker = _worker(repos, audit, operator)
+    worker.operator_max_steps = 1
+    monkeypatch.setattr(worker, "_claude_code_ready", lambda: True)
+
+    continued = await worker.process_task(task.id)
+    assert continued.metadata["claude_code_offer"]["state"] == "declined"
+    assert continued.metadata["local_recovery_step_limit"] == 4
+    after_call = await worker.process_task(task.id)
+
+    assert after_call.status == TaskStatus.RUNNING
+    assert any(entry.get("tool_name") == "filesystem.manage" for entry in after_call.metadata["operator_history"])
+    assert operator.finish_only_calls == [False]
+    assert not any(entry.get("tool_name") == "coding.agent" for entry in after_call.metadata["operator_history"])
+
+
+@pytest.mark.asyncio
+async def test_local_continuation_still_has_a_bounded_budget(tmp_path, monkeypatch):
+    repos, audit = make_repos(tmp_path)
+    prior = {"tool_name": "other.tool", "input": {}, "status": "failed", "error": "unavailable"}
+    old_stop = {"tool_name": "_stuck_check", "status": "stuck_refused", "error": "budget"}
+    task = _answered(repos, _task_with_history(repos, "Investigate a device", [prior, old_stop]), "no")
+    operator = _Seen([
+        OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={"operation": "inspect_folder"}, risk_level=RiskLevel.LOW),
+    ])
+    worker = _worker(repos, audit, operator)
+    worker.operator_max_steps = 1
+    monkeypatch.setattr(worker, "_claude_code_ready", lambda: True)
+    continued = await worker.process_task(task.id)
+    history = list(continued.metadata["operator_history"])
+    history.extend({"tool_name": f"local.{i}", "input": {}, "status": "failed"} for i in range(3))
+    repos.tasks.update_metadata(task.id, {**continued.metadata, "operator_history": history}, TaskStatus.RUNNING)
+
+    offered = await worker.process_task(task.id)
+    assert offered.metadata["operator_history"][-1]["status"] == "stuck"
+    refused = await worker.process_task(task.id)
+    assert refused.metadata["operator_history"][-1]["status"] == "stuck_refused"
+    blocked = await worker.process_task(task.id)
+    assert blocked.status == TaskStatus.BLOCKED
+    assert blocked.metadata["claude_code_offer"]["state"] == "declined"
+    assert not any(entry.get("tool_name") == "filesystem.manage" for entry in blocked.metadata["operator_history"])
 
 
 @pytest.mark.asyncio
@@ -614,3 +704,48 @@ async def test_a_final_answer_that_writes_out_a_wrong_total_is_sent_back_once_wi
     assert last["tool_name"] == "_number_check" and last["hint_id"] == "sum" and "which is 15" in last["error"]
     second = await worker.process_task(first.id)
     assert second.status == TaskStatus.COMPLETED and second.metadata["synthesized_answer"].startswith("15 lines")
+
+
+@pytest.mark.asyncio
+async def test_at_the_autonomous_level_a_question_is_the_assistants_to_answer_twice_and_then_goes_through(tmp_path):
+    """11/16: "Google Cast, Chromecast or PyChromecast?" went to the person, who said "you choose". 11/19: "do not ask me"."""
+    repos, audit = make_repos(tmp_path)
+    task = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
+    choice = OperatorDecision(action=OperatorAction.ASK_USER, question="Which casting library should I use?", options=["pychromecast", "google cast sdk", "catt"])
+    worker = _worker(repos, audit, _Seen([choice, choice, choice]))
+    first = await worker.process_task(task.id)
+    assert first.status == TaskStatus.RUNNING  # not asked: told to choose
+    entry = [item for item in first.metadata["operator_history"] if item.get("tool_name") == "_clarification_check"][-1]
+    assert "At the autonomous level the choices are yours" in entry["error"] and "pychromecast" in entry["error"]
+    assert first.metadata["operator_optional_question_recovery_count"] == 1
+    # at level 2 (the default) the same question goes to the person, as it always did
+    balanced = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=2)
+    assert (await _worker(repos, audit, _Seen([choice])).process_task(balanced.id)).status == TaskStatus.CLARIFYING
+    # a question with no options is sent back too (nothing is asked that the assistant can decide), twice; the third time it is a fact only the person has and it goes through
+    fact = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
+    ask = OperatorDecision(action=OperatorAction.ASK_USER, question="What is the name of the TV in the living room?")
+    worker = _worker(repos, audit, _Seen([ask, ask, ask]))
+    one = await worker.process_task(fact.id)
+    two = await worker.process_task(one.id)
+    three = await worker.process_task(two.id)
+    assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING and three.status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
+async def test_a_question_the_person_already_answered_is_sent_back_twice_even_after_the_autonomous_level_used_its_send_backs(tmp_path):
+    """11/19, "Call my mom and tell her I am late": "text or email?" was sent back twice, asked, answered, then asked again and waited."""
+    repos, audit = make_repos(tmp_path)
+    question = "I cannot place a phone call directly. I can either send a text message or compose an email to your mom. Which would you prefer?"
+    task = _task_with_history(
+        repos, "Call my mom and tell her I am late for dinner.", [], initiative_level=3,
+        operator_optional_question_recovery_count=2, clarify_count=1,
+        clarification_answer="Yes, please go ahead with what you proposed.", answered_clarifying_question=question,
+    )
+    again = OperatorDecision(action=OperatorAction.ASK_USER, question=question.replace("Which would you prefer?", "Which one?"), options=["Send a text message", "Compose an email"])
+    worker = _worker(repos, audit, _Seen([again, again, again]))
+    one = await worker.process_task(task.id)
+    two = await worker.process_task(one.id)
+    three = await worker.process_task(two.id)
+    assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING  # the same question is not let through
+    assert one.metadata["operator_repeated_question_recovery_count"] == 1 and two.metadata["operator_repeated_question_recovery_count"] == 2
+    assert three.status == TaskStatus.CLARIFYING  # bounded: a model that will not stop asking is not looped forever

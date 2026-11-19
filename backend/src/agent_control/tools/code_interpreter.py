@@ -599,6 +599,7 @@ class CodeInterpreterAdapter:
             raise ApprovalRequired(reason)
         before_snapshot = _file_snapshot(workspace, max_files=self.config.max_files_listed)
         before = sorted(before_snapshot)
+        named_before = {folder: _named_folder_snapshot(folder, max_files=self.config.max_files_listed) for folder in _folders_the_code_names(code, workspace)}
         script_path = _safe_child_path(workspace, str(request.input.get("script_name") or "script.py"))
         if script_path.suffix.lower() != ".py":
             script_path = script_path.with_suffix(".py")
@@ -636,7 +637,10 @@ class CodeInterpreterAdapter:
             if name in before_snapshot and before_snapshot[name] != metadata
         )
         deleted = sorted(set(before_snapshot) - set(after_snapshot))
+        changed_elsewhere = _changes_in_named_folders(named_before, max_files=self.config.max_files_listed)
         summary = _summary(execution.returncode, stdout, stderr, created, self.installable)
+        if changed_elsewhere:
+            summary = f"{summary}\nAlso wrote or changed outside the workspace: " + "; ".join(changed_elsewhere[:6])
         if backend_fallback_warning:
             summary = f"{summary}\nWarning: {backend_fallback_warning}"
         artifact_ids = self._register_created_artifacts(request.task_id, workspace, created)
@@ -652,6 +656,7 @@ class CodeInterpreterAdapter:
             "files_created": created,
             "files_modified": modified,
             "files_deleted": deleted,
+            "changed_paths": changed_elsewhere,
             "file_previews": [{"path": name, "content": text} for name, text in file_previews],
             "artifact_ids": artifact_ids,
             "stdout": stdout,
@@ -1228,6 +1233,55 @@ def _relative_files(workspace: Path, *, max_files: int) -> list[str]:
         if len(files) >= max_files:
             break
     return files
+
+
+_ABSOLUTE_PATH = re.compile(
+    r"""(?:[A-Za-z]:[\\/](?:[^\\/"'\r\n<>|?*]+[\\/])*[^\\/"'\r\n<>|?*]*)|(?:(?<![\w:/.])/(?:[^/\s"'<>|?*]+/)+[^/\s"'<>|?*]*)"""
+)
+#: Places a script may name that are not where a person's files go; they are never looked at.
+_SYSTEM_FOLDERS = frozenset({
+    "windows", "program files", "program files (x86)", "programdata", "$recycle.bin", "system volume information",
+    "usr", "etc", "bin", "sbin", "lib", "lib64", "var", "proc", "sys", "dev", "opt", "snap", "boot", "run",
+})
+
+
+def _folders_the_code_names(code: str, workspace: Path) -> list[Path]:
+    """The folders (at least two levels down) that the code names by absolute path, as they are or their parent for a file path. A script writes where its own code says."""
+    found: list[Path] = []
+    for match in _ABSOLUTE_PATH.findall(code.replace("\\\\", "\\")):
+        candidate = Path(match.strip().rstrip("\\/"))
+        folder = candidate if candidate.suffix == "" else candidate.parent
+        top = folder.parts[1].lower() if len(folder.parts) > 1 else ""
+        if len(folder.parts) < 3 or top in _SYSTEM_FOLDERS or folder == workspace or workspace in folder.parents or folder in found:
+            continue
+        found.append(folder)
+    return found[:3]
+
+
+def _named_folder_snapshot(folder: Path, *, max_files: int) -> dict[str, tuple[int, int]]:
+    """The files directly in a folder the code named, with size and time. Not its subfolders: a script writes where it says, and a walk of a whole profile would cost more than it shows."""
+    snapshot: dict[str, tuple[int, int]] = {}
+    try:
+        for entry in folder.iterdir():
+            if entry.is_file():
+                stat = entry.stat()
+                snapshot[entry.name] = (stat.st_size, stat.st_mtime_ns)
+                if len(snapshot) >= max_files:
+                    break
+    except OSError:
+        return {}
+    return snapshot
+
+
+def _changes_in_named_folders(before: dict[Path, dict[str, tuple[int, int]]], *, max_files: int) -> list[str]:
+    """Full paths of the files that appeared or changed in the folders the code named, from a snapshot taken before the run."""
+    changed: list[str] = []
+    for folder, snapshot in before.items():
+        after = _named_folder_snapshot(folder, max_files=max_files)
+        for name, metadata in after.items():
+            if snapshot.get(name) != metadata:
+                changed.append(str(folder / name))
+    return changed[:200]
 
 
 def _file_snapshot(workspace: Path, *, max_files: int) -> dict[str, tuple[int, int]]:

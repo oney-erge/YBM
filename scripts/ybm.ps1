@@ -726,7 +726,14 @@ function Invoke-YbmTest {
   Remove-Item Env:AGENT_ADMIN_TOKEN -ErrorAction SilentlyContinue
   Push-Location (Join-Path $Script:YbmRoot "backend")
   try {
-    & (Get-YbmPython) -m pytest "tests" @Argv
+    # In parallel when pytest-xdist is installed (the suite is about 35 seconds on 16 cores; one process takes many minutes), unless the caller chose -n.
+    $parallel = @()
+    if (-not ($Argv | Where-Object { $_ -like "-n*" -or $_ -eq "--numprocesses" })) {
+      & (Get-YbmPython) -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('xdist') else 1)"
+      if ($LASTEXITCODE -eq 0) { $parallel = @("-n", "auto", "--dist", "loadfile") }
+      else { Write-Host "pytest-xdist is not installed, so the tests run in one process. Run 'ybm setup' to install it." }
+    }
+    & (Get-YbmPython) -m pytest "tests" @parallel @Argv
     $testExitCode = $LASTEXITCODE
   } finally {
     Pop-Location

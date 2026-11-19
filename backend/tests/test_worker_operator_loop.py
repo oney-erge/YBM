@@ -8,6 +8,7 @@ See orchestration/operator.py's module docstring for the design.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 import threading
 
@@ -147,6 +148,29 @@ class QueueOperator:
         if self._fallback_flags is not None:
             self.last_fallback_used = self._fallback_flags.pop(0)
         return self.decisions.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_initiative_is_snapshotted_and_does_not_grant_tool_permissions(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Inspect a folder")
+
+    class SeenOperator(QueueOperator):
+        async def decide(self, objective, config_context, history, **kwargs):
+            self.context = config_context
+            return await super().decide(objective, config_context, history, **kwargs)
+
+    operator = SeenOperator([OperatorDecision(action=OperatorAction.BLOCKED, reason="test")])
+    worker = TaskWorker(repos, audit, executor=_executor(_settings(), audit, repos), operator=operator, initiative_level=3)
+    result = await worker.process_task(task.id)
+    assert result.metadata["initiative_level"] == 3
+    assert "Decision preference (Autonomous, level 3 of 3)" in operator.context
+    assert "does not grant access" in operator.context
+
+    # A reconstructed worker with new settings keeps the task's stored preference.
+    assert "Decision preference (Autonomous, level 3 of 3)" in TaskWorker(repos, audit, initiative_level=1)._planner_context(
+        metadata=result.metadata
+    )
 
 
 class QueueAuditor:
@@ -2468,6 +2492,33 @@ def test_operator_call_normalization_accepts_common_filesystem_dialect() -> None
     assert read_input == {"operation": "read_file", "path": str(Path("documents") / "report.md")}
 
 
+def test_a_file_name_with_its_folder_is_written_inside_that_folder() -> None:
+    """11/18 frozen suite (h4_three_files): root + a bare name wrote next to the program, not in the folder the person named."""
+    definition = ToolDefinition(
+        name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test",
+        operations=("inspect_folder", "search", "read_file", "write_text_file"),
+    )
+    folder = str(Path("C:/work/out") if os.name == "nt" else Path("/work/out"))
+
+    _, spelled_file_path = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "file_path": "a.txt", "content": "alpha"}, {definition.name: definition},
+    )
+    _, spelled_path = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "path": "b.txt", "content": "beta"}, {definition.name: definition},
+    )
+    _, already_whole = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "path": str(Path(folder) / "c.txt"), "content": "gamma"}, {definition.name: definition},
+    )
+
+    assert spelled_file_path["path"] == str(Path(folder) / "a.txt") and "file_path" not in spelled_file_path
+    assert spelled_path["path"] == str(Path(folder) / "b.txt")
+    assert already_whole["path"] == str(Path(folder) / "c.txt")  # a whole path is left as it is
+    _, with_folders = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "path": ".agent_control/out/notes.txt", "content": "x"}, {definition.name: definition},
+    )
+    assert with_folders["path"] == ".agent_control/out/notes.txt"  # a path with folders in it is not joined to a root it was not written for
+
+
 @pytest.mark.asyncio
 async def test_operator_loop_audit_replaces_final_answer_with_grounded_synthesis(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
@@ -2517,6 +2568,45 @@ async def test_operator_loop_audit_gap_continues_loop_instead_of_completing(tmp_
     assert result.metadata["operator_history"][-1]["status"] == "audit_gap"
     assert "only 2 of 5" in result.metadata["operator_history"][-1]["error"]
     assert "synthesized_answer" not in result.metadata
+
+
+@pytest.mark.asyncio
+async def test_an_honest_cannot_sent_back_once_is_the_answer_the_second_time(tmp_path) -> None:
+    """Frozen suite v_cannot_order (11/18): the audit found no order in the tool output, twice, and the model asked "which shop?" until the task was cancelled."""
+    cannot = "I cannot order a pizza: I have no way to place orders or pay. Jet's Pizza and Domino's are the nearest shops."
+
+    async def run(declines: bool):
+        repos, audit = make_repos(tmp_path / str(declines))
+        task = repos.tasks.create("Order me a large pizza from the shop on the corner.")
+        executor = _executor(_settings(), audit, repos, tool_name="filesystem.manage", output={"text": "Jet's Pizza; Domino's"})
+        operator = QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={}, risk_level=RiskLevel.LOW),
+            OperatorDecision(action=OperatorAction.DONE, final_answer=cannot),
+            OperatorDecision(action=OperatorAction.DONE, final_answer=cannot),
+            OperatorDecision(action=OperatorAction.DONE, final_answer=cannot),
+        ])
+        auditor = QueueAuditor([AuditResult(sufficient=False, reason="no order confirmation")] * 2)
+        asked: list[tuple[str, tuple[str, ...]]] = []
+
+        async def facts(text, names):
+            asked.append((text, names))
+            return {name: declines for name in names}
+
+        worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, audit_min_tool_calls=1, fact_checks=facts)
+        result = task
+        for _ in range(6):
+            result = await worker.process_task(result.id)
+            if result.status != TaskStatus.RUNNING:
+                break
+        return result, asked
+
+    accepted, asked = await run(True)
+    assert accepted.status == TaskStatus.COMPLETED and accepted.metadata["synthesized_answer"] == cannot
+    assert accepted.metadata["operator_audit_gap_count"] == 1  # the first "cannot" was sent back once; the second one stood
+    assert (cannot, ("answer_declines",)) in asked
+
+    refused, _ = await run(False)  # an answer that does not say it was not done keeps the audit's verdict: it is sent back a second time
+    assert refused.metadata["operator_audit_gap_count"] == 2
 
 
 @pytest.mark.asyncio

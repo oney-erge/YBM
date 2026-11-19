@@ -1,0 +1,402 @@
+[
+  {
+    "id": "cont_plan_for_it_stays_on_the_goal",
+    "requirement": "continuity",
+    "message": "The label printer in the office stopped printing since yesterday. Look into it.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Looks at the printer's state or explains what it can check",
+      "The follow-up plan is about the printer, not about the words of the follow-up"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "plan",
+        "message": "Ok, give me a plan to actually fix it properly.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:",
+            "data analysis project",
+            "sample data analysis",
+            "Chromecast"
+          ],
+          "bot_reply_contains_any": [
+            "printer",
+            "print"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "cont_you_choose_picks_for_the_pending_question",
+    "requirement": "continuity",
+    "message": "Make a QR code image for https://example.com and save it as {{c_work}}/site-qr.png. Use whatever tool you think is best.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Chooses the tool itself, or asks one short question and uses the answer",
+      "A real PNG exists at the path asked for: an answer alone is not the result"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "completed_files_exist_under": [
+        {
+          "root": "{{c_work}}",
+          "files": [
+            "site-qr.png"
+          ]
+        }
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "choose",
+        "message": "You choose.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:",
+            "data analysis project",
+            "sample data analysis",
+            "Chromecast"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "cont_a_reply_is_not_a_result",
+    "requirement": "continuity",
+    "message": "Tell me how many words are in {{c_notes}}/draft.txt, counted by a program.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Runs a program or says exactly how it counted",
+      "The count is 31",
+      "A short reply such as 'ok' never counts as having run anything"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "31"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "ok",
+        "message": "ok",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:",
+            "I have installed",
+            "has been installed"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "cont_that_file_is_the_one_just_made",
+    "requirement": "continuity",
+    "message": "Create a text file called errands.txt in {{c_work}} with four errands, one per line.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "The file exists with four lines",
+      "The follow-up appends to that file, at that path, and says where it is"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "completed_files_exist_under": [
+        {
+          "root": "{{c_work}}",
+          "files": [
+            "errands.txt"
+          ]
+        }
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "append",
+        "message": "Add a fifth one to that file: renew passport.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "file_contains_all": {
+            "errands.txt": [
+              "renew passport"
+            ]
+          }
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "cont_an_unrelated_question_is_not_an_answer",
+    "requirement": "continuity",
+    "message": "Please tidy the folder {{c_mess}}.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Asks one useful question or proposes a way",
+      "The unrelated question gets its own answer (56) and is not taken as the answer to the first"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "unrelated",
+        "message": "By the way, what is 7 times 8?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "56"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "cont_a_correction_changes_the_thing_just_made",
+    "requirement": "continuity",
+    "message": "Make a folder called Receipts inside {{c_mess}} and put receipt-1.txt and receipt-2.txt into it.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Both receipts are in Receipts",
+      "The correction renames that folder to Taxes and moves nothing else"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "completed_files_exist_under": [
+        {
+          "root": "{{c_mess}}/Receipts",
+          "files": [
+            "receipt-1.txt",
+            "receipt-2.txt"
+          ]
+        }
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "rename",
+        "message": "Sorry, I meant Taxes, not Receipts.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "completed_files_exist_under": [
+            {
+              "root": "{{c_mess}}/Taxes",
+              "files": [
+                "receipt-1.txt",
+                "receipt-2.txt"
+              ]
+            }
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  }
+]

@@ -6,7 +6,7 @@ task that asks the user a question and is answered by them (the same clarificati
 "Done" and "Skip" under it, not a new kind of thing to wait for.
 
 The runner keeps no state of its own. Every pass reads the plan and its tasks from the database and does the one thing that is next, so a
-restart, or several workers calling it at once, cannot lose a step or run one twice (a step is claimed atomically before its task exists).
+restart, or several workers calling it at once, uses one transaction to claim a step and link its task.
 One step at a time: the local model serves one request at a time, and the user reads one message at a time.
 """
 
@@ -31,9 +31,9 @@ Announce = Callable[[TaskRecord], Awaitable[None]]
 
 RESULT_CHARS = 1500
 EARLIER_RESULT_CHARS = 300
-#: A step claimed but never given a task (the process stopped between the two) is given back after this long.
+#: Allow an older worker time to finish linking a claimed step before requesting review.
 CLAIM_GRACE = timedelta(seconds=60)
-SKIP_WORDS = ("skip", "not now", "leave it", "leave this")
+SKIP_WORDS = ("skip",)
 USER_OPTIONS = ["Done", "Skip this step"]
 ACCESS_OPTIONS = ["It's ready", "Skip this step"]
 
@@ -52,11 +52,14 @@ def is_skip(text: str) -> bool:
 
 def step_objective(plan: Plan, step: PlanStep) -> str:
     """What the task for a step is asked to do: the step, the goal it serves, and what the earlier steps found."""
-    earlier = [
-        f"- {s.position}. {s.title}: {s.result[:EARLIER_RESULT_CHARS]}"
-        for s in sorted(plan.steps, key=lambda s: s.position)
-        if s.position < step.position and s.status == StepStatus.DONE and s.result
-    ]
+    earlier = []
+    for previous in sorted(plan.steps, key=lambda item: item.position):
+        if previous.position >= step.position:
+            continue
+        if previous.status == StepStatus.DONE and previous.result:
+            earlier.append(f"- {previous.position}. {previous.title}: {previous.result[:EARLIER_RESULT_CHARS]}")
+        elif previous.status == StepStatus.SKIPPED:
+            earlier.append(f"- {previous.position}. {previous.title}: skipped; no completion was recorded")
     lines = [
         f"Step {step.position} of {len(plan.steps)} of a plan.",
         f"Goal of the plan: {plan.goal}",
@@ -68,6 +71,8 @@ def step_objective(plan: Plan, step: PlanStep) -> str:
         lines.append("What the user has told you about this project:\n" + plan.notes.strip())
     if earlier:
         lines.append("What the earlier steps found:\n" + "\n".join(earlier))
+    if any(s.position < step.position and s.status == StepStatus.SKIPPED for s in plan.steps):
+        lines.append("Do not assume skipped work happened. Check prerequisites and explain an available recovery if one is missing.")
     lines.append(
         "Do only this step. Answer with what you did and what you found. If it needs something you do not have, say exactly what you need."
     )
@@ -84,7 +89,7 @@ def waiting_question(plan: Plan, step: PlanStep) -> str:
         lines.append(step.detail)
     if step.needs:
         lines.append("I need: " + "; ".join(step.needs))
-    lines.append("Tell me when it is done, or say skip to leave this step out.")
+    lines.append("Reply Done when it is complete, or say skip to leave this step out.")
     return "\n".join(lines)
 
 
@@ -95,8 +100,7 @@ def audit_plan(audit: AuditLogger, plan: Plan, event: str, **payload: object) ->
 def pause_plan(repositories: Repositories, audit: AuditLogger, plan_id: str) -> Plan | None:
     """Hold an active plan: nothing new starts. The step in flight finishes, and "start" carries on from there."""
     plan = repositories.plans.get(plan_id)
-    if plan is not None and plan.status == PlanStatus.ACTIVE:
-        repositories.plans.set_status(plan_id, PlanStatus.PAUSED)
+    if plan is not None and repositories.plans.transition_status(plan_id, PlanStatus.PAUSED, (PlanStatus.ACTIVE,)):
         audit_plan(audit, plan, "plan_paused")
     return repositories.plans.get(plan_id)
 
@@ -104,17 +108,8 @@ def pause_plan(repositories: Repositories, audit: AuditLogger, plan_id: str) -> 
 def cancel_plan(repositories: Repositories, audit: AuditLogger, plan_id: str) -> Plan | None:
     """Stop a plan for good: its open tasks are cancelled and its steps that never ran are skipped."""
     plan = repositories.plans.get(plan_id)
-    if plan is None or plan.status in (PlanStatus.DONE, PlanStatus.CANCELLED):
-        return plan
-    for step in plan.steps:
-        if step.status in (StepStatus.RUNNING, StepStatus.WAITING) and step.task_id:
-            task = repositories.tasks.get(step.task_id)
-            if task is not None and task.status not in _FINISHED:
-                repositories.tasks.update_status(task.id, TaskStatus.CANCELLED)
-        if step.status in (StepStatus.PENDING, StepStatus.RUNNING, StepStatus.WAITING):
-            repositories.plans.update_step(step.id, status=StepStatus.SKIPPED)
-    repositories.plans.set_status(plan_id, PlanStatus.CANCELLED)
-    audit_plan(audit, plan, "plan_cancelled")
+    if plan is not None and repositories.plans.cancel_active(plan_id):
+        audit_plan(audit, plan, "plan_cancelled")
     return repositories.plans.get(plan_id)
 
 
@@ -139,7 +134,8 @@ class PlanRunner:
         plan = self.repositories.plans.get(plan_id)
         if plan is None or plan.status not in (PlanStatus.PROPOSED, PlanStatus.PAUSED):
             return plan
-        self.repositories.plans.set_status(plan_id, PlanStatus.ACTIVE)
+        if not self.repositories.plans.transition_status(plan_id, PlanStatus.ACTIVE, (PlanStatus.PROPOSED, PlanStatus.PAUSED)):
+            return self.repositories.plans.get(plan_id)
         if plan.check_in_days:
             self.repositories.plans.update_plan(plan_id, last_check_in_at=utc_now())  # the first check-in is a period from the start
         self._audit(plan, "plan_started")
@@ -168,12 +164,13 @@ class PlanRunner:
         return changed
 
     async def _advance(self, plan: Plan) -> bool:
-        changed = self._settle(plan)
+        changed = await self._settle(plan)
         plan = self.repositories.plans.get(plan.id) or plan
         if plan.status != PlanStatus.ACTIVE:
             return changed
         if plan.finished():
-            self.repositories.plans.set_status(plan.id, PlanStatus.DONE)
+            if not self.repositories.plans.finish_if_complete(plan.id):
+                return changed
             self._audit(plan, "plan_done")
             await self._tell(plan, _finished_text(plan))
             return True
@@ -181,6 +178,15 @@ class PlanRunner:
             return changed
         ready = plan.ready_steps()
         if not ready:  # nothing to do yet: the next step's day has not come near, or a step is in someone's hands
+            skipped = plan.skipped_prerequisite()
+            if skipped and not plan._unblocked():
+                step, prerequisite = skipped
+                if not self.repositories.plans.transition_status(plan.id, PlanStatus.PAUSED, (PlanStatus.ACTIVE,), expected_revision=plan.revision):
+                    return changed
+                self._audit(plan, "plan_paused", step=step.position, reason="prerequisite_skipped")
+                await self._tell(plan, f"I paused the plan: '{step.title}' needs '{prerequisite.title}', which was skipped. "
+                                 "Please revise the plan or complete that prerequisite before continuing.")
+                return True
             return changed
         return await self._begin(plan, ready[0]) or changed
 
@@ -196,66 +202,90 @@ class PlanRunner:
         await self._tell(plan, check_in_text(plan))
         return True
 
-    def _settle(self, plan: Plan) -> bool:
+    async def _settle(self, plan: Plan) -> bool:
         """Read the tasks of the steps that are in flight and record how each ended."""
         changed = False
         for step in plan.steps:
             if step.status not in (StepStatus.RUNNING, StepStatus.WAITING):
                 continue
             if not step.task_id:
-                if utc_now() - step.updated_at > CLAIM_GRACE:  # claimed, then the process stopped before a task existed
-                    self.repositories.plans.update_step(step.id, status=StepStatus.PENDING)
-                    changed = True
+                if utc_now() - step.updated_at > CLAIM_GRACE:
+                    reason = "This older step has no linked task; inspect earlier work and its effects before retrying."
+                    if self.repositories.plans.settle_step(plan.id, step, None, status=StepStatus.FAILED, result=reason, pause=True):
+                        self._audit(plan, "plan_paused", step=step.position, reason="legacy_unlinked_step")
+                        await self._tell(plan, f"I paused '{step.title}'. {reason}")
+                        changed = True
                 continue
             task = self.repositories.tasks.get(step.task_id)
             if task is None:
-                self.repositories.plans.update_step(step.id, status=StepStatus.FAILED, result="its task is gone")
-                self.repositories.plans.set_status(plan.id, PlanStatus.PAUSED)
-                changed = True
+                changed = self.repositories.plans.settle_step(plan.id, step, None, status=StepStatus.FAILED,
+                                                               result="its task is gone", pause=True) or changed
             elif task.status == TaskStatus.COMPLETED:
                 answer = str(task.metadata.get("plan_step_answer") or task.metadata.get("synthesized_answer") or "done")
-                self.repositories.plans.update_step(step.id, status=StepStatus.DONE, result=answer[:RESULT_CHARS])
-                changed = True
+                if task.metadata.get("plan_delegated_from_owner"):
+                    contract = task.metadata.get("delegated_choice_contract")
+                    choice = str(task.metadata.get("synthesized_answer") or "").strip()
+                    decision_only = (task.metadata.get("plan_delegated_from_owner") == StepOwner.USER.value and step.choice_only
+                                     and not step.needs and bool(choice) and contract == {"title": step.title, "detail": step.detail,
+                                                                                         "needs": step.needs, "choice_only": True})
+                    if decision_only:
+                        changed = self.repositories.plans.settle_step(plan.id, step, task, status=StepStatus.DONE,
+                                                                       result=choice[:RESULT_CHARS]) or changed
+                        continue
+                    completion = "say it's ready" if task.metadata["plan_delegated_from_owner"] == StepOwner.ACCESS.value else "say Done"
+                    choice_line = f"My choice for '{step.title}': {choice[:RESULT_CHARS]}" if choice else f"I could not find a recorded choice for '{step.title}'."
+                    tail = (f"If that completes the whole step, {completion}; otherwise complete the remaining action or tell me what is needed."
+                            if choice else "The step remains open. Please choose or tell me what is needed.")
+                    question = f"{choice_line}\n{tail}"
+                    reopened = self.repositories.plans.return_delegated_choice(plan.id, step, task, question=question)
+                    if reopened is not None:
+                        if self._announce is not None:
+                            await self._announce(reopened)
+                        changed = True
+                    continue
+                if step.owner != StepOwner.YBM and task.metadata.get("plan_step_answer"):
+                    answer = f"User reported: {answer}"
+                changed = self.repositories.plans.settle_step(plan.id, step, task, status=StepStatus.DONE,
+                                                               result=answer[:RESULT_CHARS]) or changed
             elif task.status in (TaskStatus.FAILED, TaskStatus.BLOCKED):
                 reason = str(task.metadata.get("last_worker_error") or task.metadata.get("last_error") or task.status.value)
-                self.repositories.plans.update_step(step.id, status=StepStatus.FAILED, result=reason[:RESULT_CHARS])
-                self.repositories.plans.set_status(plan.id, PlanStatus.PAUSED)
-                self._audit(plan, "plan_paused", step=step.position, reason=reason[:200])
-                changed = True
+                if self.repositories.plans.settle_step(plan.id, step, task, status=StepStatus.FAILED,
+                                                        result=reason[:RESULT_CHARS], pause=True):
+                    self._audit(plan, "plan_paused", step=step.position, reason=reason[:200])
+                    changed = True
             elif task.status == TaskStatus.CANCELLED:
                 if step.status == StepStatus.WAITING:  # the user said skip
-                    self.repositories.plans.update_step(step.id, status=StepStatus.SKIPPED, result="skipped")
+                    settled = self.repositories.plans.settle_step(plan.id, step, task, status=StepStatus.SKIPPED, result="skipped")
                 else:  # the user stopped the work: the step goes back, the plan waits for them
-                    self.repositories.plans.update_step(step.id, status=StepStatus.PENDING, task_id=None)
-                    self.repositories.plans.set_status(plan.id, PlanStatus.PAUSED)
-                changed = True
+                    settled = self.repositories.plans.settle_step(plan.id, step, task, status=StepStatus.PENDING, clear_task=True, pause=True)
+                changed = settled or changed
         return changed
 
     async def _begin(self, plan: Plan, step: PlanStep) -> bool:
         waiting = step.owner != StepOwner.YBM
-        if not self.repositories.plans.claim_step(step.id, StepStatus.WAITING if waiting else StepStatus.RUNNING):
-            return False  # another worker took it
         conversation_id = plan.conversation_id
         base = {**plan.routing, "plan_id": plan.id, "plan_step_id": step.id}
         if waiting:
             question = waiting_question(plan, step)
-            task = self.repositories.tasks.create(
-                f"Plan step {step.position}: {step.title}",
+            task = TaskRecord(
+                objective=f"Plan step {step.position}: {step.title}",
                 conversation_id=conversation_id,
+                status=TaskStatus.CLARIFYING,
                 metadata={**base, "original_message_text": step.title, "clarifying_question": question,
                           "clarifying_options": ACCESS_OPTIONS if step.owner == StepOwner.ACCESS else USER_OPTIONS},
             )
-            self.repositories.tasks.update_status(task.id, TaskStatus.CLARIFYING)
-            self.repositories.plans.update_step(step.id, task_id=task.id)
+            if not self.repositories.plans.begin_step(plan, step, task):
+                return False
             self._audit(plan, "plan_step_waiting", step=step.position, task_id=task.id)
             if self._announce is not None:
                 await self._announce(self.repositories.tasks.get(task.id) or task)
             return True
         objective = step_objective(plan, step)
-        task = self.repositories.tasks.create(
-            objective, conversation_id=conversation_id, metadata={**base, "original_message_text": objective}
+        task = TaskRecord(
+            objective=objective, conversation_id=conversation_id, metadata={**base, "original_message_text": objective}
         )
-        self.repositories.plans.update_step(step.id, task_id=task.id)
+        if not self.repositories.plans.begin_step(plan, step, task):
+            return False
         self.audit.append(AuditEventType.TASK_CREATED, actor="plan", task_id=task.id, payload={"plan_id": plan.id, "step": step.position})
         await self._tell(plan, f"Step {step.position} of {len(plan.steps)}: {step.title}")
         return True
@@ -270,9 +300,6 @@ class PlanRunner:
 
     def _audit(self, plan: Plan, event: str, **payload: object) -> None:
         audit_plan(self.audit, plan, event, **payload)
-
-
-_FINISHED = {TaskStatus.COMPLETED, TaskStatus.BLOCKED, TaskStatus.FAILED, TaskStatus.CANCELLED}
 
 
 def _finished_text(plan: Plan) -> str:
@@ -292,8 +319,11 @@ def day_text(day: date, today: date | None = None) -> str:
 def check_in_text(plan: Plan, today: date | None = None) -> str:
     """How a plan stands, from the plan alone: what is done, what is next and when, what waits for the user."""
     today = today or date.today()
-    done = sum(1 for step in plan.steps if step.status in (StepStatus.DONE, StepStatus.SKIPPED))
+    done = sum(1 for step in plan.steps if step.status == StepStatus.DONE)
+    skipped = sum(1 for step in plan.steps if step.status == StepStatus.SKIPPED)
     lines = [f"Check-in on your plan: {plan.goal}", f"{done} of {len(plan.steps)} steps done."]
+    if skipped:
+        lines.append(f"{skipped} {'step' if skipped == 1 else 'steps'} skipped.")
     waiting = [step for step in plan.steps if step.status == StepStatus.WAITING]
     if waiting:
         lines.append(f"Waiting for you: {waiting[0].title}.")

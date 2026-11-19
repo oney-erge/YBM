@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any
+from typing import Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -209,6 +209,7 @@ class PostconditionType(StrEnum):
     EXTERNAL_COMMAND = "external_command"
     PAGE_MATCHES_REQUEST = "page_matches_request"
     FORM_SUBMITTED = "form_submitted"
+    PACKAGE_INSTALLED = "package_installed"
 
 
 class AuditEventType(StrEnum):
@@ -399,6 +400,12 @@ class MessageClassification(StrictBaseModel):
     # spawning a second task for "make it five, not three", which is how a
     # running task came to be unsteerable in the first place.
     steers_active_task: bool = False
+    # Which open goal of the chat this message belongs to (its label, G1, G2...) and what the message does to it. Filled only when the context lists open goals
+    # (goals.py); in the structured-output schema, not in the prompt text, so adding them changes no recorded fixture key.
+    goal_ref: str | None = Field(default=None, description="the label (G1, G2...) of the open goal this message answers, continues, plans for or declines something in; null for a new request")
+    act: Literal["new", "answer", "delegate", "decline", "continue", "plan", "control", "chat"] | None = Field(
+        default=None, description="what the message does: new request, answer to a goal's question, delegate the choice, decline an offered method, continue, plan for the goal, control a job, chat"
+    )
     # Populated only when is_task=False (see prompts/base/concierge_system.md) -
     # the Concierge composes the chat reply in the same call it classifies, so
     # a non-task message doesn't need a second LLM round trip. None/empty falls
@@ -592,6 +599,7 @@ class TaskRecord(StrictBaseModel):
     conversation_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    revision: int = Field(default=0, ge=0)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -857,6 +865,10 @@ class ProjectRecord(StrictBaseModel):
     criteria: list[str] = Field(default_factory=list, max_length=30)
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    # What the assistant remembers of the project (projects_memory.py): the words and names that point to it, and whether it is still being worked on.
+    # Its notebook is in `project_notes`. Never "closed": a project left alone is simply old, and is picked up again when it is mentioned.
+    hooks: list[str] = Field(default_factory=list, max_length=12)
+    status: str = Field(default="active", max_length=12)
 
 
 class Artifact(StrictBaseModel):
@@ -893,6 +905,15 @@ class MemoryFact(StrictBaseModel):
     supersedes_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    # What the fact is about ("home address", "daughter"): a newer fact about the same thing closes this one instead of deleting it, so "where did we live
+    # before" still has an answer. `valid_from` is when it became true (what the person said and when), `valid_to` when it stopped (None: still true).
+    about: str | None = Field(default=None, max_length=80)
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+    @property
+    def is_current(self) -> bool:
+        return self.valid_to is None
 
 
 class AuditEvent(StrictBaseModel):
