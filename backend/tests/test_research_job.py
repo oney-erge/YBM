@@ -502,3 +502,77 @@ async def test_the_report_says_how_many_claims_were_checked_and_removed() -> Non
     state, _said, report = await _run(_Fake(facts_for={"Costs": [("Air-source units cost 4,000 to 8,000 dollars installed.", "Air-source units cost between 4,000 and 8,000 dollars installed in the Chicago area.")]}))
     assert state["claims_checked"] >= 1 and state["claims_removed"] >= 0
     assert "Every cited sentence was checked against the quotations it cites" in report and "A check by a small model is not a proof" in report
+
+
+# --- a question no page answered is searched again before it is written up as unanswered -------------------------------------------------
+
+PAGE_PROBLEMS = "Owners report that the most common failure is a leaking refrigerant line after about eight years of use, which a technician repairs. " * 3 + "Filler. " * 40
+
+
+class _Gappy(_Fake):
+    """The first searches find only pages about cost and owners; a search in other words finds the page that answers the third question."""
+
+    def __init__(self, *, rewrite_fails=False) -> None:
+        super().__init__(facts_for={
+            "Costs": [("Air-source units cost 4,000 to 8,000 dollars installed.", "Air-source units cost between 4,000 and 8,000 dollars installed in the Chicago area.")],
+            "Problems": [("The most common failure is a leaking refrigerant line.", "the most common failure is a leaking refrigerant line after about eight years of use")],
+        })
+        self.rewrite_fails = rewrite_fails
+        self.pages["https://c.example/problems"] = Page("Problems", PAGE_PROBLEMS)
+        self.searched: list[str] = []
+
+    async def think(self, system, user, schema):
+        if schema is research._Phrasings:
+            self.calls.append(("rewrite", user))
+            if self.rewrite_fails:
+                raise RuntimeError("the model is busy")
+            one_question = "2. " not in user  # a gap asks for one question; the rewrite round of a short search asks for all of them
+            return research._Phrasings(searches=["heat pump failures and repairs owners report"] if one_question and "What goes wrong?" in user else ["same idea other words"] * 3)
+        return await super().think(system, user, schema)
+
+    async def search(self, query, count):
+        self.searched.append(query)
+        if "failures and repairs" in query:
+            return [{"title": "c.example", "url": "https://c.example/problems", "snippet": ""}]
+        if query == "same idea other words":
+            return []
+        return [result for result in await super().search(query, count) if "c.example" not in result["url"]]  # the first searches never find the page that answers the third question
+
+
+@pytest.mark.asyncio
+async def test_a_question_no_page_answered_is_searched_again_in_other_words_and_then_answered() -> None:
+    fake = _Gappy()
+    state, said, report = await _run(fake)
+    assert state["gap_tries"]["2"] == 1 and state["gap_pages"] == 1
+    assert "failures and repairs" in " ".join(fake.searched)
+    assert any("searched for it again in other words and found 1 new page" in line for line in said)
+    assert report is not None and research.numbered_notes(state, 2)  # the third question now has notes, from the page the second search found
+    assert research.numbered_notes(state, 2)[0][2]["quote"].startswith("the most common failure is a leaking refrigerant line")  # with the page's own words
+    assert any(source["url"] == "https://c.example/problems" and source["question"] == 2 and source["status"] == "read" for source in state["sources"])
+
+
+@pytest.mark.asyncio
+async def test_a_gap_is_searched_again_at_most_twice_and_never_with_the_words_already_used() -> None:
+    fake = _Gappy()
+    state, _said, report = await _run(fake)
+    assert all(count <= research.MAX_GAP_TRIES for count in state["gap_tries"].values())
+    assert fake.searched.count("same idea other words") <= research.MAX_GAP_TRIES * 2  # two questions asked for it, twice at most each
+    assert report is not None and "No page I could read answered this question." in report  # the question that stayed unanswered says so
+
+
+@pytest.mark.asyncio
+async def test_a_model_that_cannot_rewrite_the_search_leaves_the_gap_as_it_was_and_the_job_finishes() -> None:
+    fake = _Gappy(rewrite_fails=True)
+    state, _said, report = await _run(fake)
+    assert state["stage"] == "done" and state["gap_pages"] == 0 and report is not None
+    assert "No page I could read answered this question." in report
+
+
+@pytest.mark.asyncio
+async def test_the_pages_a_gap_may_add_are_limited_and_an_older_saved_job_without_the_keys_still_advances() -> None:
+    state = new_state(20)
+    assert not research._may_search_again({**state, "gap_pages": 8}, 0) and research._may_search_again(state, 0)
+    assert not research._may_search_again({**state, "gap_tries": {"0": research.MAX_GAP_TRIES}}, 0)
+    older = {key: value for key, value in new_state(20).items() if key not in ("gap_tries", "gap_pages")}
+    assert research._may_search_again(older, 0)
+    assert "searching for it again" in research.progress_text({**older, "stage": "gap", "questions": ["a", "b"], "sections": []})
