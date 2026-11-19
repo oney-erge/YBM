@@ -741,14 +741,20 @@ async def test_at_the_autonomous_level_a_question_is_the_assistants_to_answer_tw
     # at level 2 (the default) the same question goes to the person, as it always did
     balanced = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=2)
     assert (await _worker(repos, audit, _Seen([choice])).process_task(balanced.id)).status == TaskStatus.CLARIFYING
-    # a question with no options is sent back too (nothing is asked that the assistant can decide), twice; the third time it is a fact only the person has and it goes through
+    # a question with no options is sent back too (nothing is asked that the assistant can decide), twice; the third time it is not let through either: one last step may only answer
+    # (before 11/19 the third question went to the person, and a model that kept asking waited there: frozen case v_cannot_order)
     fact = _task_with_history(repos, "Cast a video to the TV", [], initiative_level=3)
     ask = OperatorDecision(action=OperatorAction.ASK_USER, question="What is the name of the TV in the living room?")
-    worker = _worker(repos, audit, _Seen([ask, ask, ask]))
+    answer = OperatorDecision(action=OperatorAction.DONE, final_answer="I could not find the TV's name on this network. Tell me what it is called and I will go on.")
+    operator = _Seen([ask, ask, ask, answer])
+    worker = _worker(repos, audit, operator)
     one = await worker.process_task(fact.id)
     two = await worker.process_task(one.id)
     three = await worker.process_task(two.id)
-    assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING and three.status == TaskStatus.CLARIFYING
+    assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING and three.status == TaskStatus.RUNNING
+    assert three.metadata["operator_history"][-1]["no_questions"] is True
+    four = await worker.process_task(three.id)
+    assert four.status == TaskStatus.COMPLETED and "Tell me what it is called" in four.metadata["synthesized_answer"]
 
 
 @pytest.mark.asyncio
@@ -762,10 +768,12 @@ async def test_a_question_the_person_already_answered_is_sent_back_twice_even_af
         clarification_answer="Yes, please go ahead with what you proposed.", answered_clarifying_question=question,
     )
     again = OperatorDecision(action=OperatorAction.ASK_USER, question=question.replace("Which would you prefer?", "Which one?"), options=["Send a text message", "Compose an email"])
-    worker = _worker(repos, audit, _Seen([again, again, again]))
+    cannot = OperatorDecision(action=OperatorAction.DONE, final_answer="I cannot place a phone call. I can send her a text or an email saying you are late: say which.")
+    worker = _worker(repos, audit, _Seen([again, again, again, cannot]))
     one = await worker.process_task(task.id)
     two = await worker.process_task(one.id)
     three = await worker.process_task(two.id)
     assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING  # the same question is not let through
     assert one.metadata["operator_repeated_question_recovery_count"] == 1 and two.metadata["operator_repeated_question_recovery_count"] == 2
-    assert three.status == TaskStatus.CLARIFYING  # bounded: a model that will not stop asking is not looped forever
+    assert three.status == TaskStatus.RUNNING and three.metadata["operator_history"][-1]["no_questions"] is True  # bounded: a model that will not stop asking gets one last step that may only answer
+    assert (await worker.process_task(three.id)).status == TaskStatus.COMPLETED
