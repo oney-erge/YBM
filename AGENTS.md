@@ -26,7 +26,7 @@ configuration examples aligned with the code that exists.
 
 The owner's own assistant, on one PC, reached through Telegram, running on a local model, meant to stay while models
 change. This is the intent every change is judged against; what is built is in the docs above, and the program to get
-there is [docs/ULTIMATE_ASSISTANT_PLAN.md](docs/ULTIMATE_ASSISTANT_PLAN.md). Planned behavior is not implemented behavior.
+there is [docs/PLAN.md](docs/PLAN.md). Planned behavior is not implemented behavior.
 
 - It understands instead of asking. It reads what is meant and how big it is from the words, typed or dictated ("take your
   time", "all the daycares around me", "overnight"), states its assumptions in its first reply, and goes. Asking the owner
@@ -50,6 +50,19 @@ there is [docs/ULTIMATE_ASSISTANT_PLAN.md](docs/ULTIMATE_ASSISTANT_PLAN.md). Pla
 - It proves what it did (receipts, sources, observed results), keeps all data in open formats, and does not depend on one model.
 - Fixes are holistic: one mechanism per need, reusing existing objects (goal, project, plan, job, memory, skill). No
   per-example patches.
+
+## How a change is made
+
+Where each job lives is in [docs/DESIGN.md](docs/DESIGN.md). Every change to `backend/src/agent_control/` is one of two kinds, and says which in its pull request
+(the `design-rule` check reads it):
+
+- **Minimal**: it fits a home in DESIGN.md and adds no module, table, config key, tool or tool operation, prompt file or pattern that matches wording, in at most
+  150 lines, with the failing case it fixes and a test.
+- **Design**: anything else. It adds an entry to DESIGN.md, deletes what it replaces in the same series, re-records the fixtures it changes, and compares the same
+  live cases before and after.
+
+A fix for one wording, one tool habit or one example is neither: it is refused, and the home is fixed instead. Two counts may only go down
+(`docs/design_baseline.json`): the patterns that match wording and the lines of `call_rewrites.py`.
 
 ## Supported Commands
 

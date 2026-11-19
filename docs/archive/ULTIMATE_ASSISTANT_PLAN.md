@@ -1,6 +1,7 @@
 # YBM: the plan from here to the ultimate assistant
 
-Written 2026-11-19, revised the same day with the owner's answers (section 8). This is direction, not description:
+Archived 2026-11-19: [PLAN.md](../PLAN.md) is the one plan now. This file keeps the exam candidates (section 5), the design notes M0 to M7 and the owner's answers
+(section 8). Written 2026-11-19, revised the same day with the owner's answers (section 8). This is direction, not description:
 nothing below is built unless it says so. What is built and what was measured is in
 [FINAL_REMAINING_PLAN.md](FINAL_REMAINING_PLAN.md) section 0. This program starts when that one ends (section 7, P0).
 

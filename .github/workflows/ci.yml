@@ -154,6 +154,24 @@ jobs:
       - run: uv run --frozen python ../scripts/check_markdown_links.py
       - run: uv run --frozen python ../scripts/check_no_em_dash.py
 
+  design-rule:
+    # The change rule (docs/DESIGN.md): a change to the product's code is labelled Minimal or Design in the pull request, and the label has to be true.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the label against the diff
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          printf '%s' "$PR_BODY" > "$RUNNER_TEMP/pr_body.md"
+          python3 scripts/check_design_change.py --base "origin/$BASE_REF" --body-file "$RUNNER_TEMP/pr_body.md"
+
   frontend:
     runs-on: ubuntu-latest
     timeout-minutes: 20
