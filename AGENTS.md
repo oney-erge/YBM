@@ -38,8 +38,12 @@ there is [docs/ULTIMATE_ASSISTANT_PLAN.md](docs/ULTIMATE_ASSISTANT_PLAN.md). Pla
   until it is good enough or reaches its ceiling, with a time estimate up front and updates along the way.
 - It works a big build with the owner: steps, a bill of materials, what to buy, a schedule, check-ins.
 - It uses the computer and the web itself: signs in, creates accounts when needed (choosing the username and password,
-  storing them, writing a skill for the site, and telling the owner), orders within the owner's limit. It does not solve
-  checks built to stop automated sign-ups; it takes another route.
+  storing them, writing a skill for the site, and telling the owner). It does not solve checks built to stop automated
+  sign-ups; it takes another route.
+- It never buys anything or uses the owner's cards on its own, at any autonomy level. It prepares the purchase up to the
+  payment page and asks once, with the exact items, seller, total, card (last four digits) and address; a yes covers that one
+  order. This rule lives in the purchase skill and in the worker's approval gate. Everything else at the top level is
+  autonomous.
 - When nothing fits it writes code, tests it read-only on real data, runs it, and keeps it; recurring work becomes a monitor.
 - When it truly cannot, it ends with a blocker report: what was tried, why it failed, the routes left with exact steps, its
   pick, and the one thing it needs. Never a bare "I could not".
