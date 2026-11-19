@@ -15,7 +15,7 @@ that stops new work from landing outside a home.
 | Job | Its home | What still lives elsewhere and moves in |
 |---|---|---|
 | **Reading a message** (which goal, what it does to it, how big, what is assumed) | `channels/base.py` intake, then `llm/decision.py`, then the Concierge (`llm/classifier.py`), then `orchestration/goal_routing.py` | The phrase patterns in `clarification.py`; Telegram's own pre-routing of gaming, undo, accounts, workflows and chat commands (`channels/telegram.py`); `job_start.py` and `plans/stage.py` goal-guessing; request-fact patterns where tests show the Concierge matches them |
-| **What the model sees** | `orchestration/context.py` (planned): one builder with priorities and a budget | `_prompt` in `orchestration/operator.py`, `ability_notes`, `memory_context`, skill text pasted into the prompt, the conversation summary |
+| **What the model sees** | `orchestration/context.py`: the notes about this person and this moment, in an order of importance, with their own room | The conversation summary and the recent turns (`channels/memory.py`) and skill text pasted whole into the prompt (`abilities/context.py`), until D5b gives them a place |
 | **Asking the person** | `orchestration/autonomy.py`: one `may_ask` decision for every place that can ask | `orchestration/initiative.py` (a sentence in the prompt), `orchestration/asking.py` as a separate path, the hand-over offer in `orchestration/guards.py`, repeated-question recovery in `worker.py` |
 | **Done, and true** | `orchestration/proof.py` (planned): one check over one record of what ran and changed, for a task, a plan step, a goal and a job | `auditor.py`, `claims.py`, `fulfillment.py` keyword checks, `answer_checks.py`, `number_check.py`, `grounding.py`, `plans/review.py`, `page_check.py` |
 | **After a failure** | `orchestration/retry.py` (planned): detect stuck, diagnose, change the kind of approach, a fresh attempt, an honest report | The fixed hint ladder in `ladder.py` and `guards.py`, `repeats.py` stop rules, the hand-over offer, `alternative_after_repeat`, `local_recovery_step_limit` |
@@ -70,3 +70,15 @@ One entry per Design change, newest last. Format: **what failed**, **which home*
 **What failed.** Fixes landed where the failure showed, so one job (reading a message, asking, deciding done, recovering, remembering) lived in several
 places, and a new variant needed a new patch. **Home.** This file and the `design-rule` check. **Replaces.** The habit of a pattern or an alias per
 wording. **Measured.** The counts in `docs/design_baseline.json` on the day the rule started: 100 wording patterns, 854 lines in `call_rewrites.py`.
+
+### D5a. What the model sees (2026-11-19)
+
+**What failed.** On 11/19 "revise the plan" failed twice. The notes about the person and the moment (the plan open in the chat, the goal, the project, what bears on
+the request, today's date) were glued on behind the tool catalog and the whole was cut to one size from the end. With a catalog over the limit, the open plan, the
+one thing that said what "it" was, went first; the decision preference was cut in the middle of a sentence; the last exchange was never in the prompt in full (the
+rolling summary keeps the gist). The model searched the disk for a notebook. **Home.** `orchestration/context.py`; the Operator takes the notes as `situation`
+and cuts only the catalog to what is left. **What it adds.** An order of importance (the date, what was said just before, the goal, the project, then what bears
+on the request, with the open plan and job first inside it), shortened from the least important at a line with a note, never mid-sentence; and the last exchange
+word for word (what they said, what was answered) when it was within six hours. **What it replaces and deletes.** The notes no longer travel inside `config_context`
+(`_planner_context` is kept only for sub-tasks); the one-size cut of the notes is gone. **Measured.** Unit tests reproduce the failure (a 70-tool catalog and an open
+plan: the plan is whole, the preference is whole, every tool is named). The live case is `cont_plan_revised_twice_stays_the_plan` in the continuity suite.

@@ -116,7 +116,6 @@ from agent_control.storage.repositories import (
     WorkerClaimLost,
     worker_claim_context,
 )
-from agent_control.orchestration.request_facts import CHECKS_KEY, today_note
 from agent_control.task_inbox import NOTE_ENTRY_NAME
 
 logger = logging.getLogger(__name__)
@@ -786,16 +785,15 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 if started is not None:
                     decision = started
                 else:
+                    situation = self._situation(latest)
                     with hosted_allowed(latest.metadata.get("cloud_allowed_profiles") or ()):
                         decision = await self.operator.decide(
                             latest.objective,
-                            self._planner_context(
-                                self._project_planner_context(latest.metadata) + str(latest.metadata.get("ability_notes") or "") + str(latest.metadata.get("goal_notes") or "")
-                                + today_note(latest.metadata.get(CHECKS_KEY)),
-                                metadata=latest.metadata,
-                            ),
+                            self._catalog_context(latest.metadata),
                             history,
                             memory_context=memory_context, prefer_major=prefer_major,
+                            # Only passed when there is something to say, so an Operator without the option is called exactly as before.
+                            **({"situation": situation} if situation else {}),
                             # Only passed when it applies, so an Operator without the option is called exactly as before.
                             **({"finish_only": True} if offer_pending else {}),
                         )

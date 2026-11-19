@@ -1799,6 +1799,15 @@ class EpisodeRepository:
             rows = connection.execute("SELECT id, kind, conversation_id, task_id, project_id, text, at FROM episodes ORDER BY at DESC LIMIT ?", (limit,)).fetchall()
         return [dict(row) for row in rows]
 
+    def latest(self, conversation_id: str, kind: str, *, limit: int = 1) -> list[dict[str, Any]]:
+        """The newest episodes of one kind in one conversation, newest first: what was said, or answered, last."""
+        with self.database.connect() as connection:
+            rows = connection.execute(
+                "SELECT id, kind, conversation_id, task_id, project_id, text, at FROM episodes WHERE conversation_id = ? AND kind = ? ORDER BY at DESC LIMIT ?",
+                (conversation_id, kind, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
 
 class ScheduleRepository:
     def __init__(self, database: Database) -> None:

@@ -541,10 +541,11 @@ def _task_notes(
     client = DecisionModelClient(settings.decision) if settings.decision.mode != "off" else None
 
     async def notes(request: str, conversation_id: str | None) -> tuple[str, str]:
-        text, route = "", ""
+        # The plan and the job that are open come first: they say what "it" is, and when the notes are too long the end is what is shortened (orchestration/context.py).
+        abilities, text, route = "", "", ""
         if catalog is not None:
             shown = await relevant(catalog.index(), request, confirm=client.yes_no if client else None)
-            text += render_notes(shown)
+            abilities = render_notes(shown)
             route = route_of(shown)
         if settings.plans.enabled:
             text += open_plan_note(repositories.plans, conversation_id)
@@ -556,7 +557,7 @@ def _task_notes(
                 # no skill matched: only a control (status, pause, resume, stop) may come of it. Otherwise any question asked while a job runs could be taken for a new
                 # job (frozen exam 11/18: a count of lines in log files became an investigation).
                 route = "job_open"
-        return text, route
+        return text + abilities, route
 
     return notes
 

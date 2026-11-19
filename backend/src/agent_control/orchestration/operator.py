@@ -25,6 +25,7 @@ _MAX_HISTORY_FIELD_CHARS = 1_000
 _MAX_OBJECTIVE_PROMPT_CHARS = 3_000
 _MAX_MEMORY_PROMPT_CHARS = 2_000
 _MAX_CONFIG_PROMPT_CHARS = 9_500
+_MIN_CATALOG_CHARS = 2_000
 # LocalDeploy's default request limit is 30,000 characters. Keep a real
 # margin for provider framing and future prompt-template growth instead of
 # merely capping history and hoping the tool catalog never grows.
@@ -67,8 +68,12 @@ class OperatorLoopService:
         memory_context: str = "",
         prefer_major: bool = False,
         finish_only: bool = False,
+        situation: str = "",
     ) -> OperatorDecision:
-        """`prefer_major` (docs/archive/HISTORY.md Part 4 T2.6): start this call on
+        """`situation` is what this person and this moment add to the tool list (orchestration/context.py): it is shown whole and the catalog is cut to what is
+        left, never the other way round.
+
+        `prefer_major` (docs/archive/HISTORY.md Part 4 T2.6): start this call on
         major_provider instead of provider, when the caller already has a
         concrete, local, zero-cost-to-check signal that the default model is
         struggling on this task - worker.py sets it once history contains an
@@ -86,7 +91,7 @@ class OperatorLoopService:
         cheaper model, the same as any other step, not inherit escalation
         just because delegation itself is happening.
         """
-        user_prompt = self._prompt(objective, config_context, history, memory_context)
+        user_prompt = self._prompt(objective, config_context, history, memory_context, situation)
         provider = self.major_provider if (prefer_major and self.major_provider is not None) else self.provider
         last_error: Exception | None = None
         current_prompt = user_prompt
@@ -129,7 +134,7 @@ class OperatorLoopService:
         raise last_error
 
     @staticmethod
-    def _prompt(objective: str, config_context: str, history: list[dict], memory_context: str) -> str:
+    def _prompt(objective: str, config_context: str, history: list[dict], memory_context: str, situation: str = "") -> str:
         # tasks/operator_user.md orders its sections most-stable-first, and
         # that ordering is load-bearing rather than cosmetic.
         #
@@ -153,7 +158,9 @@ class OperatorLoopService:
             keep_tail=True,
         )
         memory_section = f"## Conversation context\n{bounded_memory}\n\n" if bounded_memory.strip() else ""
-        bounded_config = _format_config_context(config_context, _MAX_CONFIG_PROMPT_CHARS)
+        # The notes about this person and this moment (`situation`) are not part of what is cut to the catalog's size: they keep their place and the catalog gets
+        # what is left. With no notes this is exactly the old call.
+        bounded_config = _format_config_context(config_context, max(_MIN_CATALOG_CHARS, _MAX_CONFIG_PROMPT_CHARS - len(situation))) + situation
         bounded_history = _format_history(history)
         user_prompt = render_prompt(
             "tasks/operator_user.md",
@@ -170,8 +177,8 @@ class OperatorLoopService:
         if overflow > 0:
             bounded_config = _format_config_context(
                 config_context,
-                max(2_000, len(bounded_config) - overflow - 200),
-            )
+                max(_MIN_CATALOG_CHARS, len(bounded_config) - len(situation) - overflow - 200),
+            ) + situation
             user_prompt = render_prompt(
                 "tasks/operator_user.md",
                 objective=bounded_objective,

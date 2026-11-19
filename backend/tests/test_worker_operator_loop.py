@@ -139,7 +139,7 @@ class QueueOperator:
         self.prefer_major_calls: list[bool] = []
         self.finish_only_calls: list[bool] = []
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, finish_only=False, situation=""):
         self.calls += 1
         self.prefer_major_calls.append(prefer_major)
         self.finish_only_calls.append(finish_only)
@@ -519,7 +519,7 @@ class _HistoryCapturingOperator(QueueOperator):
         super().__init__(decisions)
         self.seen_histories: list[list[dict]] = []
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, situation=""):
         self.seen_histories.append([dict(entry) for entry in history])
         return await super().decide(
             objective, config_context, history, memory_context=memory_context, prefer_major=prefer_major
@@ -998,7 +998,7 @@ async def test_gap_check_entries_do_not_consume_the_tool_call_budget(tmp_path) -
     class AlwaysCallTool:
         def __init__(self, prefix) -> None:
             self.prefix = list(prefix)
-        async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+        async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, situation=""):
             if self.prefix:
                 return self.prefix.pop(0)
             return OperatorDecision(

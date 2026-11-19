@@ -50,7 +50,7 @@ class _ScriptedOperator:
     def __init__(self) -> None:
         self.decisions: list[OperatorDecision] = []
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, situation=""):
         return self.decisions.pop(0)
 
 

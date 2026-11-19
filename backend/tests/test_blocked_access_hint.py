@@ -143,7 +143,7 @@ class _Operator:
     def __init__(self, decisions) -> None:
         self.decisions = list(decisions)
 
-    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False):
+    async def decide(self, objective, config_context, history, *, memory_context="", prefer_major=False, situation=""):
         return self.decisions.pop(0)
 
 
