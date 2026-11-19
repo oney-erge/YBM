@@ -187,6 +187,16 @@ class PlanningStage:
             return task
         return self.repositories.tasks.update_metadata(task.id, {**task.metadata, CHECKS_KEY: answers})
 
+    async def _answer_declines(self, answer: str | None) -> bool:
+        """Whether the Operator's answer says the request was not done or cannot be (request_facts.ANSWER_FACT_QUESTIONS). No decision model, no answer."""
+        if self.fact_checks is None or not (answer or "").strip():
+            return False
+        try:
+            return bool((await self.fact_checks(answer or "", ("answer_declines",))).get("answer_declines"))
+        except Exception:  # noqa: BLE001 - the audit's verdict stands when this cannot be asked
+            logger.warning("answer_declines check failed", exc_info=True)
+            return False
+
     async def _with_ability_notes(self, task: TaskRecord) -> TaskRecord:
         """Work out once, before the task's first step, what bears on the request that the Operator cannot see, and keep it with the task.
 
