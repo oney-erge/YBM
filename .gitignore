@@ -31,3 +31,6 @@ node_modules/
 # build.outDir. Shipped in the distributed Python package, not committed to
 # the repo, same as every other generated artifact in this list.
 backend/src/agent_control/static/
+
+# pytest-testmon: which tests touch which code, per checkout
+.testmondata*

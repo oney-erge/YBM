@@ -11,6 +11,7 @@ fixture setup itself.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import stat
@@ -59,7 +60,8 @@ class Fixtures:
 def prepare_fixtures(*, start_web_server: bool, home: Path | None = None) -> Fixtures:
     """Build the E2E fixtures. ``home`` replaces the user's home folder, so a test can keep
     the Desktop folders it creates out of the real Desktop."""
-    fixture_root = ROOT / ".agent_control" / "e2e_fixtures"
+    # YBM_E2E_FIXTURE_ROOT moves the folder: the unit tests set it, so running them never deletes the fixtures a live e2e run is using.
+    fixture_root = Path(os.environ.get("YBM_E2E_FIXTURE_ROOT") or ROOT / ".agent_control" / "e2e_fixtures")
     fixture_root.mkdir(parents=True, exist_ok=True)
     home = home or Path.home()
 
