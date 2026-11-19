@@ -101,11 +101,24 @@ REVISE_NOTE = """You are revising a plan that already exists, not writing a new 
 - If the user says they cannot see something in the plan, the plan was missing it: add it as a step or as the detail of a step."""
 
 
-async def revise_plan(provider: Any, goal: str, plan_text: str, instruction: str, can_do: str, *, kept: int = 0) -> PlanDraft:
-    """Ask the model for the plan again, with the plan as it stands and what the user wants changed. `kept` steps at the front have already started and stay as they are."""
+def too_short(draft_steps: int, steps_before: int) -> bool:
+    """A revision that comes back with far fewer steps than the plan had is a model that wrote only the part it was asked about (live 11/19: five steps became one)."""
+    return steps_before >= 3 and draft_steps < max(2, -(-steps_before * 3 // 5))
+
+
+async def revise_plan(
+    provider: Any, goal: str, plan_text: str, instruction: str, can_do: str, *, kept: int = 0, steps_before: int = 0, insist: bool = False,
+) -> PlanDraft:
+    """Ask the model for the plan again, with the plan as it stands and what the user wants changed. `kept` steps at the front have already started and stay as they are.
+    `insist` is the second asking, after a draft that left most of the plan out."""
     context = f"The plan as it stands:\n{plan_text.strip()[:3500]}\n\nThe user asks for this change: {instruction.strip()[:800]}"
     if kept:
         context += f"\nThe first {kept} steps have already started and cannot change: write only the steps after them."
+    if insist and steps_before:
+        context += (
+            f"\nYour last answer left most of the plan out. The plan has {steps_before} steps that can change: write all of them again, with the change made in the step it "
+            "belongs to or as a new step, so that the answer has at least that many steps."
+        )
     return await provider.generate_structured(
         SYSTEM_PROMPT + "\n\n" + REVISE_NOTE, user_prompt(goal, context, can_do, may_ask=False), PlanDraft, temperature=0.2
     )

@@ -139,3 +139,50 @@ def test_the_store_refuses_to_rewrite_a_plan_that_changed_or_whose_started_steps
     repos.plans.claim_step(third.id, StepStatus.RUNNING)  # step 3 started while 1 and 2 have not
     with pytest.raises(ValueError, match="one at a time"):
         repos.plans.replace_unstarted_steps(plan.id, steps)
+
+
+# --- a revision that lost most of the plan is not a revision ------------------------------------------------------------------------------
+
+
+class _Sequence(_Planner):
+    """Answers with each draft in turn, so a second asking can be told apart from the first."""
+
+    def __init__(self, *drafts) -> None:
+        super().__init__(None)
+        self.drafts = list(drafts)
+
+    async def generate_structured(self, system_prompt, user_prompt, schema, **kwargs):
+        self.asked.append((system_prompt, user_prompt, schema.__name__))
+        return self.drafts.pop(0)
+
+
+def _one_step_draft() -> PlanDraft:
+    return PlanDraft(summary="Added an animation step.", steps=[StepDraft(title="Research an animation library")])
+
+
+def test_a_draft_with_far_fewer_steps_than_the_plan_had_is_too_short() -> None:
+    from agent_control.plans.planner import too_short
+
+    assert too_short(1, 5) and too_short(2, 5) and not too_short(3, 5)
+    assert too_short(1, 3) and not too_short(2, 3)
+    assert not too_short(1, 2) and not too_short(0, 0)  # a plan of one or two steps can be rewritten as anything
+
+
+@pytest.mark.asyncio
+async def test_a_draft_that_left_most_of_the_plan_out_is_asked_for_again_and_the_complete_one_is_kept(tmp_path):
+    planner = _Sequence(_one_step_draft(), _revised_draft())
+    repos, adapter, task, plan = _setup(tmp_path, planner)
+    result = await adapter.execute(_request(task.id, operation="revise", instruction="Add an animation when the result appears."))
+    assert result.status == ToolResultStatus.SUCCEEDED
+    assert len(planner.asked) == 2 and "left most of the plan out" in planner.asked[1][1] and "left most of the plan out" not in planner.asked[0][1]
+    assert [s.title for s in repos.plans.get(plan.id).steps] == ["Sketch the page", "Write the conversion", "Add the slide-in animation", "Try it in a browser"]
+
+
+@pytest.mark.asyncio
+async def test_a_plan_that_would_lose_most_of_its_steps_is_left_as_it_was_and_the_operator_is_told_how_else(tmp_path):
+    planner = _Sequence(_one_step_draft(), _one_step_draft())
+    repos, adapter, task, plan = _setup(tmp_path, planner)
+    result = await adapter.execute(_request(task.id, operation="revise", instruction="Add an animation when the result appears."))
+    assert result.status == ToolResultStatus.FAILED and "returned 1 steps for a plan of 3" in result.error_message and "add_step" in result.error_message
+    unchanged = repos.plans.get(plan.id)
+    assert [s.title for s in unchanged.steps] == ["Sketch the page", "Write the conversion", "Try it in a browser"] and unchanged.revision == plan.revision
