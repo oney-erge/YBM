@@ -24,25 +24,28 @@ configuration examples aligned with the code that exists.
 
 ## What YBM is for
 
-The owner's own assistant, on one PC, reached through Telegram, local first, meant to stay while models change.
-This is the intent every change is judged against; what is built is in the docs above, and the program to get
+The owner's own assistant, on one PC, reached through Telegram, running on a local model, meant to stay while models
+change. This is the intent every change is judged against; what is built is in the docs above, and the program to get
 there is [docs/ULTIMATE_ASSISTANT_PLAN.md](docs/ULTIMATE_ASSISTANT_PLAN.md). Planned behavior is not implemented behavior.
 
-- It reads how big a request is from its words (answer now, look, dig, or run for days) and says what it will do and when
-  it will stop, before it starts. "Exhaustive", "every", "overnight", "as long as it takes" mean a campaign that runs until
-  new searching stops finding anything new, within a ceiling the owner set.
-- It keeps projects (a pool, a robot, a daycare search) with hooks and a notebook, so that after weeks on other topics the
-  owner can go back and it knows what was decided and why. A project is never just open or closed.
-- It works a big build with the owner: asks only what changes the plan, then steps, a bill of materials, what to buy, a
-  schedule and check-ins.
-- It uses the computer and the web itself, in the owner's own signed-in sessions, so no password is sent in chat. "You pick"
-  means it picks inside the limits the owner set (decide, spend, reach) and says what it picked. CAPTCHA, text-message and ID
-  checks always go to the owner.
+- It understands instead of asking. It reads what is meant and how big it is from the words, typed or dictated ("take your
+  time", "all the daycares around me", "overnight"), states its assumptions in its first reply, and goes. Asking the owner
+  is the last resort, for something no route can produce. Autonomy has three levels; at the top one it never asks.
+- It remembers, across every chat, by default (a setting, on): facts about the owner, his family and home, preferences,
+  and projects with their decisions and reasons. Facts that change are updated with their history kept. A project is never
+  just open or closed; it can be picked up weeks later.
+- Long and exhaustive work runs by itself as a loop that judges its own result against a measured standard and does more
+  until it is good enough or reaches its ceiling, with a time estimate up front and updates along the way.
+- It works a big build with the owner: steps, a bill of materials, what to buy, a schedule, check-ins.
+- It uses the computer and the web itself: signs in, creates accounts when needed (choosing the username and password,
+  storing them, writing a skill for the site, and telling the owner), orders within the owner's limit. It does not solve
+  checks built to stop automated sign-ups; it takes another route.
 - When nothing fits it writes code, tests it read-only on real data, runs it, and keeps it; recurring work becomes a monitor.
-- When it cannot, it ends with a blocker report: what was tried, why it failed, two or three routes with exact steps and
-  cost, its pick, and what it needs from the owner. Never a bare "I could not".
+- When it truly cannot, it ends with a blocker report: what was tried, why it failed, the routes left with exact steps, its
+  pick, and the one thing it needs. Never a bare "I could not".
 - It proves what it did (receipts, sources, observed results), keeps all data in open formats, and does not depend on one model.
-- Fixes are holistic: one mechanism per need, reusing existing objects (goal, project, plan, job, skill). No per-example patches.
+- Fixes are holistic: one mechanism per need, reusing existing objects (goal, project, plan, job, memory, skill). No
+  per-example patches.
 
 ## Supported Commands
 
