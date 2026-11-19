@@ -20,6 +20,13 @@ from agent_control.schemas import OperatorAction, OperatorDecision
 from agent_control.tools.spec import ToolDefinition
 
 _MAX_REF_DEPTH = 8
+#: Bounds the grammar would have to spell out. llama.cpp turns `maxItems` and `maxLength` into that many repeated rules: document.manage's rows (up to 2000, each an array
+#: of up to four kinds of value) and lines (up to 500) made the whole reply schema unparseable ("failed to parse grammar"), so on 11/19 the server refused it on every call
+#: (2,266 times in the log) and the Operator ran with no constraint at all, inventing fields. A bound above these is left to the tool's own validation, which runs after the
+#: reply is written; the shape (the tool, the operation, the names of the arguments, their kinds) stays enforced.
+_MAX_GRAMMAR_ITEMS = 16
+_MAX_GRAMMAR_LENGTH = 240
+_GRAMMAR_BOUNDS = {"maxItems": _MAX_GRAMMAR_ITEMS, "maxLength": _MAX_GRAMMAR_LENGTH, "minItems": 2}
 
 # Actions that finish or hand control back, as opposed to running a tool.
 FINISH_ACTIONS = (OperatorAction.DONE.value, OperatorAction.ASK_USER.value, OperatorAction.BLOCKED.value)
@@ -49,9 +56,22 @@ def inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     return walk(schema, 0)
 
 
+def grammar_friendly(node: Any) -> Any:
+    """The schema without the bounds a grammar cannot afford (see `_GRAMMAR_BOUNDS`); everything else as it was."""
+    if isinstance(node, dict):
+        return {
+            key: grammar_friendly(value)
+            for key, value in node.items()
+            if not (key in _GRAMMAR_BOUNDS and isinstance(value, int) and not isinstance(value, bool) and value > _GRAMMAR_BOUNDS[key])
+        }
+    if isinstance(node, list):
+        return [grammar_friendly(item) for item in node]
+    return node
+
+
 def _fields(model: Any) -> dict[str, Any]:
     """A model's own fields as the properties and required list of an object schema."""
-    described = inline_refs(model.model_json_schema())
+    described = grammar_friendly(inline_refs(model.model_json_schema()))
     return {
         "type": "object",
         "properties": dict(described.get("properties") or {}),
