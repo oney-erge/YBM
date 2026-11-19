@@ -2,14 +2,9 @@
 
 What is built, what is next, what is deliberately not on the list, and the limits that exist today.
 
-The [final remaining plan, updated November 16, 2026](FINAL_REMAINING_PLAN.md) consolidates
-the November 15 assistant plan with the latest conversation findings. Follow its sequence
-for immediate work: continuity, configurable initiative, verified step completion, and
-local recovery precede larger jobs and connected workflows. The feature list below remains
-the broader backlog; proposed behavior in the plan is not yet an implemented capability.
-
-The program that follows it, from projects with memory to exhaustive overnight searches, hands that can order, and monitors the assistant
-writes for itself, is [ULTIMATE_ASSISTANT_PLAN.md](ULTIMATE_ASSISTANT_PLAN.md). It is direction, not description.
+[PLAN.md](PLAN.md) is the one plan: what the assistant must do, where it stands, what failed on the real bot, and the work in order, from the memory that holds
+projects to retrying differently before it gives up. [DESIGN.md](DESIGN.md) says where each kind of thing lives and how a change may touch it. The earlier plans
+are in [archive/](archive/). The feature list below remains the broader backlog; proposed behavior in a plan is not yet an implemented capability.
 
 The spine every item serves:
 

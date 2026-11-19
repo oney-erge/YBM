@@ -1,7 +1,7 @@
 """Calibration: do the decision model's yes/no questions still separate what they are meant to, with the model that is running now?
 
 Every skill with a `when:` question is put in front of the Operator only when the decision model says yes to it at the skill's `when_at` mark. Those marks were measured on one
-model (docs/ULTIMATE_ASSISTANT_PLAN.md, M7): requests that should say yes scored above the mark, requests that should not scored below it. A different model, or a retrained one, scores
+model (docs/PLAN.md, staying power): requests that should say yes scored above the mark, requests that should not scored below it. A different model, or a retrained one, scores
 differently, and the marks silently stop meaning what they did. This is the check that says so, and where the marks should move, before a model swap ships:
 
     python -m agent_control.cli calibrate        # the table, exit 1 when any mark no longer separates

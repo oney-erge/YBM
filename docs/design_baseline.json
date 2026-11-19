@@ -1,0 +1,5 @@
+{
+  "note": "Counts that may only go down (scripts/check_design_change.py, docs/DESIGN.md section 4). Lower them with --update-baseline.",
+  "wording_patterns": 100,
+  "call_rewrite_lines": 854
+}

@@ -1,4 +1,4 @@
-"""The acceptance suite for docs/ULTIMATE_ASSISTANT_PLAN.md (e2e/ultimate_cases.json): frozen by hash, run against the real bot. Written after the build: a check, not a blind exam."""
+"""The acceptance suite for docs/archive/ULTIMATE_ASSISTANT_PLAN.md (e2e/ultimate_cases.json): frozen by hash, run against the real bot. Written after the build: a check, not a blind exam."""
 
 from __future__ import annotations
 

@@ -1,6 +1,6 @@
 # YBM final remaining plan
 
-Updated 2026-11-18. This replaces the November 15 plan page (R0-R7) and the November 17 version
+Archived 2026-11-19: [PLAN.md](../PLAN.md) is the one plan now. Updated 2026-11-18. This replaces the November 15 plan page (R0-R7) and the November 17 version
 of this file (P0-P8). Everything still open from both is in here once; nothing else is pending.
 
 The goal: one assistant on this PC, reached through Telegram, that holds on to what the person
