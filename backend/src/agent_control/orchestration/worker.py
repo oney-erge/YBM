@@ -700,7 +700,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 return self.repositories.tasks.update_metadata(
                     latest.id, metadata, TaskStatus.RUNNING
                 )
-            if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (latest.metadata.get("declined_methods") or []):
+            if self._may_offer_claude_code(latest):
                 return self._offer_claude_code(latest, history)
             return self._transition_operator(
                 latest, {**latest.metadata, "operator_history": history},
@@ -969,7 +969,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         "so please double-check it.)"
                     )
                 else:
-                    if latest.metadata.get("claude_code_offer") is None and self._claude_code_ready() and "claude_code" not in (latest.metadata.get("declined_methods") or []):
+                    if self._may_offer_claude_code(latest):
                         return self._offer_claude_code(latest, history)
                     metadata = {
                         **latest.metadata,
