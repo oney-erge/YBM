@@ -42,6 +42,8 @@ Fetch = Callable[[str], Awaitable[Page | None]]  # url -> the page's visible tex
 
 #: One read-only check of this computer or its network (diagnose.py): name and arguments in, a result with `ok` and `summary` out. Only a job that investigates has one.
 ProbeRun = Callable[[str, dict[str, Any]], Awaitable[Any]]
+#: A folder's files for a watch: (name, size, modified) for each file directly in it. The folder must be one the assistant may read (jobs/io.py, folder_triggers.validate_watch_folder).
+ListFolder = Callable[[str], Awaitable[list[tuple[str, int, int]]]]
 
 
 @dataclass(frozen=True)
@@ -51,6 +53,7 @@ class ResearchIO:
     search: Search
     fetch: Fetch
     probe: ProbeRun | None = None
+    list_folder: ListFolder | None = None
 
 
 # --- the limits that keep one unit small enough for a small model -------------------------------------------------------------------------------

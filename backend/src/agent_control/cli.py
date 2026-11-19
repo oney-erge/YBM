@@ -556,7 +556,24 @@ def _job_runner(settings: AppSettings, repositories: Repositories, audit: AuditL
     search, fetch = registry.adapters.get("web.search"), registry.adapters.get("http.request")
     if not settings.jobs.enabled or provider is None or search is None or fetch is None:
         return None
-    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser))
+    from agent_control.folder_triggers import MAX_FOLDER_ENTRIES, validate_watch_folder
+
+    async def list_folder(path: str) -> list[tuple[str, int, int]]:
+        """The files directly in a folder the assistant may read (the same check as a watch made in the console), with size and modified time."""
+        import os
+
+        folder = validate_watch_folder(path, settings)
+        found = []
+        with os.scandir(folder) as entries:
+            for entry in entries:
+                if len(found) >= MAX_FOLDER_ENTRIES:
+                    break
+                if entry.is_file(follow_symlinks=False):
+                    info = entry.stat(follow_symlinks=False)
+                    found.append((entry.name, info.st_size, info.st_mtime_ns))
+        return found
+
+    io = build_job_io(provider, search, fetch, browser_search=make_browser_search(settings.adapters.browser), list_folder=list_folder)
     from agent_control.scheduler import resolve_timezone
     from agent_control.schemas import utc_now
 
