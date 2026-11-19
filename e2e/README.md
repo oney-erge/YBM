@@ -9,6 +9,21 @@ Telegram Bot API can't *create* an inbound user message to your bot. A true
 Telegram E2E test needs a user session through MTProto. This harness uses
 Telethon for that and still uses the backend admin API for trace evidence.
 
+## Checking a change: five minutes, not a suite
+
+A live case takes real minutes on the real model, so a change is checked with a budget:
+
+```powershell
+backend\.venv\Scripts\python.exe scripts\run_all_e2e_tests.py --budget-seconds 300 --changed-since origin/main
+```
+
+The cases run in this order until the budget is used: the money-rule cases (when the change touches code they cover), the cases that failed last time (not the ones that have failed three runs in a row: those are checked in rotation), the cases in the areas the change touched
+(`e2e/areas.json` maps source paths to the cases' tags), then the cases that have waited longest. A case that usually takes over 90 seconds waits for the
+nightly slice (`--nightly-slice`, a different seventh of all the cases each day, so every case runs at least once a week). A failed case is run once more on its
+own. Add `--plan-only` to see what would run and why, without the bot. Only one runner may use the bot at a time (`.agent_control/e2e_runner.lock`).
+
+The held-out and sealed suites (`--suite verdict3` and the like) are for a release, not for a change.
+
 ## Setup
 
 `ybm setup` already installs the `e2e` extra (Telethon). Start the stack first:

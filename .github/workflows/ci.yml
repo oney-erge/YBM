@@ -9,8 +9,7 @@ on:
   # every job below succeeds.
   workflow_call:
   workflow_dispatch:
-  # The Windows and macOS backend jobs are not required to merge (they report on the pull request and decide nothing); the whole matrix also runs every night, so a
-  # platform-only break is seen the next morning even if nobody pushes.
+  # The whole matrix also runs every night, so a platform-only break is seen the next morning even if nobody pushes.
   schedule:
     - cron: "17 7 * * *"
 
@@ -104,9 +103,9 @@ jobs:
   backend-tests:
     name: backend (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    # Required to merge: the Linux job. Windows and macOS run for the same change and report, but do not block it (branch protection on main).
-    # The suite runs in parallel (pytest-xdist, one worker per core) with throwaway databases that skip the disk flush (backend/tests/conftest.py): the
-    # Windows run was 23 to 30 minutes in one process, and a 15 and then a 30 minute limit each cancelled it with no failing test.
+    # All three are required to merge. The suite runs in parallel (pytest-xdist, one worker per core) with throwaway databases that skip the disk flush
+    # (backend/tests/conftest.py): measured on the pull request that introduced it, Linux 0.8 minutes, Windows 1.4 and macOS 1.9. Before, the Windows run
+    # was 23 to 30 minutes in one process, and a 15 and then a 30 minute limit each cancelled it with no failing test.
     timeout-minutes: 20
     strategy:
       fail-fast: false
