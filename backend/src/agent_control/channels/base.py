@@ -37,6 +37,7 @@ from typing import Any, Protocol
 from agent_control.abilities.context import asks_about_the_assistant, asks_for_what_a_recipe_covers
 from agent_control.abilities.recipes import recipe_abilities
 from agent_control.channels.profile_facts import describe_pairs, profile_pairs, store_profile_facts
+from agent_control.projects_memory import project_context
 from agent_control.channels.memory import memory_context, recent_artifacts_context
 from agent_control.channels.responder import ChatResponder, gateway_context
 from agent_control.clarification import (
@@ -458,7 +459,7 @@ async def classify_and_spawn_task(
                 repositories.conversation_memory.get(conversation_id),
                 recent_turns=3,
                 max_chars=900,
-                remembered_facts=repositories.memory_facts.list_all(),
+                remembered_facts=repositories.memory_facts.list_all() if settings is None or settings.memory.enabled else [],
                 objective=inbound.text or "",
             )
         )
@@ -619,9 +620,11 @@ async def classify_and_spawn_task(
     mem_ctx = memory_context(
         repositories.conversation_memory.get(conversation_id),
         recent_turns=5, max_chars=1600,
-        remembered_facts=repositories.memory_facts.list_all(),
+        remembered_facts=repositories.memory_facts.list_all() if settings is None or settings.memory.enabled else [],
         objective=objective,
     ) + recent_artifacts_context(repositories, conversation_id)
+    if settings is None or settings.memory.enabled:
+        mem_ctx += await project_context(repositories, f"{inbound.text or ''} {objective}", getattr(settings, "decision", None))
     # Sent before the task exists so the id of this one message can be written with the task's first
     # record: every later progress update edits it instead of adding a bubble to the chat.
     started_text = TASK_STARTED_TEXT

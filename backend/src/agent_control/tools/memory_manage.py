@@ -11,6 +11,8 @@ input at all.
 
 from __future__ import annotations
 
+import re
+
 from agent_control.schemas import Capability, MemoryFact, MemorySource, RiskLevel, ToolCallRequest, ToolCallResult, ToolResultStatus
 from agent_control.storage.repositories import Repositories
 from agent_control.tools.contracts import MemoryManageInput, MemoryManageOutput
@@ -38,6 +40,8 @@ class MemoryManageAdapter:
                 output = self._list(request)
             elif operation == "forget":
                 output = self._forget(request)
+            elif operation == "search":
+                output = self._search(request)
             else:
                 return failed_result(request, f"unsupported memory operation: {operation}")
         except Exception as exc:
@@ -70,6 +74,27 @@ class MemoryManageAdapter:
             "summary": f"Found {len(facts)} remembered fact(s)." + ("\n" + "\n".join(lines) if lines else ""),
         }
 
+    def _search(self, request: ToolCallRequest) -> dict:
+        """What is known about something and what was said about it in any chat, with the dates. Facts that stopped being true are shown with when."""
+        query = str(request.input.get("query") or "").strip()
+        words = [w.casefold() for w in re.findall(r"[A-Za-z0-9]+", query) if len(w) > 2]
+        facts = [
+            fact for fact in self.repositories.memory_facts.list_all(include_closed=True)
+            if any(w in f"{fact.content} {fact.category} {fact.about or ''}".casefold() for w in words)
+        ][:12]
+        episodes = self.repositories.episodes.search(query, limit=8)
+        lines = []
+        for fact in facts:
+            until = f" (until {fact.valid_to.date().isoformat()})" if fact.valid_to else ""
+            lines.append(f"- known [{fact.about or fact.category}] {fact.content}{until}")
+        for episode in episodes:
+            who = {"said": "you said", "answer": "I answered", "note": "noted"}.get(episode["kind"], episode["kind"])
+            lines.append(f"- {str(episode['at'])[:10]} {who}: {episode['text'][:240]}")
+        return {
+            "facts": [f.model_dump(mode="json") for f in facts],
+            "summary": (f"Found {len(facts)} fact(s) and {len(episodes)} past message(s) about {query!r}:\n" + "\n".join(lines)) if lines else f"Nothing remembered or said about {query!r}.",
+        }
+
     def _forget(self, request: ToolCallRequest) -> dict:
         fact_id = str(request.input["fact_id"]).strip()
         deleted = self.repositories.memory_facts.delete(fact_id)
@@ -98,12 +123,12 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             description=(
                 "remember a durable fact about the user or their setup for future tasks, list "
-                "previously remembered facts, or forget one by id"
+                "previously remembered facts, search what was said and remembered about something in any chat, or forget one by id"
             ),
-            operations=("remember", "list", "forget"),
+            operations=("remember", "list", "forget", "search"),
             input_schema=MemoryManageInput,
             output_schema=MemoryManageOutput,
-            operation_output_schemas=same_output_schema(("remember", "list", "forget"), MemoryManageOutput),
+            operation_output_schemas=same_output_schema(("remember", "list", "forget", "search"), MemoryManageOutput),
             default_operation="remember",
             # docs/archive/UI_UX_AUDIT.md Phase 15: remember/list stay low-risk,
             # no-approval - forgetting a durable fact is the one operation
@@ -113,6 +138,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_risks={
                 "remember": RiskLevel.LOW,
                 "list": RiskLevel.LOW,
+                "search": RiskLevel.LOW,
                 "forget": RiskLevel.MEDIUM,
             },
             approval_required_operations=("forget",),
@@ -122,6 +148,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             examples=(
                 {"operation": "remember", "category": "preference", "content": "Prefers metric units"},
                 {"operation": "list", "query": "preference"},
+                {"operation": "search", "query": "daycare"},
                 {"operation": "forget", "fact_id": "{{fact_id}}"},
             ),
         )

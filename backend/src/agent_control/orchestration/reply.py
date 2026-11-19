@@ -89,6 +89,9 @@ class ReplyStage:
         if not summary:
             return
         try:
+            answer = str(task.metadata.get("synthesized_answer") or "").strip()
+            if answer:
+                self.repositories.episodes.add("answer", answer, conversation_id=task.conversation_id, task_id=task.id)  # once per task
             await ConversationMemoryService(self.repositories).update_from_task_summary(task.conversation_id, summary)
         except Exception as exc:
             self.audit.append(

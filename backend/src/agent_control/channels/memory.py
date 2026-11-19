@@ -120,9 +120,13 @@ class ConversationMemoryService:
         summarization_timeout_seconds: int = 20,
         summarize_in_background: bool = False,
         summarize_delay_seconds: float = 15.0,
+        learner: Any = None,
     ) -> None:
         self.repositories = repositories
         self.provider = provider
+        # Keeps what the owner says about their life as facts (channels/memory_learning.py); None when `memory.auto_remember` is off.
+        self.learner = learner
+        self._learned: set[tuple[str, str]] = set()
         self.max_summary_chars = max_summary_chars
         self.max_recent_turns = max_recent_turns
         self.summarization_timeout_seconds = summarization_timeout_seconds
@@ -190,8 +194,22 @@ class ConversationMemoryService:
             summary = await self._summarize(str(record.get("summary") or DEFAULT_SUMMARY), turns)
             latest = self.repositories.conversation_memory.get(conversation_id) or record  # turns that arrived meanwhile are kept; only the summary is replaced
             self.repositories.conversation_memory.upsert(conversation_id, summary, dict(latest.get("facts") or {}))
+            await self._learn_from(conversation_id, turns)
         except Exception:  # noqa: BLE001 - a summary is never worth a failed message
             logger.warning("conversation summary refresh failed", exc_info=True)
+
+    async def _learn_from(self, conversation_id: str, turns: list[dict[str, str]]) -> None:
+        """Keep what the owner just said about their life, once per message, after the reply."""
+        if self.learner is None:
+            return
+        said = next((turn["text"] for turn in reversed(turns) if turn.get("role") == "user"), "")
+        key = (conversation_id, said)
+        if not said or key in self._learned:
+            return
+        self._learned.add(key)
+        if len(self._learned) > 200:
+            self._learned.clear()
+        await self.learner.learn(said, conversation_id=conversation_id)
 
     def _summarize_later(self, conversation_id: str) -> None:
         """Summarize this conversation after the reply, at most one run at a time per conversation."""

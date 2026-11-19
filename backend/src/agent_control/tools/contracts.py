@@ -1089,7 +1089,7 @@ class ScheduleManageOutput(ToolOutputModel):
 
 
 class MemoryManageInput(ToolInputModel):
-    operation: Literal["remember", "list", "forget"] = "remember"
+    operation: Literal["remember", "list", "forget", "search"] = "remember"
     category: str | None = None
     content: str | None = None
     fact_id: str | None = None
@@ -1101,6 +1101,8 @@ class MemoryManageInput(ToolInputModel):
             raise ValueError("memory.manage remember requires 'category' and 'content'")
         if self.operation == "forget" and not self.fact_id:
             raise ValueError("memory.manage forget requires 'fact_id'")
+        if self.operation == "search" and not (self.query or "").strip():
+            raise ValueError("memory.manage search requires 'query'")
         return self
 
 
