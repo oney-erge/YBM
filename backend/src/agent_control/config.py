@@ -819,6 +819,8 @@ class JobsConfig(StrictBaseModel):
     reports_dir: str = ".agent_control/jobs"
     # Where the scripts a monitor runs are kept (jobs/monitors.py). Only a script saved here by `job.manage start_watch` is ever run by a monitor.
     monitors_dir: str = ".agent_control/monitors"
+    # While a research, survey or investigation is running, ask Windows not to sleep (jobs/awake.py); the screen may still turn off. A watch does not count.
+    keep_awake: bool = True
     # Equal hours disable quiet time. Completion, failures and required questions still notify.
     quiet_start: int = Field(default=23, ge=0, le=23)
     quiet_end: int = Field(default=8, ge=0, le=23)

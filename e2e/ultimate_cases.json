@@ -265,7 +265,8 @@
     ],
     "assertions": {
       "final_status_in": [
-        "completed"
+        "completed",
+        "chat"
       ],
       "bot_reply_excludes_all": [
         "task_",

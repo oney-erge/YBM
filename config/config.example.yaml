@@ -292,6 +292,7 @@ jobs:
   quiet_start: 23     # progress messages use scheduler.default_timezone
   quiet_end: 8        # equal hours disable quiet time; completion and failures still notify
   monitors_dir: .agent_control/monitors  # where the scripts a monitor runs are kept (a script the assistant wrote, tested once)
+  keep_awake: true    # ask Windows not to sleep while a research, survey or investigation runs (the screen may still turn off)
 
 # What the assistant remembers across every chat. Both are on: it keeps what you say about yourself, your family, your home, your plans and your projects without
 # being asked, closes a fact that stops being true instead of deleting it, and can search everything said in any chat. Turn either off here.

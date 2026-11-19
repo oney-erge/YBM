@@ -259,7 +259,7 @@ def close_open_jobs() -> None:
     """
     try:
         conn = sqlite3.connect(DB_PATH)
-        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('running', 'paused')")
+        conn.execute("UPDATE background_jobs SET status = 'cancelled' WHERE status IN ('running', 'paused')")
         conn.commit()
         conn.close()
     except Exception:

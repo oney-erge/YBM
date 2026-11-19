@@ -3,6 +3,7 @@ name: Keep watch on something on this computer or network
 description: write a small read-only script that looks at something on this computer or the home network (devices, disk space, a service, a drive), keep it, and have it checked every few minutes, telling the person only when something changes
 when: Is the user asking you to keep monitoring something on their computer or home network over time (devices, services, disk space, open ports, a program) and tell them when it changes?
 when_at: 0.6
+route: job
 tools:
   - job.manage
   - code.interpreter
