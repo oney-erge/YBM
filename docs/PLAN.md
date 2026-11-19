@@ -150,9 +150,9 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 
 | # | What | Type | Size | State |
 |---|---|---|---|---|
-| G0.1 | `DESIGN.md`, the change rule, the CI check, the counts | Design | S | in review |
-| G0.2 | This plan replaces the two | Minimal | S | in review |
-| G0.3 | Write and seal Verdict 4 before the work | Minimal | S | |
+| G0.1 | `DESIGN.md`, the change rule, the CI check, the counts | Design | S | done (#271); `design-rule` is a required check |
+| G0.2 | This plan replaces the two | Minimal | S | done (#271) |
+| G0.3 | Write and seal Verdict 4 before the work | Minimal | S | done: 20 cases, `e2e/verdict4_cases.sha256`, `--suite verdict4` |
 | G0.4 | Clean test leftovers from live memory; the runner removes what each case made | Minimal | S | |
 | G0.5 | Re-record the fixtures in the owner's config; merge or drop the lifecycle branches | Minimal | S | |
 | D5a | What the model sees (section 4) | Design | M | |
