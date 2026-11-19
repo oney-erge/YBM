@@ -502,5 +502,194 @@
         "expects_task": "auto"
       }
     ]
+  },
+  {
+    "id": "cont_projects_listed_and_returned",
+    "requirement": "continuity",
+    "message": "We are building a treehouse for the kids: an oak platform, a 600 dollar budget, and it should be finished by June.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup",
+      "memory",
+      "projects"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the treehouse as a project with its budget and date",
+      "Says which projects are active, naming the treehouse, without asking which project",
+      "Returning to it gives the budget and the month from what was kept"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "other_topic",
+        "message": "Unrelated: how many minutes are there in 3 hours?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "180"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "which",
+        "message": "Which projects am I working on right now?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "treehouse"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "back",
+        "message": "Back to the treehouse. What was the budget and when should it be finished?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "600",
+            "June"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "cont_a_fact_that_changes_keeps_its_history",
+    "requirement": "continuity",
+    "message": "I work at Initech.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup",
+      "memory"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Keeps the first employer and closes it when told about the change instead of deleting it",
+      "Gives the new employer as the current one and the old as the earlier one"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "changed",
+        "message": "I changed jobs last week, I am at Globex now.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "where",
+        "message": "Where do I work now, and where did I work before?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "Globex",
+            "Initech"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
   }
 ]
