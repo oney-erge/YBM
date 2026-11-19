@@ -1090,12 +1090,26 @@ def _fill_form_script(fields: dict[str, str], *, submit: bool, submit_selector: 
     node.blur();
     filled.push(key);
   }}
+  let pressed = false;
   if (submit) {{
-    const submitNode = submitSelector ? document.querySelector(submitSelector) : document.querySelector('button[type="submit"], input[type="submit"]');
-    if (submitNode) submitNode.click();
-    else if (document.forms[0]) document.forms[0].requestSubmit();
+    const pressable = Array.from(document.querySelectorAll('button, input[type="submit"], input[type="button"], [role="button"]')).filter((item) => item.getClientRects().length > 0);
+    const label = (item) => normalize(item.innerText || item.value || item.getAttribute('aria-label') || item.title);
+    let submitNode = null;
+    if (submitSelector) {{
+      // The model may give a CSS selector or the button's words ("Search", "text=Search"); both mean the same button.
+      try {{ submitNode = document.querySelector(submitSelector); }} catch (error) {{ submitNode = null; }}
+      if (!submitNode) {{
+        const wantedWords = normalize(submitSelector.replace(/^\\s*text\\s*=\\s*/i, '').replace(/^["']|["']$/g, ''));
+        submitNode = pressable.find((item) => label(item) === wantedWords) || pressable.find((item) => label(item).includes(wantedWords)) || null;
+      }}
+    }}
+    if (!submitNode) submitNode = document.querySelector('button[type="submit"], input[type="submit"]');
+    // A page without a form (a search box and a button side by side): the button named for what the fields are for.
+    if (!submitNode) submitNode = pressable.find((item) => /^(search|find|go|submit|send|save|ok|continue|next|sign in|log in|login|sign up|create)/.test(label(item))) || null;
+    if (submitNode) {{ submitNode.click(); pressed = true; }}
+    else if (document.forms[0]) {{ document.forms[0].requestSubmit(); pressed = true; }}
   }}
-  return {{ filled, submitted: submit }};
+  return {{ filled, submitted: submit && pressed, ...(submit && !pressed ? {{ submit_note: 'No button to press was found, so nothing was submitted. Click the page button by its words.' }} : {{}}) }};
 }})()"""
 
 

@@ -552,6 +552,38 @@ class BrowserClickInput(ToolInputModel):
 
 _FIELD_NAMES = ("field", "field_name", "form_field", "field_id", "field_label", "input_name", "name", "label", "input", "key", "selector")
 _FIELD_VALUES = ("value", "field_value", "input_value", "form_value", "text", "content")
+#: Other names for the whole `fields` object, and for "press this button when done" (live 11/19, hands suite: `field_values` and `submit_button` were refused five times).
+_FIELDS_OBJECT_NAMES = ("field_values", "form_values", "form_data", "values")
+_BUTTON_NAMES = ("submit_button", "submit_text", "button_text", "button", "submit_label")
+
+
+def _words(value: Any) -> str:
+    """A value a model wrote as a list ("lighthouse") or a word is the words the field is to hold."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def _spelled_for_fill(data: dict[str, Any]) -> dict[str, Any]:
+    """`field_values`/`form_data`/`values` as the `fields` object, and a named button to press as `submit` with that button's words as `submit_selector`."""
+    out = dict(data)
+    if not out.get("fields"):
+        for key in _FIELDS_OBJECT_NAMES:
+            if isinstance(out.get(key), dict) and out[key]:
+                out["fields"] = {str(name): _words(value) for name, value in out[key].items()}
+                break
+    for key in _FIELDS_OBJECT_NAMES:
+        if key in out and out.get("fields"):
+            out.pop(key, None)
+    if not out.get("submit_selector"):
+        for key in _BUTTON_NAMES:
+            if isinstance(out.get(key), str) and out[key].strip():
+                out["submit_selector"] = out[key].strip()
+                out["submit"] = True
+                break
+    for key in _BUTTON_NAMES:
+        out.pop(key, None)
+    return out
 
 
 def _fields_from_dialect(data: Any) -> Any:
@@ -559,7 +591,11 @@ def _fields_from_dialect(data: Any) -> Any:
     Every spelling is the same request. Live, 11/19 (hands suite): `fill_form_step` with `field_name` and `value` was refused four times in a row and the task was blocked."""
     if not isinstance(data, dict):
         return data
+    data = _spelled_for_fill(data)
     fields = data.get("fields")
+    if isinstance(fields, dict) and fields:
+        data = {**data, "fields": {str(name): _words(value) for name, value in fields.items()}}  # a value written as a list is its words
+        return data
     if isinstance(fields, list):
         pairs = {}
         for item in fields:
