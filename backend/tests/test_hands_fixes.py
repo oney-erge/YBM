@@ -98,3 +98,44 @@ def test_a_click_that_names_nothing_on_the_screen_waits_instead_of_clicking_some
     assert _named_click({"type": "click", "name": "Equals"}, observation) == {"type": "wait", "seconds": 1}
     assert _named_click({"type": "click", "x": 5, "y": 6, "name": "Seven"}, observation) == {"type": "click", "x": 5, "y": 6, "name": "Seven"}
     assert _named_click({"type": "hotkey", "keys": ["ctrl", "c"]}, observation) == {"type": "hotkey", "keys": ["ctrl", "c"]}
+
+
+def test_a_click_names_its_target_in_whatever_word_the_model_uses() -> None:
+    from agent_control.tools.contracts import BrowserClickInput
+
+    assert BrowserClickInput(operation="click", target="Continue").text == "Continue"
+    assert BrowserClickInput(operation="click", element="Add to cart").text == "Add to cart"
+    assert BrowserClickInput(operation="click", button="#go").selector == "#go"
+    assert BrowserClickInput(operation="click", target="button.primary").selector == "button.primary"
+    assert BrowserClickInput(operation="click", target="text=Checkout").text == "text=Checkout"  # the click script reads the prefix
+    assert BrowserClickInput(operation="click", selector="#a", target="b").selector == "#a"  # what was given properly wins
+    with pytest.raises(ValueError):
+        BrowserClickInput(operation="click")
+
+
+def test_a_payment_that_was_asked_for_approved_and_carried_out_backs_the_words_that_say_so() -> None:
+    from agent_control.orchestration import claims
+
+    paid = [{"tool_name": "browser.control", "status": "succeeded", "input": {"operation": "click", "text": "Place your order"}}]
+    looked = [{"tool_name": "browser.control", "status": "succeeded", "input": {"operation": "click", "text": "Add to cart"}}]
+    failed = [{"tool_name": "browser.control", "status": "failed", "input": {"operation": "click", "text": "Place your order"}}]
+    said = "The red mug has been purchased. Your order was placed, order number ORD-2290."
+    assert claims.unbacked_claims(said, paid, {}) == []
+    assert any(c.kind == "paid" for c in claims.unbacked_claims(said, looked, {}))  # nothing paid, and it says it was
+    assert any(c.kind == "paid" for c in claims.unbacked_claims("I ordered the mug for you.", failed, {}))
+
+
+@pytest.mark.asyncio
+async def test_what_a_script_wrote_in_a_folder_it_names_is_a_recorded_change(tmp_path) -> None:
+    from agent_control.config import CodeInterpreterAdapterConfig
+    from agent_control.tools.code_interpreter import CodeInterpreterAdapter
+
+    target = tmp_path / "work" / "out"
+    adapter = CodeInterpreterAdapter(CodeInterpreterAdapterConfig(enabled=True, workspace_root=str(tmp_path / "ws"), blocked_imports=[]), provider=None)
+    code = f"import os\nfolder = r'{target}'\nos.makedirs(folder, exist_ok=True)\nopen(os.path.join(folder, 'hands-note.txt'), 'w').write('hello from hands')\nprint('saved')\n"
+    result = await adapter.execute(ToolCallRequest(
+        task_id="task_x", tool_name="code.interpreter", capability=Capability.TERMINAL_RUN, risk_level=RiskLevel.HIGH,
+        input={"operation": "run_python", "code": code, "execution_profile": "trusted"},
+    ))
+    assert result.status.value == "succeeded", result.error_message
+    assert result.output["changed_paths"] == [str(target / "hands-note.txt")] and "outside the workspace" in result.output["summary"]
