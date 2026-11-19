@@ -901,6 +901,15 @@ class MemoryFact(StrictBaseModel):
     supersedes_id: str | None = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    # What the fact is about ("home address", "daughter"): a newer fact about the same thing closes this one instead of deleting it, so "where did we live
+    # before" still has an answer. `valid_from` is when it became true (what the person said and when), `valid_to` when it stopped (None: still true).
+    about: str | None = Field(default=None, max_length=80)
+    valid_from: datetime | None = None
+    valid_to: datetime | None = None
+
+    @property
+    def is_current(self) -> bool:
+        return self.valid_to is None
 
 
 class AuditEvent(StrictBaseModel):

@@ -252,8 +252,13 @@ def _concierge_parts(
             is not None,
         )
     responder = LLMChatResponder(concierge_provider, settings, repositories) if concierge_provider else None
+    learner = None
+    if concierge_provider is not None and settings.memory.enabled and settings.memory.auto_remember:
+        from agent_control.channels.memory_learning import FactLearner
+
+        learner = FactLearner(repositories, concierge_provider)
     return classifier, responder, ConversationMemoryService(
-        repositories, provider=concierge_provider, summarize_in_background=settings.llm.summarize_memory_in_background,
+        repositories, provider=concierge_provider, summarize_in_background=settings.llm.summarize_memory_in_background, learner=learner,
     )
 
 

@@ -187,6 +187,30 @@ SCHEMA_STATEMENTS = [
     )
     """,
     """
+    CREATE TABLE IF NOT EXISTS episodes (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        conversation_id TEXT,
+        task_id TEXT,
+        project_id TEXT,
+        text TEXT NOT NULL,
+        at TEXT NOT NULL
+    )
+    """,
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_answer ON episodes(task_id) WHERE kind = 'answer'",
+    "CREATE INDEX IF NOT EXISTS idx_episodes_at ON episodes(at)",
+    "CREATE VIRTUAL TABLE IF NOT EXISTS episodes_fts USING fts5(text, content='episodes', content_rowid='rowid', tokenize='porter unicode61')",
+    """
+    CREATE TRIGGER IF NOT EXISTS episodes_ai AFTER INSERT ON episodes BEGIN
+        INSERT INTO episodes_fts(rowid, text) VALUES (new.rowid, new.text);
+    END
+    """,
+    """
+    CREATE TRIGGER IF NOT EXISTS episodes_ad AFTER DELETE ON episodes BEGIN
+        INSERT INTO episodes_fts(episodes_fts, rowid, text) VALUES ('delete', old.rowid, old.text);
+    END
+    """,
+    """
     CREATE TABLE IF NOT EXISTS workflows (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -329,6 +353,10 @@ ADDITIVE_MIGRATIONS = [
     ("project_plans", "last_check_in_at",      "ALTER TABLE project_plans ADD COLUMN last_check_in_at TEXT"),
     # Controls and unit completion must compare a durable generation, including pause/resume ABA races.
     ("background_jobs", "revision", "ALTER TABLE background_jobs ADD COLUMN revision INTEGER NOT NULL DEFAULT 0"),
+    # Facts that change over time: what a fact is about, when it became true, when it stopped.
+    ("memory_facts", "about", "ALTER TABLE memory_facts ADD COLUMN about TEXT"),
+    ("memory_facts", "valid_from", "ALTER TABLE memory_facts ADD COLUMN valid_from TEXT"),
+    ("memory_facts", "valid_to", "ALTER TABLE memory_facts ADD COLUMN valid_to TEXT"),
 ]
 
 
@@ -343,3 +371,14 @@ def apply_additive_migrations(connection) -> None:
         existing = {row[1] for row in rows}
         if column not in existing:
             connection.execute(statement)
+    backfill_episodes(connection)
+
+
+def backfill_episodes(connection) -> None:
+    """Once, when the episodes table is first made: what the owner has already said (every message kept so far) becomes searchable."""
+    if connection.execute("SELECT 1 FROM episodes LIMIT 1").fetchone() is not None:
+        return
+    connection.execute(
+        "INSERT INTO episodes (id, kind, conversation_id, task_id, project_id, text, at) "
+        "SELECT 'ep_' || id, 'said', conversation_id, NULL, NULL, text, received_at FROM messages WHERE text IS NOT NULL AND length(trim(text)) > 0"
+    )

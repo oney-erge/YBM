@@ -458,7 +458,7 @@ async def classify_and_spawn_task(
                 repositories.conversation_memory.get(conversation_id),
                 recent_turns=3,
                 max_chars=900,
-                remembered_facts=repositories.memory_facts.list_all(),
+                remembered_facts=repositories.memory_facts.list_all() if settings is None or settings.memory.enabled else [],
                 objective=inbound.text or "",
             )
         )
@@ -619,7 +619,7 @@ async def classify_and_spawn_task(
     mem_ctx = memory_context(
         repositories.conversation_memory.get(conversation_id),
         recent_turns=5, max_chars=1600,
-        remembered_facts=repositories.memory_facts.list_all(),
+        remembered_facts=repositories.memory_facts.list_all() if settings is None or settings.memory.enabled else [],
         objective=objective,
     ) + recent_artifacts_context(repositories, conversation_id)
     # Sent before the task exists so the id of this one message can be written with the task's first

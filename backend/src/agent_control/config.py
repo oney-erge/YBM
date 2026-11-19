@@ -761,6 +761,13 @@ class PlansConfig(StrictBaseModel):
     enabled: bool = False
 
 
+class MemoryConfig(StrictBaseModel):
+    """What the assistant remembers across every chat (channels/memory_learning.py). Both on by default: it remembers what the owner says without being asked to."""
+
+    enabled: bool = True  # remembered facts are offered to every task, and past conversations can be searched
+    auto_remember: bool = True  # facts the owner states about themselves, their family, home, plans and projects are kept as they say them
+
+
 class MailConfig(StrictBaseModel):
     """The assistant's own mailbox (tools/mail_manage.py). Off in the code's defaults for the same reason as `jobs.enabled`: a new tool line changes the Operator's prompt.
 
@@ -845,6 +852,7 @@ class AppSettings(BaseSettings):
     plans: PlansConfig = Field(default_factory=PlansConfig)
     jobs: JobsConfig = Field(default_factory=JobsConfig)
     mail: MailConfig = Field(default_factory=MailConfig)
+    memory: MemoryConfig = Field(default_factory=MemoryConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
 
     @classmethod
