@@ -198,7 +198,7 @@ sign in. Create accounts when needed, choose the username and password, store th
 
 1. **Measure first.** A Hands suite of 20 scenarios on the real PC: change a setting in an app, fill and submit a web form,
    download a file and rename it, sign in to a site with stored credentials, create a free account, put items in a cart and
-   check out within the limit, read a page behind a cookie wall, recover when a button moved.
+   take a cart to the page before payment and stop there, read a page behind a cookie wall, recover when a button moved.
 2. **Reliable by structure.** Accessibility tree first, screenshot second; after every action observe and check the effect;
    stop on a mismatch and try another way; a site that worked becomes a saved procedure (a skill), so the second time is a
    script.
@@ -300,7 +300,7 @@ starts; their wording is not used while building. At level 3 none of them may pr
 | "I am going to build a humanoid robot. What are the steps and what should I buy?" | Dig, then project | Phases (frame, actuators, compute, power, control, safety), three budget tiers, a bill of materials with sources, what to buy first |
 | "Turn my old PC parts into a home server." | Dig | What the parts are (read from the machine), what is missing, steps, a shopping list |
 | "Plan our daughter's first birthday." | Look | A plan with a date, budget, checklist and reminders, assumptions stated |
-| "Plan a trip to Portugal in May with the baby." | Dig | Itinerary options, baby logistics, costs, bookings within the limit |
+| "Plan a trip to Portugal in May with the baby." | Dig | Itinerary options, baby logistics, costs, bookings prepared and paid only after a yes |
 | "Set up a vegetable garden for our climate." | Dig | Zone from the remembered location, calendar, bed plan, shopping list, reminders |
 
 **Long and exhaustive**
