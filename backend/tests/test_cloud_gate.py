@@ -268,7 +268,8 @@ async def test_a_named_coding_agent_still_starts(tmp_path) -> None:
 @pytest.mark.asyncio
 async def test_insisting_on_an_unrequested_coding_agent_stops_the_task(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
-    task = repos.tasks.create("Build me a todo app", metadata={"original_message_text": "Build me a todo app"})
+    # The retry loop (orchestration/retry.py) has had its turns, so what is tested here is the stop itself.
+    task = repos.tasks.create("Build me a todo app", metadata={"original_message_text": "Build me a todo app", "retry_changes": [{"kind": "step_back"}] * 3})
     executor = _executor_with_adapter(_settings(), audit, repos, StaticToolAdapter({"summary": "started"}), tool_name="coding.agent")
     worker = TaskWorker(repos, audit, executor=executor, operator=QueueOperator([_start() for _ in range(5)]))
 

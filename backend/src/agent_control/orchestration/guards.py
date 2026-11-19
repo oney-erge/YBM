@@ -1,14 +1,16 @@
 """What stands between the model's decision and the world: refusals, the ladder of next steps, the offers to finish or to hand over."""
 from __future__ import annotations
 
+import logging
 import shutil
 from typing import Any
 
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, is_yes
-from agent_control.orchestration import call_policy, ladder
+from agent_control.orchestration import call_policy, context, ladder, retry
 from agent_control.orchestration.asking import users_own_words
-from agent_control.orchestration.autonomy import AUTONOMOUS, autonomy_of, may_ask_to_hand_over
+from agent_control.orchestration.autonomy import may_ask_to_hand_over
 from agent_control.orchestration.check_entries import (
+    CHECK_ENTRY_APPROACH,
     CHECK_ENTRY_NAMES,
     CHECK_ENTRY_STRATEGY,
     CHECK_ENTRY_STUCK,
@@ -25,6 +27,7 @@ from agent_control.orchestration.number_check import (
 from agent_control.orchestration.repeats import repeated_no_progress_call
 from agent_control.orchestration.request_facts import RequestFacts
 from agent_control.orchestration.task_record import claude_code_decision, steps_used
+from agent_control.plans.model import PlanStatus
 from agent_control.schemas import (
     AuditEventType,
     OperatorDecision,
@@ -32,6 +35,11 @@ from agent_control.schemas import (
     TaskStatus,
     ToolResultStatus,
 )
+
+logger = logging.getLogger(__name__)
+
+#: Tools that are the machinery of a task, not a different way of doing it: never offered as "another tool".
+_NOT_AN_APPROACH = frozenset({"delegate", "task.status", "ability.search", "ability.acquire", "skills.use", "persona.manage", "mcp.client", "artifact.deliver"})
 
 
 class GuardStage:
@@ -127,19 +135,6 @@ class GuardStage:
         still calls tools and gets the same result, the task stops as before.
         """
         current = current_recovery_history(history)
-        recent = next((entry for entry in reversed(current) if isinstance(entry, dict)
-                       and entry.get("tool_name") not in CHECK_ENTRY_NAMES), {})
-        budget = max(self.operator_max_steps, int(task.metadata.get("local_recovery_step_limit") or 0))
-        if (autonomy_of(task.metadata) >= AUTONOMOUS
-                and recent.get("status") in ("failed", "denied") and steps_used(history) < budget
-                and not any(entry.get("hint_id") == "alternative_after_repeat" for entry in current if isinstance(entry, dict))):
-            history.append({
-                "tool_name": CHECK_ENTRY_STRATEGY, "input": None, "status": "strategy", "hint_id": "alternative_after_repeat",
-                "error": (f"{called} has repeatedly failed. Do not repeat it; use the remaining budget for a materially different "
-                          "available local method within policy, or explain the blocker and an evidence-based next action. "
-                          "Treat untested ideas as possibilities, not proven capabilities."),
-            })
-            return self.repositories.tasks.update_metadata(task.id, {**task.metadata, "operator_history": history})
         if any(entry.get("tool_name") == CHECK_ENTRY_STUCK for entry in current if isinstance(entry, dict)):
             if self._may_offer_claude_code(task):
                 return self._offer_claude_code(task, history)
@@ -282,6 +277,78 @@ class GuardStage:
             return None
         metadata = {**task.metadata, "operator_history": history, "synthesized_answer": answer}
         return self._transition_operator(task, metadata, TaskStatus.COMPLETED, "operator_redundant_read_finished")
+
+    async def _retry_step(self, task: TaskRecord, history: list[dict[str, Any]], step_id: str) -> TaskRecord | None:
+        """Before each model decision: when the task is going nowhere, find out why and change the kind of approach (orchestration/retry.py).
+
+        Noticing is plain code over the task's own steps. Only then is the model asked, once, what the attempts took for granted and which assumption was the first wrong
+        one. Code chooses a kind of approach that suits the cause, was not tried and fits this task, and writes it into the history as one note; the prompt then shows
+        what came before it as a short list of what failed. After `retry.MAX_CHANGES` changes nothing more is done here and the task ends the way it always did, with what
+        was tried. Returns the task when this tick was spent on the note.
+        """
+        meta = task.metadata
+        changes = list(meta.get("retry_changes") or [])
+        steps = retry.work_steps(history)
+        if len(changes) >= retry.MAX_CHANGES or len(steps) <= int(meta.get("retry_handled_through") or 0) or retry.stuck(history) is None:
+            return None
+        diagnosis = await self._diagnose(task, history)
+        cause = diagnosis.cause if diagnosis is not None else "missing_context"
+        tried = [str(change.get("kind")) for change in changes]
+        facts = self._retry_facts(task, history)
+        kind = retry.choose(cause, tried, self._retry_available(facts, history))
+        update = {**meta, "retry_handled_through": len(steps)}  # looked at once for these steps, whatever comes of it
+        if kind is None:
+            return self.repositories.tasks.update_metadata(task.id, update)  # nothing left to try: it is written down, and the task ends the way it always did
+        history.append({
+            "tool_name": CHECK_ENTRY_APPROACH, "input": None, "status": "approach", "hint_id": kind, "step_id": step_id,
+            "error": retry.approach_text(kind, diagnosis, facts, retry.tried_lines(history), may_ask=may_ask_to_hand_over(meta)),
+        })
+        self.audit.append(AuditEventType.TASK_STATE_CHANGED, actor="worker", task_id=task.id, payload={"reason": "approach_changed", "kind": kind, "cause": cause})
+        return self.repositories.tasks.update_metadata(task.id, {
+            **update, "operator_history": history, "retry_changes": [*changes, {"kind": kind, "cause": cause, "after_step": len(steps)}],
+        })
+
+    async def _diagnose(self, task: TaskRecord, history: list[dict[str, Any]]) -> retry.Diagnosis | None:
+        """The one model call: what the person asked, what the attempts assumed, which assumption was the first wrong one. None when it cannot be asked."""
+        generate = getattr(getattr(self.operator, "provider", None), "generate_structured", None)
+        if generate is None:
+            return None
+        exchange = context.last_exchange(self.repositories.episodes, task.conversation_id, str(task.metadata.get("original_message_text") or ""))
+        try:
+            return await generate(
+                retry.DIAGNOSE_SYSTEM, retry.diagnose_prompt(users_own_words(task), exchange, retry.tried_lines(history)), retry.Diagnosis, temperature=0.1
+            )
+        except Exception:  # noqa: BLE001 - a diagnosis is help, never a gate: without one the kind is chosen from the evidence alone
+            logger.info("diagnosis failed; choosing an approach without it", exc_info=True)
+            return None
+
+    def _retry_facts(self, task: TaskRecord, history: list[dict[str, Any]]) -> retry.Facts:
+        steps = retry.work_steps(history)
+        last_error = next((str(step.get("error") or "") for step in reversed(steps) if step.get("status") in ("failed", "denied")), "")
+        used = {str(step.get("tool_name")) for step in steps}
+        definitions = getattr(self.executor, "tool_definitions", {}) if self.executor is not None else {}
+        untried = tuple(sorted(name for name, definition in definitions.items() if definition.enabled and name not in used and name not in _NOT_AN_APPROACH))
+        home = ""
+        plans = self.repositories.plans.list(statuses=[PlanStatus.PROPOSED, PlanStatus.ACTIVE, PlanStatus.PAUSED], conversation_id=task.conversation_id, limit=1)
+        if plans:
+            home = "plan.manage with operation revise and the person's own words as the instruction: the plan open in this chat is the one they mean"
+        return retry.Facts(home=home, last_error=last_error, untried_tools=untried)
+
+    def _retry_available(self, facts: retry.Facts, history: list[dict[str, Any]]) -> set[str]:
+        """The kinds of approach that fit this task right now."""
+        available = {"answer_from_context", "step_back", "break_down"}
+        if facts.home:
+            available.add("owning_home")
+        if facts.last_error and any(word in facts.last_error.lower() for word in ("requires", "invalid input", "validation", "unexpected", "missing")):
+            available.add("fix_the_call")
+        if facts.untried_tools:
+            available.add("other_tool")
+        definitions = getattr(self.executor, "tool_definitions", {}) if self.executor is not None else {}
+        for kind, tool in (("write_code", ladder.CODE_TOOL), ("look_up", "web.search")):
+            definition = definitions.get(tool)
+            if definition is not None and definition.enabled:
+                available.add(kind)
+        return available
 
     def _may_offer_claude_code(self, task: TaskRecord) -> bool:
         """The one test for asking the person whether to hand the task to Claude Code: not offered or declined before, a coding agent is there, and the

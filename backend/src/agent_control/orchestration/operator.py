@@ -12,6 +12,7 @@ import re
 from pydantic import ValidationError
 
 from agent_control.llm.providers import LLMProvider
+from agent_control.orchestration import retry
 from agent_control.prompts import prompt_text, render_prompt
 from agent_control.schemas import OperatorDecision
 from agent_control.task_inbox import NOTE_ENTRY_NAME
@@ -230,8 +231,12 @@ def _neutralize_embedded_fence_markers(text: str) -> str:
 def _format_history(history: list[dict]) -> str:
     if not history:
         return "(none yet - this is the first step)"
+    failed_before, history = retry.compact_before_approach(history)
     recent = history[-_MAX_HISTORY_ENTRIES:]
     lines = []
+    if failed_before:
+        # A change of approach (orchestration/retry.py): what came before it is a short list, not the transcript a model would copy.
+        lines.append("[Before the change of approach below, these were tried and did not work:\n" + "\n".join(failed_before[-8:]) + "]")
     if len(history) > len(recent):
         lines.append(f"[{len(history) - len(recent)} earlier step(s) omitted]")
     for index, entry in enumerate(recent, start=1):

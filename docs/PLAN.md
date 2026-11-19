@@ -158,7 +158,7 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 | D5a | What the model sees (section 4) | Design | M | built: notes keep their place, the catalog gives way, the last exchange is shown; the index and `PROJECT.md` layers come with D5b |
 | P1 | "Revise the plan" goes to the planner with the old plan; plans get versions | Design (a new operation) | S | built: `plan.manage revise`, a version line, step detail on the card |
 | D2 | One asking gate, including the hand-over offer | Design | S | |
-| D4 | The retry loop (section 6); deletes the fixed hint ladder and two old recovery pieces | Design | M to L | |
+| D4 | The retry loop (section 6); deletes the fixed hint ladder and two old recovery pieces | Design | M to L | built: noticing, one diagnosis, kinds of approach, a fresh attempt; learning a lesson comes with D5b |
 | D3 | One proof check that sees the answer | Design | M | |
 | D6 | Tool calls checked per operation; then delete the alias tables | Design | S | |
 | D1 | One front door for every channel; deletes the phrase patterns and Telegram-only routing | Design | L | |

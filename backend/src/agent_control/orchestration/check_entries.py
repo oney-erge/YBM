@@ -16,7 +16,10 @@ CHECK_ENTRY_NUMBER = "_number_check"
 # What the task's own evidence says to do next (orchestration/ladder.py): a search that is settled, a script to write, a result
 # that is not where the request said.
 CHECK_ENTRY_STRATEGY = "_strategy_check"
+# A change of approach after the task went nowhere (orchestration/retry.py): why, what to do instead, what already failed. The prompt shows what came before it as
+# short lines, not as the failed transcript.
+CHECK_ENTRY_APPROACH = "_approach_check"
 CHECK_ENTRY_NAMES = frozenset(
     {CHECK_ENTRY_FULFILLMENT, CHECK_ENTRY_AUDIT, CHECK_ENTRY_CLARIFICATION, CHECK_ENTRY_STUCK, CHECK_ENTRY_NUMBER,
-     CHECK_ENTRY_STRATEGY}
+     CHECK_ENTRY_STRATEGY, CHECK_ENTRY_APPROACH}
 )
