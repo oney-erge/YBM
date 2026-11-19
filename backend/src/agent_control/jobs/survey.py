@@ -30,8 +30,9 @@ from agent_control.jobs.research import PAGE_CHARS, ResearchIO, Unit, normalized
 
 RESULTS_PER_QUERY = 8
 MAX_PHRASINGS_PER_ROUND = 8
-MAX_ROUNDS = 8
-STOP_NEW_RATE = 0.02  # rows found in the last three rounds, as a share of all rows
+MAX_ROUNDS = 40  # a backstop: the stop measure below and the hours decide, as the person is told
+STOP_NEW_RATE = 0.02  # rows found in the last three rounds, as a share of all rows (and under STOP_NEW_FLOOR rows at the least: with 23 rows 2% is under one row, so a single stray find would keep the search going)
+STOP_NEW_FLOOR = 2
 STOP_FILLED = 0.95
 STEADY_ROUNDS = 3
 MAX_TRIES_PER_CELL = 3
@@ -138,7 +139,7 @@ def steady(state: dict[str, Any]) -> bool:
     total = len(state.get("rows") or [])
     if len(history) < STEADY_ROUNDS or not total:
         return False
-    return sum(history[-STEADY_ROUNDS:]) / total < STOP_NEW_RATE
+    return sum(history[-STEADY_ROUNDS:]) < max(STOP_NEW_FLOOR, STOP_NEW_RATE * total)
 
 
 def progress_text(state: dict[str, Any]) -> str:
@@ -353,11 +354,13 @@ async def _deepen(state: dict[str, Any], io: ResearchIO) -> Unit:
         return Unit(state)
     for criterion in missing:
         row["tries"][criterion] = row["tries"].get(criterion, 0) + 1
-    url = row.get("url") or ""
-    if not url.startswith(("http://", "https://")):
-        results = await io.search(f"{row['name']} {row['address'] or state['area']} {' '.join(missing[:3])}", 5)
-        url = next((str(r.get("url") or "") for r in results if str(r.get("url") or "").startswith(("http://", "https://"))), "")
+    tried = row.setdefault("tried_urls", [])
+    url = next((u for u in (row.get("url") or "",) if u.startswith(("http://", "https://")) and normalized_url(u) not in tried), "")
+    if not url:
+        results = await io.search(f"{row['name']} {row['address'] or state['area']} {' '.join(missing[:3])}", 6)
+        url = next((str(r.get("url") or "") for r in results if str(r.get("url") or "").startswith(("http://", "https://")) and normalized_url(str(r.get("url"))) not in tried), "")
     if url:
+        tried.append(normalized_url(url))
         fetched = await io.fetch(url)
         if fetched is not None and fetched.text.strip():
             text = fetched.text[:PAGE_CHARS]
@@ -373,6 +376,11 @@ async def _deepen(state: dict[str, Any], io: ResearchIO) -> Unit:
                 if url not in row["sources"]:
                     row["sources"].append(url)
                 break
+    elif missing:
+        for criterion in missing:
+            row["tries"][criterion] = MAX_TRIES_PER_CELL  # no page left to try for this one
+    if any(c not in row["cells"] and row["tries"].get(c, 0) < MAX_TRIES_PER_CELL for c in state["criteria"]):
+        state["deepen_queue"].append(row_id)  # still missing something: another page, after the others have had their first
     if not state["deepen_queue"] or filled_share(state) >= STOP_FILLED:
         state["stage"] = "rate"
     return Unit(state)

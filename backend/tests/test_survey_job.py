@@ -133,6 +133,43 @@ def test_the_stop_measure_is_a_share_of_all_rows_over_the_last_three_rounds() ->
     assert not survey.steady({"rows": [], "round_new": [0, 0, 0]})  # nothing found is not a finished survey
 
 
+def test_a_small_table_is_steady_when_the_last_three_rounds_found_under_two_rows() -> None:
+    """11/19, the real daycare survey: 23 rows, rounds of [4, 14, 0, 0, 1, 4, 0, 0]. 2 percent of 23 is under one row, so one stray find in three rounds kept it searching until the round cap."""
+    small = {"rows": [{}] * 23}
+    assert survey.steady({**small, "round_new": [4, 14, 0, 0, 1]})  # 1 new in the last three rounds
+    assert not survey.steady({**small, "round_new": [4, 14, 0, 1, 1]})  # 2 are not under two
+    assert not survey.steady({**small, "round_new": [4, 14, 0, 0, 1, 4]})  # 5 in the last three
+    assert survey.MAX_ROUNDS >= 30  # the cap is a backstop; the measure and the hours decide
+
+
+@pytest.mark.asyncio
+async def test_a_gap_is_looked_for_on_a_different_page_each_time_never_the_same_page_twice() -> None:
+    """The real survey read the first search result for every gap, so a second look read the same page and found the same nothing."""
+    class _Tries(_Io):
+        def __init__(self) -> None:
+            super().__init__()
+            self.fetched: list[str] = []
+
+        async def search(self, query, count):
+            return [{"title": "one", "url": "https://one.example/a", "snippet": ""}, {"title": "two", "url": "https://two.example/b", "snippet": ""}, {"title": "three", "url": "https://three.example/c", "snippet": ""}]
+
+        async def fetch(self, url):
+            self.fetched.append(url)
+            return Page("page", "A page that says nothing about this daycare.")
+
+    io = _Tries()
+    state = survey.new_state()
+    state.update({"stage": "deepen", "criteria": ["hours"], "entity": "daycare", "area": "Pearland"})
+    state["rows"] = [{"id": 1, "name": "Oak Tree Kids", "address": "9 Elm Rd", "url": "", "cells": {}, "sources": [], "tries": {}, "score": None, "reason": ""}]
+    state["deepen_queue"] = [1]
+    for _ in range(6):
+        if state["stage"] != "deepen":
+            break
+        state = (await survey.advance("g", state, io.io)).state
+    assert io.fetched == ["https://one.example/a", "https://two.example/b", "https://three.example/c"]  # three different pages, one each time
+    assert state["rows"][0]["tries"]["hours"] == survey.MAX_TRIES_PER_CELL and state["stage"] == "rate"
+
+
 @pytest.mark.asyncio
 async def test_the_ceiling_stops_the_search_and_a_job_that_found_nothing_says_so() -> None:
     io = _Io()
