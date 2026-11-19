@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -518,12 +519,28 @@ class BrowserCloseTabInput(ToolInputModel):
     title_contains: str | None = None
 
 
+_CSS_LIKE = re.compile(r"^[#.\[]|[>~+\[\]=:]|^[a-z]+[.#]")
+
+
 class BrowserClickInput(ToolInputModel):
     operation: Literal["click"] = "click"
     selector: str | None = None
     text: str | None = None
     tab_id: str | None = None
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _what_is_clicked(cls, data: Any) -> Any:
+        """`target`, `element`, `button`, `link`, `label` or `name` is what to click: CSS when it looks like CSS, the visible words otherwise. Refused four times in a row live
+        (hands suite 11/19, `target: "Continue"`) and the task ended blocked."""
+        if isinstance(data, dict) and not (data.get("selector") or data.get("text")):
+            for key in ("target", "element", "button", "link", "label", "name", "locator"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    rest = {k: v for k, v in data.items() if k != key}
+                    return {**rest, ("selector" if _CSS_LIKE.search(value.strip()) and not value.strip().lower().startswith("text=") else "text"): value.strip()}
+        return data
 
     @model_validator(mode="after")
     def _require_selector_or_text(self) -> "BrowserClickInput":

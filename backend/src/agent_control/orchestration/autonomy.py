@@ -56,15 +56,20 @@ _ACTING_TOOLS = frozenset({"browser.control", "computer.use", "desktop.control"}
 
 def payment_reason(request: ToolCallRequest) -> str | None:
     """Why this call would spend money, or None. Such a call is an approval-only action at every autonomy level."""
-    if request.tool_name not in _ACTING_TOOLS:
+    return payment_in(request.tool_name, request.input)
+
+
+def payment_in(tool_name: str, tool_input: Mapping[str, Any] | None) -> str | None:
+    """The same test on a tool name and its input, so the record of a finished step can be read the way the request was."""
+    if tool_name not in _ACTING_TOOLS or not isinstance(tool_input, Mapping):
         return None
-    operation = str(request.input.get("operation") or "")
+    operation = str(tool_input.get("operation") or "")
     if operation in _LOOKING:
         return None
     try:
-        text = json.dumps(request.input, ensure_ascii=False, default=str)
+        text = json.dumps(tool_input, ensure_ascii=False, default=str)
     except (TypeError, ValueError):
-        text = str(request.input)
+        text = str(tool_input)
     found = _CARD_FIELDS.search(text)
     if found:
         return f"it fills in payment details ({found.group(0).strip()})"
