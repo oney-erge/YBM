@@ -729,3 +729,23 @@ async def test_at_the_autonomous_level_a_question_is_the_assistants_to_answer_tw
     two = await worker.process_task(one.id)
     three = await worker.process_task(two.id)
     assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING and three.status == TaskStatus.CLARIFYING
+
+
+@pytest.mark.asyncio
+async def test_a_question_the_person_already_answered_is_sent_back_twice_even_after_the_autonomous_level_used_its_send_backs(tmp_path):
+    """11/19, "Call my mom and tell her I am late": "text or email?" was sent back twice, asked, answered, then asked again and waited."""
+    repos, audit = make_repos(tmp_path)
+    question = "I cannot place a phone call directly. I can either send a text message or compose an email to your mom. Which would you prefer?"
+    task = _task_with_history(
+        repos, "Call my mom and tell her I am late for dinner.", [], initiative_level=3,
+        operator_optional_question_recovery_count=2, clarify_count=1,
+        clarification_answer="Yes, please go ahead with what you proposed.", answered_clarifying_question=question,
+    )
+    again = OperatorDecision(action=OperatorAction.ASK_USER, question=question.replace("Which would you prefer?", "Which one?"), options=["Send a text message", "Compose an email"])
+    worker = _worker(repos, audit, _Seen([again, again, again]))
+    one = await worker.process_task(task.id)
+    two = await worker.process_task(one.id)
+    three = await worker.process_task(two.id)
+    assert one.status == TaskStatus.RUNNING and two.status == TaskStatus.RUNNING  # the same question is not let through
+    assert one.metadata["operator_repeated_question_recovery_count"] == 1 and two.metadata["operator_repeated_question_recovery_count"] == 2
+    assert three.status == TaskStatus.CLARIFYING  # bounded: a model that will not stop asking is not looped forever

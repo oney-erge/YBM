@@ -38,20 +38,22 @@ Local first stays the rule: nothing goes to a hosted model without asking.
 
 ## 2. Where it stands against that bar
 
+Status at 0.1.8 (11/19). Measured on the real bot and the real PC, one runner at a time (an earlier pair of overlapping runs cancelled each other's tasks and was discarded): the acceptance suite written after the build (`--suite ultimate`, 14 cases, frozen by hash) passed 7 of 14 on its first run, 11 of 14 after the first round of fixes, and 12 of 14 on the merged build; the hands suite (`--suite hands`, 10 cases on a real browser and desktop) went 6, 5, 8, then 9 of 10. The two ultimate cases that failed on the merged build are `ult_phone` (the same "text or email?" question asked again after the answer, fixed in 0.1.8 and not rerun live) and `ult_try_again` (a made-up "created plan.txt" caught by the claims check: the check worked, the model's second try did not). The hands case that failed, `hands_search_page`, searched the web instead of the named page (fixed in 0.1.8, checked in a real headless Edge, not rerun through the bot). These are counts from a 9B model that varies: `ult_phone` and `ult_try_again` each passed in an earlier run and failed in this one.
+
 | Behavior | State today |
 |---|---|
-| 1 Understand instead of asking | Partial. Initiative 1-5 exists and level 4 makes the assistant answer options questions itself; it still asks more than it should, and approvals still wait on cards. |
-| 2 Size of the ask | Missing. Nothing reads "take your time" or "all of them" from the words. |
-| 3 Memory across chats | Partial. A per-conversation summary (`conversation_memory`), global facts (`memory_facts`) and a `memory.manage` tool (remember, list, forget). No search over past conversations, no facts that change over time, no automatic remembering. |
-| 4 Projects | Partial. Projects are folders, instructions, corrections and criteria opened from the console. No hooks from chat, no notebook, no recall. |
-| 5 Big builds | Partial. Plans with dated steps and check-ins. No bill of materials, no walk-through. |
-| 6 Long exhaustive work | Partial. Research reads up to 1000 pages into a cited report. No loop that judges its own result; no entity search. The first live 600-page run was interrupted by a search throttle, fixed and resumed. |
-| 7 Hands | Partial and unmeasured. `computer.use` (Windows) and `browser.control` exist; no suite measures them; no accounts. |
-| 8 Decide when told | Done for routine choices. |
-| 9 Write code | Partial. `code.interpreter`, `adapter.factory`, `coding.agent`, skills. No test-then-keep loop, no monitors. |
-| 10 Exact blockers | Partial. Investigations end with evidenced options; not yet every failure. |
-| 11 Proof | Mostly. The done-check cannot see the answer, so an honest "I cannot" is rejected. |
-| 12 Stay | Partial. Restart survival, backup, additive migrations. No model-swap procedure. |
+| 1 Understand instead of asking | Done in code. `operator.autonomy_level` 1-3 (the owner's is 3): at 3 a question is sent back twice with "decide it and say what you assumed", routine approvals are granted by the assistant itself (audited as `autonomy`), and a question already answered is not asked again. Payments always ask, at every level. Frozen everyday cases at level 3: 30 of 32. |
+| 2 Size of the ask | Done. The job-start stage reads size from the words: "all the daycares around me" is a survey, "take your time" is a long job, "what is 15 percent of 80" is an answer; the size cases of the acceptance suite pass (daycares, custard, builders, research, a quick sum). |
+| 3 Memory across chats | Done in code, on by default (`memory.enabled`, `memory.auto_remember`): facts with `valid_from`/`valid_to` (changed or ended, not deleted), an episode index over past messages and answers (FTS5), `memory.manage search`, and a learner that notes a stated fact after the reply. Live check: the name given in one message was answered in the next. Not run across days. |
+| 4 Projects | Done in code. Hooks from chat into a project, a notebook per project, project context in replies, the `plan-a-project` skill as a companion. Not run over a real week. |
+| 5 Big builds | Partial. A pool and a humanoid robot get phases, assumptions stated instead of asked, a buy list and a safety line (both cases pass); no bill-of-materials file and no walk-through. |
+| 6 Long exhaustive work | Partial. Survey job with a stop measure (new rows of the last three rounds under 2% of all rows, 72 hours or 8 rounds at most), research up to 1000 pages, retries with backoff, the computer kept awake. The survey has not run overnight on the real web; the 600-page research run finished once with a thin report. |
+| 7 Hands | Measured: 9 of 10 on the hands suite. Sign-in and sign-up by the assistant itself with the login told to the owner, a skill per site, a money gate that is not a setting. |
+| 8 Decide when told | Done. |
+| 9 Write code | Done for monitors: a script is written, tested once, saved and run on a schedule (`ult_devices` passes: the stage writes the script, it is tested, and a watch is started). |
+| 10 Exact blockers | Done at the end of a task: what was tried, ways forward A, B, C, and a pick. |
+| 11 Proof | Mostly. An honest "I cannot" completes; a "paid" claim needs a recorded payment; a "created" claim needs a recorded write (it caught the made-up file in `ult_try_again`). |
+| 12 Stay | Partial. Daily backup, monthly restore check, a morning line, `ybm health`, `ybm calibrate` (all six skill marks separate on the real model). No three-day soak run; no model-swap procedure. |
 
 ## 3. The design
 

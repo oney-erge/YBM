@@ -469,6 +469,7 @@ class BrowserOpenInput(ToolInputModel):
 class BrowserSearchInput(ToolInputModel):
     operation: Literal["search"] = "search"
     query: str | None = None
+    url: str | None = Field(default=None, description="a page to search on (its own search box); leave empty to search the web")
     objective: str | None = None
     open_first_result: bool = False
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)

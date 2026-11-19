@@ -18,6 +18,7 @@ from agent_control.orchestration.asking import (
     clarification_recovery_reason,
     named_target_not_found,
     post_clarification_history_offset,
+    repeats_an_answered_question,
     still_asking_after_the_work_is_done,
     users_own_words,
 )
@@ -1086,9 +1087,14 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     "and name the nearest thing you can do."
                 )
             if clarification_recovery:
-                recovery_count = int(
-                    latest.metadata.get("operator_optional_question_recovery_count", 0)
+                # A question the person already answered is sent back on its own count: the two send-backs the autonomous level spent on the first
+                # asking must not let the same question through a second time (11/19, "Call my mom": "text or email?", answered, asked again, waited).
+                recovery_key = (
+                    "operator_repeated_question_recovery_count"
+                    if repeats_an_answered_question(latest, decision.question)
+                    else "operator_optional_question_recovery_count"
                 )
+                recovery_count = int(latest.metadata.get(recovery_key, 0))
                 if offer_pending and sum(
                     1 for entry in history if isinstance(entry, dict) and entry.get("tool_name") == CHECK_ENTRY_STUCK
                 ) < 2:
@@ -1124,7 +1130,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     metadata = {
                         **latest.metadata,
                         "operator_history": history,
-                        "operator_optional_question_recovery_count": recovery_count + 1,
+                        recovery_key: recovery_count + 1,
                     }
                     return self.repositories.tasks.update_metadata(
                         latest.id, metadata, TaskStatus.RUNNING
