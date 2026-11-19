@@ -1,0 +1,83 @@
+{
+  "_about": "Which live cases a change can affect. A changed file under a path prefix touches that area; a case belongs to an area when one of its tags (or its requirement) is listed. A change to a core path touches every area. e2e/budget.py reads this.",
+  "core": [
+    "backend/src/agent_control/orchestration/worker.py",
+    "backend/src/agent_control/orchestration/operator.py",
+    "backend/src/agent_control/orchestration/executor.py",
+    "backend/src/agent_control/orchestration/planning.py",
+    "backend/src/agent_control/channels/base.py",
+    "backend/src/agent_control/llm/",
+    "backend/src/agent_control/policy/",
+    "backend/src/agent_control/storage/",
+    "backend/src/agent_control/schemas.py"
+  ],
+  "areas": {
+    "files": {
+      "paths": [
+        "backend/src/agent_control/tools/filesystem_manage.py",
+        "backend/src/agent_control/tools/document_manage.py",
+        "backend/src/agent_control/tools/office_text.py",
+        "backend/src/agent_control/tools/artifact_delivery.py",
+        "backend/src/agent_control/tools/path_utils.py",
+        "backend/src/agent_control/tools/code_interpreter.py",
+        "backend/src/agent_control/work_folders.py"
+      ],
+      "tags": ["files", "filesystem", "documents", "delivery", "editing", "telegram_delivery", "calculation", "code_interpreter"]
+    },
+    "browser-and-computer": {
+      "paths": [
+        "backend/src/agent_control/tools/browser.py",
+        "backend/src/agent_control/tools/computer_use.py",
+        "backend/src/agent_control/tools/page_check.py",
+        "backend/src/agent_control/tools/web_search.py",
+        "backend/src/agent_control/accounts.py"
+      ],
+      "tags": ["hands", "computer", "browser", "web"]
+    },
+    "jobs": {
+      "paths": [
+        "backend/src/agent_control/jobs/",
+        "backend/src/agent_control/tools/job_manage.py",
+        "backend/src/agent_control/orchestration/job_start.py",
+        "backend/src/agent_control/scheduler.py",
+        "backend/src/agent_control/upkeep.py"
+      ],
+      "tags": ["ultimate", "long_running", "schedule", "plan", "multistep", "multi_step"]
+    },
+    "memory-and-conversation": {
+      "paths": [
+        "backend/src/agent_control/channels/memory.py",
+        "backend/src/agent_control/channels/memory_learning.py",
+        "backend/src/agent_control/projects_memory.py",
+        "backend/src/agent_control/tools/memory_manage.py",
+        "backend/src/agent_control/goals.py",
+        "backend/src/agent_control/orchestration/goal_routing.py"
+      ],
+      "tags": ["memory", "continuity", "conversation", "multi_turn", "followup"]
+    },
+    "asking-and-safety": {
+      "paths": [
+        "backend/src/agent_control/orchestration/asking.py",
+        "backend/src/agent_control/orchestration/autonomy.py",
+        "backend/src/agent_control/orchestration/initiative.py",
+        "backend/src/agent_control/orchestration/guards.py",
+        "backend/src/agent_control/orchestration/claims.py",
+        "backend/src/agent_control/orchestration/auditor.py",
+        "backend/src/agent_control/orchestration/approvals.py",
+        "backend/src/agent_control/clarification.py"
+      ],
+      "tags": ["safety", "safe", "honesty", "autonomy", "gaps"]
+    },
+    "abilities-and-skills": {
+      "paths": [
+        "backend/src/agent_control/abilities/",
+        "backend/src/agent_control/tools/skills.py",
+        "backend/src/agent_control/tools/ability_acquire.py",
+        "backend/src/agent_control/tools/adapter_factory.py",
+        "backend/src/agent_control/skill_learning.py",
+        "skills/"
+      ],
+      "tags": ["acquire", "invent", "evolution", "external", "recovery"]
+    }
+  }
+}
