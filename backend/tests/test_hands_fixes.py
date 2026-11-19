@@ -21,6 +21,8 @@ def test_a_field_is_a_field_whatever_the_model_calls_it() -> None:
     assert BrowserFillFormStepInput(operation="fill_form_step", field_name="Name", value="Ada Lovelace", url="http://x/").fields == expected
     assert BrowserFillFormStepInput(operation="fill_form_step", field="Name", value="Ada Lovelace").fields == expected
     assert BrowserFillFormStepInput(operation="fill_form_step", name="Name", text="Ada Lovelace").fields == expected
+    assert BrowserFillFormStepInput(operation="fill_form_step", form_field="Name", value="Ada Lovelace").fields == expected
+    assert BrowserFillFormInput(operation="fill_form", form_field="q", field_value="lighthouse").fields == {"q": "lighthouse"}
     pairs = BrowserFillFormInput(operation="fill_form", fields=[{"name": "quantity", "value": "1"}, {"field": "color", "text": "red"}])
     assert pairs.fields == {"quantity": "1", "color": "red"}
     assert BrowserFillFormInput(operation="fill_form", fields={"Name": "Ada"}).fields == {"Name": "Ada"}  # the proper form is untouched
