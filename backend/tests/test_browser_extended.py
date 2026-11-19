@@ -112,6 +112,26 @@ async def test_browser_extract_state_and_fill_form_step(monkeypatch) -> None:
     )
 
     assert state.output["forms"][0]["inputs"][0]["name"] == "email"
+    assert "Fields: email." in state.output["summary"]
+    assert "What the page says now:" in state.output["summary"] and "Latest episode 7 released" in state.output["summary"]  # the words on the page are kept, not replaced by a count of forms
     assert filled.output["browser_state"]["filled_fields"]["filled"] == ["email"]
     assert filled.output["browser_state"]["filled_fields"]["submitted"] is False
 
+
+
+@pytest.mark.asyncio
+async def test_a_login_made_for_the_person_is_said_to_be_sent_to_them_so_the_model_neither_asks_nor_refuses(monkeypatch) -> None:
+    monkeypatch.setattr("agent_control.tools.browser.ChromeDevToolsClient", FakeClient)
+    adapter = BrowserAdapter(BrowserAdapterConfig(enabled=True, default_wait_seconds=0))
+
+    made = await adapter.execute(ToolCallRequest(
+        task_id="task_browser", tool_name="browser.control", capability=Capability.BROWSER_CONTROL,
+        input={"operation": "fill_form", "url": "https://form.test", "fields": {"email": "a@example.com", "password": "{{new_password}}"}},
+    ))
+    plain = await adapter.execute(ToolCallRequest(
+        task_id="task_browser", tool_name="browser.control", capability=Capability.BROWSER_CONTROL,
+        input={"operation": "fill_form", "url": "https://form.test", "fields": {"email": "a@example.com"}},
+    ))
+
+    assert "the system sends the person the username and the password" in made.output["summary"] and "Do not ask" in made.output["summary"]
+    assert "password" not in plain.output["summary"].lower()
