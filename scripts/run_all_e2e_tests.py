@@ -1826,6 +1826,10 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
     stage.started_at = datetime.now().isoformat(timespec="seconds")
     start_mono = time.monotonic()
     existing_memory_fact_ids = _memory_fact_ids()
+    _ensure_fixtures_path()
+    import residue  # type: ignore[import-not-found]
+
+    residue_before = residue.snapshot(DB_PATH, ROOT / ".agent_control" / "skills")
 
     print(f"\n{'=' * 78}")
     print(f"  {stage.case_id}  [{stage.size}/{stage.source_file}]")
@@ -1914,6 +1918,9 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
     finally:
         _cleanup_settled_stage_tasks(stage)
         _delete_memory_facts_created_after(existing_memory_fact_ids)
+        left = residue.remove_new(DB_PATH, ROOT / ".agent_control" / "skills", residue_before)  # projects, notes, plans and skills the case made are not the owner's
+        if left:
+            print(f"    [cleanup] removed what the case made: {', '.join(left)}")
         stage.total_duration_s = round(time.monotonic() - start_mono, 1)
         stage.ended_at = datetime.now().isoformat(timespec="seconds")
     return stage
