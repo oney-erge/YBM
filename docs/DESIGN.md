@@ -23,6 +23,7 @@ that stops new work from landing outside a home.
 | **Turning the model's call into a real call** | `tools/call_schema.py` with the tool's own contract in `tools/contracts.py`, checked per operation | `orchestration/call_rewrites.py` keeps only rules that carry policy; alias tables that only fix the shape of a call are deleted |
 | **Long work** | `jobs/` (one runner, one `Unit`, kinds: research, investigate, watch, survey, monitors) | Nothing: new long work is a new kind of job, not a new loop |
 | **What it can do** | `abilities/` (one index) and `skills/` (procedures) | Nothing: a new capability is a record in the index |
+| **Getting your data out** | `export.py` (`ybm export`): what is yours, as text and JSON, with no secrets; `backup.py` is the way back, not the way out | Nothing |
 
 Objects that already exist are reused, not paralleled: **project** (long-lived), **goal** (one thing wanted now), **plan** (dated steps),
 **job** (background work), **memory fact**, **skill**. A project holds goals; a goal holds attempts (tasks, plans, jobs).
@@ -121,3 +122,13 @@ under `.agent_control/memory` (INDEX.md, about-you.md, `projects/<name>/PROJECT.
 the database for search. (5) Words that point to a project when the model gave none: its name, then the longer words of what was said. **What it replaces and deletes.** Nothing yet:
 the hook-confirmed notebook lines in the chat context stay as the second layer until the first live comparison; the nightly rewrite of each page's "where we are" by the model
 is the next piece. **Measured.** Unit tests (`test_projects_index.py`); live, project questions ("which are active", "tell me about the pool") and the switch-and-return cases.
+
+### D7. Your data in open formats (2026-11-19)
+
+**What failed.** Bar 12 says everything is kept in open formats the owner can read and move, and it was not true of most of it: the only way out was `ybm backup`, a zip of the
+database with the settings and the secrets, which only the assistant can open. **Home.** A new module, `export.py`, behind `ybm export`: the one command that writes what is the
+person's (messages, answers, facts with when they became and stopped being true, projects and their notebooks, plans with their steps, goals, schedules, jobs, the learned
+procedures, and the readable project pages) as JSONL, JSON-lines and markdown in a new folder under `.agent_control/exports`. **What it leaves out, on purpose.** Passwords and keys (`.env`,
+the vault, the logins it made), the raw record of what each tool was given and returned (it can hold a password typed into a form), logs, and the files it made, which are
+ordinary files already. Only named columns of each table leave it. **What it replaces and deletes.** Nothing. **Measured.** Unit tests (`test_export.py`): the files and their
+contents, and that a password in a raw message and in a tool's input appears in nothing exported.

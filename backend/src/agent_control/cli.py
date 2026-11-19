@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 from agent_control.backup import run_backup
+from agent_control.export import run_export
 from agent_control.bootstrap import admin_console_url, run_doctor, run_setup
 from agent_control.updates import check_for_updates
 from agent_control.config_sync import CONFIG_FILE_PATH, ENV_FILE_PATH, config_fingerprint, set_config_path
@@ -1080,6 +1081,7 @@ def main() -> None:
             "run-coding-agent-session",
             "run-coding-session-watcher",
             "backup",
+            "export",
             "health",
             "calibrate",
             "restore-check",
@@ -1205,6 +1207,8 @@ def main() -> None:
         asyncio.run(run_coding_session_watcher(args.poll_interval_seconds))
     elif args.command == "backup":
         raise SystemExit(run_backup(args.out))
+    elif args.command == "export":
+        raise SystemExit(run_export(args.out))
     elif args.command == "health":
         raise SystemExit(run_health())
     elif args.command == "restore-check":

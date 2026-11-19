@@ -16,7 +16,7 @@
 #>
 param(
   [Parameter(Position = 0)]
-  [ValidateSet("run", "setup", "doctor", "start", "stop", "restart", "status", "logs", "test", "e2e", "e2e-login", "send", "trace", "scenario", "db", "config", "clean", "package-extension", "tray", "autostart", "backup", "check-updates", "ui-build", "ui-dev", "help")]
+  [ValidateSet("run", "setup", "doctor", "start", "stop", "restart", "status", "logs", "test", "e2e", "e2e-login", "send", "trace", "scenario", "db", "config", "clean", "package-extension", "tray", "autostart", "backup", "export", "check-updates", "ui-build", "ui-dev", "help")]
   [string]$Command = "help",
 
   [Parameter(Position = 1)]
@@ -79,6 +79,8 @@ YBM - local agentic control stack
                                 shortcut). The model is not loaded until the first message; set idle_stop_seconds on the
                                 LocalDeploy profile to free the GPU again after a pause
   ybm backup [--out <dir>]     zip the database, config.yaml, .env, and secret vault (default: .agent_control/backups)
+  ybm export [--out <dir>]     write what is yours (messages, facts, projects, plans, goals, schedules, learned skills) as text and JSON, with no
+                                passwords or keys (default: .agent_control/exports)
   ybm check-updates            compare the installed version against the latest GitHub release (read-only)
   ybm ui-build                 build the admin console (Node 22.22.2+, 24.15.0+, or 26+)
   ybm ui-dev                   run the admin console with hot reload (same Node ranges)
@@ -883,6 +885,11 @@ switch ($Command) {
   "backup" {
     $env:PYTHONPATH = "$Script:YbmRoot\backend\src"
     & (Get-YbmPython) -m agent_control.cli backup @Rest
+    exit $LASTEXITCODE
+  }
+  "export" {
+    $env:PYTHONPATH = "$Script:YbmRoot\backend\src"
+    & (Get-YbmPython) -m agent_control.cli export @Rest
     exit $LASTEXITCODE
   }
   "check-updates" {
