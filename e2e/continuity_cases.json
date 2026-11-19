@@ -691,5 +691,87 @@
         "expects_task": "auto"
       }
     ]
+  },
+  {
+    "id": "cont_what_was_spent",
+    "requirement": "continuity",
+    "message": "For the backyard pond project I bought a pump for 180 dollars.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup",
+      "memory",
+      "projects"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Writes the purchase in the project's notebook",
+      "Adds the second purchase",
+      "The total comes from the notebook and is right (220), with what was bought"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "second",
+        "message": "I also bought 40 dollars of tubing for the pond.",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ]
+        },
+        "expects_task": "auto"
+      },
+      {
+        "id": "total",
+        "message": "How much have I spent on the pond so far?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "220"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
   }
 ]
