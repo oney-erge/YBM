@@ -34,12 +34,12 @@ exact order.
 | Behavior | State |
 |---|---|
 | 1, 2, 8 Understand, size, decide | Built. Frozen everyday cases at the top autonomy level: 30 of 32. `v_cannot_order` failed all 8 runs, including after its fix. |
-| 3, 4 Memory, projects | Built, **not proven**: one real remembered fact (the owner's name); the projects in the database are test-made, with every note repeated four times; no project has a hook. Never run across days. |
+| 3, 4 Memory, projects | Built; the model now always sees an index of the projects (active, parked, finished) and can read a project's page (`memory.manage projects`, `project`, `set_project`), and the files are under `.agent_control/memory`; **not proven live**: one real remembered fact (the owner's name); the projects in the database were test-made, with every note repeated four times; no project has a hook. Never run across days. |
 | 5 Big builds | Partial: a skill that makes a bill of materials; no walk-through; the five-session check never ran. |
 | 6 Long work | Partial: the survey ran once (12 percent of its table filled; the fixes in #270 are not rerun); the 600-page research ran once and its report was thin (178 of 238 cited sentences removed by the claim check). |
 | 7 Hands | Measured: 9 of 10 on the hands suite. |
 | 9 Code, monitors | Built; `ult_devices` passes. |
-| 10 Blockers | Built at the end of a task; **the retry before it is a fixed ladder of generic hints**, and it offered a hand-over to Claude Code on 11/19 for a text edit. |
+| 10 Blockers | Built at the end of a task; **the retry before it was a fixed ladder of generic hints** and it offered a hand-over to Claude Code on 11/19 for a text edit; now one retry loop (`orchestration/retry.py`) notices, diagnoses once and changes the kind of approach, and the hand-over is never asked at the autonomous level. |
 | 11 Proof | Mostly: an honest "I cannot" completes; "created" and "paid" claims need a record. Five separate checks do it. |
 | 12 Stay | Partial: backup, restore check, morning line, `ybm calibrate`. No model-swap procedure, no rollback, no three-day run. |
 
@@ -153,15 +153,15 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 | G0.1 | `DESIGN.md`, the change rule, the CI check, the counts | Design | S | done (#271); `design-rule` is a required check |
 | G0.2 | This plan replaces the two | Minimal | S | done (#271) |
 | G0.3 | Write and seal Verdict 4 before the work | Minimal | S | done: 20 cases, `e2e/verdict4_cases.sha256`, `--suite verdict4` |
-| G0.4 | Clean test leftovers from live memory; the runner removes what each case made | Minimal | S | |
-| G0.5 | Re-record the fixtures in the owner's config; merge or drop the lifecycle branches | Minimal | S | |
+| G0.4 | Clean test leftovers from live memory; the runner removes what each case made | Minimal | S | done (#273): backup first, duplicate notes and two test skills cleaned, `e2e/residue.py` removes what each live case makes |
+| G0.5 | Re-record the fixtures in the owner's config; merge or drop the lifecycle branches | Minimal | S | not done: the recorded scenarios still use the code defaults (abilities, plans and vision off) and are re-keyed when a prompt changes (`ybm scenario rekey --all`); the old lifecycle branches are untouched and need a reading of their diffs |
 | D5a | What the model sees (section 4) | Design | M | built: notes keep their place, the catalog gives way, the last exchange is shown; the index and `PROJECT.md` layers come with D5b |
 | P1 | "Revise the plan" goes to the planner with the old plan; plans get versions | Design (a new operation) | S | built: `plan.manage revise`, a version line, step detail on the card |
-| D2 | One asking gate, including the hand-over offer | Design | S | |
+| D2 | One asking gate, including the hand-over offer | Design | S | the hand-over question is one test in one place and never asked at the autonomous level (#274); the other questions still go through the gate in `worker.py` (sent back twice at the top level, then let through): a third question reaches the person, and `v_cannot_order` still fails on it |
 | D4 | The retry loop (section 6); deletes the fixed hint ladder and two old recovery pieces | Design | M to L | built: noticing, one diagnosis, kinds of approach, a fresh attempt; learning a lesson comes with D5b |
-| D3 | One proof check that sees the answer | Design | M | |
+| D3 | One proof check that sees the answer | Design | M | reviewed, not built: the done path already runs one ordered pipeline (`answer_checks.py`) then the auditor then the fulfillment gap; merging the auditor, claims and fulfillment into one module is a large change to the path every task takes, with no live failure waiting on it that the retry loop and the honest-cannot rule do not already cover; to do after the first full live exam shows where it fails |
 | D6 | Tool calls checked per operation; then delete the alias tables | Design | S | part 1 built: the strict call schema parses again (it was refused on every call); next: measure with the schema in force, then delete the alias tables it makes unnecessary |
-| D1 | One front door for every channel; deletes the phrase patterns and Telegram-only routing | Design | L | |
+| D1 | One front door for every channel; deletes the phrase patterns and Telegram-only routing | Design | L | reviewed, not built: Telegram's command chain (gaming, undo, accounts, workflows, chat) is scoped to Telegram by design (the account vault must not be readable from another channel), so a shared chain would change who can do what; the goal and Concierge path is already shared; the phrase patterns in `clarification.py` need the labeled intake set (150 messages) to show parity before they go |
 | D5b | Memory files, projects, index, hooks, `project.list`, nightly tidy-up (section 5) | Design | L | first part built: the index, `memory.manage projects/project/set_project`, the readable files, hooks when the model gives none, the nightly tidy; next: the model's nightly rewrite of each page, the memory suite |
 | G2 | Proof runs, unattended: survey rerun (at least 90 percent of the registry's daycares), 600-page research with two fixes in `jobs/research.py` (search again for unanswered questions; write from the collected quotes), the mailbox, speed (2, 6 and 15 s) | Minimal | S each | research: the gap stage is built (an unanswered question is searched again in other words before it is written up; the writer already works from the quotes); the 600-page run, the survey rerun, the mailbox and the speed numbers are not run yet |
 | G3 | Big-build walk-through ("next step", reminders, "what did I spend"); a model swap tested on a copy and rollbackable updates; one export command | Minimal, one Design | M | |
