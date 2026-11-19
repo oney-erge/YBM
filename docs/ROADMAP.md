@@ -8,6 +8,9 @@ for immediate work: continuity, configurable initiative, verified step completio
 local recovery precede larger jobs and connected workflows. The feature list below remains
 the broader backlog; proposed behavior in the plan is not yet an implemented capability.
 
+The program that follows it, from projects with memory to exhaustive overnight searches, hands that can order, and monitors the assistant
+writes for itself, is [ULTIMATE_ASSISTANT_PLAN.md](ULTIMATE_ASSISTANT_PLAN.md). It is direction, not description.
+
 The spine every item serves:
 
 **Plan -> Approve -> Execute -> Verify -> Receipt**

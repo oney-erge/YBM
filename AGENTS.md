@@ -22,6 +22,28 @@ Use these as the durable sources of truth:
 Do not describe planned behavior as implemented. Keep documentation, schemas, and
 configuration examples aligned with the code that exists.
 
+## What YBM is for
+
+The owner's own assistant, on one PC, reached through Telegram, local first, meant to stay while models change.
+This is the intent every change is judged against; what is built is in the docs above, and the program to get
+there is [docs/ULTIMATE_ASSISTANT_PLAN.md](docs/ULTIMATE_ASSISTANT_PLAN.md). Planned behavior is not implemented behavior.
+
+- It reads how big a request is from its words (answer now, look, dig, or run for days) and says what it will do and when
+  it will stop, before it starts. "Exhaustive", "every", "overnight", "as long as it takes" mean a campaign that runs until
+  new searching stops finding anything new, within a ceiling the owner set.
+- It keeps projects (a pool, a robot, a daycare search) with hooks and a notebook, so that after weeks on other topics the
+  owner can go back and it knows what was decided and why. A project is never just open or closed.
+- It works a big build with the owner: asks only what changes the plan, then steps, a bill of materials, what to buy, a
+  schedule and check-ins.
+- It uses the computer and the web itself, in the owner's own signed-in sessions, so no password is sent in chat. "You pick"
+  means it picks inside the limits the owner set (decide, spend, reach) and says what it picked. CAPTCHA, text-message and ID
+  checks always go to the owner.
+- When nothing fits it writes code, tests it read-only on real data, runs it, and keeps it; recurring work becomes a monitor.
+- When it cannot, it ends with a blocker report: what was tried, why it failed, two or three routes with exact steps and
+  cost, its pick, and what it needs from the owner. Never a bare "I could not".
+- It proves what it did (receipts, sources, observed results), keeps all data in open formats, and does not depend on one model.
+- Fixes are holistic: one mechanism per need, reusing existing objects (goal, project, plan, job, skill). No per-example patches.
+
 ## Supported Commands
 
 The stable source-checkout entry points are `run.bat` and `run.ps1` on Windows,
