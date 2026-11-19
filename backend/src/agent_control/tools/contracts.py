@@ -532,6 +532,37 @@ class BrowserClickInput(ToolInputModel):
         return self
 
 
+_FIELD_NAMES = ("field", "field_name", "name", "label", "input", "key", "selector")
+_FIELD_VALUES = ("value", "text", "content")
+
+
+def _fields_from_dialect(data: Any) -> Any:
+    """What a model writes for "fill this field": a `fields` object, a list of {name, value} pairs, or one field as `field_name` and `value` (or `field`, `name`, `label` and `text`).
+    Every spelling is the same request. Live, 11/19 (hands suite): `fill_form_step` with `field_name` and `value` was refused four times in a row and the task was blocked."""
+    if not isinstance(data, dict):
+        return data
+    fields = data.get("fields")
+    if isinstance(fields, list):
+        pairs = {}
+        for item in fields:
+            if isinstance(item, dict):
+                name = next((item[k] for k in _FIELD_NAMES if item.get(k) not in (None, "")), None)
+                value = next((item[k] for k in _FIELD_VALUES if item.get(k) is not None), "")
+                if name is not None:
+                    pairs[str(name)] = str(value)
+        if pairs:
+            return {**data, "fields": pairs}
+        return data
+    if fields:
+        return data
+    name = next((data[k] for k in _FIELD_NAMES if k != "selector" and data.get(k) not in (None, "")), None)
+    if name is None:
+        return data
+    value = next((data[k] for k in _FIELD_VALUES if data.get(k) is not None), "")
+    rest = {key: val for key, val in data.items() if key not in {*_FIELD_NAMES, *_FIELD_VALUES} or key == "selector"}
+    return {**rest, "fields": {str(name): str(value)}}
+
+
 class BrowserFillFormInput(ToolInputModel):
     operation: Literal["fill_form"] = "fill_form"
     # fields is logically required for fill_form - encoding that here instead
@@ -541,6 +572,11 @@ class BrowserFillFormInput(ToolInputModel):
     submit_selector: str | None = None
     tab_id: str | None = None
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_field_dialects(cls, data: Any) -> Any:
+        return _fields_from_dialect(data)
 
 
 class BrowserSummarizePageInput(ToolInputModel):
@@ -604,11 +640,8 @@ class BrowserFillFormStepInput(ToolInputModel):
     @model_validator(mode="before")
     @classmethod
     def _one_field_as_a_pair(cls, data: Any) -> Any:
-        """A model often fills one field per step as `field` and `value`; that is a one-entry `fields`."""
-        if isinstance(data, dict) and not data.get("fields") and data.get("field") is not None:
-            rest = {key: value for key, value in data.items() if key not in {"field", "value"}}
-            return {**rest, "fields": {str(data["field"]): str(data.get("value", ""))}}
-        return data
+        """A model often fills one field per step as `field` and `value`, or `field_name` and `value`; that is a one-entry `fields`."""
+        return _fields_from_dialect(data)
 
 
 class ComputerObserveInput(ToolInputModel):
@@ -636,7 +669,18 @@ class ComputerRunGoalInput(ToolInputModel):
     objective: str = Field(min_length=1)
     max_steps: int | None = Field(default=None, ge=1, le=50)
     include_ui_tree: bool = True
-    require_vision: bool = True
+    # Vision is used when there is a model that can see; without one the goal is worked from the window list and the UI tree alone (tools/computer_use.py).
+    require_vision: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _goal_is_the_objective(cls, data: Any) -> Any:
+        """`goal`, `task` or `instruction` for `objective`: the same thing, refused live (hands suite 11/19) until the model happened to spell it the other way."""
+        if isinstance(data, dict) and not data.get("objective"):
+            for key in ("goal", "task", "instruction", "request"):
+                if data.get(key):
+                    return {**{k: v for k, v in data.items() if k != key}, "objective": data[key]}
+        return data
 
 
 class FilesystemInspectInput(ToolInputModel):
@@ -796,6 +840,17 @@ class WorkspaceWebAppPreviewOutput(WorkspaceLaunchStaticOutput):
 class CodeInterpreterRunPythonInput(ToolInputModel):
     operation: Literal["run_python"] = "run_python"
     code: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _script_is_the_code(cls, data: Any) -> Any:
+        """`script`, `source` or `python` for `code`."""
+        if isinstance(data, dict) and not data.get("code"):
+            for key in ("script", "source", "python", "program"):
+                if isinstance(data.get(key), str) and data[key].strip():
+                    return {**{k: v for k, v in data.items() if k != key}, "code": data[key]}
+        return data
+
     objective: str | None = None
     workspace_dir: str | None = None
     script_name: str = "script.py"
