@@ -221,6 +221,8 @@ python scripts\run_all_e2e_tests.py --suite verdict3
 python scripts\run_all_e2e_tests.py --suite continuity
 ```
 
+`e2e/hands_cases.json` (10 cases, ids `hands_*`, `--suite hands`) measures the assistant using the computer and the web itself on local pages (a form, a cookie wall, a button that moves, a download, a sign-up, a cart that ends at the payment click). `e2e/ultimate_cases.json` (14 cases, ids `ult_*`, `--suite ultimate`, hash in `ultimate_cases.sha256`) is the acceptance suite for docs/ULTIMATE_ASSISTANT_PLAN.md: it was written after the build from the plan's list of requests, so it is a frozen check, not a blind exam. Both run against the real bot.
+
 `e2e/continuity_cases.json` (6 cases, ids `cont_*`) is a development suite, not a sealed one: the mechanisms behind the 2026-11-16 chain in which a follow-up
 became new work, a short reply was taken as a result, "you choose" started an unrelated plan, and "that file" was read at a rewritten path, in other topics and
 other words (a printer, a QR code, a word count, an errands file, a messy folder, a folder renamed by a correction). A new variant of a mechanism found later is

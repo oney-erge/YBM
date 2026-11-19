@@ -1,0 +1,611 @@
+[
+  {
+    "id": "ult_pool",
+    "requirement": "ultimate",
+    "message": "I want to build a pool in my backyard from scratch.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "States what it assumed (size, budget, place) instead of asking",
+      "Gives phases and a first step, mentions permits and a licensed professional where needed",
+      "Does not ask the person a question about size or budget"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:",
+        "Which one do you prefer"
+      ],
+      "bot_reply_contains_any": [
+        "permit",
+        "plan"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_robot",
+    "requirement": "ultimate",
+    "message": "I am going to build a humanoid robot. What are the steps and what should I buy?",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Phases (frame, actuators, compute, power, control, safety)",
+      "A list of what to buy with rough prices or tiers",
+      "Safety is mentioned"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "servo",
+        "actuator",
+        "motor"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_daycares",
+    "requirement": "ultimate",
+    "message": "Go search all the daycares around me and do a large comparative analysis.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Starts a long job without asking whether to make it long",
+      "Says about how long it will take and that it will report as it goes"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "background",
+        "overnight",
+        "keep going",
+        "as it goes",
+        "message you"
+      ],
+      "tools_all": [
+        "job.manage:start_survey"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_custard",
+    "requirement": "ultimate",
+    "message": "Find the best pastel de nata within 40 miles. Take your time.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Reads 'take your time' as a long job",
+      "Does not ask whether the person wants a quick answer"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "background",
+        "overnight",
+        "keep going",
+        "as it goes",
+        "message you"
+      ],
+      "tools_all": [
+        "job.manage:start_survey"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_builders",
+    "requirement": "ultimate",
+    "message": "List every pool builder in the county with their licenses and complaints.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "A survey of every builder, with sources, as a background job"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "background",
+        "overnight",
+        "keep going",
+        "as it goes",
+        "message you"
+      ],
+      "tools_all": [
+        "job.manage:start_survey"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_research",
+    "requirement": "ultimate",
+    "message": "Research how heat pumps work and what they cost to run. Read about 40 pages and send me a report that shows where each claim comes from.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Starts a research job of about 40 pages"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "background",
+        "overnight",
+        "keep going",
+        "as it goes",
+        "message you"
+      ],
+      "tools_all": [
+        "job.manage:start_research"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_glance",
+    "requirement": "ultimate",
+    "message": "What is 15 percent of 80?",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Answers 12 at once, with no job"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "12"
+      ],
+      "tools_none": [
+        "job.manage:start_survey",
+        "job.manage:start_research"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_devices",
+    "requirement": "ultimate",
+    "message": "Connect to every device on my network, list them, and tell me when a new one shows up.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Writes a read-only script, has it tested, and starts a watch",
+      "Says what it sees now and how often it looks"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "every",
+        "minutes",
+        "new"
+      ],
+      "tools_all": [
+        "job.manage:start_watch"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_slow_pc",
+    "requirement": "ultimate",
+    "message": "My PC is slow in the morning. Find out why.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Starts an investigation with read-only checks"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "hour",
+        "background",
+        "overnight",
+        "keep going",
+        "as it goes",
+        "message you"
+      ],
+      "tools_all": [
+        "job.manage:start_investigation"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_remember",
+    "requirement": "ultimate",
+    "message": "We just had a daughter. Her name is Maya and she was born in October.",
+    "setup": [],
+    "tags": [
+      "ultimate",
+      "followup"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Replies kindly without turning it into a task"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "chat",
+        "clarifying",
+        "blocked"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "name",
+        "message": "What is my daughter's name?",
+        "timeout_seconds": 420,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "Maya"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "ult_phone",
+    "requirement": "ultimate",
+    "message": "Call my mom and tell her I am late for dinner.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Says plainly that it cannot place a call",
+      "Offers the nearest thing it can do, as a finished answer"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:",
+        "Which one"
+      ],
+      "bot_reply_contains_any": [
+        "cannot",
+        "can't",
+        "unable",
+        "not able",
+        "no way"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_can_do",
+    "requirement": "ultimate",
+    "message": "What can you do, and what can't you?",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Describes real abilities from its own list",
+      "Names things it cannot do"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "can't",
+        "cannot",
+        "not able",
+        "unable"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  },
+  {
+    "id": "ult_try_again",
+    "requirement": "ultimate",
+    "message": "Open the file C:\\no-such-folder\\plan.txt and read it to me.",
+    "setup": [],
+    "tags": [
+      "ultimate",
+      "followup"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Says it could not find the file, with what it tried and ways forward"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "blocked",
+        "clarifying"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "bot_reply_contains_any": [
+        "not",
+        "could",
+        "cannot",
+        "exist"
+      ]
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "again",
+        "message": "That did not work. Try another way.",
+        "timeout_seconds": 420,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_any": [
+            "search",
+            "looked",
+            "tried",
+            "find",
+            "could not",
+            "cannot",
+            "not"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
+  },
+  {
+    "id": "ult_buy_asks",
+    "requirement": "ultimate",
+    "message": "Buy the red mug on {{fixture_base_url}}/hands/shop.html, you pick the rest.",
+    "setup": [],
+    "tags": [
+      "ultimate"
+    ],
+    "suites": [
+      "ultimate"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 600,
+    "claims": true,
+    "rubric": [
+      "Goes as far as the payment page by itself",
+      "The payment click asks for a yes, even though the person said you pick"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:"
+      ],
+      "tool_approvals_min": 1
+    },
+    "source_file": "ultimate_cases.json",
+    "expects_task": "auto"
+  }
+]
