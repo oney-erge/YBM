@@ -1073,7 +1073,9 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 # to pick from), and an approval is a card, not a question; neither is touched.
                 clarification_recovery = (
                     f"At initiative level {level} the routine choices are yours: you were going to ask the person to choose among {', '.join(str(o) for o in decision.options[:5])}. "
-                    "Choose the one the evidence supports best, say in your answer which you chose and why, and go on."
+                    "Choose the one the evidence supports best, say in your answer which you chose and why, and go on. "
+                    "If what was asked cannot be done at all with the tools you have (placing an order, a call, a payment), there is nothing to choose: say so plainly as your answer "
+                    "and name the nearest thing you can do."
                 )
             if clarification_recovery:
                 recovery_count = int(

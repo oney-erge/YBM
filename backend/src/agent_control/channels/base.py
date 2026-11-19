@@ -552,7 +552,10 @@ async def classify_and_spawn_task(
             authorized=True, inbound_message=inbound, classification=classification,
             outbound_message=OutboundMessage(channel=inbound.channel, chat_id=inbound.chat_id, text=goal_routing.ambiguity_question(goal_labels)),
         )
-    if route.goal is not None and route.act in ("answer", "delegate", "decline"):
+    if route.goal is not None and route.act in ("answer", "delegate", "decline", "continue"):
+        # "continue" is in here on purpose: a goal that waits on a question has nothing to carry on with until the question is answered, and a reply that is about the goal
+        # but that the model did not call an answer ("Yes, go ahead with what you proposed") is the answer. Taken as a fresh attempt, it started a second task next to the one
+        # still asking, which sat there until the frozen suite cancelled it (v_cannot_order, h4_ask_before_moving, 11/18). With nothing waiting the call returns None.
         said = goal_routing.resume_waiting_task(repositories, audit, route, inbound)
         if said is not None:
             return ChannelUpdateResult(
