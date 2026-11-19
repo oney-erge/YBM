@@ -183,9 +183,9 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             named_when_disabled=False,
             description=(
-                "start and control a long job that runs in the background: start_investigation works out why something on this computer or the home network does not work (it reads the network, services, firewall and devices, then looks up what is known) and reports what it found with ways forward; start_research reads many web pages one at a time, keeps the "
-                "quotations from pages, messages the person as it goes and ends with a cited report that needs source review; status says how far it is; pause, "
-                "resume and stop control it. Use it when the person asks for thorough research, many sources, or to be told when it is done"
+                "start and control a long background job: start_research reads many web pages and ends with a cited report; start_investigation works out why "
+                "something on this computer or network does not work and reports ways forward; status, pause, resume and stop control it. Use it for thorough "
+                "research, many sources, or a problem to work out"
             ),
             operations=OPERATIONS,
             input_schema=JobManageInput,
@@ -200,7 +200,6 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             },
             examples=(
                 {"operation": "start_research", "goal": "Which heat pump is best for a 150 square meter house in Chicago? Costs, running costs, reliability.", "max_pages": 60},
-                {"operation": "start_investigation", "goal": "My TV will not take a cast from this computer; find out why."},
                 {"operation": "status"},
                 {"operation": "pause"},
             ),

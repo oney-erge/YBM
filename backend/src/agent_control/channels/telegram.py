@@ -592,7 +592,7 @@ class TelegramIntakeService:
         # Looks at answered chat messages in the background; kept so they are not collected before they finish.
         self._background: set[asyncio.Future[bool]] = set()
         # Work that is only worth doing once the reply is on its way (the conversation summary): run by the polling loop right after it sends.
-        self._after_reply: list[Callable[[], Awaitable[None]]] = []
+        self._after_reply: list[tuple[str, Callable[[], Awaitable[None]]]] = []
         # Set by the polling loop, which runs the after-reply work: with no loop to run it (a test, a caller that handles one update) the summary is written inline, as it was.
         self.defer_summary = False
         # (chat id, message id, text, keyboard) to show again once a button has been handled: the plan card after a tap.
@@ -711,6 +711,7 @@ class TelegramIntakeService:
                     repositories=self.repositories, audit=self.audit,
                     classifier=self.classifier, responder=self.responder, settings=self.settings,
                     send_progress=self._send_progress,
+                    before_task=(lambda: self._summary_before_task(conversation_id)) if self.defer_summary else None,
                 )
                 self._watch_for_a_preference(inbound, answered)
                 return answered
@@ -828,12 +829,19 @@ class TelegramIntakeService:
             await self.memory_service.update_from_user_message(conversation_id, text)
             return
         await self.memory_service.update_from_user_message(conversation_id, text, summarize=False)
-        self._after_reply.append(lambda: self.memory_service.refresh_summary(conversation_id))
+        self._after_reply.append((conversation_id, lambda: self.memory_service.refresh_summary(conversation_id)))
+
+    async def _summary_before_task(self, conversation_id: str) -> None:
+        """A message that turned out to be a task: its summary is written now, not after a reply there will not be."""
+        mine = [work for conversation, work in self._after_reply if conversation == conversation_id]
+        self._after_reply = [(conversation, work) for conversation, work in self._after_reply if conversation != conversation_id]
+        for work in mine:
+            await work()
 
     async def run_after_reply(self) -> None:
         """Do what was kept for after the reply, once: each item may fail without affecting the others or the message that was answered."""
         pending, self._after_reply = self._after_reply, []
-        for work in pending:
+        for _conversation_id, work in pending:
             try:
                 await work()
             except Exception:  # noqa: BLE001

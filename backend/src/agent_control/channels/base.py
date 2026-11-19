@@ -416,6 +416,7 @@ async def classify_and_spawn_task(
     responder: ChatResponder | None = None,
     settings: AppSettings | None = None,
     send_progress: Callable[[str, str], Awaitable[Any]],
+    before_task: Callable[[], Awaitable[None]] | None = None,
 ) -> ChannelUpdateResult:
     """Classify one inbound message and either spawn a task or produce a
     chat-only reply - the "classify -> task" half of intake -> classify ->
@@ -604,6 +605,13 @@ async def classify_and_spawn_task(
         {"voice_file_id": voice_attachment.file_id, "voice_transcript": voice_attachment.transcript}
         if voice_attachment is not None else {}
     )
+    if before_task is not None:
+        # The task is given a snapshot of the conversation's memory now, so a summary that was left for after the reply (the polling loop does that for chat) has to be written
+        # first: a task started on a stale summary went browsing for a shop it should have said it could not order from (frozen suite, 11/18).
+        try:
+            await before_task()
+        except Exception:  # noqa: BLE001 - a summary that cannot be written is not a reason to drop the task
+            logger.warning("summary before a task failed", exc_info=True)
     # Snapshot conversation memory so the planner has prior context available.
     mem_ctx = memory_context(
         repositories.conversation_memory.get(conversation_id),
