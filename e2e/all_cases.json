@@ -168,7 +168,7 @@
         "completed"
       ],
       "tools_all": [
-        "document.manage:summarize_pdf"
+        "document.manage"
       ],
       "metadata_any": [
         "document_summary",
