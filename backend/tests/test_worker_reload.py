@@ -50,13 +50,13 @@ async def test_decision_preference_reloads_for_subsequent_work(monkeypatch, tmp_
     repos, audit = make_repos(tmp_path)
     reloader = cli.WorkerRuntimeReloader(lambda: cli._worker_kwargs(cli.load_settings(), repos, audit), audit)
     worker = TaskWorker(repos, audit, **reloader.kwargs, runtime_refresh=reloader)
-    assert worker.initiative_level == 3
+    assert worker.initiative_level == 2
     config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
-    config["operator"] = {"initiative_level": 4}
+    config["operator"] = {"autonomy_level": 3}
     config_path.write_text(yaml.safe_dump(config), encoding="utf-8")
     _bump_mtime(config_path)
     await worker.process_next()
-    assert worker.initiative_level == 4
+    assert worker.initiative_level == 3
     assert not worker.executor.tool_definitions["filesystem.manage"].enabled
 
 

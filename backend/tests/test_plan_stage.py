@@ -82,8 +82,8 @@ async def test_a_follow_up_plan_keeps_the_resolved_objective_and_the_users_words
 async def test_the_planner_receives_the_selected_initiative_without_extra_authority(tmp_path):
     repos, audit = make_repos(tmp_path)
     provider = _Provider(_steps_draft())
-    await run_plan_stage(repos, audit, provider, "", _task(repos, initiative_level=4))
-    assert "Decision preference (4 of 5)" in provider.asked[0]
+    await run_plan_stage(repos, audit, provider, "", _task(repos, initiative_level=3))
+    assert "Decision preference (Autonomous, level 3 of 3)" in provider.asked[0]
     assert "does not grant access" in provider.asked[0]
 
 
@@ -91,9 +91,9 @@ async def test_the_planner_receives_the_selected_initiative_without_extra_author
 async def test_long_objective_does_not_hide_the_decision_preference(tmp_path):
     repos, audit = make_repos(tmp_path)
     provider = _Provider(_steps_draft())
-    task = _task(repos, initiative_level=5).model_copy(update={"objective": "A detailed objective " * 300})
+    task = _task(repos, initiative_level=1).model_copy(update={"objective": "A detailed objective " * 300})
     await run_plan_stage(repos, audit, provider, "", task)
-    assert "Decision preference (5 of 5)" in provider.asked[0]
+    assert "Decision preference (Ask, level 1 of 3)" in provider.asked[0]
 
 
 @pytest.mark.asyncio

@@ -7,10 +7,14 @@ from agent_control.config import AppSettings, ConfigValidationError, is_loopback
 from agent_control.schemas import Capability
 
 
-def test_initiative_level_supports_nested_environment_config(monkeypatch, tmp_path) -> None:
+def test_autonomy_level_supports_nested_environment_config_and_reads_the_earlier_setting_only_when_it_is_absent(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AGENT_OPERATOR__INITIATIVE_LEVEL", "4")
-    assert AppSettings(_env_file=None).operator.initiative_level == 4
+    assert AppSettings(_env_file=None).operator.effective_autonomy == 3  # the earlier 4 was "proactive": the autonomous level
+    monkeypatch.setenv("AGENT_OPERATOR__INITIATIVE_LEVEL", "3")
+    assert AppSettings(_env_file=None).operator.effective_autonomy == 2  # the earlier 3 was balanced
+    monkeypatch.setenv("AGENT_OPERATOR__AUTONOMY_LEVEL", "1")
+    assert AppSettings(_env_file=None).operator.effective_autonomy == 1  # the new setting wins
 
 
 def test_default_invasive_capabilities_are_disabled(monkeypatch, tmp_path) -> None:

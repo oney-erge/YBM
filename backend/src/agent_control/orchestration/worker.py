@@ -22,6 +22,7 @@ from agent_control.orchestration.asking import (
     users_own_words,
 )
 from agent_control.orchestration.auditor import AuditorService, AuditResult
+from agent_control.orchestration.autonomy import AUTONOMOUS, autonomy_of
 from agent_control.orchestration.call_rewrites import (
     ALREADY_DONE_STATUS,
     exact_delivery_call,
@@ -181,7 +182,7 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
         task_budget_seconds: float | None = None,
         operator: OperatorLoopService | None = None,
         operator_max_steps: int = 12,
-        initiative_level: int = 3,
+        initiative_level: int = 2,
         auto_close_blocked_hours: int = 0,
         auditor: AuditorService | None = None,
         persist_llm_calls: bool = True,
@@ -1069,18 +1070,19 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                 update={"metadata": {**latest.metadata, "operator_history": history}}
             )
             clarification_recovery = clarification_recovery_reason(candidate, history, decision.question)
-            level = latest.metadata.get("initiative_level")
+            level = autonomy_of(latest.metadata)
             if (
-                not clarification_recovery and decision.options and isinstance(level, int) and not isinstance(level, bool) and level >= 4
+                not clarification_recovery and level >= AUTONOMOUS
                 and int(latest.metadata.get("operator_optional_question_recovery_count", 0)) < 2
             ):
-                # A question that offers options is a choice. At the higher initiative levels the person has said that routine choices are the assistant's to make (11/16: "Google Cast,
-                # Chromecast or PyChromecast?" and then "you choose"): pick the best-supported one now and say which. A fact only the person has asks no such question (it has no options
-                # to pick from), and an approval is a card, not a question; neither is touched.
+                # At the autonomous level the person has said not to ask (11/16: "Google Cast, Chromecast or PyChromecast?" and then "you choose"; 11/19: "do not ask me"). A question
+                # is sent back twice with the instruction to decide it and say what was chosen; a fact only the person has (a code sent to their phone) comes again and goes through.
+                # An approval is a card, not a question, and is not touched.
+                offered = f" you were going to ask the person to choose among {', '.join(str(o) for o in decision.options[:5])}." if decision.options else " you were going to ask the person a question."
                 clarification_recovery = (
-                    f"At initiative level {level} the routine choices are yours: you were going to ask the person to choose among {', '.join(str(o) for o in decision.options[:5])}. "
-                    "Choose the one the evidence supports best, say in your answer which you chose and why, and go on. "
-                    "If what was asked cannot be done at all with the tools you have (placing an order, a call, a payment), there is nothing to choose: say so plainly as your answer "
+                    f"At the autonomous level the choices are yours:{offered} "
+                    "Decide it from the evidence, say in your answer what you chose or assumed and why, and go on. "
+                    "If what was asked cannot be done at all with the tools you have (placing a call, a payment), there is nothing to choose: say so plainly as your answer "
                     "and name the nearest thing you can do."
                 )
             if clarification_recovery:
