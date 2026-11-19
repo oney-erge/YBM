@@ -80,6 +80,11 @@ PAGES_PER_CHAPTER = 100
 MAX_CHAPTERS = 10
 #: Searches get more rounds when the person asked for more than the usual maximum of pages.
 EXTRA_SEARCH_ROUNDS = 6
+#: A question no page answered is searched again, in other words, this many times, with this many new pages each time, before the report says it was not answered. Across the
+#: whole job the extra pages are at most a fifth of the limit (and at least eight): a gap is worth some reading, not a second job. (First 600-page run, 11/19: the search engine
+#: throttled after 9 of 34 searches, several questions had no pages and were written up as "no page I could read answered this".)
+MAX_GAP_TRIES = 2
+GAP_PAGES = 4
 USUAL_MAX_PAGES = 150
 
 
@@ -178,6 +183,8 @@ def new_state(max_pages: int = DEFAULT_MAX_PAGES) -> dict[str, Any]:
         "pages_read": 0,
         "told_at_pages": 0,
         "errors_in_a_row": 0,
+        "gap_tries": {},  # question index (as text) -> how many times it was searched again after no page answered it
+        "gap_pages": 0,  # pages added that way
     }
 
 
@@ -217,6 +224,8 @@ def progress_text(state: dict[str, Any]) -> str:
         return f"Reading: {read} of {len(sources)} pages read ({left} to go)."
     if stage == "write":
         return f"Writing: {len(state.get('sections') or [])} of {total} sections written, from {read} pages."
+    if stage == "gap":
+        return f"Nothing I read answered question {len(state.get('sections') or []) + 1} of {total}, so I am searching for it again in other words."
     if stage == "chapters":
         done = sum(1 for chapter in state.get("chapters") or [] if chapter.get("overview") is not None)
         return f"Writing the chapter overviews: {done} of {len(state.get('chapters') or [])} done."
@@ -241,6 +250,8 @@ async def advance(goal: str, state: dict[str, Any], io: ResearchIO) -> Unit:
         return await _read(goal, state, io)
     if stage == "write":
         return await _write(state, io)
+    if stage == "gap":
+        return await _gap(state, io)
     if stage == "chapters":
         return await _chapter_overview(state, io)
     return await _finish(goal, state, io)
@@ -445,6 +456,9 @@ async def _write(state: dict[str, Any], io: ResearchIO) -> Unit:
         return Unit(state)
     notes = numbered_notes(state, index)
     question = state["questions"][index]
+    if not notes and _may_search_again(state, index):
+        state["stage"] = "gap"  # an unanswered question is a gap to fill, not a sentence to write
+        return Unit(state)
     if not notes:
         text = "No page I could read answered this question."
     else:
@@ -457,6 +471,53 @@ async def _write(state: dict[str, Any], io: ResearchIO) -> Unit:
         text = text or "No page I could read answered this question."  # every sentence failed its check: nothing the pages said supports a claim here
     state["sections"].append({"question": question, "text": text})
     return Unit(state, say=f"Writing: section {index + 1} of {len(state['questions'])} done." if (index + 1) % 3 == 0 else None)
+
+
+def _may_search_again(state: dict[str, Any], index: int) -> bool:
+    return (
+        int((state.get("gap_tries") or {}).get(str(index), 0)) < MAX_GAP_TRIES
+        and int(state.get("gap_pages") or 0) < max(8, state["max_pages"] // 5)
+    )
+
+
+async def _gap(state: dict[str, Any], io: ResearchIO) -> Unit:
+    """No page answered the question that is next to be written: search for it once more in other words, read what that finds, and come back to write it.
+
+    The same search in other words, never the same words again; a model that cannot rewrite it, a search that finds nothing new or that fails leaves the question as it was, and the
+    report says plainly that it was not answered. The wait between failed searches is the runner's (jobs/runner.py)."""
+    index = len(state["sections"])
+    tries = dict(state.get("gap_tries") or {})
+    tries[str(index)] = int(tries.get(str(index), 0)) + 1
+    state["gap_tries"] = tries
+    state["stage"] = "write"
+    question = state["questions"][index]
+    earlier = [question, *(items[index] for items in state.get("search_history") or [] if index < len(items))]
+    earlier += [str(items[index]) for items in [state.get("phrasings") or []] if index < len(items)]
+    listed = f"1. {question} (previous searches: {'; '.join(dict.fromkeys(earlier))})"
+    try:
+        answer = await io.think(PHRASE_SYSTEM, f"Questions:\n{listed}", _Phrasings)
+        query = " ".join(str(getattr(answer, "searches", [""])[0]).split())
+    except Exception:  # noqa: BLE001 - a gap filled is a bonus: without a new wording the question stays as it is
+        return Unit(state)
+    if not query or query in earlier:
+        return Unit(state)
+    try:
+        results = await io.search(query, RESULTS_PER_QUERY)
+    except Exception:  # noqa: BLE001 - the same
+        return Unit(state)
+    seen = {normalized_url(source["url"]) for source in state["sources"]}
+    added = 0
+    for result in results:
+        url = str(result.get("url") or "").strip()
+        if not url.startswith(("http://", "https://")) or normalized_url(url) in seen or added >= GAP_PAGES:
+            continue
+        seen.add(normalized_url(url))
+        state["sources"].append({"id": len(state["sources"]) + 1, "url": url, "title": str(result.get("title") or url)[:160], "question": index, "status": "new", "facts": []})
+        added += 1
+    state["gap_pages"] = int(state.get("gap_pages") or 0) + added
+    if added:
+        state["stage"] = "read"  # the reading ends in "write" again, and this question is next
+    return Unit(state, say=f"Nothing I read answered question {index + 1} of {len(state['questions'])}, so I searched for it again in other words and found {added} new page(s)." if added else None)
 
 
 _NUMBER = re.compile(r"(?<![\w.])\d[\d,. ]*\d|(?<![\w.])\d")
