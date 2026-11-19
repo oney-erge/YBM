@@ -768,3 +768,83 @@ async def test_executor_leaves_content_trust_unset_for_an_undeclared_operation(t
     result = await executor.execute(_tool_request(task.id, "local.tool", "read"))
 
     assert result.content_trust is None
+
+
+# --- the autonomy level, and money -------------------------------------------------------------------------------------------------------------
+
+
+def _browser_request(task_id: str, operation: str, **fields: Any) -> ToolCallRequest:
+    return ToolCallRequest(
+        task_id=task_id, tool_name="browser.control", capability=Capability.BROWSER_CONTROL, risk_level=RiskLevel.LOW,
+        input={"operation": operation, **fields},
+    )
+
+
+async def _run(tmp_path, level: int, request_for, *, requires_approval: bool = True):
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t", metadata={"initiative_level": level})
+    settings = _settings_with(Capability.BROWSER_CONTROL, requires_approval=requires_approval)
+    executor = ToolExecutor(PolicyEngine(settings), repos, audit, adapters={"browser.control": StaticToolAdapter({"ok": True})})
+    return repos, audit, task, executor, await executor.execute(request_for(task.id))
+
+
+@pytest.mark.asyncio
+async def test_at_the_autonomous_level_a_routine_approval_is_granted_by_the_assistant_and_recorded(tmp_path) -> None:
+    repos, audit, task, _executor, result = await _run(tmp_path, 3, lambda tid: _browser_request(tid, "click", selector="a.next", text="Next page"))
+    assert result.status == ToolResultStatus.SUCCEEDED
+    events = repos.audit.list_by_type_recent(AuditEventType.APPROVAL_DECIDED, limit=10)
+    assert any(e.actor == "autonomy" and e.task_id == task.id for e in events)  # on the record, as the assistant's own grant
+
+
+@pytest.mark.asyncio
+async def test_at_the_balanced_level_the_same_call_waits_for_the_person(tmp_path) -> None:
+    _repos, _audit, _task, _executor, result = await _run(tmp_path, 2, lambda tid: _browser_request(tid, "click", selector="a.next", text="Next page"))
+    assert result.status == ToolResultStatus.NEEDS_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_a_payment_waits_for_the_person_at_every_level_even_where_policy_asks_for_nothing(tmp_path) -> None:
+    for level in (1, 2, 3):
+        for needs in (True, False):
+            _repos, _audit, _task, _executor, result = await _run(
+                tmp_path / f"{level}{needs}", level, lambda tid: _browser_request(tid, "click", selector="button.primary", text="Place your order"), requires_approval=needs,
+            )
+            assert result.status == ToolResultStatus.NEEDS_APPROVAL, (level, needs)
+
+
+@pytest.mark.asyncio
+async def test_card_fields_and_a_goal_that_buys_are_money_too_and_looking_is_not(tmp_path) -> None:
+    from agent_control.orchestration.autonomy import payment_reason
+
+    assert payment_reason(_browser_request("t", "fill_form", fields=[{"name": "card_number", "value": "4111"}])) is not None
+    assert payment_reason(ToolCallRequest(task_id="t", tool_name="computer.use", capability=Capability.DESKTOP_CONTROL, input={"operation": "run_goal", "goal": "Buy the cheapest USB-C cable and check out"})) is not None
+    assert payment_reason(_browser_request("t", "extract_page_state")) is None
+    assert payment_reason(ToolCallRequest(task_id="t", tool_name="browser.open", capability=Capability.BROWSER_OPEN, input={"operation": "search", "query": "buy usb c cable"})) is None
+    assert payment_reason(_browser_request("t", "click", selector="a.next", text="Next page")) is None
+
+
+@pytest.mark.asyncio
+async def test_an_allow_for_this_task_grant_never_covers_a_payment(tmp_path) -> None:
+    from datetime import timedelta
+
+    from agent_control.schemas import ApprovalGrant, utc_now
+
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("t", metadata={"initiative_level": 1})
+    settings = _settings_with(Capability.BROWSER_CONTROL, requires_approval=True)
+    executor = ToolExecutor(PolicyEngine(settings), repos, audit, adapters={"browser.control": StaticToolAdapter({"ok": True})})
+    repos.approval_grants.create(ApprovalGrant(
+        task_id=task.id, tool_name="browser.control", capability=Capability.BROWSER_CONTROL, max_operations=10,
+        granted_from_approval_id="approval_x", expires_at=utc_now() + timedelta(hours=1),
+    ))
+    assert (await executor.execute(_browser_request(task.id, "click", selector="a.next", text="Next page"))).status == ToolResultStatus.SUCCEEDED
+    assert (await executor.execute(_browser_request(task.id, "click", selector="button", text="Pay now"))).status == ToolResultStatus.NEEDS_APPROVAL
+
+
+@pytest.mark.asyncio
+async def test_a_critical_call_still_waits_at_the_autonomous_level(tmp_path) -> None:
+    _repos, _audit, _task, _executor, result = await _run(
+        tmp_path, 3, lambda tid: ToolCallRequest(task_id=tid, tool_name="browser.control", capability=Capability.BROWSER_CONTROL, risk_level=RiskLevel.CRITICAL, input={"operation": "click", "selector": "a"}),
+        requires_approval=True,
+    )
+    assert result.status in (ToolResultStatus.NEEDS_APPROVAL, ToolResultStatus.DENIED)

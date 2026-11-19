@@ -230,7 +230,7 @@ class AdminVoiceConfigRequest(StrictBaseModel):
 
 
 class AdminInitiativeConfigRequest(StrictBaseModel):
-    level: int = Field(ge=1, le=5, strict=True)
+    level: int = Field(ge=1, le=3, strict=True)
 
 
 class AdminDecisionConfigRequest(StrictBaseModel):
@@ -2577,14 +2577,15 @@ def create_admin_router(
     @router.get("/api/config/initiative")
     def admin_get_initiative_config(request: Request) -> dict[str, Any]:
         loaded = require_admin(request)
-        return {"level": loaded.operator.initiative_level}
+        return {"level": loaded.operator.effective_autonomy}
 
     @router.post("/api/config/initiative")
     def admin_update_initiative_config(request: Request, payload: AdminInitiativeConfigRequest) -> dict[str, Any]:
         loaded = require_admin(request)
         config = _read_config_file(config_manager)
         operator = config.setdefault("operator", {})
-        operator["initiative_level"] = payload.level
+        operator["autonomy_level"] = payload.level
+        operator.pop("initiative_level", None)  # the earlier five-level key; the new one is read first
         _write_config_file(config_manager, config)
         _audit_config_update(repositories_loader(), loaded, "initiative", {"level": payload.level})
         return {"config_file": str(CONFIG_FILE_PATH), "level": payload.level}

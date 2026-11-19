@@ -287,8 +287,17 @@ class OperatorConfig(StrictBaseModel):
     # execution path as of 2026-07-28 (the old plan-once-then-replan path and
     # its keyword-driven recovery were deleted, not just defaulted off).
     max_steps: int = Field(default=12, ge=1, le=50)
-    # How readily the assistant makes routine choices. This never grants tool permissions.
+    # How much the assistant does without asking: 1 Ask, 2 Balanced (the default), 3 Autonomous (never asks, grants routine approvals itself; a payment and a
+    # critical-risk call still wait for the owner). Capabilities stay as configured; this never turns one on.
+    autonomy_level: int | None = Field(default=None, ge=1, le=3)
+    # The earlier five-level setting. Read only when `autonomy_level` is not set (1-2 became Ask, 3 Balanced, 4-5 Autonomous).
     initiative_level: int = Field(default=3, ge=1, le=5)
+
+    @property
+    def effective_autonomy(self) -> int:
+        from agent_control.orchestration.autonomy import level_from_legacy
+
+        return self.autonomy_level if self.autonomy_level is not None else level_from_legacy(self.initiative_level)
     # Who decides whether a `done` actually delivered what was asked.
     #
     # "auditor"   - the Auditor judges it, reading the user's own words and a

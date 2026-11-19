@@ -1557,7 +1557,7 @@ export function updateDecisionConfig(input: { mode: DecisionMode; profile: strin
 }
 
 export function fetchInitiativeConfig() {
-  return apiFetch("/api/config/initiative", z.object({ level: z.number().int().min(1).max(5) }))
+  return apiFetch("/api/config/initiative", z.object({ level: z.number().int().min(1).max(3) }))
 }
 
 export function updateInitiativeConfig(level: number) {

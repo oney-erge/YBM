@@ -161,14 +161,14 @@ async def test_initiative_is_snapshotted_and_does_not_grant_tool_permissions(tmp
             return await super().decide(objective, config_context, history, **kwargs)
 
     operator = SeenOperator([OperatorDecision(action=OperatorAction.BLOCKED, reason="test")])
-    worker = TaskWorker(repos, audit, executor=_executor(_settings(), audit, repos), operator=operator, initiative_level=4)
+    worker = TaskWorker(repos, audit, executor=_executor(_settings(), audit, repos), operator=operator, initiative_level=3)
     result = await worker.process_task(task.id)
-    assert result.metadata["initiative_level"] == 4
-    assert "Decision preference (4 of 5)" in operator.context
+    assert result.metadata["initiative_level"] == 3
+    assert "Decision preference (Autonomous, level 3 of 3)" in operator.context
     assert "does not grant access" in operator.context
 
     # A reconstructed worker with new settings keeps the task's stored preference.
-    assert "Decision preference (4 of 5)" in TaskWorker(repos, audit, initiative_level=1)._planner_context(
+    assert "Decision preference (Autonomous, level 3 of 3)" in TaskWorker(repos, audit, initiative_level=1)._planner_context(
         metadata=result.metadata
     )
 

@@ -318,7 +318,7 @@ operator:
   max_steps: 12
   # 1 asks about meaningful choices; 5 chooses routine details whenever possible.
   # This does not change approval requirements or tool permissions.
-  initiative_level: 3
+  autonomy_level: 2  # 1 Ask, 2 Balanced, 3 Autonomous (never asks; payments and unrecoverable changes still wait for you)
 
 adapters:
   vscode:
