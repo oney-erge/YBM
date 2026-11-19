@@ -1,10 +1,12 @@
 """Staying up: the chores that keep the assistant alive for years, and the one line each morning that says whether it is.
 
-Three things, once a day at `upkeep.hour`, by the scheduler process (scheduler.py), with nothing for the person to start:
+Four things, once a day at `upkeep.hour`, by the scheduler process (scheduler.py), with nothing for the person to start:
 
     backup         a backup (backup.py) when the last one is older than a day
     restore check  once a month, the newest backup is opened in a scratch folder and what it holds is counted (tasks, facts, episodes, projects), so a backup that cannot be
                    read is found while it still matters, not on the day it is needed
+    project tidy   notes a project holds twice are kept once, and the readable copy of the memory (.agent_control/memory: INDEX.md, about-you.md, one PROJECT.md per project)
+                   is written again, so it is there to open
     morning line   one message: whether the model answers, how much disk is free, what the background jobs are doing, how old the last backup is and what the last restore
                    check found; "all good" in one line, or what needs a look
 
@@ -152,6 +154,12 @@ async def run_daily(settings: Any, repositories: Any, say, *, now: datetime | No
     if due and latest is not None:
         state["restore_check"] = restore_check(latest)
         state["restore_checked_on"] = today
+    try:
+        from agent_control import projects_memory
+
+        projects_memory.tidy(repositories)  # notes written twice are kept once, and the readable copy under .agent_control/memory is rewritten
+    except Exception:  # noqa: BLE001 - a chore that fails must not stop the morning line
+        pass
     _write_state(state, state_path)
     if not config.message:
         return None

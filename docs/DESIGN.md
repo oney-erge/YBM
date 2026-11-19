@@ -108,3 +108,16 @@ shows what came before it as a short list of what failed, not as the transcript.
 **What it replaces and deletes.** The generic "write a short program after three failures" hint (`try_code`) and the "use a materially different method" nudge
 (`alternative_after_repeat`); the evidence hints about files and forms stay. **Measured.** Unit tests (`test_retry.py`), including the 11/19 chain; live, the continuity case
 `cont_plan_revised_twice_stays_the_plan` and the stuck set before and after.
+
+### D5b-1. Projects the person can ask about (2026-11-19)
+
+**What failed.** "Which projects are we working on?" had nothing to be answered from: the model saw a project only when a hook word of the message matched, and no project had
+a hook (the small model gave none). A project was "active" forever. The notebook could be read only as five latest lines in the chat context; the owner could not open anything.
+**Home.** `projects_memory.py` (projects, hooks, notes), with the tool `memory.manage`. **What it adds.** (1) Where a project stands is the calendar's, never stored: active when touched
+in the last two weeks, parked after; done and dropped are the person's word (`set_project`). (2) An index in what the model always sees: one line per active project, the names
+of the parked ones, a count of the finished (`orchestration/context.py`, priority with the last exchange). (3) Three operations on `memory.manage`: `projects` (active, parked,
+done, dropped, with their words), `project` (one project's page: where we are, decisions, open questions, bought, steps, results) and `set_project`. (4) A readable copy
+under `.agent_control/memory` (INDEX.md, about-you.md, `projects/<name>/PROJECT.md`), rewritten by the daily upkeep and whenever a list or a page is asked for; the notes stay in
+the database for search. (5) Words that point to a project when the model gave none: its name, then the longer words of what was said. **What it replaces and deletes.** Nothing yet:
+the hook-confirmed notebook lines in the chat context stay as the second layer until the first live comparison; the nightly rewrite of each page's "where we are" by the model
+is the next piece. **Measured.** Unit tests (`test_projects_index.py`); live, project questions ("which are active", "tell me about the pool") and the switch-and-return cases.

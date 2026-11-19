@@ -27,7 +27,7 @@ _MAX_THEIR_CHARS = 600
 _MAX_YOUR_CHARS = 1_500
 
 #: Importance of each part, lower is kept longer. The date is a few words and the last exchange is what "it" and "that" point to.
-TODAY, LAST_EXCHANGE, GOAL, PROJECT, ABILITIES = 0, 1, 1, 2, 3
+TODAY, LAST_EXCHANGE, GOAL, PROJECT_INDEX, PROJECT, ABILITIES = 0, 1, 1, 1, 2, 3
 
 
 def _line_cut(text: str, keep: int) -> str:

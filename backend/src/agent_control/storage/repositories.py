@@ -1412,6 +1412,14 @@ class ProjectNoteRepository:
             connection.execute("UPDATE projects SET updated_at = ? WHERE id = ?", (_dt(utc_now()), project_id))
         return note_id
 
+    def remove_duplicates(self) -> int:
+        """Keep the first of any entries of one project that say the same thing of the same kind (a note written again every time the topic came up)."""
+        with self.database.connect() as connection:
+            cursor = connection.execute(
+                "DELETE FROM project_notes WHERE rowid NOT IN (SELECT MIN(rowid) FROM project_notes GROUP BY project_id, kind, text)"
+            )
+        return cursor.rowcount
+
     def list(self, project_id: str, *, limit: int = 50) -> list[dict[str, Any]]:
         """The newest entries first, with `at` as a time."""
         with self.database.connect() as connection:

@@ -5,6 +5,7 @@ import logging
 import re
 from typing import Any
 
+from agent_control import projects_memory
 from agent_control.orchestration import context, planner
 from agent_control.orchestration.asking import users_own_words
 from agent_control.orchestration.initiative import initiative_guidance
@@ -228,6 +229,7 @@ class PlanningStage:
             (context.GOAL, str(metadata.get("goal_notes") or "")),
             (context.TODAY, today_note(metadata.get(CHECKS_KEY))),
             (context.LAST_EXCHANGE, context.last_exchange(self.repositories.episodes, task.conversation_id, str(metadata.get("original_message_text") or ""))),
+            (context.PROJECT_INDEX, projects_memory.index_text(self.repositories)),
         ])
 
     def _catalog_context(self, metadata: dict[str, Any] | None = None) -> str:

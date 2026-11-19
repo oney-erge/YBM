@@ -1202,11 +1202,15 @@ class ScheduleManageOutput(ToolOutputModel):
 
 
 class MemoryManageInput(ToolInputModel):
-    operation: Literal["remember", "list", "forget", "search"] = "remember"
+    operation: Literal["remember", "list", "forget", "search", "projects", "project", "set_project"] = "remember"
     category: str | None = None
     content: str | None = None
     fact_id: str | None = None
     query: str | None = None
+    # project, set_project: the project's name (or words that point to it). set_project: where it stands, and the words that point to it.
+    name: str | None = None
+    status: Literal["active", "done", "dropped"] | None = None
+    hooks: list[str] | None = None
 
     @model_validator(mode="after")
     def _require_inputs_per_operation(self) -> "MemoryManageInput":
@@ -1216,6 +1220,10 @@ class MemoryManageInput(ToolInputModel):
             raise ValueError("memory.manage forget requires 'fact_id'")
         if self.operation == "search" and not (self.query or "").strip():
             raise ValueError("memory.manage search requires 'query'")
+        if self.operation in ("project", "set_project") and not (self.name or "").strip():
+            raise ValueError(f"memory.manage {self.operation} requires 'name': the project's name, or words that point to it")
+        if self.operation == "set_project" and self.status is None and not self.hooks:
+            raise ValueError("memory.manage set_project requires 'status' (active, done or dropped) or 'hooks'")
         return self
 
 

@@ -162,7 +162,7 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 | D3 | One proof check that sees the answer | Design | M | |
 | D6 | Tool calls checked per operation; then delete the alias tables | Design | S | |
 | D1 | One front door for every channel; deletes the phrase patterns and Telegram-only routing | Design | L | |
-| D5b | Memory files, projects, index, hooks, `project.list`, nightly tidy-up (section 5) | Design | L | |
+| D5b | Memory files, projects, index, hooks, `project.list`, nightly tidy-up (section 5) | Design | L | first part built: the index, `memory.manage projects/project/set_project`, the readable files, hooks when the model gives none, the nightly tidy; next: the model's nightly rewrite of each page, the memory suite |
 | G2 | Proof runs, unattended: survey rerun (at least 90 percent of the registry's daycares), 600-page research with two fixes in `jobs/research.py` (search again for unanswered questions; write from the collected quotes), the mailbox, speed (2, 6 and 15 s) | Minimal | S each | |
 | G3 | Big-build walk-through ("next step", reminders, "what did I spend"); a model swap tested on a copy and rollbackable updates; one export command | Minimal, one Design | M | |
 | G4 | Verdict 4 once, a three-day run with a restart, release 0.2.0, README, site post | | S plus 3 days | |
