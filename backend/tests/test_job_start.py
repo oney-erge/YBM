@@ -339,3 +339,20 @@ def test_research_finished_in_the_last_week_is_told_to_the_operator_with_its_sum
     assert "an old one" not in note  # a month ago is not "the last week"
     assert "## Research is running" not in note  # nothing is running
     assert open_job_note(repos.jobs, "other", reports_dir=".agent_control/jobs") == ""
+
+
+@pytest.mark.asyncio
+async def test_a_list_to_find_is_a_survey_and_something_to_keep_watching_is_a_monitor_with_its_script():
+    survey = await start_research_call(_Provider(_Start(action="survey", goal="Find all the daycares around Pearland and compare them")), "Go search all the daycares around me and do a large comparative analysis.")
+    assert survey == {"operation": "start_survey", "goal": "Find all the daycares around Pearland and compare them"}
+    script = "import subprocess\nout = subprocess.run(['arp', '-a'], capture_output=True, text=True).stdout\nprint(out)\n"
+    monitor = await start_research_call(
+        _Provider(_Start(action="monitor", name="network-devices", script=script, every_minutes=10, goal="Tell me when a new device shows up")),
+        "Connect to every device on my network and tell me when a new one shows up.",
+    )
+    assert monitor == {"operation": "start_watch", "script": script, "name": "network-devices", "goal": "Tell me when a new device shows up", "every_minutes": 10}
+    # no script written: the Operator takes it with the skill instead of a call that cannot work
+    assert await start_research_call(_Provider(_Start(action="monitor", name="x")), "Watch my network.") is None
+    system = _Provider(_Start(action="other"))
+    await start_research_call(system, "hello")
+    assert "all the daycares around me and compare them" in system.asked[0][0] and "ONLY when they ask for research on a topic" in system.asked[0][0]
