@@ -814,7 +814,10 @@ def _telegram_notifier(
         return None
     try:
         client = _telegram_client(settings, audit)
-        return TelegramTaskNotifier(client, approvals=approvals, plans=plans) if client else None
+        from agent_control.accounts import AccountVault
+
+        vault = AccountVault(settings.secrets)
+        return TelegramTaskNotifier(client, approvals=approvals, plans=plans, logins=vault.made_by) if client else None
     except RuntimeError:
         return None
 

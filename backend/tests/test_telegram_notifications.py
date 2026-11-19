@@ -448,3 +448,29 @@ def test_failed_task_message_includes_the_last_real_step() -> None:
 
     assert "The last thing I tried was reading a document, and it did not work: PDF is password protected." in message
     assert "document.manage" not in message
+
+
+@pytest.mark.asyncio
+async def test_an_account_made_for_the_person_is_told_to_them_with_its_login_after_the_answer(tmp_path, monkeypatch) -> None:
+    from agent_control.accounts import AccountVault
+    from agent_control.config import SecretVaultConfig
+    from agent_control.storage.secrets import SecretVault
+
+    monkeypatch.setenv("AGENT_SECRET_VAULT_KEY", SecretVault.generate_key())
+    vault = AccountVault(SecretVaultConfig(path=str(tmp_path / "vault.json")))
+    password = vault.password_for_new_account("daycare.example", task_id="task_1", username="oney@example.com")
+    vault.password_for_new_account("other.example", task_id="task_2", username="someone")
+    client = FakeTelegramClient()
+    notifier = TelegramTaskNotifier(client, logins=vault.made_by)  # type: ignore[arg-type]
+    metadata = {"source_channel": ChannelType.TELEGRAM.value, "source_chat_id": "42", "synthesized_answer": "Your account is ready."}
+
+    await notifier.notify(TaskRecord(id="task_1", objective="Make me an account on daycare.example", status=TaskStatus.COMPLETED, metadata=metadata))
+
+    assert [text for _, text in client.messages][0] == "Your account is ready."  # the answer carries no password: the standard message strips credentials
+    login = client.messages[1][1]
+    assert "daycare.example: username oney@example.com" in login and f"password {password}" in login and "other.example" not in login
+    plain = FakeTelegramClient()
+    await TelegramTaskNotifier(plain, logins=vault.made_by).notify(  # type: ignore[arg-type]
+        TaskRecord(id="task_3", objective="Say hi", status=TaskStatus.COMPLETED, metadata={**metadata, "synthesized_answer": "Hi."})
+    )
+    assert [text for _, text in plain.messages] == ["Hi."]  # a task that made no account says nothing about logins
