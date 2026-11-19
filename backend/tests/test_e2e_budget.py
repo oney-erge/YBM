@@ -143,3 +143,18 @@ def test_one_runner_at_a_time_uses_the_bot(tmp_path) -> None:
 @pytest.mark.parametrize("pid", [0, -1])
 def test_a_nonsense_process_id_is_not_alive(pid: int) -> None:
     assert budget._alive(pid) is False
+
+
+def test_a_check_with_a_cap_on_each_case_ends_a_turn_at_the_cap_and_not_at_the_workers_own_budget(monkeypatch) -> None:
+    """11/19: a "5-minute" check lasted 25 because a hung case was waited for as long as the worker's budget (640 s), and then re-run. With --case-timeout the turn ends at the cap."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("run_all_e2e_tests_cap", ROOT / "scripts" / "run_all_e2e_tests.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert module._turn_ceiling_seconds(150) == (670, False)  # by default a turn outlasts the worker's own budget
+    monkeypatch.setattr(module, "WORKER_BUDGET_SAFETY_S", 150)
+    assert module._turn_ceiling_seconds(150) == (180, False)
+    source = (ROOT / "scripts" / "run_all_e2e_tests.py").read_text(encoding="utf-8")
+    assert "WORKER_BUDGET_SAFETY_S = int(args.case_timeout)" in source and "<= args.budget_seconds * 1.25):" in source  # and a failed case is re-run only inside the budget

@@ -2322,6 +2322,12 @@ async def main() -> int:
                         help="do not grant approval prompts during the run (cases needing "
                              "approval will stall until they time out)")
     args = parser.parse_args()
+    if args.case_timeout:
+        # A turn is waited for as long as the worker's own budget (WORKER_BUDGET_SAFETY_S, 640 s), so that the runner never walks away from a busy worker. A check with a cap on
+        # each case is the other choice: it ends the turn at the cap, and the task is cancelled. Without this a case that hung (the screen read, 225 s and then a solo re-run of
+        # 667 s on 11/19) made a "5-minute" check last 25.
+        global WORKER_BUDGET_SAFETY_S
+        WORKER_BUDGET_SAFETY_S = int(args.case_timeout)
 
     _load_env()
     issues = [] if args.plan_only else _preflight()
@@ -2495,7 +2501,8 @@ async def main() -> int:
                 runner_exception=f"{exc}\n{traceback.format_exc()[-1500:]}",
                 failure_reason=f"outer runner exception: {exc}",
             )
-        if not stage.passed and not stage.skipped and args.budget_seconds:
+        if (not stage.passed and not stage.skipped and args.budget_seconds
+                and time.monotonic() - suite_start + budget.usual_seconds(case, history, cap=cap) <= args.budget_seconds * 1.25):
             # The model varies: a failed case gets one solo re-run now (never a re-run of the suite). Failing twice is a finding; failing once is noise.
             print(f"  --> FAIL ({stage.failure_reason}); one solo re-run")
             again = await _run_one(case, fixtures)
