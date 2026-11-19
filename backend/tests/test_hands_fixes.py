@@ -141,3 +141,19 @@ async def test_what_a_script_wrote_in_a_folder_it_names_is_a_recorded_change(tmp
     ))
     assert result.status.value == "succeeded", result.error_message
     assert result.output["changed_paths"] == [str(target / "hands-note.txt")] and "outside the workspace" in result.output["summary"]
+
+
+def test_the_whole_fields_object_and_the_button_to_press_have_other_names_too() -> None:
+    """11/19, hands suite, second run: `field_values` and `submit_button` were refused five times and the task ran out of steps."""
+    step = BrowserFillFormStepInput(operation="fill_form_step", field_values={"q": ["lighthouse"]}, submit_button="Search", url="http://x/")
+    assert step.fields == {"q": "lighthouse"}  # a value written as a list is its words
+    assert step.submit is True and step.submit_selector == "Search"  # naming a button to press means submit, with the button's words
+    assert BrowserFillFormInput(operation="fill_form", form_data={"email": "a@b.c"}).fields == {"email": "a@b.c"}
+    assert BrowserFillFormInput(operation="fill_form", values={"email": "a@b.c"}, button_text="Sign up").submit_selector == "Sign up"
+    assert BrowserFillFormInput(operation="fill_form", fields={"q": ["a", "b"]}).fields == {"q": "a, b"}
+    # the proper form, and a CSS selector the model gave, are left as they are
+    proper = BrowserFillFormInput(operation="fill_form", fields={"q": "x"}, submit=True, submit_selector="#go")
+    assert proper.fields == {"q": "x"} and proper.submit is True and proper.submit_selector == "#go"
+    with pytest.raises(ValueError):
+        BrowserFillFormStepInput(operation="fill_form_step", submit_button="Search", url="http://x/")  # a button with nothing to fill is still refused
+

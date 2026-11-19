@@ -101,7 +101,7 @@ def clarification_recovery_reason(
     question: str | None = None,
 ) -> str | None:
     answer = str(task.metadata.get("clarification_answer") or "").strip()
-    if answer and _same_question(question, task.metadata.get("answered_clarifying_question")):
+    if repeats_an_answered_question(task, question):
         return f"this question was already asked and the user answered: {answer!r}. Act on that answer."
     if satisfied_task_does_not_need_clarification(task, history):
         return (
@@ -128,6 +128,12 @@ def clarification_recovery_reason(
             "scaffold the cache-only proposal with conservative defaults and report review gaps"
         )
     return None
+
+
+def repeats_an_answered_question(task: TaskRecord, question: object) -> bool:
+    """Whether the question is the one the person already answered on this task (asked again, perhaps reworded)."""
+    answer = str(task.metadata.get("clarification_answer") or "").strip()
+    return bool(answer) and _same_question(question, task.metadata.get("answered_clarifying_question"))
 
 
 def _same_question(question: object, answered: object) -> bool:
