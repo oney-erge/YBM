@@ -21,7 +21,7 @@ from agent_control.orchestration.asking import (
     still_asking_after_the_work_is_done,
     users_own_words,
 )
-from agent_control.orchestration.auditor import AuditorService
+from agent_control.orchestration.auditor import AuditorService, AuditResult
 from agent_control.orchestration.call_rewrites import (
     ALREADY_DONE_STATUS,
     exact_delivery_call,
@@ -928,6 +928,12 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                         fallback_used=getattr(self.auditor, "last_fallback_used", False),
                     )
                     self._record_llm_call(latest.id, "auditor", len(history), self.auditor, step_id=step_id)
+                    if not audit_result.sufficient and audit_gap_count >= 1 and await self._answer_declines(final_answer):
+                        # The audit asks whether the tool output proves the request was done. An answer that says plainly it was not done, or cannot be,
+                        # claims nothing to prove: sent back a second time, the model asked a question instead ("Which pizza shop?") and the task waited
+                        # until it was cancelled (frozen suite v_cannot_order, 11/18, at every initiative level). Once sent back, a "cannot" that comes
+                        # again is the answer.
+                        audit_result = AuditResult(sufficient=True, answer=None, reason="the answer says it was not done")
                     if not audit_result.sufficient:
                         history.append({
                             "tool_name": CHECK_ENTRY_AUDIT,

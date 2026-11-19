@@ -2571,6 +2571,45 @@ async def test_operator_loop_audit_gap_continues_loop_instead_of_completing(tmp_
 
 
 @pytest.mark.asyncio
+async def test_an_honest_cannot_sent_back_once_is_the_answer_the_second_time(tmp_path) -> None:
+    """Frozen suite v_cannot_order (11/18): the audit found no order in the tool output, twice, and the model asked "which shop?" until the task was cancelled."""
+    cannot = "I cannot order a pizza: I have no way to place orders or pay. Jet's Pizza and Domino's are the nearest shops."
+
+    async def run(declines: bool):
+        repos, audit = make_repos(tmp_path / str(declines))
+        task = repos.tasks.create("Order me a large pizza from the shop on the corner.")
+        executor = _executor(_settings(), audit, repos, tool_name="filesystem.manage", output={"text": "Jet's Pizza; Domino's"})
+        operator = QueueOperator([
+            OperatorDecision(action=OperatorAction.CALL_TOOL, tool_name="filesystem.manage", tool_input={}, risk_level=RiskLevel.LOW),
+            OperatorDecision(action=OperatorAction.DONE, final_answer=cannot),
+            OperatorDecision(action=OperatorAction.DONE, final_answer=cannot),
+            OperatorDecision(action=OperatorAction.DONE, final_answer=cannot),
+        ])
+        auditor = QueueAuditor([AuditResult(sufficient=False, reason="no order confirmation")] * 2)
+        asked: list[tuple[str, tuple[str, ...]]] = []
+
+        async def facts(text, names):
+            asked.append((text, names))
+            return {name: declines for name in names}
+
+        worker = TaskWorker(repos, audit, executor=executor, operator=operator, auditor=auditor, audit_min_tool_calls=1, fact_checks=facts)
+        result = task
+        for _ in range(6):
+            result = await worker.process_task(result.id)
+            if result.status != TaskStatus.RUNNING:
+                break
+        return result, asked
+
+    accepted, asked = await run(True)
+    assert accepted.status == TaskStatus.COMPLETED and accepted.metadata["synthesized_answer"] == cannot
+    assert accepted.metadata["operator_audit_gap_count"] == 1  # the first "cannot" was sent back once; the second one stood
+    assert (cannot, ("answer_declines",)) in asked
+
+    refused, _ = await run(False)  # an answer that does not say it was not done keeps the audit's verdict: it is sent back a second time
+    assert refused.metadata["operator_audit_gap_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_operator_loop_audit_gap_exhausts_and_blocks_without_unverified_answer(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     task = repos.tasks.create("list the first 5 episodes")
