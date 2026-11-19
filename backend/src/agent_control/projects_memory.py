@@ -12,7 +12,8 @@ repository once); the decision model is asked whether the message really is abou
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from agent_control.schemas import ProjectRecord, utc_now
@@ -71,6 +72,7 @@ def note_to_project(
         return None
     kind = kind if kind in NOTE_KINDS else "fact"
     clean_hooks = [h for h in dict.fromkeys(" ".join(h.lower().split())[:30] for h in hooks if h and len(h.strip()) > 2)][:MAX_HOOKS]
+    clean_hooks = clean_hooks or derive_hooks(name, text)  # the small model often gives none; the words of the name still point to the project
     project = find_project(repositories, name, clean_hooks)
     if project is None:
         project = repositories.projects.create(ProjectRecord(name=name, hooks=clean_hooks))
@@ -166,3 +168,144 @@ def project_context_sync(repositories: Repositories, text: str) -> str:
         return context_text(repositories, _without_a_model(candidates(repositories, text), text))
     except Exception:  # noqa: BLE001
         return ""
+
+
+# --- what the person can ask: which projects, and where each one stands -------------------------------------------------------------------
+
+#: A project not touched for this long is parked: still held, with its decisions, and picked up again when it is mentioned. The person decides done and dropped.
+PARK_AFTER = timedelta(days=14)
+#: Where the readable copy of the memory is kept: the owner can open, move or back up these files; the database holds the same notes for search.
+MEMORY_DIR = Path(".agent_control") / "memory"
+_MAX_INDEX_LINES = 8
+_KIND_TITLES = {
+    "decision": "Decisions", "question": "Open questions", "fact": "Facts", "purchase": "Bought or to buy", "step": "Steps", "result": "Results",
+}
+
+
+def derive_hooks(name: str, text: str = "") -> list[str]:
+    """Words that point to a project when the model gave none: the words of its name, then the longer words of what was said. Candidates only; a model confirms."""
+    own = [w for w in re.findall(r"[a-z0-9]+", (name or "").lower()) if len(w) > 2 and w not in _STOP]
+    said = [w for w in re.findall(r"[a-z0-9]+", (text or "").lower()) if len(w) > 4 and w not in _STOP]
+    return list(dict.fromkeys([*own, *said]))[:6]
+
+
+def last_touched(repositories: Repositories, project: ProjectRecord) -> datetime:
+    notes = repositories.project_notes.list(project.id, limit=1)
+    stamps = [project.updated_at, *([notes[0]["at"]] if notes else [])]
+    return max(stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc) for stamp in stamps)
+
+
+def standing(project: ProjectRecord, touched: datetime, now: datetime | None = None) -> str:
+    """active, parked, done or dropped. The first two follow the calendar and are never stored; the last two are the person's word."""
+    if project.status in ("done", "dropped"):
+        return project.status
+    return "active" if (now or utc_now()) - touched < PARK_AFTER else "parked"
+
+
+def listing(repositories: Repositories, now: datetime | None = None) -> list[tuple[ProjectRecord, str, datetime]]:
+    """Every project with where it stands, the most recently touched first."""
+    now = now or utc_now()
+    rows = [(project, last_touched(repositories, project)) for project in repositories.projects.list_all()]
+    rows.sort(key=lambda row: row[1], reverse=True)
+    return [(project, standing(project, touched, now), touched) for project, touched in rows]
+
+
+def index_text(repositories: Repositories, now: datetime | None = None) -> str:
+    """One line per active project and the names of the parked ones: what the model always sees, so "which projects are active?" and "back to the pool" need no guess."""
+    try:
+        rows = listing(repositories, now)
+    except Exception:  # noqa: BLE001 - help, never a reason to fail a message
+        return ""
+    if not rows:
+        return ""
+    now = now or utc_now()
+    lines = ["\n\n## Projects you are holding for this person (read one's notes with memory.manage project, by name)"]
+    active = [row for row in rows if row[1] == "active"]
+    for project, _, touched in active[:_MAX_INDEX_LINES]:
+        lines.append(f"- {project.name}: active, last touched {_ago(touched, now)}")
+    parked = [f"{project.name} ({_ago(touched, now)})" for project, state, touched in rows if state == "parked"]
+    if parked:
+        lines.append("- Parked: " + ", ".join(parked[:_MAX_INDEX_LINES]) + (f" and {len(parked) - _MAX_INDEX_LINES} more" if len(parked) > _MAX_INDEX_LINES else ""))
+    finished = sum(1 for row in rows if row[1] in ("done", "dropped"))
+    if finished:
+        lines.append(f"- {finished} finished or dropped, not listed.")
+    return "\n".join(lines)
+
+
+def _slug(name: str) -> str:
+    return "-".join(re.findall(r"[a-z0-9]+", name.lower()))[:60] or "project"
+
+
+def render_project(repositories: Repositories, project: ProjectRecord, now: datetime | None = None) -> str:
+    """The project's own page: where it stands, the words that point to it, and its notebook by kind, newest first. What the owner can read and what the assistant reads."""
+    now = now or utc_now()
+    touched = last_touched(repositories, project)
+    notes = repositories.project_notes.list(project.id, limit=200)
+    lines = [f"# {project.name}", "", f"Status: {standing(project, touched, now)} (last touched {_ago(touched, now)})."]
+    if project.hooks:
+        lines.append("Words that point to it: " + ", ".join(project.hooks) + ".")
+    if project.instructions.strip():
+        lines += ["", "## What it is", project.instructions.strip()]
+    latest = {}
+    for note in notes:
+        latest.setdefault(note["kind"], note)
+    where = [f"- {_KIND_TITLES[kind][:-1] if kind != 'fact' else 'Fact'}: {latest[kind]['text']}" for kind in ("decision", "question", "step") if kind in latest]
+    if where:
+        lines += ["", "## Where we are", *where]
+    for kind in NOTE_KINDS:
+        entries = [note for note in notes if note["kind"] == kind]
+        if entries:
+            lines += ["", f"## {_KIND_TITLES[kind]}", *[f"- {str(note['at'])[:10]}: {note['text']}" for note in entries]]
+    if not notes:
+        lines += ["", "Nothing has been written down about it yet."]
+    return "\n".join(lines) + "\n"
+
+
+def describe(repositories: Repositories, name: str) -> tuple[ProjectRecord, str] | None:
+    """The project a name points to, and its page, or None."""
+    project = find_project(repositories, name, derive_hooks(name))
+    if project is None:
+        found = candidates(repositories, name, limit=1)
+        project = found[0][1] if found else None
+    return None if project is None else (project, render_project(repositories, project))
+
+
+def render_about_you(repositories: Repositories) -> str:
+    """What is kept about the person, one line each with its date; what stopped being true is below, with the day it stopped."""
+    facts = repositories.memory_facts.list_all(include_closed=True)
+    lines = ["# About you", ""]
+    current = [fact for fact in facts if fact.is_current]
+    lines += [f"- {fact.content}" + (f" ({str(fact.valid_from)[:10]})" if getattr(fact, "valid_from", None) else "") for fact in current] or ["Nothing yet."]
+    ended = [fact for fact in facts if not fact.is_current]
+    if ended:
+        lines += ["", "## No longer so", *[f"- {fact.content} (until {str(fact.valid_to)[:10]})" for fact in ended]]
+    return "\n".join(lines) + "\n"
+
+
+def write_files(repositories: Repositories, root: Path | None = None, now: datetime | None = None) -> list[Path]:
+    """Write the readable copy: INDEX.md, about-you.md and one folder per project with its PROJECT.md. The notes stay in the database too; these files are regenerated, so
+    an edit by hand is not kept. Never raises: a copy that could not be written is not worth a failed task."""
+    root = root or MEMORY_DIR
+    written: list[Path] = []
+    try:
+        rows = listing(repositories, now)
+        index = ["# Projects", ""] + [f"- [{project.name}](projects/{_slug(project.name)}/PROJECT.md): {state}, last touched {_ago(touched, now)}" for project, state, touched in rows]
+        targets = {
+            root / "INDEX.md": "\n".join(index if rows else ["# Projects", "", "None yet."]) + "\n",
+            root / "about-you.md": render_about_you(repositories),
+        }
+        for project, _, _ in rows:
+            targets[root / "projects" / _slug(project.name) / "PROJECT.md"] = render_project(repositories, project, now)
+        for path, text in targets.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text, encoding="utf-8", newline="\n")
+            written.append(path)
+    except Exception:  # noqa: BLE001
+        return written
+    return written
+
+
+def tidy(repositories: Repositories, root: Path | None = None, now: datetime | None = None) -> dict[str, int]:
+    """The nightly chore: notes that say the same thing twice are kept once, and the readable copy is rewritten."""
+    removed = repositories.project_notes.remove_duplicates()
+    return {"duplicates_removed": removed, "files_written": len(write_files(repositories, root, now))}
