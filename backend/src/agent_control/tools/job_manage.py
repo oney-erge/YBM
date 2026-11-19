@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_control.config import AppSettings
-from agent_control.jobs import engines, investigate, research
+from agent_control.jobs import engines, investigate, research, watch
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.jobs.runner import cancel_job, pause_job, resume_job
 from agent_control.plans.runner import routing_of
@@ -19,7 +19,7 @@ from agent_control.storage.repositories import Repositories
 from agent_control.tools.contracts import JobManageInput, JobManageOutput
 from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDefinition, failed_result, same_output_schema
 
-OPERATIONS = ("start_research", "start_investigation", "status", "pause", "resume", "stop")
+OPERATIONS = ("start_research", "start_investigation", "start_watch", "status", "pause", "resume", "stop")
 #: Jobs open at once in one chat. The one local model serves one request at a time, so a third job would only slow the other two.
 MAX_OPEN_JOBS = 2
 
@@ -65,6 +65,8 @@ class JobManageAdapter:
                 output = self._start(request, routing)
             elif operation == "start_investigation":
                 output = self._start_investigation(request, routing, task)
+            elif operation == "start_watch":
+                output = self._start_watch(request, routing)
             elif operation == "status":
                 output = self._status(request, routing)
             elif operation in ("pause", "resume", "stop"):
@@ -84,7 +86,7 @@ class JobManageAdapter:
         goal = " ".join(str(request.input.get("goal") or "").split())
         if not goal:
             raise ValueError("start_research requires a goal")
-        open_jobs = self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED])
+        open_jobs = [job for job in self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]) if job.kind != "watch"]  # a watch is asleep most of the time: it takes no place from the long jobs
         if len(open_jobs) >= MAX_OPEN_JOBS:
             raise ValueError(f"{len(open_jobs)} researches are already open in this chat; pause or stop one first, or wait for it to finish")
         pages = int(request.input.get("max_pages") or self.config.default_pages)
@@ -107,7 +109,7 @@ class JobManageAdapter:
         goal = " ".join(str(request.input.get("goal") or "").split())
         if not goal:
             raise ValueError("start_investigation requires a goal")
-        open_jobs = self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED])
+        open_jobs = [job for job in self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]) if job.kind != "watch"]  # a watch is asleep most of the time: it takes no place from the long jobs
         if len(open_jobs) >= MAX_OPEN_JOBS:
             raise ValueError(f"{len(open_jobs)} jobs are already open in this chat; pause or stop one first, or wait for it to finish")
         # The goal this belongs to travels with the job, so that when it ends what it found goes to the goal (orchestration/goal_routing.py).
@@ -122,6 +124,29 @@ class JobManageAdapter:
                 f"Started working out: {goal[:200]}. It runs read-only checks of this computer and the home network, one at a time, looks up what is known, and then "
                 "messages the person what it found and the ways forward. Tell the person in one or two sentences, without any job number, that it has started and that they "
                 "can ask 'how far are you?', pause it or stop it at any time."
+            ),
+        }
+
+    def _start_watch(self, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
+        target = " ".join(str(request.input.get("target") or "").split())
+        if not target:
+            raise ValueError("start_watch requires a target: a folder path or a web page address")
+        open_jobs = self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED])
+        if len([job for job in open_jobs if job.kind != "watch"]) >= MAX_OPEN_JOBS:
+            raise ValueError("two long jobs are already open in this chat; pause or stop one first (a watch does not count)")
+        if any(job.kind == "watch" and job.state.get("target") == target for job in open_jobs):
+            raise ValueError(f"{target} is already being watched in this chat")
+        goal = " ".join(str(request.input.get("goal") or "").split()) or f"Tell me when {target} changes"
+        every = int(request.input.get("every_minutes") or watch.DEFAULT_EVERY_MINUTES)
+        job = self.repositories.jobs.create(Job(kind="watch", goal=goal, state=watch.new_state(target, every), routing=routing))
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor="job", task_id=request.task_id, payload={"reason": "job_started", "job_id": job.id, "kind": "watch"}
+        )
+        return {
+            "job_id": job.id, "jobs": [{"id": job.id, "status": job.status.value}],
+            "summary": (
+                f"Started watching {target} every {job.state['every_minutes']} minutes. The first look only records what is there; after that the person is told once about each change, "
+                "and about nothing else. Tell the person in one or two sentences, without any job number, that it is watching, how often it looks, and that they can pause or stop it."
             ),
         }
 
@@ -183,9 +208,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             enabled=enabled,
             named_when_disabled=False,
             description=(
-                "start and control a long background job: start_research reads many web pages and ends with a cited report; start_investigation works out why "
-                "something on this computer or network does not work and reports ways forward; status, pause, resume and stop control it. Use it for thorough "
-                "research, many sources, or a problem to work out"
+                "start and control a background job: start_research reads many pages into a cited report; start_investigation works out why something on this computer or "
+                "network does not work; start_watch tells the person when a folder or page changes; status, pause, resume, stop control it"
             ),
             operations=OPERATIONS,
             input_schema=JobManageInput,
@@ -193,10 +217,11 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_output_schemas=same_output_schema(OPERATIONS, JobManageOutput),
             default_operation="status",
             # Hours of work and many web requests start only when the person says so, with a sentence that says what it will do.
-            approval_required_operations=("start_research", "start_investigation"),
+            approval_required_operations=("start_research", "start_investigation", "start_watch"),
             approval_reasons={
                 "start_research": "Starts a long research job that reads many web pages over several hours.",
                 "start_investigation": "Runs read-only checks of this computer and the home network to work out a problem, and looks up what is known.",
+                "start_watch": "Looks at a folder or a web page every so often, in the background, and messages you about changes.",
             },
             examples=(
                 {"operation": "start_research", "goal": "Which heat pump is best for a 150 square meter house in Chicago? Costs, running costs, reliability.", "max_pages": 60},

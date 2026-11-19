@@ -408,11 +408,14 @@ class MailManageOutput(ToolOutputModel):
 
 
 class JobManageInput(ToolInputModel):
-    operation: Literal["start_research", "start_investigation", "status", "pause", "resume", "stop"] = "status"
+    operation: Literal["start_research", "start_investigation", "start_watch", "status", "pause", "resume", "stop"] = "status"
     # start_research: what to find out, as a full goal with everything the user said (the topic, the place, the budget), and how many pages
     # at most (the person's own number if they gave one).
     goal: str | None = None
     max_pages: int | None = Field(default=None, ge=5, le=1000)
+    # start_watch: what to watch (a folder path or an http(s) address) and how often to look.
+    target: str | None = None
+    every_minutes: int | None = Field(default=None, ge=1, le=1440)
     # status, pause, resume, stop: which job (default: the newest of this chat that has not ended).
     job_id: str | None = None
 
@@ -420,6 +423,8 @@ class JobManageInput(ToolInputModel):
     def needs_its_arguments(self) -> "JobManageInput":
         if self.operation in ("start_research", "start_investigation") and not (self.goal or "").strip():
             raise ValueError(f"operation={self.operation} requires 'goal'")
+        if self.operation == "start_watch" and not (self.target or "").strip():
+            raise ValueError("operation=start_watch requires 'target'")
         return self
 
 

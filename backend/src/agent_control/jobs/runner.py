@@ -15,7 +15,7 @@ from pathlib import Path
 
 import structlog
 
-from agent_control.jobs import engines, research
+from agent_control.jobs import engines, research, watch
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.schemas import AuditEventType, TaskStatus
 from agent_control.storage.audit import AuditLogger
@@ -79,7 +79,9 @@ class JobRunner:
                 if job is not None:
                     await self._deliver(job)
                     return 1
-            for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=1):
+            for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=20):
+                if job.kind == "watch" and watch.asleep(job.state, self.clock()):
+                    continue  # a watch is mostly asleep: it is looked at again when its time comes, and costs nothing until then
                 try:
                     await self._unit(job)
                 except Exception:  # noqa: BLE001 - one job's trouble must not stop the worker taking tasks
