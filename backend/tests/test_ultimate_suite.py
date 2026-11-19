@@ -13,7 +13,7 @@ FROZEN = ROOT / "e2e" / "ultimate_cases.sha256"
 
 
 def test_the_file_is_the_one_that_was_frozen() -> None:
-    assert hashlib.sha256(CASES.read_bytes()).hexdigest() == FROZEN.read_text(encoding="ascii").strip()
+    assert hashlib.sha256(CASES.read_bytes().replace(b"\r\n", b"\n")).hexdigest() == FROZEN.read_text(encoding="ascii").strip()  # line endings made plain: a checkout on any system agrees
 
 
 def test_fourteen_cases_each_with_a_rubric_and_a_check_a_run_can_make() -> None:
