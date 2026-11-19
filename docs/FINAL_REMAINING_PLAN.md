@@ -7,6 +7,32 @@ The goal: one assistant on this PC, reached through Telegram, that holds on to w
 wants until it is done or honestly blocked; decides routine things itself as far as the person
 allows; finds another way when one fails; and proves a result before it says "done".
 
+## 0. Status at the end of 2026-11-18
+
+Written after the work below ran on the real bot. Numbers are from runs on this PC; nothing here is rounded up.
+
+| Phase | State |
+|---|---|
+| P0 land, release, baseline | Done: working tree landed (#247), v0.1.7 tagged and its assets verified (a clean install was **not** run), Verdict 3 sealed (#248) and run once, continuity suite (6 dev cases). `lifecycle-implementation` and `lifecycle-current-*` are **not** integrated. |
+| P1 goals and understand | Done and live: goals table, `goal_ref`/`act` in the one classification call (53/56 goal right, 52/56 act right on the 9B), "You choose." and a bare answer reach the goal's question (#249). The typed `reply task_…:` syntax is no longer asked for when the question has a goal; it is still there for questions without one. |
+| P2 evidence and initiative | Done: an install is done when an install ran; `operator.initiative_level` 1-5 is a prompt preference plus a gate (an options question at level 4 or 5 is answered by the assistant, at most twice) (#249, #254, #255). Your setting is 4. |
+| P3 investigate and the TV | Investigation done and live: five read-only checks, findings, up to three options, the goal waits for the pick (#252). The picked option is **not** carried out reliably by the 9B (it asks redundant questions); no setting on the TV or PC was changed by any run. |
+| P4 research claims, 600 pages | Claim check done (#250): on the 9B all wrong claims were removed and 2 right ones lost. Page cap is 1000. The 600-page overnight run has **not** been done. |
+| P5 mailbox and watches | `mail.manage` built and tested against scripted servers only (#253); off until you give a username and password. Watches built (#256, `tell-me-when` skill, installed); the exam's watch-a-folder case passed, the fires-once case is manual and was not run. |
+| P6 learning and speed | A chat reply no longer waits for the conversation summary (#251): 23 s became about 7-10 s; the 6 s target is **not** met. Learning beyond the existing cards is not built. |
+| P7 final exam | Run, not passed (below). |
+
+| Done check | Result |
+|---|---|
+| 1 Nothing broke: 32 frozen cases | 29 of 32 at level 4 on the final build (27 of 32 at level 3 before the last fixes). Failing: `v_cannot_order` every time (the done-check rejects an honest "I cannot" because it never sees the answer), and one or two of `h4_cannot_phone`, `h4_three_files`, `v_web_titles` that change from run to run. Before 11/18 the same cases passed 32/32; the build is not back to that. |
+| 2 Challenge | Not rerun. |
+| 3 Verdict 3 (sealed, once) | **12 of 17** run cases (3 manual cases not run); target 18 of 20 **not** met. Failed: `a3` (a Word file named in the answer that no write recorded), `a5` (a correction to the folder just made), `b2` (declined hand-over follow-up: no task seen), `r1` and `d2` (jobs left open by earlier cases; #258 fixes the cause). A used exam is not scored again. |
+| 4-9 | Not run: goal chain end to end on the TV, overnight research, mailbox round trip, speed. |
+
+What the runs found and fixed on the way (all merged, with tests): a reply the model called "continue" to a goal's question started a second task; independent cases shared goals and jobs; a bare file name with a `root` was written beside the program; reading a folder said "file does not exist"; an options question at level 4 was answered by asking again. Each is in `CHANGELOG.md`.
+
+Still open, in order of what it costs you: the done-check (`orchestration/auditor.py`) should see the answer so an honest "cannot" completes; the Operator carrying out a picked option; the 600-page run; the mailbox credentials; the lifecycle branches; 0.1.8.
+
 ## 1. Where YBM stands today
 
 Checked on 2026-11-18 from the repository, the running instance and its database.
