@@ -12,7 +12,7 @@ from agent_control.config import AppSettings, LLMProfileConfig
 from agent_control.llm.providers import OpenAICompatibleProvider
 from agent_control.orchestration.operator import OperatorLoopService
 from agent_control.schemas import OperatorAction, OperatorDecision
-from agent_control.tools.call_schema import CachedOperatorSchema, inline_refs, operator_response_schema
+from agent_control.tools.call_schema import CachedOperatorSchema, grammar_friendly, inline_refs, operator_response_schema
 from agent_control.tools.registry import build_tool_registry
 from helpers import make_repos
 
@@ -257,3 +257,46 @@ async def test_a_finish_only_step_gets_the_finishing_schema(registry) -> None:
                   {"action": "blocked", "reason": "no access"}):
         assert accepts(finishing, reply)
     assert not accepts(finishing, {"action": "call_tools_parallel", "parallel_calls": []})
+
+
+# --- a schema the server can read ---------------------------------------------------------------------------------------------------
+
+
+def _bounds(node, found=None):
+    found = [] if found is None else found
+    if isinstance(node, dict):
+        for key, value in node.items():
+            if key in ("maxItems", "maxLength", "minItems") and isinstance(value, int):
+                found.append((key, value))
+            _bounds(value, found)
+    elif isinstance(node, list):
+        for item in node:
+            _bounds(item, found)
+    return found
+
+
+def test_the_schema_holds_no_bound_a_grammar_would_have_to_spell_out(schema) -> None:
+    """llama.cpp turns maxItems and maxLength into that many repeated rules. document.manage's rows (2000) and lines (500) made the whole schema unparseable on 11/19: the server
+    refused it on every call (2,266 times) and the Operator ran with no constraint at all."""
+    for key, value in _bounds(schema):
+        assert (key == "maxItems" and value <= 16) or (key == "maxLength" and value <= 240) or (key == "minItems" and value <= 2), (key, value)
+
+
+def test_dropping_the_big_bounds_keeps_the_shape_and_leaves_the_count_to_the_tools_own_validation(registry, schema) -> None:
+    rows = [["a", 1, 2.5, None]] * 40
+    reply = call("document.manage", operation="create_spreadsheet", title="t", rows=rows, lines=["x"] * 40)
+    assert accepts(schema, reply)  # more than the old bounds' sibling limits; the tool's own check (maxItems 2000 / 500) still applies after the reply is written
+    assert not accepts(schema, call("document.manage", operation="create_spreadsheet", title="t", sheets=[1]))  # an argument the tool does not have is still not writable
+    definition = next(d for d in registry.definitions if d.name == "document.manage")
+    with pytest.raises(Exception, match="too many|at most|List should have"):
+        definition.validate_input({"operation": "create_spreadsheet", "title": "t", "rows": [["a"]] * 2001})
+
+
+def test_grammar_friendly_changes_only_the_bounds_that_are_too_big() -> None:
+    source = {"properties": {"maxItems": {"type": "integer"}, "xs": {"type": "array", "maxItems": 2000, "minItems": 1, "items": {"type": "string", "maxLength": 8000, "minLength": 1}},
+                             "ys": {"type": "array", "maxItems": 4, "items": {"type": "string", "maxLength": 40}}}, "required": ["xs"]}
+    friendly = grammar_friendly(source)
+    assert friendly["properties"]["maxItems"] == {"type": "integer"}  # a property that happens to be called maxItems is not a bound
+    assert friendly["properties"]["xs"] == {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+    assert friendly["properties"]["ys"] == source["properties"]["ys"] and friendly["required"] == ["xs"]
+    assert source["properties"]["xs"]["maxItems"] == 2000  # the original is not changed
