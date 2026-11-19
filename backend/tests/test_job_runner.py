@@ -310,6 +310,21 @@ async def test_failed_job_can_be_resumed_without_a_job_id(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_resume_goes_to_the_job_that_can_be_resumed_not_to_one_that_is_running(tmp_path) -> None:
+    repos, call = _tool(tmp_path)
+    failed_id = (await call(operation="start_research", goal="The research that failed")).output["job_id"]
+    failed = repos.jobs.get(failed_id)
+    repos.jobs.save(failed_id, state=failed.state, status=JobStatus.FAILED)
+    running_id = (await call(operation="start_watch", target="https://example.com/news")).output["job_id"]  # another job is running in the same chat
+    assert repos.jobs.get(running_id).status == JobStatus.RUNNING
+
+    resumed = await call(operation="resume")
+
+    assert resumed.status == ToolResultStatus.SUCCEEDED and resumed.output["job_id"] == failed_id
+    assert repos.jobs.get(failed_id).status == JobStatus.RUNNING
+
+
+@pytest.mark.asyncio
 async def test_completed_job_without_file_channel_does_not_claim_the_report_was_sent(tmp_path, monkeypatch) -> None:
     repos, audit = make_repos(tmp_path)
     job = _job(repos)
