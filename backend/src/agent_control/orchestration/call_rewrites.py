@@ -122,7 +122,10 @@ def _canonical_operator_tool_call(
             folder = tool_input.get("root") or tool_input.get("folder_path")
             name = tool_input.get("path")
             if isinstance(folder, str) and isinstance(name, str) and folder.strip() and name.strip():
-                if Path(folder).expanduser().is_absolute() and not Path(name).expanduser().is_absolute():
+                # Only a bare name: a path with folders in it was written for another starting point (the model sends "root": "C:\work" with ".agent_control/out/notes.txt"), and joining
+                # it put the file outside the project; it is left as it was.
+                bare = not any(sep in name for sep in ("/", "\\"))
+                if bare and Path(folder).expanduser().is_absolute():
                     tool_input["path"] = str(Path(folder).expanduser() / name)
     return tool_name, tool_input
 

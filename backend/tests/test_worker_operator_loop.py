@@ -2513,6 +2513,10 @@ def test_a_file_name_with_its_folder_is_written_inside_that_folder() -> None:
     assert spelled_file_path["path"] == str(Path(folder) / "a.txt") and "file_path" not in spelled_file_path
     assert spelled_path["path"] == str(Path(folder) / "b.txt")
     assert already_whole["path"] == str(Path(folder) / "c.txt")  # a whole path is left as it is
+    _, with_folders = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "path": ".agent_control/out/notes.txt", "content": "x"}, {definition.name: definition},
+    )
+    assert with_folders["path"] == ".agent_control/out/notes.txt"  # a path with folders in it is not joined to a root it was not written for
 
 
 @pytest.mark.asyncio
