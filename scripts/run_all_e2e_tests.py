@@ -249,6 +249,21 @@ def close_open_goals() -> None:
         pass
 
 
+def close_open_jobs() -> None:
+    """Independent cases do not share background jobs either.
+
+    A research or investigation job that a case started keeps running after the case, so the next case's chat had two jobs open: a status question was answered with
+    the other case's investigation, and a plain count of log lines was read as a request for another job and refused for the limit (frozen exam, 11/18).
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE jobs SET status = 'cancelled' WHERE status IN ('running', 'paused')")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def _memory_fact_ids() -> set[str]:
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1821,6 +1836,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
         if not any(t in (case.get("tags") or []) for t in ("followup", "memory")):
             clear_conversation_memory()
         close_open_goals()  # also for a case that keeps the memory: its own follow-ups make their goals after this
+        close_open_jobs()
 
         rendered_message = render_text(stage.message, fixtures)
         max_seconds = int(case.get("timeout_seconds") or 360)

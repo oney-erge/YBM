@@ -111,6 +111,28 @@ async def test_a_routed_request_starts_with_the_job_call_once_and_only_on_its_fi
 
 
 @pytest.mark.asyncio
+async def test_a_message_that_only_arrives_while_a_job_is_open_may_control_it_but_not_start_another(tmp_path):
+    """Frozen exam 11/18: a count of ERROR lines in log files, asked while jobs were open, was read as "investigate" and an investigation was asked for."""
+    repos, audit = make_repos(tmp_path)
+
+    def stage_of(call):
+        async def stage(task):
+            return call
+        return stage
+
+    for call in ({"operation": "start_investigation", "goal": "count the ERROR lines"}, {"operation": "start_research", "goal": "g"}, {"operation": "start_watch", "target": "C:/x"}):
+        task = _task(repos, task_route="job_open")
+        assert await TaskWorker(repos, audit, job_stage=stage_of(call))._started_job(task, []) is None  # the Operator takes the message
+        assert repos.tasks.get(task.id).metadata["job_start_done"] is True
+    for operation in ("status", "pause", "resume", "stop"):
+        decision = await TaskWorker(repos, audit, job_stage=stage_of({"operation": operation}))._started_job(_task(repos, task_route="job_open"), [])
+        assert decision.action == OperatorAction.CALL_TOOL and decision.tool_input == {"operation": operation}
+    task = _task(repos, task_route="job")  # a skill that took it for a request for a job still starts one
+    started = await TaskWorker(repos, audit, job_stage=stage_of({"operation": "start_investigation", "goal": "g"}))._started_job(task, [])
+    assert started.tool_input["operation"] == "start_investigation"
+
+
+@pytest.mark.asyncio
 async def test_only_a_routed_task_with_a_stage_is_started_and_a_failed_stage_blocks(tmp_path):
     repos, audit = make_repos(tmp_path)
     calls: list = []

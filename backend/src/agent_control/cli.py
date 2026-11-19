@@ -545,7 +545,10 @@ def _task_notes(
             chat_id = repositories.conversations.external_id(conversation_id)
             text += open_job_note(repositories.jobs, chat_id, settings.jobs.reports_dir)
             if not route and has_open_job(repositories.jobs, chat_id):
-                route = "job"  # while research is open, any message may be about it ("pause the research" is nothing a yes/no question can recognize)
+                # While a job is open, any message may be about it ("pause the research" is nothing a yes/no question can recognize). That is a route of its own, because
+                # no skill matched: only a control (status, pause, resume, stop) may come of it. Otherwise any question asked while a job runs could be taken for a new
+                # job (frozen exam 11/18: a count of lines in log files became an investigation).
+                route = "job_open"
         return text, route
 
     return notes

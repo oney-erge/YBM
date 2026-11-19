@@ -7,6 +7,8 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A message that arrives while a background job is open, and that no skill took for a request for one, can only control that job (status, pause, resume, stop). Before, every such message went to the model that writes the job call, and a count of ERROR lines in log files was read as "investigate" and an investigation was asked for (sealed exam, 11/18). A message a skill does route to a job starts one as before.
+- The end-to-end runner cancels open jobs, as it already closed goals, before each case: a research or investigation job one case started was still running in the next, which answered a status question with the other case's investigation and refused a plain question for "2 jobs open".
 - At initiative level 4 or 5 a question that offers options is not asked: it is a choice, and the Operator is told to choose the best-supported option, say which and why, and go on (the same bounded rejection as for any optional question, at most twice). On 2026-11-16 "Google Cast, Chromecast or PyChromecast?" went to the person, who answered "you choose", while the setting was only a sentence in the prompt. A question with no options (a fact only the person has) is asked at every level, approvals stay cards, and at level 3 (the default) nothing changes.
 ### Fixed
 
