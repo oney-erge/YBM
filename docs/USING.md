@@ -39,6 +39,26 @@ Browser") and offers a button, instead of failing with a code.
 
 The status strip in the header shows the model, Telegram, VS Code, workspace, and database at a glance.
 
+### How much it asks
+
+In Settings, "How much it asks" has three levels (`operator.autonomy_level` in `config.yaml`): 1 Ask, which asks before meaningful choices; 2 Balanced, the default, which chooses routine details and asks only when a missing fact blocks the work; and 3 Autonomous, which does not ask. At level 3 it works out what you mean from your words, says what it assumed in its first reply so a wrong guess can be corrected in a word, chooses its own methods, and approves the routine approvals a tool call would wait for (each one is recorded as the assistant's own). The older five-level `initiative_level` is still read when `autonomy_level` is not set (1-2 became Ask, 3 Balanced, 4-5 Autonomous).
+
+Two things wait for you at every level: anything that would spend your money (placing an order, paying, subscribing, starting a trial, filling in card details) and anything with a critical risk. The assistant prepares a purchase up to the payment page and asks once, with the items, seller, total with tax and shipping, the card's last four digits and the address; a yes covers that one order. The level never turns a tool on: access stays as configured.
+
+### What it remembers
+
+Both are on by default (`memory.enabled`, `memory.auto_remember`). It keeps what you say about yourself, your family, your home, your plans and your projects as facts, without being asked. A fact that stops being true is closed, not deleted ("we moved": the old address stays with the day it stopped). Everything said and answered in any chat is searchable ("what did I say about the daycare?"), and a project you work on over time has a notebook of decisions and facts that is brought back when you mention it, even weeks later. The Memory page lists the facts; "forget that" removes one.
+
+### Long jobs, surveys and monitors
+
+Say "all", "every", "take your time" or "overnight" and the request becomes a long job: `find all the daycares around me and compare them` is a survey that keeps going until new searches stop finding anything new, with a source for every value. "Tell me when a new device shows up on my network" becomes a monitor: a small read-only script the assistant writes, tests once, and keeps; it speaks only when something changes. A task that cannot go on ends with what was tried and the ways forward, and the goal stays open.
+
+### Staying up
+
+Once a day after `upkeep.hour` (8) the assistant makes a backup if the last is older than a day, once a month checks that the newest backup can be restored, and sends one morning line saying whether all is well. By hand: `ybm health`, `ybm restore-check`, and `ybm calibrate` (checks that the decision model's yes/no marks still separate what each skill expects: run it after changing the model).
+
+Research jobs default to 60 pages and can be configured up to 1,000. A request above the configured limit is refused with the limit rather than silently reduced. Reports are saved locally as Markdown and, when creation succeeds, Word. A send with an uncertain result is not automatically repeated; ask YBM to send the saved report again if needed. Review the sources and claims before relying on the report.
+
 ## Projects and recurring work
 
 In **Agent -> Projects**, create a project with folders, instructions, and success criteria. Use

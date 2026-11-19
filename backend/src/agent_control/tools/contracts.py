@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, Literal
 
@@ -352,6 +353,7 @@ class PlanManageInput(ToolInputModel):
     title: str | None = None
     detail: str | None = None
     owner: Literal["ybm", "user", "access"] | None = None
+    choice_only: bool | None = None
     needs: list[str] | None = None
     depends_on: list[int] | None = None
     ability: str | None = None
@@ -360,8 +362,8 @@ class PlanManageInput(ToolInputModel):
     due: str | None = None
     days: int | None = None
     note: str | None = None
-    # update_step: done, skipped or pending (what the user told you). set_status: active (start), paused or cancelled.
-    status: Literal["done", "skipped", "pending", "active", "paused", "cancelled"] | None = None
+    # update_step: skipped or pending for an unstarted step. Completion belongs to the plan runner.
+    status: Literal["skipped", "pending", "active", "paused", "cancelled"] | None = None
 
     @model_validator(mode="after")
     def needs_its_arguments(self) -> "PlanManageInput":
@@ -380,19 +382,54 @@ class PlanManageInput(ToolInputModel):
         return self
 
 
+class MailManageInput(ToolInputModel):
+    operation: Literal["status", "list", "read", "draft", "send"] = "status"
+    # list: how many messages (at most 30) and whether only the unread ones.
+    limit: int = Field(default=10, ge=1, le=30)
+    unread_only: bool = True
+    # read: the number a list gave.
+    message_id: str | None = None
+    # draft, send: one recipient, a subject and the text.
+    to: str | None = None
+    subject: str | None = None
+    body: str | None = None
+
+    @model_validator(mode="after")
+    def needs_its_arguments(self) -> "MailManageInput":
+        if self.operation == "read" and not (self.message_id or "").strip():
+            raise ValueError("operation=read requires 'message_id'")
+        if self.operation in ("draft", "send") and not ((self.to or "").strip() and (self.subject or "").strip() and (self.body or "").strip()):
+            raise ValueError(f"operation={self.operation} requires 'to', 'subject' and 'body'")
+        return self
+
+
+class MailManageOutput(ToolOutputModel):
+    operation: str = Field(min_length=1)
+    summary: str = Field(min_length=1)
+
+
 class JobManageInput(ToolInputModel):
-    operation: Literal["start_research", "status", "pause", "resume", "stop"] = "status"
+    operation: Literal["start_research", "start_investigation", "start_watch", "start_survey", "status", "pause", "resume", "stop"] = "status"
     # start_research: what to find out, as a full goal with everything the user said (the topic, the place, the budget), and how many pages
     # at most (the person's own number if they gave one).
     goal: str | None = None
-    max_pages: int | None = Field(default=None, ge=5, le=150)
+    max_pages: int | None = Field(default=None, ge=5, le=1000)
+    # start_watch: what to watch (a folder path or an http(s) address) and how often to look.
+    target: str | None = None
+    every_minutes: int | None = Field(default=None, ge=1, le=1440)
+    # start_watch with a script: the Python the assistant wrote (read only: it prints one line for each thing it sees) and a plain name for it. The tool saves it, runs it once
+    # as a test, and watches what it prints; `target` is then made from the name.
+    script: str | None = Field(default=None, max_length=20_000)
+    name: str | None = Field(default=None, max_length=60)
     # status, pause, resume, stop: which job (default: the newest of this chat that has not ended).
     job_id: str | None = None
 
     @model_validator(mode="after")
     def needs_its_arguments(self) -> "JobManageInput":
-        if self.operation == "start_research" and not (self.goal or "").strip():
-            raise ValueError("operation=start_research requires 'goal'")
+        if self.operation in ("start_research", "start_investigation", "start_survey") and not (self.goal or "").strip():
+            raise ValueError(f"operation={self.operation} requires 'goal'")
+        if self.operation == "start_watch" and not (self.target or "").strip() and not ((self.script or "").strip() and (self.name or "").strip()):
+            raise ValueError("operation=start_watch requires 'target', or 'script' with a 'name'")
         return self
 
 
@@ -432,6 +469,7 @@ class BrowserOpenInput(ToolInputModel):
 class BrowserSearchInput(ToolInputModel):
     operation: Literal["search"] = "search"
     query: str | None = None
+    url: str | None = Field(default=None, description="a page to search on (its own search box); leave empty to search the web")
     objective: str | None = None
     open_first_result: bool = False
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
@@ -482,6 +520,9 @@ class BrowserCloseTabInput(ToolInputModel):
     title_contains: str | None = None
 
 
+_CSS_LIKE = re.compile(r"^[#.\[]|[>~+\[\]=:]|^[a-z]+[.#]")
+
+
 class BrowserClickInput(ToolInputModel):
     operation: Literal["click"] = "click"
     selector: str | None = None
@@ -489,11 +530,91 @@ class BrowserClickInput(ToolInputModel):
     tab_id: str | None = None
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
 
+    @model_validator(mode="before")
+    @classmethod
+    def _what_is_clicked(cls, data: Any) -> Any:
+        """`target`, `element`, `button`, `link`, `label` or `name` is what to click: CSS when it looks like CSS, the visible words otherwise. Refused four times in a row live
+        (hands suite 11/19, `target: "Continue"`) and the task ended blocked."""
+        if isinstance(data, dict) and not (data.get("selector") or data.get("text")):
+            for key in ("target", "element", "button", "link", "label", "name", "locator"):
+                value = data.get(key)
+                if isinstance(value, str) and value.strip():
+                    rest = {k: v for k, v in data.items() if k != key}
+                    return {**rest, ("selector" if _CSS_LIKE.search(value.strip()) and not value.strip().lower().startswith("text=") else "text"): value.strip()}
+        return data
+
     @model_validator(mode="after")
     def _require_selector_or_text(self) -> "BrowserClickInput":
         if not (self.selector or self.text):
             raise ValueError("browser.click requires 'selector' (CSS) or 'text' (visible text to match)")
         return self
+
+
+_FIELD_NAMES = ("field", "field_name", "form_field", "field_id", "field_label", "input_name", "name", "label", "input", "key", "selector")
+_FIELD_VALUES = ("value", "field_value", "input_value", "form_value", "text", "content")
+#: Other names for the whole `fields` object, and for "press this button when done" (live 11/19, hands suite: `field_values` and `submit_button` were refused five times).
+_FIELDS_OBJECT_NAMES = ("field_values", "form_values", "form_data", "values")
+_BUTTON_NAMES = ("submit_button", "submit_text", "button_text", "button", "submit_label")
+
+
+def _words(value: Any) -> str:
+    """A value a model wrote as a list ("lighthouse") or a word is the words the field is to hold."""
+    if isinstance(value, (list, tuple)):
+        return ", ".join(str(item) for item in value)
+    return str(value)
+
+
+def _spelled_for_fill(data: dict[str, Any]) -> dict[str, Any]:
+    """`field_values`/`form_data`/`values` as the `fields` object, and a named button to press as `submit` with that button's words as `submit_selector`."""
+    out = dict(data)
+    if not out.get("fields"):
+        for key in _FIELDS_OBJECT_NAMES:
+            if isinstance(out.get(key), dict) and out[key]:
+                out["fields"] = {str(name): _words(value) for name, value in out[key].items()}
+                break
+    for key in _FIELDS_OBJECT_NAMES:
+        if key in out and out.get("fields"):
+            out.pop(key, None)
+    if not out.get("submit_selector"):
+        for key in _BUTTON_NAMES:
+            if isinstance(out.get(key), str) and out[key].strip():
+                out["submit_selector"] = out[key].strip()
+                out["submit"] = True
+                break
+    for key in _BUTTON_NAMES:
+        out.pop(key, None)
+    return out
+
+
+def _fields_from_dialect(data: Any) -> Any:
+    """What a model writes for "fill this field": a `fields` object, a list of {name, value} pairs, or one field as `field_name` and `value` (or `field`, `name`, `label` and `text`).
+    Every spelling is the same request. Live, 11/19 (hands suite): `fill_form_step` with `field_name` and `value` was refused four times in a row and the task was blocked."""
+    if not isinstance(data, dict):
+        return data
+    data = _spelled_for_fill(data)
+    fields = data.get("fields")
+    if isinstance(fields, dict) and fields:
+        data = {**data, "fields": {str(name): _words(value) for name, value in fields.items()}}  # a value written as a list is its words
+        return data
+    if isinstance(fields, list):
+        pairs = {}
+        for item in fields:
+            if isinstance(item, dict):
+                name = next((item[k] for k in _FIELD_NAMES if item.get(k) not in (None, "")), None)
+                value = next((item[k] for k in _FIELD_VALUES if item.get(k) is not None), "")
+                if name is not None:
+                    pairs[str(name)] = str(value)
+        if pairs:
+            return {**data, "fields": pairs}
+        return data
+    if fields:
+        return data
+    name = next((data[k] for k in _FIELD_NAMES if k != "selector" and data.get(k) not in (None, "")), None)
+    if name is None:
+        return data
+    value = next((data[k] for k in _FIELD_VALUES if data.get(k) is not None), "")
+    rest = {key: val for key, val in data.items() if key not in {*_FIELD_NAMES, *_FIELD_VALUES} or key == "selector"}
+    return {**rest, "fields": {str(name): str(value)}}
 
 
 class BrowserFillFormInput(ToolInputModel):
@@ -505,6 +626,11 @@ class BrowserFillFormInput(ToolInputModel):
     submit_selector: str | None = None
     tab_id: str | None = None
     wait_seconds: float | None = Field(default=None, ge=0.0, le=30.0)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _accept_field_dialects(cls, data: Any) -> Any:
+        return _fields_from_dialect(data)
 
 
 class BrowserSummarizePageInput(ToolInputModel):
@@ -568,11 +694,8 @@ class BrowserFillFormStepInput(ToolInputModel):
     @model_validator(mode="before")
     @classmethod
     def _one_field_as_a_pair(cls, data: Any) -> Any:
-        """A model often fills one field per step as `field` and `value`; that is a one-entry `fields`."""
-        if isinstance(data, dict) and not data.get("fields") and data.get("field") is not None:
-            rest = {key: value for key, value in data.items() if key not in {"field", "value"}}
-            return {**rest, "fields": {str(data["field"]): str(data.get("value", ""))}}
-        return data
+        """A model often fills one field per step as `field` and `value`, or `field_name` and `value`; that is a one-entry `fields`."""
+        return _fields_from_dialect(data)
 
 
 class ComputerObserveInput(ToolInputModel):
@@ -600,7 +723,18 @@ class ComputerRunGoalInput(ToolInputModel):
     objective: str = Field(min_length=1)
     max_steps: int | None = Field(default=None, ge=1, le=50)
     include_ui_tree: bool = True
-    require_vision: bool = True
+    # Vision is used when there is a model that can see; without one the goal is worked from the window list and the UI tree alone (tools/computer_use.py).
+    require_vision: bool = False
+
+    @model_validator(mode="before")
+    @classmethod
+    def _goal_is_the_objective(cls, data: Any) -> Any:
+        """`goal`, `task` or `instruction` for `objective`: the same thing, refused live (hands suite 11/19) until the model happened to spell it the other way."""
+        if isinstance(data, dict) and not data.get("objective"):
+            for key in ("goal", "task", "instruction", "request"):
+                if data.get(key):
+                    return {**{k: v for k, v in data.items() if k != key}, "objective": data[key]}
+        return data
 
 
 class FilesystemInspectInput(ToolInputModel):
@@ -760,6 +894,17 @@ class WorkspaceWebAppPreviewOutput(WorkspaceLaunchStaticOutput):
 class CodeInterpreterRunPythonInput(ToolInputModel):
     operation: Literal["run_python"] = "run_python"
     code: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _script_is_the_code(cls, data: Any) -> Any:
+        """`script`, `source` or `python` for `code`."""
+        if isinstance(data, dict) and not data.get("code"):
+            for key in ("script", "source", "python", "program"):
+                if isinstance(data.get(key), str) and data[key].strip():
+                    return {**{k: v for k, v in data.items() if k != key}, "code": data[key]}
+        return data
+
     objective: str | None = None
     workspace_dir: str | None = None
     script_name: str = "script.py"
@@ -1053,7 +1198,7 @@ class ScheduleManageOutput(ToolOutputModel):
 
 
 class MemoryManageInput(ToolInputModel):
-    operation: Literal["remember", "list", "forget"] = "remember"
+    operation: Literal["remember", "list", "forget", "search"] = "remember"
     category: str | None = None
     content: str | None = None
     fact_id: str | None = None
@@ -1065,6 +1210,8 @@ class MemoryManageInput(ToolInputModel):
             raise ValueError("memory.manage remember requires 'category' and 'content'")
         if self.operation == "forget" and not self.fact_id:
             raise ValueError("memory.manage forget requires 'fact_id'")
+        if self.operation == "search" and not (self.query or "").strip():
+            raise ValueError("memory.manage search requires 'query'")
         return self
 
 
@@ -1076,7 +1223,7 @@ class MemoryManageOutput(ToolOutputModel):
 
 
 class SystemInventoryInput(ToolInputModel):
-    operation: Literal["steam_games", "installed_apps", "disk_space", "hardware", "find_files"] = "find_files"
+    operation: Literal["steam_games", "installed_apps", "disk_space", "hardware", "displays", "find_files"] = "find_files"
     query: str | None = None
     extensions: list[str] = Field(default_factory=list, max_length=12)
     match: Literal["name", "content"] = "name"
@@ -1104,7 +1251,7 @@ class SystemInstalledAppsInput(ToolInputModel):
 
 
 class SystemSimpleInput(ToolInputModel):
-    operation: Literal["steam_games", "disk_space", "hardware"] = "steam_games"
+    operation: Literal["steam_games", "disk_space", "hardware", "displays"] = "steam_games"
 
 
 class SystemInventoryOutput(ToolOutputModel):

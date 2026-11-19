@@ -39,10 +39,13 @@ From `backend/`:
 
 ```powershell
 uv sync --frozen --extra test --extra dev   # first time only (skip if `ybm setup` already ran)
-uv run --frozen pytest
+uv run --frozen pytest -n auto --dist loadfile   # the whole suite, in parallel: about 35 seconds on 16 cores
 uv run --frozen ruff check .
 uv run --frozen python ../scripts/check_markdown_links.py
 ```
+
+While you edit, run only the tests your change can affect: `uv run --frozen pytest --testmon -n auto --dist loadfile`. The first run builds a map of
+which tests touch which code (about a minute); after that a change runs in seconds. CI always runs everything.
 
 From `vscode-extension/`, if you touched the extension:
 

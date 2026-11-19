@@ -17,6 +17,7 @@ from typing import Any
 import structlog
 
 from agent_control.plans.model import MAX_STEPS, Plan, PlanStep, in_date_order
+from agent_control.orchestration.initiative import initiative_guidance
 from agent_control.plans.planner import draft_plan
 from agent_control.plans.runner import audit_plan, render_plan, routing_of
 from agent_control.schemas import TaskRecord
@@ -37,10 +38,21 @@ class StageOutcome:
 async def run_plan_stage(
     repositories: Repositories, audit: AuditLogger, provider: Any, can_do: str, task: TaskRecord
 ) -> StageOutcome:
-    goal = str(task.metadata.get("original_message_text") or task.objective).strip()
+    # Intake may have resolved a short follow-up into a complete objective. Keep
+    # the user's original words as context, but don't save an unresolved "it"
+    # as the goal that every future step will receive.
+    original = str(task.metadata.get("original_message_text") or "").strip()
+    goal = task.objective.split("\n[Question to the user:", 1)[0].strip() or original
+    context = initiative_guidance(task.metadata.get("initiative_level")) + str(task.metadata.get("goal_notes") or "")
+    if original and original != goal:
+        context += f"\nThe user's message: {original}"
+    context += "\n" + task.objective
+    memory = str(task.metadata.get("memory_context") or "").strip()
+    if memory:
+        context += f"\nRecent conversation context (may be incomplete):\n{memory}"
     asked_before = int(task.metadata.get("clarify_count", 0)) > 0
     try:
-        draft = await draft_plan(provider, goal[:500], task.objective, can_do, may_ask=not asked_before)
+        draft = await draft_plan(provider, goal[:500], context, can_do, may_ask=not asked_before)
     except Exception:  # noqa: BLE001 - the Operator loop is the fallback for everything this stage cannot do
         logger.warning("plan_stage_draft_failed", task_id=task.id, exc_info=True)
         return StageOutcome("none")

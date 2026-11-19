@@ -47,6 +47,20 @@ def test_task_lifecycle_and_audit(tmp_path) -> None:
     assert events[1].payload == {"old_status": "received", "new_status": "paused"}
 
 
+def test_existing_tasks_gain_a_revision_without_losing_their_state(tmp_path) -> None:
+    database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
+    database.initialize()
+    repos = Repositories.for_database(database)
+    task = repos.tasks.create("Older task", metadata={"clarifying_question": "Which file?"})
+    repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    with database.connect() as connection:
+        connection.execute("ALTER TABLE tasks DROP COLUMN revision")
+    database.initialize()
+    migrated = repos.tasks.get(task.id)
+    assert migrated.revision == 0 and migrated.status == TaskStatus.CLARIFYING
+    assert migrated.metadata["clarifying_question"] == "Which file?"
+
+
 def test_message_repository_duplicate_create_is_idempotent(tmp_path) -> None:
     database = Database(f"sqlite:///{tmp_path / 'agent.db'}")
     database.initialize()

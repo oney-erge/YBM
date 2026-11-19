@@ -41,7 +41,7 @@ class ComparisonOperator:
         )
 
 
-def make_system(root: Path, *, ask_first: bool = False):
+def make_system(root: Path, *, ask_first: bool = False, settings_loader=None):
     root.mkdir(parents=True, exist_ok=True)
     (root / "a.txt").write_text("Cost: 10 USD.\nTimeline: two weeks.", encoding="utf-8")
     (root / "b.txt").write_text("Cost: 12 USD.\nTimeline: one week.", encoding="utf-8")
@@ -64,5 +64,5 @@ def make_system(root: Path, *, ask_first: bool = False):
     operator = ComparisonOperator(root, ask_first=ask_first)
     worker = TaskWorker(repositories, audit, executor=executor, operator=operator)
     app = FastAPI()
-    app.include_router(create_admin_router(lambda: settings, lambda: repositories, VSCodeBridgeStore()))
+    app.include_router(create_admin_router(lambda: settings_loader(settings) if settings_loader else settings, lambda: repositories, VSCodeBridgeStore()))
     return app, repositories, audit, worker, operator

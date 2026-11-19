@@ -11,6 +11,7 @@ know:
     - ``disk_space``     free and total space per drive
     - ``hardware``       the graphics card and its video memory, RAM and processor count (the same
                          reading that decides which local model fits, ``llm/hardware.py``)
+    - ``displays``       displays currently attached to the Windows desktop, when available
     - ``find_files``     the Windows Search index (a full-text index of the user's files that
                          already exists and answers in milliseconds), or a bounded folder walk
                          where there is no index
@@ -21,6 +22,7 @@ to read, so that what it finds can be opened by the next step.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
@@ -56,7 +58,67 @@ from agent_control.tools.spec import (
     same_output_schema,
 )
 
-OPERATIONS = ("steam_games", "installed_apps", "disk_space", "hardware", "find_files")
+OPERATIONS = ("steam_games", "installed_apps", "disk_space", "hardware", "displays", "find_files")
+
+
+def _windows_desktop_displays() -> list[dict[str, Any]]:
+    import ctypes
+    from ctypes import wintypes
+
+    class DisplayDevice(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("device", wintypes.WCHAR * 32), ("label", wintypes.WCHAR * 128),
+                    ("flags", wintypes.DWORD), ("identifier", wintypes.WCHAR * 128), ("key", wintypes.WCHAR * 128)]
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    displays = []
+    for index in range(64):
+        adapter = DisplayDevice()
+        adapter.cb = ctypes.sizeof(adapter)
+        if not user32.EnumDisplayDevicesW(None, index, ctypes.byref(adapter), 0):
+            break
+        if not adapter.flags & 1:  # attached to the desktop
+            continue
+        monitor = DisplayDevice()
+        monitor.cb = ctypes.sizeof(monitor)
+        found = user32.EnumDisplayDevicesW(adapter.device, 0, ctypes.byref(monitor), 0)
+        displays.append({"device": adapter.device, "adapter": adapter.label, "primary": bool(adapter.flags & 4),
+                         "name": monitor.label if found else "Unknown display",
+                         "monitor_id": monitor.identifier if found else ""})
+    return displays
+
+
+def _windows_monitor_names() -> list[dict[str, str]]:
+    script = r"""
+$ErrorActionPreference = 'Stop'
+$rows = @(Get-CimInstance -Namespace root\wmi -ClassName WmiMonitorID | Where-Object { $_.Active } | ForEach-Object {
+  $name = -join @($_.UserFriendlyName | Where-Object { $_ -ne 0 } | ForEach-Object { [char]$_ })
+  [pscustomobject]@{ instance = $_.InstanceName; name = $name }
+})
+ConvertTo-Json -InputObject $rows -Compress
+"""
+    try:
+        result = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", script],
+                                capture_output=True, text=True, timeout=8, check=True, creationflags=0x08000000)
+        items = json.loads(result.stdout)
+        return [item for item in items if isinstance(item, dict) and item.get("name") and item.get("instance")]
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return []  # the desktop enumeration is still useful without WMI names
+
+
+def connected_displays() -> list[dict[str, Any]] | None:
+    """Windows desktop displays, without claiming that a picture is visible or finding network devices."""
+    if sys.platform != "win32":
+        return None
+    displays = _windows_desktop_displays()
+    names = _windows_monitor_names()
+    for display in displays:
+        parts = display["monitor_id"].split("\\")
+        model_id = parts[1].casefold() if len(parts) > 1 else ""
+        matches = [item["name"] for item in names if model_id and len(item["instance"].split("\\")) > 1
+                   and item["instance"].split("\\")[1].casefold() == model_id]
+        if len(matches) == 1:
+            display["name"] = matches[0]
+    return displays
 
 #: Steam installs these next to the games; they are not games a person would count.
 _STEAM_NOT_GAMES = {228980}
@@ -465,6 +527,8 @@ class SystemInventoryAdapter:
                 output = self._disks()
             elif operation == "hardware":
                 output = self._hardware()
+            elif operation == "displays":
+                output = await asyncio.to_thread(self._displays)
             elif operation == "find_files":
                 output = self._find(request)
             else:
@@ -508,6 +572,18 @@ class SystemInventoryAdapter:
         disks = disk_space()
         lines = [f"- {d['drive']} {d['free_gb']} GB free of {d['total_gb']} GB" for d in disks]
         return {"count": len(disks), "items": disks, "summary": "Disk space:\n" + "\n".join(lines)}
+
+    @staticmethod
+    def _displays() -> dict[str, Any]:
+        displays = connected_displays()
+        if displays is None:
+            return {"count": 0, "items": [], "summary": "Desktop display inspection is not available on this platform."}
+        if not displays:
+            return {"count": 0, "items": [], "summary": "Windows reported no displays attached to this desktop session."}
+        lines = [f"- {item['name']} on {item['adapter']}" + (" (primary)" if item['primary'] else "") for item in displays]
+        return {"count": len(displays), "items": displays, "source": "Windows desktop display enumeration",
+                "summary": "Windows reports these attached desktop displays:\n" + "\n".join(lines)
+                + "\nThis does not discover network TVs or verify that a picture or sound is playing."}
 
     @staticmethod
     def _hardware() -> dict[str, Any]:
@@ -629,14 +705,14 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
         ToolDefinition(
             name="system.inventory",
             group="system",
-            provides=('installed', 'games', 'steam', 'apps', 'programs', 'disk', 'space', 'battery', 'hardware', 'cpu', 'ram', 'gpu', 'drivers', 'many', 'computer',),
+            provides=('installed', 'games', 'steam', 'apps', 'programs', 'disk', 'space', 'battery', 'hardware', 'cpu', 'ram', 'gpu', 'drivers', 'display', 'monitor', 'television', 'many', 'computer',),
             capability=Capability.SYSTEM_INVENTORY,
             enabled=enabled,
             named_when_disabled=False,
             description=(
                 "answer questions about this computer from the places that already know: how many Steam "
                 "games are installed, which apps are installed, free disk space, the graphics card with its "
-                "video memory and the RAM, or find a file anywhere by name or content (Windows Search). "
+                "video memory and the RAM, attached Windows desktop displays, or find a file anywhere by name or content (Windows Search). "
                 "Read-only; prefer it over opening apps or searching one folder at a time, and over asking "
                 "the user what this computer has"
             ),
@@ -646,6 +722,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 "steam_games": SystemSimpleInput,
                 "disk_space": SystemSimpleInput,
                 "hardware": SystemSimpleInput,
+                "displays": SystemSimpleInput,
                 "installed_apps": SystemInstalledAppsInput,
                 "find_files": SystemFindFilesInput,
             },
@@ -659,6 +736,7 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
                 {"operation": "installed_apps", "query": "python"},
                 {"operation": "disk_space"},
                 {"operation": "hardware"},
+                {"operation": "displays"},
             ),
         )
     )

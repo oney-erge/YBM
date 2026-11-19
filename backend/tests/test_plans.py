@@ -46,6 +46,15 @@ def _runner(repos, audit) -> tuple[PlanRunner, _Outbox]:
     return PlanRunner(repos, audit, say=outbox.say, announce=outbox.announce), outbox
 
 
+def test_existing_plan_rows_default_to_unknown_choice_kind_after_migration(tmp_path):
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    with repos.plans.database.connect() as connection:
+        connection.execute("ALTER TABLE project_plan_steps DROP COLUMN choice_only")
+    repos.plans.database.initialize()
+    assert all(not step.choice_only for step in repos.plans.get(plan.id).steps)
+
+
 # --- the model --------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -64,6 +73,27 @@ def test_a_skipped_step_does_not_hold_up_what_follows_and_a_plan_is_finished_whe
     assert [s.position for s in plan.ready_steps()] == [3] and not plan.finished()
     plan.steps[2].status = StepStatus.DONE
     assert plan.finished() and not _plan([]).finished()
+
+
+@pytest.mark.asyncio
+async def test_skipped_explicit_prerequisite_pauses_before_dependent_work(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    runner, outbox = _runner(repos, audit)
+    plan = repos.plans.create(_plan([
+        PlanStep(position=1, title="Install the library", owner=StepOwner.USER),
+        PlanStep(position=2, title="Run the script", depends_on=[1]),
+    ]))
+    await runner.start(plan.id)
+    waiting = repos.plans.get(plan.id).steps[0]
+    _finish(repos, waiting.task_id, TaskStatus.CANCELLED)
+
+    await runner.tick()
+
+    result = repos.plans.get(plan.id)
+    assert result.status == PlanStatus.PAUSED
+    assert result.steps[0].status == StepStatus.SKIPPED
+    assert result.steps[1].status == StepStatus.PENDING and result.steps[1].task_id is None
+    assert "needs 'Install the library', which was skipped" in outbox.said[-1][1]
 
 
 def test_the_plan_reads_as_a_short_list_with_who_does_what():
@@ -102,6 +132,129 @@ def test_a_step_is_claimed_by_exactly_one_of_several_workers_and_added_steps_mov
     ]
     with pytest.raises(ValueError):
         repos.plans.update_step(first, nonsense=1)
+
+
+def test_inserting_a_step_keeps_existing_dependencies_bound_to_the_same_steps(tmp_path):
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan([PlanStep(position=1, title="a"), PlanStep(position=2, title="b"),
+                                     PlanStep(position=3, title="c", depends_on=[2])]))
+    repos.plans.add_step(plan.id, PlanStep(position=2, title="new", depends_on=[1]), expected_revision=plan.revision)
+    result = repos.plans.get(plan.id)
+    assert [(step.title, step.position, step.depends_on) for step in result.steps] == [
+        ("a", 1, []), ("new", 2, [1]), ("b", 3, []), ("c", 4, [3]),
+    ]
+    assert result.steps[2].id == plan.steps[1].id
+    assert result.steps[3].id == plan.steps[2].id
+    with pytest.raises(ValueError, match="changed"):
+        repos.plans.add_step(plan.id, PlanStep(position=1, title="stale"), expected_revision=plan.revision)
+
+
+def test_inserting_before_an_already_started_step_is_refused(tmp_path):
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    assert repos.plans.claim_step(plan.steps[0].id, StepStatus.RUNNING)
+    with pytest.raises(ValueError, match="already started"):
+        repos.plans.add_step(plan.id, PlanStep(position=1, title="too late"))
+    assert len(repos.plans.get(plan.id).steps) == len(plan.steps)
+
+
+def test_step_and_child_creation_roll_back_together_on_failure(tmp_path, monkeypatch):
+    from agent_control.schemas import TaskRecord
+    from agent_control.storage.repositories import TaskRepository
+
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(plan.id, PlanStatus.ACTIVE)
+    plan = repos.plans.get(plan.id)
+    child = TaskRecord(objective="test child")
+    insert = TaskRepository.insert
+    def fail_after_insert(connection, task):
+        insert(connection, task)
+        raise RuntimeError("interrupted before commit")
+    monkeypatch.setattr(TaskRepository, "insert", staticmethod(fail_after_insert))
+    with pytest.raises(RuntimeError, match="interrupted"):
+        repos.plans.begin_step(plan, plan.steps[0], child)
+    assert repos.tasks.get(child.id) is None
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.PENDING
+    monkeypatch.setattr(TaskRepository, "insert", staticmethod(insert))
+    assert repos.plans.begin_step(plan, plan.steps[0], child)
+    assert repos.plans.get(plan.id).steps[0].task_id == child.id
+    assert not repos.plans.begin_step(plan, plan.steps[0], TaskRecord(objective="duplicate"))
+
+
+def test_plan_cancel_and_step_admission_have_one_atomic_winner(tmp_path):
+    from agent_control.schemas import TaskRecord
+
+    repos, audit = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(plan.id, PlanStatus.ACTIVE)
+    snapshot = repos.plans.get(plan.id)
+    cancel_plan(repos, audit, plan.id)
+    late = TaskRecord(objective="must not start")
+    assert not repos.plans.begin_step(snapshot, snapshot.steps[0], late)
+    assert repos.tasks.get(late.id) is None
+    assert not repos.plans.transition_status(plan.id, PlanStatus.ACTIVE, (PlanStatus.PROPOSED, PlanStatus.PAUSED))
+
+    second = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(second.id, PlanStatus.ACTIVE)
+    snapshot = repos.plans.get(second.id)
+    child = TaskRecord(objective="admitted first")
+    assert repos.plans.begin_step(snapshot, snapshot.steps[0], child)
+    cancel_plan(repos, audit, second.id)
+    assert repos.tasks.get(child.id).status == TaskStatus.CANCELLED
+    assert repos.plans.get(second.id).steps[0].status == StepStatus.SKIPPED
+
+
+def test_competing_plan_runners_create_only_one_child(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from agent_control.schemas import TaskRecord
+
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(plan.id, PlanStatus.ACTIVE)
+    snapshot = repos.plans.get(plan.id)
+    children = [TaskRecord(objective="candidate one"), TaskRecord(objective="candidate two")]
+    barrier = Barrier(2)
+    def begin(child):
+        barrier.wait(timeout=5)
+        return repos.plans.begin_step(snapshot, snapshot.steps[0], child)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(begin, children))
+    assert sum(results) == 1
+    assert sum(repos.tasks.get(child.id) is not None for child in children) == 1
+    assert repos.plans.get(plan.id).steps[0].task_id == children[results.index(True)].id
+
+
+@pytest.mark.asyncio
+async def test_cancel_keeps_a_child_result_that_completed_before_settlement(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    runner, _ = _runner(repos, audit)
+    plan = repos.plans.create(_plan(_steps()))
+    await runner.start(plan.id)
+    child_id = repos.plans.get(plan.id).steps[0].task_id
+    _finish(repos, child_id, synthesized_answer="The check succeeded.")
+    cancelled = cancel_plan(repos, audit, plan.id)
+    assert cancelled.status == PlanStatus.CANCELLED
+    assert cancelled.steps[0].status == StepStatus.DONE and cancelled.steps[0].result == "The check succeeded."
+
+
+@pytest.mark.asyncio
+async def test_pause_preserves_a_completed_child_until_the_plan_resumes(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    runner, _ = _runner(repos, audit)
+    plan = repos.plans.create(_plan(_steps()))
+    await runner.start(plan.id)
+    active = repos.plans.get(plan.id)
+    child = repos.tasks.get(active.steps[0].task_id)
+    _finish(repos, child.id, synthesized_answer="observed result")
+    child = repos.tasks.get(child.id)
+    await runner.pause(plan.id)
+    assert not repos.plans.settle_step(plan.id, active.steps[0], child, status=StepStatus.DONE, result="observed result")
+    assert repos.plans.get(plan.id).steps[0].status == StepStatus.RUNNING
+    await runner.start(plan.id)
+    after = repos.plans.get(plan.id)
+    assert after.steps[0].status == StepStatus.DONE and after.steps[0].result == "observed result"
 
 
 # --- the runner -------------------------------------------------------------------------------------------------------------------------------
@@ -197,30 +350,43 @@ async def test_cancelling_stops_the_open_task_and_leaves_nothing_to_run(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_a_step_claimed_by_a_process_that_stopped_before_its_task_existed_is_given_back(tmp_path):
+async def test_a_legacy_unlinked_step_is_paused_for_review_instead_of_repeated(tmp_path):
     repos, audit = make_repos(tmp_path)
-    runner, _ = _runner(repos, audit)
+    runner, outbox = _runner(repos, audit)
     plan = repos.plans.create(_plan(_steps()))
     repos.plans.set_status(plan.id, PlanStatus.ACTIVE)
     step = plan.steps[0]
     assert repos.plans.claim_step(step.id, StepStatus.RUNNING)
+    orphan = repos.tasks.create("Earlier attempt", metadata={"plan_id": plan.id, "plan_step_id": step.id})
     await runner.tick()
     assert repos.plans.get(plan.id).steps[0].status == StepStatus.RUNNING  # just claimed: another worker may be creating the task
     with repos.plans.database.connect() as connection:
         connection.execute("UPDATE project_plan_steps SET updated_at = '2000-01-01T00:00:00+00:00' WHERE id = ?", (step.id,))
     await runner.tick()
     plan = repos.plans.get(plan.id)
-    assert plan.steps[0].status == StepStatus.RUNNING and plan.steps[0].task_id  # given back, then started again by the same pass
+    assert plan.status == PlanStatus.PAUSED and plan.steps[0].status == StepStatus.FAILED
+    assert plan.steps[0].task_id is None and "inspect earlier work" in plan.steps[0].result
+    assert repos.tasks.get(orphan.id).status == TaskStatus.RECEIVED
+    assert len(repos.tasks.list_recent(10)) == 1
+    assert any("inspect earlier work" in text for _, text in outbox.said)
 
 
 def test_the_words_that_mean_skip_and_what_each_step_is_asked_to_do():
-    assert is_skip("Skip this step") and is_skip("skip") and is_skip("not now, later") and not is_skip("Done") and not is_skip("")
+    assert is_skip("Skip this step") and is_skip("skip") and not is_skip("not now, later") and not is_skip("Done") and not is_skip("")
     plan = _plan(_steps())
     plan.steps[0].status, plan.steps[0].result = StepStatus.DONE, "Q" * 900
     objective = step_objective(plan, plan.steps[2])
     assert objective.count("Q") == 300 and "Do only this step." in objective
     ask = waiting_question(plan, PlanStep(position=2, title="Give me the Amazon login", owner=StepOwner.ACCESS, needs=["an Amazon login"]))
     assert ask.startswith("I need something from you to go on (step 2 of 3)") and "skip" in ask
+
+
+def test_a_later_step_is_told_when_earlier_work_was_skipped():
+    plan = _plan(_steps())
+    plan.steps[0].status = StepStatus.SKIPPED
+    objective = step_objective(plan, plan.steps[1])
+    assert "skipped; no completion was recorded" in objective
+    assert "Do not assume skipped work happened" in objective
 
 
 # --- the tool ---------------------------------------------------------------------------------------------------------------------------------
@@ -278,12 +444,15 @@ async def test_show_finds_the_newest_open_plan_of_the_chat_and_steps_can_be_chan
     shown = await adapter.execute(_request(task.id, operation="show"))
     assert shown.output["plan_id"] == plan_id and "[ ] 1. a" in shown.output["terminal_output"][0]["content"]
     done = await adapter.execute(_request(task.id, operation="update_step", position=1, status="done"))
-    assert done.status == ResultOK and repos.plans.get(plan_id).steps[0].status == StepStatus.DONE
+    assert done.status == ToolResultStatus.FAILED and "plan runner" in done.error_message
+    assert repos.plans.get(plan_id).steps[0].status == StepStatus.PENDING
     renamed = await adapter.execute(_request(task.id, operation="update_step", position=2, title="b, but in the garage", owner="user"))
     assert renamed.status == ResultOK
     assert repos.plans.get(plan_id).steps[1].title == "b, but in the garage" and repos.plans.get(plan_id).steps[1].owner == StepOwner.USER
     added = await adapter.execute(_request(task.id, operation="add_step", position=2, title="Measure the garage"))
     assert [s.title for s in repos.plans.get(plan_id).steps] == ["a", "Measure the garage", "b, but in the garage"] and added.status == ResultOK
+    dependent = await adapter.execute(_request(task.id, operation="add_step", position=3, title="Choose a design", depends_on=[1]))
+    assert dependent.status == ResultOK and repos.plans.get(plan_id).steps[2].depends_on == [1]
     for refused in (
         _request(task.id, operation="update_step", position=9, status="done"),
         _request(task.id, operation="update_step", position=1, status="running"),
@@ -298,6 +467,59 @@ async def test_show_finds_the_newest_open_plan_of_the_chat_and_steps_can_be_chan
     assert repos.plans.get(plan_id).status == PlanStatus.CANCELLED
     gone = await adapter.execute(_request(task.id, operation="show", plan_id="plan_nope"))
     assert gone.status == ToolResultStatus.FAILED
+
+
+def test_editing_a_pending_step_and_admitting_its_task_cannot_both_win(tmp_path):
+    from agent_control.schemas import TaskRecord
+
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(plan.id, PlanStatus.ACTIVE)
+    before = repos.plans.get(plan.id)
+    step = before.steps[0]
+    first = TaskRecord(objective="first attempt")
+    assert repos.plans.begin_step(before, step, first)
+    assert not repos.plans.edit_pending_step(before, step, title="Changed", status=StepStatus.PENDING)
+    current = repos.plans.get(plan.id)
+    assert current.steps[0].task_id == first.id and current.steps[0].title == step.title
+
+    other = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(other.id, PlanStatus.ACTIVE)
+    other = repos.plans.get(other.id)
+    assert repos.plans.edit_pending_step(other, other.steps[0], title="Changed")
+    duplicate = TaskRecord(objective="stale attempt")
+    assert not repos.plans.begin_step(other, other.steps[0], duplicate)
+    assert repos.tasks.get(duplicate.id) is None
+
+
+def test_plan_edit_invalidates_a_snapshot_even_when_the_clock_does_not_advance(tmp_path, monkeypatch):
+    from agent_control.schemas import TaskRecord
+    import agent_control.storage.repositories as storage
+
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan(_steps()))
+    repos.plans.set_status(plan.id, PlanStatus.ACTIVE)
+    snapshot = repos.plans.get(plan.id)
+    monkeypatch.setattr(storage, "utc_now", lambda: snapshot.updated_at)
+    assert repos.plans.edit_pending_step(snapshot, snapshot.steps[0], title="A revised step")
+    current = repos.plans.get(plan.id)
+    assert current.updated_at == snapshot.updated_at and current.revision == snapshot.revision + 1
+    assert not repos.plans.begin_step(snapshot, snapshot.steps[0], TaskRecord(objective="old work"))
+
+
+@pytest.mark.asyncio
+async def test_operator_cannot_reset_a_running_step_or_invent_a_forward_dependency(tmp_path):
+    repos, audit, adapter, task = _adapter(tmp_path)
+    created = await adapter.execute(_request(task.id, operation="create", goal="g", steps=[{"title": "a"}, {"title": "b"}]))
+    plan_id = created.output["plan_id"]
+    bad_dependency = await adapter.execute(_request(task.id, operation="update_step", position=1, depends_on=[2]))
+    assert bad_dependency.status == ToolResultStatus.FAILED and "earlier" in bad_dependency.error_message
+    await PlanRunner(repos, audit).start(plan_id)
+    current = repos.plans.get(plan_id)
+    first_task = current.steps[0].task_id
+    reset = await adapter.execute(_request(task.id, operation="update_step", position=1, status="pending"))
+    assert reset.status == ToolResultStatus.FAILED and "already started" in reset.error_message
+    assert repos.plans.get(plan_id).steps[0].task_id == first_task
 
 
 def test_the_tool_is_off_and_unnamed_unless_plans_are_enabled():
@@ -372,6 +594,7 @@ def _draft():
 @pytest.mark.asyncio
 async def test_a_goal_without_steps_is_planned_by_the_planner_from_what_the_user_said_and_what_the_assistant_can_do(tmp_path):
     repos, audit, adapter, task = _adapter(tmp_path)
+    repos.tasks.update_metadata(task.id, {**task.metadata, "initiative_level": 3})
     planner = _Planner(_draft())
     adapter.provider = planner
     adapter._catalog = type("Catalog", (), {"index": lambda self: _Index()})()
@@ -385,6 +608,8 @@ async def test_a_goal_without_steps_is_planned_by_the_planner_from_what_the_user
     system, user, schema = planner.asked[0]
     assert schema == "PlanDraft" and "never pays" in system and "Do not ask questions." in user  # a tool call is never a place to ask
     assert "Goal: Build a small indoor drone" in user and "Build me a drone" in user  # the goal and what the user said
+    assert "Decision preference (Autonomous, level 3 of 3)" in user and "does not grant access" in user
+    assert "Routine implementation choices" in system
     assert "- can: files: read and move files" in user and "- cannot: order and pay. never pays" in user
 
 

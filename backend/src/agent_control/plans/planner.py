@@ -21,9 +21,10 @@ Rules:
 - 4 to 10 steps, in order, one thing per step, in plain words ("Compare three flight controllers", not "Research").
 - Every step has an owner:
   ybm    = the assistant does it on the computer: research, comparing options, writing code or documents, making lists, drafting messages.
-  user   = only the user can: buying, assembling, testing, signing, choosing between options, anything physical or that costs money.
+  user   = only the user can: buying, assembling, signing, physical actions, or choices requiring the user's values or approval.
   access = the assistant could do it once the user gives it something (an account, a key, a login). Put what it needs in `needs`.
-- Finding things out is the assistant's step (ybm), even when the user decides afterwards: rules and permits, prices, options, who could do the work, what to ask them. The user's steps are what only a person can do: deciding, visiting, meeting, signing, paying, collecting. `needs` is for the user's side only, in plain words (a budget, an account); never the name of a tool.
+- `choice_only` is true only when the entire step is selecting an option and no purchase, sign-up, installation, physical action, access confirmation, or other execution is part of it. When uncertain set it false. Keep choices and later actions in separate steps.
+- Finding things out is the assistant's step (ybm), even when the user decides afterwards: rules and permits, prices, options, who could do the work, what to ask them. Testing feasible software methods is also the assistant's step. Routine implementation choices can also be the assistant's step when the user's instructions and decision preference allow it. Use user steps for choices requiring personal values, material tradeoffs, approval, or a physical action only the user can perform. `needs` is for the user's side only, in plain words (a budget, an account); never the name of a tool.
 - The assistant never pays and never places an order. Plan it as two steps: the assistant makes the shopping list with links, then the user buys.
 - `summary`: one or two sentences: what done looks like, and the assumptions you made, so the user can correct the plan.
 - `depends_on`: positions of earlier steps that must be done first. Leave it empty when a step simply follows the one before it.
@@ -39,18 +40,19 @@ MAY_ASK = (
 MAY_NOT_ASK = "Do not ask questions. Where something is unknown, assume something sensible and say so in `summary`."
 
 
-def _require_a_day(schema: dict[str, Any]) -> None:
+def _require_step_fields(schema: dict[str, Any]) -> None:
     """A field the model may leave out, it leaves out: with "due" only optional, one live house plan had a day on 1 step of 9 and another, drafted from the same goal, on all of them.
     Required in the schema the model is held to, a day or an empty string is written for every step; a draft without one is still accepted in code."""
-    schema["required"] = [*schema.get("required", []), "due"]
+    schema["required"] = [*schema.get("required", []), "due", "choice_only"]
 
 
 class StepDraft(BaseModel):
-    model_config = ConfigDict(json_schema_extra=_require_a_day)
+    model_config = ConfigDict(json_schema_extra=_require_step_fields)
 
     title: str = Field(min_length=1, max_length=160)
     detail: str = Field(default="", max_length=600)
     owner: Literal["ybm", "user", "access"] = "ybm"
+    choice_only: bool = False
     needs: list[str] = Field(default_factory=list)
     depends_on: list[int] = Field(default_factory=list)
     due: str = Field(default="", max_length=20)

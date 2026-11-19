@@ -155,6 +155,13 @@ def test_a_check_in_says_what_is_done_what_waits_for_the_user_and_what_is_late()
     assert f"Past its day: Get the permit (was due {day_text(_in(-4))})." in text
 
 
+def test_a_check_in_does_not_count_skipped_steps_as_done():
+    plan = _plan([PlanStep(position=1, title="Skipped", status=StepStatus.SKIPPED),
+                  PlanStep(position=2, title="Done", status=StepStatus.DONE)])
+    text = check_in_text(plan, TODAY)
+    assert "1 of 2 steps done." in text and "1 step skipped." in text
+
+
 # --- the tool ---------------------------------------------------------------------------------------------------------------------------------
 
 
@@ -254,6 +261,20 @@ def test_days_notes_and_check_ins_are_stored_and_the_days_of_unfinished_steps_sh
         repos.plans.update_plan(saved.id, goal="nope")
 
 
+def test_date_shift_rechecks_plan_revision_and_rolls_back_every_step_on_error(tmp_path):
+    repos, _ = make_repos(tmp_path)
+    plan = repos.plans.create(_plan([PlanStep(position=1, title="First", due=date(2027, 1, 1)),
+                                     PlanStep(position=2, title="Last", due=date.max)]))
+    with pytest.raises(ValueError, match="cannot be shifted"):
+        repos.plans.shift_dates(plan.id, 1, expected_revision=plan.revision)
+    unchanged = repos.plans.get(plan.id)
+    assert [step.due for step in unchanged.steps] == [date(2027, 1, 1), date.max]
+    assert unchanged.revision == plan.revision
+    repos.plans.set_status(plan.id, PlanStatus.CANCELLED)
+    with pytest.raises(ValueError, match="changed or is no longer open"):
+        repos.plans.shift_dates(plan.id, 1, expected_revision=plan.revision)
+
+
 def test_a_database_from_before_days_and_check_ins_gets_the_columns(tmp_path):
     from agent_control.storage import Database, Repositories
 
@@ -280,6 +301,7 @@ def test_a_database_from_before_days_and_check_ins_gets_the_columns(tmp_path):
     repos = Repositories.for_database(database)
     plan = repos.plans.get("plan_old")
     assert plan.notes == "" and plan.check_in_days == 0 and plan.last_check_in_at is None and plan.steps[0].due is None
+    assert plan.revision == 0 and plan.steps[0].revision == 0 and not plan.steps[0].choice_only
     repos.plans.update_plan("plan_old", check_in_days=7)
     assert repos.plans.get("plan_old").check_in_days == 7
 

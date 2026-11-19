@@ -249,3 +249,19 @@ def test_phoning_and_emailing_are_known_gaps_that_say_so_first_and_offer_the_nea
         assert gap.kind == AbilityKind.GAP and gap.state == AbilityState.UNAVAILABLE and gap.confirm and gap.confirm_at >= 0.85
         assert "never claim" in gap.guidance and "first sentence" in gap.guidance
     assert "script" in phone.guidance and "tel:" in phone.guidance and "draft" in mail.guidance and "Do not ask for the recipient's address" in mail.guidance
+
+
+def test_a_set_up_mailbox_replaces_the_known_gap_for_sending_email_and_an_unset_one_is_not_an_ability(tmp_path):
+    from agent_control.config import CapabilityPolicy
+    from agent_control.schemas import Capability, RiskLevel
+
+    off = build_index(build_tool_registry(_settings(tmp_path), "http://127.0.0.1:8765"), _settings(tmp_path))
+    assert "gap:mail.send" in [item.id for item in off.all()] and "tool:mail.manage" not in [item.id for item in off.all()]
+    base = _settings(tmp_path)
+    on_settings = base.model_copy(update={
+        "mail": base.mail.model_copy(update={"enabled": True}),
+        "capabilities": {**base.capabilities, Capability.NETWORK_HTTP: CapabilityPolicy(enabled=True, requires_approval=False, max_risk_level=RiskLevel.HIGH)},
+    })
+    on = build_index(build_tool_registry(on_settings, "http://127.0.0.1:8765"), on_settings)
+    ids = [item.id for item in on.all()]
+    assert "tool:mail.manage" in ids and "gap:mail.send" not in ids

@@ -4,9 +4,11 @@ from collections.abc import Iterable
 from typing import Any, Protocol
 
 from agent_control.egress import extract_egress_hosts, record_egress
+from agent_control.orchestration.autonomy import grants_itself, payment_reason
 from agent_control.policy import PolicyEngine, normalize_scope_target, scope_contains
 from agent_control.schemas import (
     ApprovalGrant,
+    ApprovalStatus,
     AuditEventType,
     ErrorClass,
     RiskLevel,
@@ -98,10 +100,17 @@ class ToolExecutor:
             else None
         )
         has_grant = grant is not None and self._grant_covers(grant, request)
+        spends = payment_reason(request)
+        if spends is not None:
+            has_grant = False  # a grant ("Allow for this task") never covers money
         decision = self.policy.evaluate(request, approval=approval, has_grant=has_grant)
-        if decision.needs_approval:
+        # Money waits for the owner at every autonomy level: a call that would spend it asks even where policy would let it through.
+        forced = spends is not None and approval is None and decision.allowed
+        if decision.needs_approval or forced:
             definition = self.tool_definitions.get(request.tool_name)
             reason = definition.approval_reason(request.input) if definition else None
+            if forced:
+                reason = f"{reason + '; ' if reason else ''}this spends money: {spends}"
             summary = f"Approve {request.tool_name} using {request.capability.value}: {reason}" if reason else None
             approval = self.policy.approval_request(request, summary=summary)
             self.repositories.approvals.create(approval)
@@ -109,16 +118,29 @@ class ToolExecutor:
                 AuditEventType.APPROVAL_REQUESTED,
                 actor="policy",
                 task_id=request.task_id,
-                payload={"approval_id": approval.id, "tool_request_id": request.id},
+                payload={"approval_id": approval.id, "tool_request_id": request.id, **({"spends_money": spends} if forced else {})},
             )
-            return self._complete(
-                request,
-                ToolCallResult(
-                    request_id=request.id,
-                    status=ToolResultStatus.NEEDS_APPROVAL,
-                    output={"approval_id": approval.id},
+            task = self.repositories.tasks.get(request.task_id) if request.task_id else None
+            if task is not None and grants_itself(task.metadata, request) and self.repositories.approvals.decide_pending(approval.id, ApprovalStatus.APPROVED):
+                # The autonomous level: the assistant grants the routine approval itself, on the record. Policy still ran above (capability on, scope, risk
+                # ceiling); this only skips the wait for a person.
+                self.audit.append(
+                    AuditEventType.APPROVAL_DECIDED,
+                    actor="autonomy",
+                    task_id=request.task_id,
+                    payload={"approval_id": approval.id, "decision": "approve", "source": "autonomy_level_3"},
                 )
-            )
+                approval = self.repositories.approvals.get(approval.id)
+                decision = self.policy.evaluate(request, approval=approval, has_grant=False)
+            else:
+                return self._complete(
+                    request,
+                    ToolCallResult(
+                        request_id=request.id,
+                        status=ToolResultStatus.NEEDS_APPROVAL,
+                        output={"approval_id": approval.id},
+                    )
+                )
 
         if not decision.allowed:
             return self._complete(

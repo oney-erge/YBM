@@ -1,0 +1,119 @@
+{
+ "investigate-a-problem.md": {
+  "yes": [
+   "My Samsung TV in the living room will not take a cast from this computer. Find out why.",
+   "The label printer stopped printing since yesterday, can you look into it?",
+   "The Wi-Fi on this PC keeps dropping every few minutes. Work out what is going on.",
+   "Some websites load really slowly on this computer but others are fine. Find out why.",
+   "Steam will not start since the last update, figure out why",
+   "My speakers have no sound since this morning. Find the cause."
+  ],
+  "no": [
+   "What is a heat pump?",
+   "Summarize the PDF in C:/data/report.pdf.",
+   "Move the pictures into a folder called Pictures.",
+   "Write me a short poem about rain.",
+   "Find my resume.",
+   "How many Steam games do I have?",
+   "Install ffmpeg on this computer.",
+   "Explain how Wi-Fi works.",
+   "How much RAM does this computer have?",
+   "How many lines containing the word ERROR are there in the log files?"
+  ]
+ },
+ "tell-me-when.md": {
+  "yes": [
+   "Tell me whenever a new file shows up in my Downloads folder.",
+   "Let me know if that web page changes.",
+   "Tell me when a new PDF appears in C:/data/inbox.",
+   "Watch this page and message me when the price changes."
+  ],
+  "no": [
+   "What is a heat pump?",
+   "Find my resume.",
+   "Move the pictures into a folder called Pictures.",
+   "Summarize this PDF.",
+   "Order the cheapest USB-C cable.",
+   "Why is my wifi slow?"
+  ]
+ },
+ "buy-something.md": {
+  "yes": [
+   "Order the cheapest USB-C cable that does 100 watts and is 2 meters.",
+   "Reorder diapers like last time.",
+   "Buy everything on the robot parts list under 30 dollars from one store.",
+   "Book me a table for two on Friday at 7.",
+   "Just buy it, you pick.",
+   "Subscribe me to the premium plan.",
+   "Get me a large pizza from Domino's.",
+   "Purchase the 4-pack of batteries on Amazon."
+  ],
+  "no": [
+   "What is a heat pump?",
+   "Compare three robot arms and tell me which is best.",
+   "Find all daycares in Pearland.",
+   "Summarize this PDF.",
+   "Move the pictures into a folder.",
+   "Research the best heat pump for Chicago.",
+   "Write a script that renames my photos."
+  ]
+ },
+ "sign-in-and-sign-up.md": {
+  "yes": [
+   "Set me up an account on that site and tell me the login.",
+   "Sign in to my GitHub.",
+   "Create an account on Zillow for me.",
+   "Register at the city website.",
+   "Make me a login for the daycare portal."
+  ],
+  "no": [
+   "What is a heat pump?",
+   "Order the cheapest USB-C cable.",
+   "Find all daycares in Pearland.",
+   "Move the pictures into a folder.",
+   "Explain how passwords are stored.",
+   "Summarize this PDF.",
+   "Tell me when my package ships."
+  ]
+ },
+ "find-them-all.md": {
+  "yes": [
+   "Go search all the daycares around me and do a large comparative analysis.",
+   "Find the best pastel de nata within 40 miles. Take your time.",
+   "List every pool builder in the county with their licenses and complaints.",
+   "Find all the pediatricians near me who take new patients and compare them.",
+   "I want every Portuguese restaurant in Houston with reviews, take as long as you need.",
+   "Look through all the preschools in Pearland and rank them for me."
+  ],
+  "no": [
+   "Find my resume.",
+   "Research how heat pumps work. Read about 100 pages.",
+   "Where is the nearest pharmacy?",
+   "Compare these two quotes.",
+   "Order the cheapest USB-C cable.",
+   "Summarize this PDF.",
+   "Tell me when a new file shows up in that folder.",
+   "Why is my wifi slow?",
+   "Find the cheapest USB-C cable."
+  ]
+ },
+ "monitor-something.md": {
+  "yes": [
+   "Connect to every device on my network, list them, and tell me when a new one appears.",
+   "Keep an eye on disk space on C and D and warn me if it drops under 20 GB.",
+   "Monitor my home network and alert me about unknown devices.",
+   "Watch whether my NAS stays reachable and tell me if it goes down."
+  ],
+  "no": [
+   "What is a heat pump?",
+   "Tell me when a new file shows up in that folder.",
+   "Let me know if that page changes.",
+   "Find all the daycares around me.",
+   "How many devices are on my network right now?",
+   "Why is my wifi slow?",
+   "Summarize this PDF.",
+   "Order the cheapest USB-C cable.",
+   "Back up my documents every night."
+  ]
+ }
+}

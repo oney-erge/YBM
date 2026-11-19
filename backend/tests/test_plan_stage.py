@@ -51,6 +51,52 @@ async def test_the_stage_saves_the_plan_the_planner_drafted_as_proposed_with_the
 
 
 @pytest.mark.asyncio
+async def test_choice_only_marker_survives_the_planner_and_storage(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    draft = PlanDraft(steps=[StepDraft(title="Choose a method", owner="user", choice_only=True),
+                             StepDraft(title="Install it", owner="ybm")])
+    outcome = await run_plan_stage(repos, audit, _Provider(draft), "", _task(repos))
+    assert [step.choice_only for step in repos.plans.get(outcome.plan.id).steps] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_a_follow_up_plan_keeps_the_resolved_objective_and_the_users_words(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    task = repos.tasks.create(
+        "Plan how to connect to the living room TV", conversation_id=conversation,
+        metadata={**ROUTING, "original_message_text": "Give me a plan for it",
+                  "memory_context": "The Chrome casting attempt failed."},
+    )
+    provider = _Provider(_steps_draft())
+
+    outcome = await run_plan_stage(repos, audit, provider, "", task)
+
+    assert outcome.plan.goal == "Plan how to connect to the living room TV"
+    assert "The user's message: Give me a plan for it" in provider.asked[0]
+    assert "The Chrome casting attempt failed." in provider.asked[0]
+    assert repos.plans.get(outcome.plan.id).goal == outcome.plan.goal
+
+
+@pytest.mark.asyncio
+async def test_the_planner_receives_the_selected_initiative_without_extra_authority(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    provider = _Provider(_steps_draft())
+    await run_plan_stage(repos, audit, provider, "", _task(repos, initiative_level=3))
+    assert "Decision preference (Autonomous, level 3 of 3)" in provider.asked[0]
+    assert "does not grant access" in provider.asked[0]
+
+
+@pytest.mark.asyncio
+async def test_long_objective_does_not_hide_the_decision_preference(tmp_path):
+    repos, audit = make_repos(tmp_path)
+    provider = _Provider(_steps_draft())
+    task = _task(repos, initiative_level=1).model_copy(update={"objective": "A detailed objective " * 300})
+    await run_plan_stage(repos, audit, provider, "", task)
+    assert "Decision preference (Ask, level 1 of 3)" in provider.asked[0]
+
+
+@pytest.mark.asyncio
 async def test_a_goal_that_cannot_be_told_is_asked_about_once_with_options_and_never_twice(tmp_path):
     repos, audit = make_repos(tmp_path)
     question = PlanDraft(question="What kind of robot?", options=["A small drone", "A desk arm", " ", "Something else"])

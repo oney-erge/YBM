@@ -91,7 +91,11 @@ def gateway_context(
     workspace_approval = "approval-free" if workspace_policy and not workspace_policy.requires_approval else "approval-gated"
     adapter_factory_enabled = bool(settings.adapters.adapter_factory.enabled and workspace_policy and workspace_policy.enabled)
     memory_record = repositories.conversation_memory.get(conversation_id) if conversation_id else None
-    memory = memory_context(memory_record, remembered_facts=repositories.memory_facts.list_all(), objective=query_text)
+    memory = memory_context(memory_record, remembered_facts=repositories.memory_facts.list_all() if settings.memory.enabled else [], objective=query_text)
+    if settings.memory.enabled and query_text:
+        from agent_control.projects_memory import project_context_sync
+
+        memory += project_context_sync(repositories, query_text)
 
     return f"""LLM profile: {settings.llm.default_profile}
 Chat receive/send: enabled

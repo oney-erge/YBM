@@ -175,7 +175,9 @@ def make_browser_search(config: BrowserAdapterConfig) -> BrowserSearch | None:
 # --- the whole of it ---------------------------------------------------------------------------------------------------------------------------
 
 
-def build_io(provider: Any, search_adapter: Any, http_adapter: Any, *, browser_search: BrowserSearch | None = None) -> ResearchIO:
+def build_io(
+    provider: Any, search_adapter: Any, http_adapter: Any, *, browser_search: BrowserSearch | None = None, list_folder: Any = None, run_monitor: Any = None,
+) -> ResearchIO:
     async def think(system: str, user: str, schema: type[BaseModel]) -> BaseModel:
         return await provider.generate_structured(system, user, schema, temperature=0.1)
 
@@ -219,5 +221,10 @@ def build_io(provider: Any, search_adapter: Any, http_adapter: Any, *, browser_s
             return None
         return visible_text(str(output.get("text") or ""))
 
-    return ResearchIO(think=think, write=write, search=search, fetch=fetch)
+    async def probe(op: str, args: dict[str, Any]) -> Any:
+        from agent_control.diagnose import run_probe
+
+        return await run_probe(op, **args)
+
+    return ResearchIO(think=think, write=write, search=search, fetch=fetch, probe=probe, list_folder=list_folder, run_monitor=run_monitor)
 

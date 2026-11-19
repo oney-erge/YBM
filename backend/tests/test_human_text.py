@@ -68,6 +68,17 @@ def test_humanize_trims_a_missing_file_at_its_extension(home):
     assert "\\" not in out
 
 
+@windows_only
+def test_missing_file_is_not_cut_at_an_existing_space_prefix(tmp_path, monkeypatch):
+    short = tmp_path / "part"
+    short.mkdir()
+    home = tmp_path / "part two" / "Users" / "sam"
+    home.mkdir(parents=True)
+    monkeypatch.setattr(human_text, "_home", lambda: home)
+    out = humanize(rf"Cannot open {home}\Desktop\gone.txt because it was moved.")
+    assert out == "Cannot open gone.txt (in Desktop) because it was moved."
+
+
 def test_humanize_leaves_urls_alone(home):
     text = "It is running at http://127.0.0.1:8891/ now."
     assert humanize(text) == text

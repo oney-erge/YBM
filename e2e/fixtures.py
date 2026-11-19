@@ -11,6 +11,7 @@ fixture setup itself.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import socket
 import stat
@@ -26,6 +27,9 @@ from heldout3_fixtures import prepare_heldout3_fixtures
 from challenge_fixtures import prepare_challenge_fixtures
 from heldout4_fixtures import prepare_heldout4_fixtures
 from verdict2_fixtures import prepare_verdict2_fixtures
+from verdict3_fixtures import prepare_verdict3_fixtures
+from continuity_fixtures import prepare_continuity_fixtures
+from hands_fixtures import prepare_hands_fixtures
 from verdict_fixtures import prepare_verdict_fixtures
 from vision_fixtures import prepare_vision_fixtures
 
@@ -56,7 +60,8 @@ class Fixtures:
 def prepare_fixtures(*, start_web_server: bool, home: Path | None = None) -> Fixtures:
     """Build the E2E fixtures. ``home`` replaces the user's home folder, so a test can keep
     the Desktop folders it creates out of the real Desktop."""
-    fixture_root = ROOT / ".agent_control" / "e2e_fixtures"
+    # YBM_E2E_FIXTURE_ROOT moves the folder: the unit tests set it, so running them never deletes the fixtures a live e2e run is using.
+    fixture_root = Path(os.environ.get("YBM_E2E_FIXTURE_ROOT") or ROOT / ".agent_control" / "e2e_fixtures")
     fixture_root.mkdir(parents=True, exist_ok=True)
     home = home or Path.home()
 
@@ -306,6 +311,9 @@ if __name__ == "__main__":
     values.update(prepare_challenge_fixtures(fixture_root, _remove_fixture_tree))
     values.update(prepare_verdict_fixtures(fixture_root, _remove_fixture_tree))
     values.update(prepare_verdict2_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_verdict3_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_continuity_fixtures(fixture_root, _remove_fixture_tree))
+    values.update(prepare_hands_fixtures(fixture_root, _remove_fixture_tree))
 
     server: ThreadingHTTPServer | None = None
     if start_web_server:

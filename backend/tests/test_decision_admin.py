@@ -55,6 +55,19 @@ def test_the_console_reads_the_classifier_choice_and_the_route_list(tmp_path, mo
     assert body["stats"]["messages"] == 0 and body["stats"]["agreement"] is None
 
 
+def test_initiative_setting_validates_and_preserves_other_settings(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("AGENT_OPERATOR__INITIATIVE_LEVEL", raising=False)
+    client, _ = _client(tmp_path, monkeypatch)
+    assert client.get("/admin/api/config/initiative").json() == {"level": 2}
+    assert client.post("/admin/api/config/initiative", json={"level": 4}).status_code == 422
+    assert client.post("/admin/api/config/initiative", json={"level": True}).status_code == 422
+    assert client.post("/admin/api/config/initiative", json={"level": 3}).status_code == 200
+    assert client.get("/admin/api/config/initiative").json() == {"level": 3}
+    saved = yaml.safe_load((tmp_path / "config" / "config.yaml").read_text(encoding="utf-8"))
+    assert saved["operator"]["autonomy_level"] == 3 and "initiative_level" not in saved["operator"]
+    assert "capabilities" not in saved and "approval_policy" not in saved
+
+
 def test_the_console_saves_the_classifier_choice_to_config_yaml(tmp_path, monkeypatch) -> None:
     client, _ = _client(tmp_path, monkeypatch)
 

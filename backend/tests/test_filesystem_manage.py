@@ -412,6 +412,19 @@ async def test_read_file_gives_the_text_of_a_word_file_not_its_bytes(tmp_path) -
 
 
 @pytest.mark.asyncio
+async def test_read_file_on_a_folder_says_it_is_a_folder_not_that_it_is_missing(tmp_path) -> None:
+    folder = tmp_path / "reports"
+    folder.mkdir()
+    (folder / "east.txt").write_text("East first sentence.", encoding="utf-8")
+    adapter = FilesystemManageAdapter([str(tmp_path)])
+    result = await adapter.execute(_request(tmp_path, "read_file", path=str(folder)))
+
+    assert result.status.value != "succeeded"
+    message = str(result.error_message)
+    assert "is a folder" in message and "inspect_folder" in message and "does not exist" not in message
+
+
+@pytest.mark.asyncio
 async def test_read_file_on_a_binary_file_says_there_is_nothing_to_read(tmp_path) -> None:
     blob = tmp_path / "photo.png"
     blob.write_bytes(b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + bytes(range(256)))

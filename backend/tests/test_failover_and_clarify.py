@@ -327,7 +327,7 @@ async def test_clarifying_reply_resumes_the_same_task(tmp_path) -> None:
                 "message_id": 7,
                 "from": {"id": 42},
                 "chat": {"id": 100},
-                "text": "The Q3 sales report on my desktop",
+                "text": f"reply {task.id}: The Q3 sales report on my desktop",
             }
         }
     )
@@ -379,6 +379,68 @@ async def test_stale_clarification_does_not_capture_a_new_message(tmp_path) -> N
     assert result.outbound_message is None or "resuming" not in result.outbound_message.text.lower()
     expired = [e for e in repos.audit.list_for_task(task.id) if e.payload.get("reason") == "clarification_expired"]
     assert len(expired) == 1
+
+
+def test_clarification_does_not_cross_channels_with_the_same_chat_id(tmp_path) -> None:
+    repos, _ = make_repos(tmp_path)
+    telegram = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
+    whatsapp = repos.conversations.get_or_create(ChannelType.WHATSAPP, "100")
+    task = repos.tasks.create("Telegram question", conversation_id=telegram,
+                              metadata={"source_channel": "telegram", "source_chat_id": "100"})
+    repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    assert find_clarifying_task(repos, conversation_id=whatsapp, chat_id="100") is None
+    assert find_clarifying_task(repos, conversation_id=telegram, chat_id="100").id == task.id
+
+
+def test_competing_replies_cannot_both_change_the_same_question(tmp_path) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Barrier
+    from agent_control.clarification import resume_clarifying_task
+    from agent_control.schemas import utc_now
+
+    repos, audit = make_repos(tmp_path)
+    conversation = repos.conversations.get_or_create(ChannelType.TELEGRAM, "100")
+    task = repos.tasks.create("Compare two options", conversation_id=conversation,
+                              metadata={"clarifying_question": "Which option?"})
+    snapshot = repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    barrier = Barrier(2)
+    def answer(text):
+        barrier.wait(timeout=5)
+        return resume_clarifying_task(repos, audit, snapshot, text=text, actor="test", message_id=text, received_at=utc_now())
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(answer, ["first", "second"]))
+    assert sum(result.accepted for result in results) == 1
+    saved = repos.tasks.get(task.id)
+    assert saved.status == TaskStatus.RECEIVED and len(saved.metadata["clarification_answers"]) == 1
+    assert saved.objective.count("[User clarification:") == 1
+
+
+def test_a_reply_cannot_revive_a_paused_or_cancelled_task(tmp_path) -> None:
+    from agent_control.clarification import resume_clarifying_task
+    from agent_control.schemas import utc_now
+
+    repos, audit = make_repos(tmp_path)
+    for status in (TaskStatus.PAUSED, TaskStatus.CANCELLED):
+        task = repos.tasks.create("Pending work", metadata={"clarifying_question": "Which option?"})
+        snapshot = repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+        repos.tasks.update_status(task.id, status)
+        reply = resume_clarifying_task(repos, audit, snapshot, text="Yes", actor="test", message_id="1", received_at=utc_now())
+        saved = repos.tasks.get(task.id)
+        assert not reply.accepted and saved.status == status and saved.objective == "Pending work"
+
+
+def test_expiry_cannot_cancel_a_question_that_was_answered_concurrently(tmp_path, monkeypatch) -> None:
+    repos, audit = make_repos(tmp_path)
+    task = repos.tasks.create("Old work", metadata={"clarifying_question": "Which option?"})
+    repos.tasks.update_status(task.id, TaskStatus.CLARIFYING)
+    _age_task(repos, task.id, hours=25)
+    commit = repos.tasks.answer_clarification
+    def answer_before_expiry(snapshot, **kwargs):
+        repos.tasks.update_status(snapshot.id, TaskStatus.RECEIVED)
+        return commit(snapshot, **kwargs)
+    monkeypatch.setattr(repos.tasks, "answer_clarification", answer_before_expiry)
+    assert expire_stale_clarifications(repos, audit) == []
+    assert repos.tasks.get(task.id).status == TaskStatus.RECEIVED
 
 
 def test_expire_stale_clarifications_only_touches_old_questions(tmp_path) -> None:

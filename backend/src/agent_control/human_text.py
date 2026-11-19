@@ -82,16 +82,17 @@ def _resolve_prefix(candidate: str) -> str:
     ends at its first file extension that does not run on into more path, or, for a folder, at the first
     quote or sentence punctuation, so what follows it is kept.
     """
-    existing = _existing_prefix(candidate)
-    if existing is not None:
-        return existing
     trimmed = candidate.rstrip().rstrip(_TRAILING)
     # Not on this computer: end the path at the first file extension that does not run on into more path.
     match = re.match(r"^(.*?\\[^\\/]*?\.[A-Za-z0-9]{1,6})(?![A-Za-z0-9_\\/-])", trimmed)
-    if match:
-        return match.group(1)
-    # A folder with no extension ends at the first quote or sentence punctuation.
-    return re.match(r"^(.*?)(?=[`'\"]|[.,;:!?)\]]+(?:\s|$)|$)", trimmed).group(1)
+    end = match.group(1) if match else re.match(r"^(.*?)(?=[`'\"]|[.,;:!?)\]]+(?:\s|$)|$)", trimmed).group(1)
+    existing = _existing_prefix(candidate)
+    if existing is not None:
+        # An unrelated existing prefix such as C:\\for must not truncate a
+        # missing file under C:\\for fun\\... at the space in its parent.
+        if "\\" not in end[len(existing):]:
+            return existing
+    return end
 
 
 def friendly_path(path: str) -> str:
@@ -369,8 +370,22 @@ def describe_action(tool: str, tool_input: dict[str, Any] | None) -> str:
     if tool == "image.describe":
         name = str(data.get("path") or "").replace("\\", "/").rsplit("/", 1)[-1] or "a picture"
         return f"Load a vision model to look at {name} (about 3 GB of GPU memory; the picture stays on this computer)"
+    if tool == "job.manage" and operation == "start_watch":
+        every = f"every {data['every_minutes']} minutes" if data.get("every_minutes") else "every 15 minutes"
+        return f"Watch {' '.join(str(data.get('target') or '').split())[:160]} {every} in the background and message you when it changes"
+    if tool == "job.manage" and operation == "start_survey":
+        return f"Find every one of them and compare them, in the background, for as long as it takes (hours, at most three days), and message you as it goes: {' '.join(str(data.get('goal') or '').split())[:160]}"
+    if tool == "job.manage" and operation == "start_investigation":
+        return f"Work this out: run read-only checks of this computer and your network, look up what is known, and tell you what I find and the ways forward: {' '.join(str(data.get('goal') or '').split())[:160]}"
+    if tool == "mail.manage" and operation == "send":
+        from agent_control.tools.mail_manage import approval_sentence as mail_sentence
+
+        return mail_sentence(data)
     if tool == "job.manage" and operation == "start_research":
+        from agent_control.jobs.research import time_estimate
+
         pages = f"up to {data['max_pages']} pages" if data.get("max_pages") else "many pages"
-        return f"Research this in depth, reading {pages} over a few hours, and message you as I go: {' '.join(str(data.get('goal') or '').split())[:160]}"
+        duration = time_estimate(int(data["max_pages"])) if data.get("max_pages") else "a few hours"
+        return f"Research this in depth, reading {pages} ({duration}; actual time varies), and message you as I go: {' '.join(str(data.get('goal') or '').split())[:160]}"
     phrase = progress_phrase(tool, operation, data)
     return phrase[:1].upper() + phrase[1:]

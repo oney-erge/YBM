@@ -22,6 +22,35 @@ Use these as the durable sources of truth:
 Do not describe planned behavior as implemented. Keep documentation, schemas, and
 configuration examples aligned with the code that exists.
 
+## What YBM is for
+
+The owner's own assistant, on one PC, reached through Telegram, running on a local model, meant to stay while models
+change. This is the intent every change is judged against; what is built is in the docs above, and the program to get
+there is [docs/ULTIMATE_ASSISTANT_PLAN.md](docs/ULTIMATE_ASSISTANT_PLAN.md). Planned behavior is not implemented behavior.
+
+- It understands instead of asking. It reads what is meant and how big it is from the words, typed or dictated ("take your
+  time", "all the daycares around me", "overnight"), states its assumptions in its first reply, and goes. Asking the owner
+  is the last resort, for something no route can produce. Autonomy has three levels; at the top one it never asks.
+- It remembers, across every chat, by default (a setting, on): facts about the owner, his family and home, preferences,
+  and projects with their decisions and reasons. Facts that change are updated with their history kept. A project is never
+  just open or closed; it can be picked up weeks later.
+- Long and exhaustive work runs by itself as a loop that judges its own result against a measured standard and does more
+  until it is good enough or reaches its ceiling, with a time estimate up front and updates along the way.
+- It works a big build with the owner: steps, a bill of materials, what to buy, a schedule, check-ins.
+- It uses the computer and the web itself: signs in, creates accounts when needed (choosing the username and password,
+  storing them, writing a skill for the site, and telling the owner). It does not solve checks built to stop automated
+  sign-ups; it takes another route.
+- It never buys anything or uses the owner's cards on its own, at any autonomy level. It prepares the purchase up to the
+  payment page and asks once, with the exact items, seller, total, card (last four digits) and address; a yes covers that one
+  order. This rule lives in the purchase skill and in the worker's approval gate. Everything else at the top level is
+  autonomous.
+- When nothing fits it writes code, tests it read-only on real data, runs it, and keeps it; recurring work becomes a monitor.
+- When it truly cannot, it ends with a blocker report: what was tried, why it failed, the routes left with exact steps, its
+  pick, and the one thing it needs. Never a bare "I could not".
+- It proves what it did (receipts, sources, observed results), keeps all data in open formats, and does not depend on one model.
+- Fixes are holistic: one mechanism per need, reusing existing objects (goal, project, plan, job, memory, skill). No
+  per-example patches.
+
 ## Supported Commands
 
 The stable source-checkout entry points are `run.bat` and `run.ps1` on Windows,
@@ -113,7 +142,9 @@ Choose checks in proportion to the change:
 - Backend behavior: `.\scripts\ybm.ps1 test` and the focused affected test. On a
   checkout where `ybm setup`/`ybm.ps1 setup` has not run (`backend/.venv` doesn't
   exist yet), first run `uv sync --frozen --extra test --extra dev` from
-  `backend` - matches what CI does before `uv run --frozen pytest`. Without
+  `backend` - matches what CI does before `uv run --frozen pytest -n auto --dist loadfile`
+  (the whole suite in parallel, about 35 seconds on 16 cores; while editing, add `--testmon` to run only
+  the tests a change can affect). Without
   that sync, a bare `uv run --frozen pytest` can silently resolve to a
   system-installed `pytest` outside the project's `.venv` and fail with
   `ModuleNotFoundError` instead of running the suite.

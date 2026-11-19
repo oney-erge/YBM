@@ -179,6 +179,8 @@ def _normalize(text: str) -> str:
         matched_path = match.group(0)
         root_match = _PYTEST_TMP_ROOT.match(matched_path)
         suffix = matched_path[root_match.end():] if root_match else ""
+        # Under pytest-xdist every worker has its own base folder, `popen-gw<N>`, between the run counter and the test's folder: not part of the key.
+        suffix = re.sub(r"^[\\/]popen-gw\d+(?=[\\/]|$)", "", suffix)
         return f"<pytest_tmp>{suffix.replace(chr(92), '/')}"
 
     text = _PYTEST_TMP_PATH.sub(replace_pytest_tmp, text)

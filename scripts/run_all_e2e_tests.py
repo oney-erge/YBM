@@ -69,6 +69,10 @@ HELDOUT4_PATH = ROOT / "e2e" / "heldout4_cases.json"
 CHALLENGE_PATH = ROOT / "e2e" / "challenge_cases.json"
 VERDICT_PATH = ROOT / "e2e" / "verdict_cases.json"
 VERDICT2_PATH = ROOT / "e2e" / "verdict2_cases.json"
+VERDICT3_PATH = ROOT / "e2e" / "verdict3_cases.json"
+CONTINUITY_PATH = ROOT / "e2e" / "continuity_cases.json"
+HANDS_PATH = ROOT / "e2e" / "hands_cases.json"
+ULTIMATE_PATH = ROOT / "e2e" / "ultimate_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
 
 ADMIN_BASE = "http://127.0.0.1:8765"
@@ -225,6 +229,37 @@ def clear_conversation_memory() -> None:
     try:
         conn = sqlite3.connect(DB_PATH)
         conn.execute("DELETE FROM conversation_memory")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def close_open_goals() -> None:
+    """Independent cases do not share goals.
+
+    A goal outlives the task that made it, on purpose, so the next message of the same chat can carry it on. A case that ran earlier (or the same case in the last
+    run) left its goal open, and the next case's message was then read as carrying that goal on: "Call my mom" went on with the old attempt's notes and asked its
+    question again after the harness's reply (11/18). Cases that need a goal across messages make it within their own turns; this runs once, before the first.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE goals SET status = 'dropped' WHERE status IN ('open', 'waiting', 'blocked')")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
+def close_open_jobs() -> None:
+    """Independent cases do not share background jobs either.
+
+    A research or investigation job that a case started keeps running after the case, so the next case's chat had two jobs open: a status question was answered with
+    the other case's investigation, and a plain count of log lines was read as a request for another job and refused for the limit (frozen exam, 11/18).
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE background_jobs SET status = 'cancelled' WHERE status IN ('running', 'paused')")
         conn.commit()
         conn.close()
     except Exception:
@@ -671,7 +706,7 @@ def expects_task_mode(value: object) -> bool | str:
 def load_cases() -> list[dict]:
     """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH, CHALLENGE_PATH, VERDICT_PATH, VERDICT2_PATH):
+    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH, CHALLENGE_PATH, VERDICT_PATH, VERDICT2_PATH, VERDICT3_PATH, CONTINUITY_PATH, HANDS_PATH, ULTIMATE_PATH):
         if path.exists():
             cases += json.loads(path.read_text(encoding="utf-8"))
     return cases
@@ -1802,6 +1837,8 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
         # case is explicitly a follow-up-with-memory case.
         if not any(t in (case.get("tags") or []) for t in ("followup", "memory")):
             clear_conversation_memory()
+        close_open_goals()  # also for a case that keeps the memory: its own follow-ups make their goals after this
+        close_open_jobs()
 
         rendered_message = render_text(stage.message, fixtures)
         max_seconds = int(case.get("timeout_seconds") or 360)
@@ -2255,9 +2292,18 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,challenge,verdict,verdict2,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,challenge,verdict,verdict2,verdict3,continuity,hands,ultimate,full"
         ),
     )
+    parser.add_argument("--budget-seconds", type=float, default=0,
+                        help="run only what fits in this many seconds: the money-rule cases, then what failed last time, then the areas the change touched "
+                             "(--changed-since), then the cases that have waited longest; a case that usually takes over 90 s waits for the nightly slice")
+    parser.add_argument("--changed-since", default="",
+                        help="a git ref; with --budget-seconds, the areas whose code changed since it (and the working tree) are checked first (e2e/areas.json)")
+    parser.add_argument("--nightly-slice", action="store_true",
+                        help="run today's seventh of the selected cases (a different seventh each day, so every case runs at least once a week)")
+    parser.add_argument("--case-timeout", type=float, default=0, help="cap, in seconds, on each case's own timeout")
+    parser.add_argument("--plan-only", action="store_true", help="print the cases that would run, and why, then stop (needs no bot)")
     parser.add_argument("--include-guarded", action="store_true",
                         help="include codex/copilot/quota/limit cases (usually need external creds)")
     parser.add_argument("--no-web-fixture", action="store_true",
@@ -2268,12 +2314,23 @@ async def main() -> int:
     args = parser.parse_args()
 
     _load_env()
-    issues = _preflight()
+    issues = [] if args.plan_only else _preflight()
     if issues:
         print("Preflight failed - start the missing services first:")
         for issue in issues:
             print(f"  - {issue}")
         return 1
+
+    _ensure_fixtures_path()
+    import budget  # type: ignore[import-not-found]
+
+    lock_path = ROOT / ".agent_control" / "e2e_runner.lock"
+    if not args.plan_only:
+        busy = budget.take_lock(lock_path)
+        if busy:
+            print(f"Not started: {busy}.")
+            return 1
+        atexit.register(budget.drop_lock, lock_path)
 
     cases_all = load_cases()
     cleanup_catalog_memory_facts(cases_all)
@@ -2285,6 +2342,31 @@ async def main() -> int:
         suites={s.strip() for s in args.suite.split(",") if s.strip()},
         include_guarded=args.include_guarded,
     )
+
+    history_path = ROOT / ".agent_control" / "e2e_history.json"
+    history = budget.load_history(history_path)
+    if not history["cases"]:
+        print(f"  [history] seeded from {budget.seed_from_results(history, RESULTS_ROOT)} earlier case runs")
+    areas = budget.load_areas()
+    cap = args.case_timeout or budget.DEFAULT_CAP_SECONDS
+    if args.nightly_slice:
+        selected = budget.nightly_slice(selected, datetime.now().toordinal())
+        print(f"  [nightly] today's slice: {len(selected)} cases")
+    if args.budget_seconds:
+        touched = budget.changed_areas(budget.git_changed_files(args.changed_since, ROOT), areas) if args.changed_since else set()
+        selected = budget.plan(selected, history, budget_seconds=args.budget_seconds, touched=touched, areas=areas, cap=cap)
+        print(f"  [budget] {args.budget_seconds:.0f} s: {len(selected)} cases" + (f"; areas touched: {', '.join(sorted(touched)) or 'none'}" if args.changed_since else ""))
+    if args.case_timeout:
+        selected = [{**c, "timeout_seconds": min(int(c.get("timeout_seconds") or 360), int(args.case_timeout))} for c in selected]
+    if args.plan_only:
+        spent = 0.0
+        for c in selected:
+            usual = budget.usual_seconds(c, history, cap=cap)
+            spent += usual
+            last = budget.last_run(c, history)
+            print(f"  {c.get('id'):<44} usual {usual:>5.0f}s  last {'FAIL' if last and not last['ok'] else ('ok' if last else 'never run')}")
+        print(f"  {len(selected)} cases, about {spent:.0f} s")
+        return 0
 
     # Pre-flight inventory: what's actually going to run, how long it might take,
     # what skipped. This is the single most useful thing to glance at before
@@ -2373,6 +2455,9 @@ async def main() -> int:
     total = len(selected)
     for idx, case in enumerate(selected, start=1):
         stage_dir = run_dir / f"{idx:02d}_{case.get('id','case')}"
+        if args.budget_seconds and results and time.monotonic() - suite_start + budget.usual_seconds(case, history, cap=cap) > args.budget_seconds * 1.25:
+            print(f"\n  Budget of {args.budget_seconds:.0f} s reached after {len(results)} cases; the other {total - len(results)} wait for a later check.")
+            break
 
         # Progress banner BEFORE each case so the user knows where we are.
         passed_so_far = sum(1 for r in results if r.passed)
@@ -2400,6 +2485,16 @@ async def main() -> int:
                 runner_exception=f"{exc}\n{traceback.format_exc()[-1500:]}",
                 failure_reason=f"outer runner exception: {exc}",
             )
+        if not stage.passed and not stage.skipped and args.budget_seconds:
+            # The model varies: a failed case gets one solo re-run now (never a re-run of the suite). Failing twice is a finding; failing once is noise.
+            print(f"  --> FAIL ({stage.failure_reason}); one solo re-run")
+            again = await _run_one(case, fixtures)
+            if again.passed:
+                again.hook_notes.append(f"first attempt failed ({stage.failure_reason}); passed on one solo re-run")
+                stage = again
+        if not stage.skipped:
+            budget.record(history, stage.case_id, passed=stage.passed, seconds=stage.total_duration_s, at=stage.started_at)
+            budget.save_history(history_path, history)
         results.append(stage)
         if case_may_create_schedules(case):
             removed = delete_schedules_created_since(stage_started_iso)
