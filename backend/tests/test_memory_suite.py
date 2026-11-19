@@ -25,3 +25,15 @@ def test_the_runner_knows_the_suite() -> None:
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     assert sum(1 for case in module.load_cases() if "memory" in (case.get("suites") or [])) == 8
+
+
+def test_the_long_suite_starts_the_two_jobs_of_the_final_proof_and_the_runner_knows_it() -> None:
+    import importlib.util
+
+    cases = json.loads((ROOT / "e2e" / "long_cases.json").read_text(encoding="utf-8"))
+    assert [c["id"] for c in cases] == ["long_research_600_pages", "long_survey_pearland_daycares"] and all(c["suites"] == ["long"] for c in cases)
+    spec = importlib.util.spec_from_file_location("run_all_e2e_tests", ROOT / "scripts" / "run_all_e2e_tests.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    assert sum(1 for case in module.load_cases() if "long" in (case.get("suites") or [])) == 2

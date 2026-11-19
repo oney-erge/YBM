@@ -73,6 +73,7 @@ VERDICT3_PATH = ROOT / "e2e" / "verdict3_cases.json"
 VERDICT4_PATH = ROOT / "e2e" / "verdict4_cases.json"
 CONTINUITY_PATH = ROOT / "e2e" / "continuity_cases.json"
 MEMORY_PATH = ROOT / "e2e" / "memory_cases.json"
+LONG_PATH = ROOT / "e2e" / "long_cases.json"
 HANDS_PATH = ROOT / "e2e" / "hands_cases.json"
 ULTIMATE_PATH = ROOT / "e2e" / "ultimate_cases.json"
 CONFIG_PATH = ROOT / "config" / "config.yaml"
@@ -708,7 +709,7 @@ def expects_task_mode(value: object) -> bool | str:
 def load_cases() -> list[dict]:
     """The development cases plus the held-out suite. Held-out cases only run when asked for (see select_cases)."""
     cases = json.loads(CASES_PATH.read_text(encoding="utf-8"))
-    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH, CHALLENGE_PATH, VERDICT_PATH, VERDICT2_PATH, VERDICT3_PATH, VERDICT4_PATH, CONTINUITY_PATH, MEMORY_PATH, HANDS_PATH, ULTIMATE_PATH):
+    for path in (HELDOUT_PATH, HELDOUT2_PATH, HELDOUT3_PATH, VISION_PATH, HELDOUT4_PATH, CHALLENGE_PATH, VERDICT_PATH, VERDICT2_PATH, VERDICT3_PATH, VERDICT4_PATH, CONTINUITY_PATH, MEMORY_PATH, LONG_PATH, HANDS_PATH, ULTIMATE_PATH):
         if path.exists():
             cases += json.loads(path.read_text(encoding="utf-8"))
     return cases
@@ -2301,7 +2302,7 @@ async def main() -> int:
         default="",
         help=(
             "comma-separated suites: smoke,tools,autonomy,evolution,code_interpreter,"
-            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,challenge,verdict,verdict2,verdict3,verdict4,continuity,memory,hands,ultimate,full"
+            "mcp,recovery,external_agent,human_autonomy,gaps,heldout,heldout2,heldout3,heldout4,vision,challenge,verdict,verdict2,verdict3,verdict4,continuity,memory,long,hands,ultimate,full"
         ),
     )
     parser.add_argument("--budget-seconds", type=float, default=0,
