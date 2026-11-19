@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from agent_control.config import AppSettings
-from agent_control.jobs import engines, investigate, research, watch
+from agent_control.jobs import engines, investigate, research, survey, watch
 from agent_control.jobs.model import Job, JobStatus
 from agent_control.jobs.runner import cancel_job, pause_job, resume_job
 from agent_control.plans.runner import routing_of
@@ -19,7 +19,7 @@ from agent_control.storage.repositories import Repositories
 from agent_control.tools.contracts import JobManageInput, JobManageOutput
 from agent_control.tools.spec import Adapters, Definitions, RegistryDeps, ToolDefinition, failed_result, same_output_schema
 
-OPERATIONS = ("start_research", "start_investigation", "start_watch", "status", "pause", "resume", "stop")
+OPERATIONS = ("start_research", "start_investigation", "start_watch", "start_survey", "status", "pause", "resume", "stop")
 #: Jobs open at once in one chat. The one local model serves one request at a time, so a third job would only slow the other two.
 MAX_OPEN_JOBS = 2
 
@@ -67,6 +67,8 @@ class JobManageAdapter:
                 output = self._start_investigation(request, routing, task)
             elif operation == "start_watch":
                 output = self._start_watch(request, routing)
+            elif operation == "start_survey":
+                output = self._start_survey(request, routing)
             elif operation == "status":
                 output = self._status(request, routing)
             elif operation in ("pause", "resume", "stop"):
@@ -124,6 +126,26 @@ class JobManageAdapter:
                 f"Started working out: {goal[:200]}. It runs read-only checks of this computer and the home network, one at a time, looks up what is known, and then "
                 "messages the person what it found and the ways forward. Tell the person in one or two sentences, without any job number, that it has started and that they "
                 "can ask 'how far are you?', pause it or stop it at any time."
+            ),
+        }
+
+    def _start_survey(self, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
+        goal = " ".join(str(request.input.get("goal") or "").split())
+        if not goal:
+            raise ValueError("start_survey requires a goal")
+        open_jobs = [job for job in self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]) if job.kind != "watch"]
+        if len(open_jobs) >= MAX_OPEN_JOBS:
+            raise ValueError(f"{len(open_jobs)} jobs are already open in this chat; pause or stop one first, or wait for it to finish")
+        job = self.repositories.jobs.create(Job(kind="survey", goal=goal, state=survey.new_state(), routing=routing))
+        self.audit.append(
+            AuditEventType.TASK_STATE_CHANGED, actor="job", task_id=request.task_id, payload={"reason": "job_started", "job_id": job.id, "kind": "survey"}
+        )
+        return {
+            "job_id": job.id, "jobs": [{"id": job.id, "status": job.status.value}],
+            "summary": (
+                f"Started a survey: {goal[:200]}. It finds every one of them it can, checks each against the criteria with a source for every value, and keeps going in the background "
+                f"until new searches stop finding anything new, or three days pass. {survey.estimate_text()} Tell the person in two sentences, without any job number, what it is doing, "
+                "that it may take hours, and that they can ask 'how far are you?', pause it or stop it at any time."
             ),
         }
 
@@ -215,7 +237,8 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             named_when_disabled=False,
             description=(
                 "start and control a background job: start_research reads many pages into a cited report; start_investigation works out why something on this computer or "
-                "network does not work; start_watch tells the person when a folder or page changes; status, pause, resume, stop control it"
+                "network does not work; start_watch tells the person when a folder or page changes; "
+                "start_survey finds every one of something in a place and compares them, for hours or days; status, pause, resume, stop control it"
             ),
             operations=OPERATIONS,
             input_schema=JobManageInput,
@@ -223,11 +246,12 @@ def register(deps: RegistryDeps, definitions: Definitions, adapters: Adapters) -
             operation_output_schemas=same_output_schema(OPERATIONS, JobManageOutput),
             default_operation="status",
             # Hours of work and many web requests start only when the person says so, with a sentence that says what it will do.
-            approval_required_operations=("start_research", "start_investigation", "start_watch"),
+            approval_required_operations=("start_research", "start_investigation", "start_watch", "start_survey"),
             approval_reasons={
                 "start_research": "Starts a long research job that reads many web pages over several hours.",
                 "start_investigation": "Runs read-only checks of this computer and the home network to work out a problem, and looks up what is known.",
                 "start_watch": "Looks at a folder or a web page every so often, in the background, and messages you about changes.",
+                "start_survey": "Finds every one of something in a place, checks each against criteria with a source for every value, and keeps going in the background until it is done.",
             },
             examples=(
                 {"operation": "start_research", "goal": "Which heat pump is best for a 150 square meter house in Chicago? Costs, running costs, reliability.", "max_pages": 60},

@@ -752,7 +752,7 @@ def test_starting_needs_the_persons_approval_and_the_tool_is_unnamed_while_off_s
     off = build_tool_registry(AppSettings(_env_file=None), "http://127.0.0.1:8765", repositories=repos, audit_logger=audit)
     definition = off.definition_index["job.manage"]
     assert not definition.enabled and not definition.named_when_disabled and "job.manage" not in off.context()
-    assert definition.approval_required_operations == ("start_research", "start_investigation", "start_watch")
+    assert definition.approval_required_operations == ("start_research", "start_investigation", "start_watch", "start_survey")
     on = build_tool_registry(AppSettings(_env_file=None, jobs={"enabled": True}), "http://127.0.0.1:8765", repositories=repos, audit_logger=audit)
     assert "job.manage" in on.context() and "start_research" in on.context()
 

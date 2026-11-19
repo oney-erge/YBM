@@ -408,7 +408,7 @@ class MailManageOutput(ToolOutputModel):
 
 
 class JobManageInput(ToolInputModel):
-    operation: Literal["start_research", "start_investigation", "start_watch", "status", "pause", "resume", "stop"] = "status"
+    operation: Literal["start_research", "start_investigation", "start_watch", "start_survey", "status", "pause", "resume", "stop"] = "status"
     # start_research: what to find out, as a full goal with everything the user said (the topic, the place, the budget), and how many pages
     # at most (the person's own number if they gave one).
     goal: str | None = None
@@ -421,7 +421,7 @@ class JobManageInput(ToolInputModel):
 
     @model_validator(mode="after")
     def needs_its_arguments(self) -> "JobManageInput":
-        if self.operation in ("start_research", "start_investigation") and not (self.goal or "").strip():
+        if self.operation in ("start_research", "start_investigation", "start_survey") and not (self.goal or "").strip():
             raise ValueError(f"operation={self.operation} requires 'goal'")
         if self.operation == "start_watch" and not (self.target or "").strip():
             raise ValueError("operation=start_watch requires 'target'")
