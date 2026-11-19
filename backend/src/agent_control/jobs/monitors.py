@@ -34,7 +34,7 @@ def script_path(folder: str | Path, name: str) -> Path:
 
 def run_script(folder: str | Path, name: str, *, seconds: int = RUN_SECONDS) -> str:
     """Run a saved monitor script and return what it printed. Raises with the end of its error text when it fails, prints nothing, or takes too long."""
-    path = script_path(folder, name)
+    path = script_path(folder, name).resolve()  # absolute: the folder is a relative path in the settings, and the script runs with its own folder as the working directory
     if not path.is_file():
         raise RuntimeError(f"the monitor script {path.name} does not exist")
     try:

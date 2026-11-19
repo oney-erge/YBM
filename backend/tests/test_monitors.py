@@ -34,6 +34,14 @@ def test_a_script_is_saved_run_once_and_a_failing_or_silent_one_is_not_kept(tmp_
         monitors.script_path(folder, "!!!")
 
 
+def test_a_monitors_folder_given_as_a_relative_path_still_runs_its_scripts(tmp_path, monkeypatch) -> None:
+    """Live 11/19 (acceptance suite): the setting is `.agent_control/monitors`, relative; the script is run with its own folder as the working directory, and the relative path then pointed nowhere."""
+    monkeypatch.chdir(tmp_path)
+    path, first = monitors.save_and_test(".agent_control/monitors", "devices", GOOD)
+    assert first.splitlines()[0] == "192.168.1.1 router" and path.name == "devices.py"
+    assert monitors.run_script(".agent_control/monitors", "devices").splitlines()[1] == "192.168.1.20 tv"
+
+
 def test_a_script_outside_the_folder_is_never_run_and_a_slow_one_is_stopped(tmp_path) -> None:
     folder = tmp_path / "monitors"
     folder.mkdir()
