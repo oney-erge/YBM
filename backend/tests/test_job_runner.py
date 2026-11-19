@@ -6,6 +6,7 @@ import asyncio
 import multiprocessing
 import sqlite3
 import threading
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -306,6 +307,21 @@ async def test_failed_job_can_be_resumed_without_a_job_id(tmp_path) -> None:
     resumed = await call(operation="resume")
     assert resumed.status == ToolResultStatus.SUCCEEDED
     assert repos.jobs.get(job_id).status == JobStatus.RUNNING and "stop_reason" not in repos.jobs.get(job_id).state
+
+
+@pytest.mark.asyncio
+async def test_resume_goes_to_the_job_that_can_be_resumed_not_to_one_that_is_running(tmp_path) -> None:
+    repos, call = _tool(tmp_path)
+    failed_id = (await call(operation="start_research", goal="The research that failed")).output["job_id"]
+    failed = repos.jobs.get(failed_id)
+    repos.jobs.save(failed_id, state=failed.state, status=JobStatus.FAILED)
+    running_id = (await call(operation="start_watch", target="https://example.com/news")).output["job_id"]  # another job is running in the same chat
+    assert repos.jobs.get(running_id).status == JobStatus.RUNNING
+
+    resumed = await call(operation="resume")
+
+    assert resumed.status == ToolResultStatus.SUCCEEDED and resumed.output["job_id"] == failed_id
+    assert repos.jobs.get(failed_id).status == JobStatus.RUNNING
 
 
 @pytest.mark.asyncio
@@ -619,12 +635,53 @@ async def test_hourly_progress_resumes_after_quiet_hours_and_restart(tmp_path, m
 
 
 @pytest.mark.asyncio
+async def test_a_failed_unit_is_tried_again_after_a_wait_and_not_at_once(tmp_path) -> None:
+    """Live 11/19: five failures in five seconds ended a 600-page research when the search engine answered "no results" to a burst of queries."""
+    repos, audit = make_repos(tmp_path)
+    job = _job(repos)
+    runner, _chat = _runner(repos, audit, tmp_path, io=_Io(fail=True))
+    now = [datetime(2026, 11, 19, 12, tzinfo=timezone.utc)]
+    runner.clock = lambda: now[0]
+
+    assert await runner.tick() == 1 and repos.jobs.get(job.id).state["errors_in_a_row"] == 1
+    assert await runner.tick() == 0  # the wait is not over: nothing is tried
+    now[0] += timedelta(seconds=31)
+    assert await runner.tick() == 1 and repos.jobs.get(job.id).state["errors_in_a_row"] == 2
+    assert await runner.tick() == 0  # and the wait after a second failure is longer
+    now[0] += timedelta(seconds=45)
+    assert await runner.tick() == 0
+    now[0] += timedelta(seconds=20)
+    assert await runner.tick() == 1 and repos.jobs.get(job.id).state["errors_in_a_row"] == 3
+
+
+@pytest.mark.asyncio
+async def test_a_search_that_stops_answering_leaves_the_pages_already_found_to_be_read() -> None:
+    sources = [{"id": 1, "url": "https://a.example/1", "title": "One", "question": 0, "status": "new", "facts": []}]
+
+    class _NoSearch(_Io):
+        async def search(self, query, count):
+            raise RuntimeError("no search engine gave results")
+
+    io = _NoSearch().io
+    state = {**research.new_state(10), "stage": "search", "questions": ["What does it cost?", "Who installs it?"], "sources": list(sources), "queries_done": 0}
+    with pytest.raises(RuntimeError):
+        await research.advance("heat pumps", {**state, "errors_in_a_row": 1}, io)  # asked once or twice: the job waits and asks again
+    unit = await research.advance("heat pumps", {**state, "errors_in_a_row": 2}, io)
+    assert unit.state["stage"] == "read" and "stopped answering" in unit.say and "1 pages" in unit.say
+    with pytest.raises(RuntimeError):
+        await research.advance("heat pumps", {**state, "sources": [], "errors_in_a_row": 4}, io)  # nothing found yet: nothing to read instead
+
+
+@pytest.mark.asyncio
 async def test_a_job_that_keeps_failing_stops_says_so_and_keeps_its_state_and_resume_tries_again(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     job = _job(repos)
     runner, chat = _runner(repos, audit, tmp_path, io=_Io(fail=True))
+    now = [datetime(2026, 11, 19, 12, tzinfo=timezone.utc)]
+    runner.clock = lambda: now[0]
     for _ in range(MAX_ERRORS_IN_A_ROW):
         await runner.tick()
+        now[0] += timedelta(hours=1)  # each try waits out the pause the failure before it asked for
 
     failed = repos.jobs.get(job.id)
     assert failed.status == JobStatus.FAILED and failed.state["errors_in_a_row"] == MAX_ERRORS_IN_A_ROW

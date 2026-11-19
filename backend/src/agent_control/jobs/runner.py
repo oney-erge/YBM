@@ -35,7 +35,20 @@ class DeliveryUnavailable(RuntimeError):
 #: A task in one of these states is the person waiting: jobs give way.
 _ACTIVE = [TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.AWAITING_APPROVAL]
 UNIT_SECONDS = 240.0  # a unit that takes longer than this is counted as failed: a model that hangs must not stop the worker taking tasks
-MAX_ERRORS_IN_A_ROW = 5
+MAX_ERRORS_IN_A_ROW = 8
+#: After a failed unit the job waits before it tries again: 30 s, then twice as long each time, at most half an hour. Five tries in five seconds were enough to stop a
+#: 600-page research when the search engine answered "no results" to a burst of queries (live, 11/19); a throttle of that kind passes in minutes.
+RETRY_FIRST = timedelta(seconds=30)
+RETRY_CAP = timedelta(minutes=30)
+
+
+def _waiting_to_retry(state: dict, now: datetime) -> bool:
+    """Whether the job's last unit failed and the wait before the next try is not over."""
+    until = state.get("retry_at")
+    try:
+        return isinstance(until, str) and now < datetime.fromisoformat(until)
+    except (TypeError, ValueError):
+        return False
 
 
 class JobRunner:
@@ -82,6 +95,8 @@ class JobRunner:
             for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=20):
                 if job.kind == "watch" and watch.asleep(job.state, self.clock()):
                     continue  # a watch is mostly asleep: it is looked at again when its time comes, and costs nothing until then
+                if _waiting_to_retry(job.state, self.clock()):
+                    continue  # its last unit failed: it is tried again when the wait is over
                 try:
                     await self._unit(job)
                 except Exception:  # noqa: BLE001 - one job's trouble must not stop the worker taking tasks
@@ -105,6 +120,7 @@ class JobRunner:
             await self._failed_unit(job, state, exc)
             return
         unit.state["errors_in_a_row"] = 0
+        unit.state.pop("retry_at", None)
         if unit.report is not None:
             await self._finish(job, unit)
             return
@@ -142,8 +158,9 @@ class JobRunner:
         reason = str(exc) or type(exc).__name__
         logger.info("job_unit_error", job_id=job.id, errors=errors, reason=reason[:200])
         if errors < MAX_ERRORS_IN_A_ROW:
+            retry_at = self.clock() + min(RETRY_CAP, RETRY_FIRST * 2 ** (errors - 1))
             self.repositories.jobs.save_if_revision(
-                job.id, job.revision, allowed=(JobStatus.RUNNING,), state={**state, "errors_in_a_row": errors},
+                job.id, job.revision, allowed=(JobStatus.RUNNING,), state={**state, "errors_in_a_row": errors, "retry_at": retry_at.isoformat()},
             )
             return
         if not self.repositories.jobs.save_if_revision(
@@ -265,6 +282,7 @@ def pause_job(repositories: Repositories, job: Job) -> bool:
 def resume_job(repositories: Repositories, job: Job) -> bool:
     state = dict(job.state)
     state["errors_in_a_row"] = 0  # a person's "resume" is a fresh start for a job that stopped on errors
+    state.pop("retry_at", None)
     state.pop("stop_reason", None)
     return repositories.jobs.save_if_revision(
         job.id, job.revision, allowed=(JobStatus.PAUSED, JobStatus.FAILED), state=state, status=JobStatus.RUNNING,

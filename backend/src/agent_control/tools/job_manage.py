@@ -170,9 +170,15 @@ class JobManageAdapter:
         return {"job_id": jobs[-1].id, "jobs": [{"id": job.id, "status": job.status.value} for job in jobs], "summary": "\n".join(job_line(job) for job in jobs)}
 
     def _control(self, operation: str, request: ToolCallRequest, routing: dict[str, str]) -> dict[str, Any]:
-        job = self._named(request, routing) or next(iter(reversed(self._mine(routing, [JobStatus.RUNNING, JobStatus.PAUSED]))), None)
-        if job is None and operation == "resume":
-            job = next(iter(reversed(self._mine(routing, [JobStatus.FAILED]))), None)
+        job = self._named(request, routing)
+        if job is None:
+            # The newest job the operation applies to. A running job cannot be resumed, so "resume the research" must not land on a watch or another job that is running: it
+            # answered "the research is running, not paused" while the research that had failed waited (live 11/19). Only when nothing else is there, a running one is named, so the answer is that it is running.
+            applies = {"pause": [[JobStatus.RUNNING]], "resume": [[JobStatus.PAUSED], [JobStatus.FAILED], [JobStatus.RUNNING]], "stop": [[JobStatus.RUNNING, JobStatus.PAUSED]]}.get(operation, [[JobStatus.RUNNING, JobStatus.PAUSED]])
+            for statuses in applies:
+                job = next(iter(reversed(self._mine(routing, statuses))), None)
+                if job is not None:
+                    break
         if job is None:
             raise ValueError("there is no research running in this chat to " + operation)
         if operation == "pause":

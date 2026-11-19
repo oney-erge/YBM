@@ -325,7 +325,16 @@ async def _search(state: dict[str, Any], io: ResearchIO) -> Unit:
         share = max(2, -(-missing // (len(questions) - index if state.get("round") else len(questions))))
         found = 0
         queries = state.get("phrasings") or questions
-        for result in await io.search(queries[index], RESULTS_PER_QUERY):
+        try:
+            results = await io.search(queries[index], RESULTS_PER_QUERY)
+        except Exception:
+            if state["sources"] and int(state.get("errors_in_a_row", 0)) >= 2:
+                # Asked three times, with a wait between: the search engine is not answering now. The pages already found are read instead of the job failing
+                # (live 11/19: 250 pages were in hand and the research ended with none read).
+                state["stage"] = "read"
+                return Unit(state, say=f"The search stopped answering, so I will read the {len(state['sources'])} pages I have found so far. Reading them one at a time now.")
+            raise
+        for result in results:
             url = str(result.get("url") or "").strip()
             if not url.startswith(("http://", "https://")) or normalized_url(url) in seen or found >= share:
                 continue
