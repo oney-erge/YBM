@@ -188,6 +188,14 @@ candidates checked harder; ranked by the owner's weights; delivered as a spreads
 A campaign keeps the PC awake while it runs (approved by the owner on 11/19), survives restarts, backs off when a site
 throttles it, keeps quiet hours for messages only, and can be steered ("focus on the ones with a pool", "stop").
 
+What the first 600-page run (11/19) shows this loop must fix. It ran 1.5 hours, found 442 pages, read 395 and delivered a cited
+Word report, but the report is thin: the search engine throttled after 9 of 34 planned searches, so several questions had no
+pages and were written up as "no page I could read answered this"; of 238 cited sentences the claim check removed 178; the
+summary listed what was missing instead of what was found; 1,131 quoted facts were collected and 64 sources ended up cited.
+In the loop above, an unanswered question is a gap the judge sees, so the next move is to search again for it (after the
+back-off) before anything is written; sections are written from the collected facts with their quotes, so a sentence is
+supported by construction instead of being removed afterwards; and the summary leads with the findings.
+
 Done when: a daycare survey on the real bot finds at least 90 percent of the entries in the state registry for the area,
 every row has a source, it runs overnight unattended and stops by itself.
 
