@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from agent_control.config import AppSettings
 from agent_control.orchestration.initiative import initiative_guidance
 from agent_control.plans.model import MAX_CHECK_IN_DAYS, MAX_STEPS, Plan, PlanStatus, PlanStep, StepOwner, StepStatus, in_date_order
-from agent_control.plans.planner import can_do_text, draft_plan, revise_plan
+from agent_control.plans.planner import can_do_text, draft_plan, revise_plan, too_short
 from agent_control.plans.runner import audit_plan, cancel_plan, pause_plan, render_plan, routing_of
 from agent_control.schemas import Capability, ToolCallRequest, ToolCallResult, ToolResultStatus, utc_now
 from agent_control.storage.audit import AuditLogger
@@ -157,12 +157,22 @@ class PlanManageAdapter:
         if self.provider is None:
             raise ValueError("no planner model is available here to revise the plan; change it with update_step and add_step")
         kept = sum(1 for step in plan.steps if step.status != StepStatus.PENDING or step.task_id is not None)
+        before = len(plan.steps) - kept
         try:
-            draft = await revise_plan(self.provider, plan.goal, render_plan(plan, results=True, details=True), instruction, self._can_do(), kept=kept)
+            asked = {"kept": kept, "steps_before": before}
+            draft = await revise_plan(self.provider, plan.goal, render_plan(plan, results=True, details=True), instruction, self._can_do(), **asked)
+            if draft.steps and too_short(len(draft.steps), before):
+                draft = await revise_plan(self.provider, plan.goal, render_plan(plan, results=True, details=True), instruction, self._can_do(), insist=True, **asked)
         except Exception as exc:  # noqa: BLE001 - say what happened; the Operator can change the steps itself
             raise ValueError(f"the planner could not revise the plan ({type(exc).__name__}); change it with update_step and add_step") from exc
         if not draft.steps:
             raise ValueError("the planner gave no steps; say the change in other words")
+        if too_short(len(draft.steps), before):
+            # A plan that lost most of its steps is not a revision. The plan is left as it was, and the Operator is told how to make the change.
+            raise ValueError(
+                f"the planner returned {len(draft.steps)} steps for a plan of {before}, so the plan was left as it was; make the change with add_step or update_step, "
+                "or say the instruction in more detail"
+            )
         steps = []
         for index, item in enumerate(draft.steps, start=1):
             fields = {k: v for k, v in item.model_dump().items() if k in _STEP_FIELDS}
