@@ -107,7 +107,7 @@ def _canonical_operator_tool_call(
             pattern = str(tool_input.pop("pattern", "") or "").strip()
             if pattern and pattern not in {"*", "**", "*.*", "**/*", "**\\*"}:
                 tool_input["query"] = pattern
-        if operation == "read_file" and "path" not in tool_input:
+        if operation in {"read_file", "write_text_file"} and "path" not in tool_input:
             file_path = tool_input.pop("file_path", None)
             if file_path:
                 tool_input["path"] = file_path
@@ -116,6 +116,14 @@ def _canonical_operator_tool_call(
                 file_name = tool_input.pop("file_name", None)
                 if folder_path and file_name:
                     tool_input["path"] = str(Path(str(folder_path)) / str(file_name))
+        if operation in {"read_file", "write_text_file"}:
+            # A file name and the folder it belongs in, as two fields ("root": "C:\work\out", "path": "a.txt"): the name alone was resolved against the folder the program runs in, so
+            # three files meant for one folder were written next to the program's own files, and the answer said they were made where asked (frozen suite, h4_three_files, 11/18).
+            folder = tool_input.get("root") or tool_input.get("folder_path")
+            name = tool_input.get("path")
+            if isinstance(folder, str) and isinstance(name, str) and folder.strip() and name.strip():
+                if Path(folder).expanduser().is_absolute() and not Path(name).expanduser().is_absolute():
+                    tool_input["path"] = str(Path(folder).expanduser() / name)
     return tool_name, tool_input
 
 

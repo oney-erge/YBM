@@ -156,6 +156,23 @@ async def test_you_choose_answers_the_question_the_goal_waits_on_instead_of_star
 
 
 @pytest.mark.asyncio
+async def test_a_reply_the_model_calls_continue_answers_the_question_the_goal_waits_on(tmp_path) -> None:
+    """11/18 frozen suite: "Yes, go ahead with what you proposed" was read as "continue", started a second task, and left the asking one waiting for good."""
+    repos, audit = make_repos(tmp_path)
+    conversation_id = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")
+    asking = repos.tasks.create("Move the jpg files", conversation_id=conversation_id, metadata={"source_chat_id": "42", "clarifying_question": "Shall I move 4 files into Pictures?"})
+    repos.tasks.update_metadata(asking.id, asking.metadata, TaskStatus.CLARIFYING)
+    repos.goals.create(Goal(conversation_id=conversation_id, objective="Move the jpg files", status=GoalStatus.WAITING, waiting={"task_id": asking.id, "question": "Shall I move 4 files into Pictures?"}))
+    reply = "Yes, please go ahead with what you proposed, staying within the constraints in my original message."
+
+    result = await classify_and_spawn_task(_inbound(reply), conversation_id, repositories=repos, audit=audit, classifier=_Classifier(goal_ref="G1", act="continue"), send_progress=_no_progress)
+
+    assert result.task is None  # no second task
+    resumed = repos.tasks.get(asking.id)
+    assert resumed.status == TaskStatus.RECEIVED and resumed.metadata["clarification_answer"] == reply
+
+
+@pytest.mark.asyncio
 async def test_no_do_it_yourself_to_a_pending_handover_declines_the_method_and_keeps_the_goal(tmp_path) -> None:
     repos, audit = make_repos(tmp_path)
     conversation_id = repos.conversations.get_or_create(ChannelType.TELEGRAM, "42")

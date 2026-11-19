@@ -233,6 +233,22 @@ def clear_conversation_memory() -> None:
         pass
 
 
+def close_open_goals() -> None:
+    """Independent cases do not share goals.
+
+    A goal outlives the task that made it, on purpose, so the next message of the same chat can carry it on. A case that ran earlier (or the same case in the last
+    run) left its goal open, and the next case's message was then read as carrying that goal on: "Call my mom" went on with the old attempt's notes and asked its
+    question again after the harness's reply (11/18). Cases that need a goal across messages make it within their own turns; this runs once, before the first.
+    """
+    try:
+        conn = sqlite3.connect(DB_PATH)
+        conn.execute("UPDATE goals SET status = 'dropped' WHERE status IN ('open', 'waiting', 'blocked')")
+        conn.commit()
+        conn.close()
+    except Exception:
+        pass
+
+
 def _memory_fact_ids() -> set[str]:
     try:
         conn = sqlite3.connect(DB_PATH)
@@ -1804,6 +1820,7 @@ async def _run_one(case: dict, fixtures: dict[str, str]) -> StageResult:
         # case is explicitly a follow-up-with-memory case.
         if not any(t in (case.get("tags") or []) for t in ("followup", "memory")):
             clear_conversation_memory()
+        close_open_goals()  # also for a case that keeps the memory: its own follow-ups make their goals after this
 
         rendered_message = render_text(stage.message, fixtures)
         max_seconds = int(case.get("timeout_seconds") or 360)

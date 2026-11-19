@@ -8,6 +8,7 @@ See orchestration/operator.py's module docstring for the design.
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 import threading
 
@@ -2489,6 +2490,29 @@ def test_operator_call_normalization_accepts_common_filesystem_dialect() -> None
     assert search_input == {"operation": "search", "root": "documents", "query": "report"}
     assert read_name == "filesystem.manage"
     assert read_input == {"operation": "read_file", "path": str(Path("documents") / "report.md")}
+
+
+def test_a_file_name_with_its_folder_is_written_inside_that_folder() -> None:
+    """11/18 frozen suite (h4_three_files): root + a bare name wrote next to the program, not in the folder the person named."""
+    definition = ToolDefinition(
+        name="filesystem.manage", capability=Capability.FILESYSTEM_WRITE, enabled=True, description="test",
+        operations=("inspect_folder", "search", "read_file", "write_text_file"),
+    )
+    folder = str(Path("C:/work/out") if os.name == "nt" else Path("/work/out"))
+
+    _, spelled_file_path = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "file_path": "a.txt", "content": "alpha"}, {definition.name: definition},
+    )
+    _, spelled_path = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "path": "b.txt", "content": "beta"}, {definition.name: definition},
+    )
+    _, already_whole = _canonical_operator_tool_call(
+        "filesystem.manage", {"operation": "write_text_file", "root": folder, "path": str(Path(folder) / "c.txt"), "content": "gamma"}, {definition.name: definition},
+    )
+
+    assert spelled_file_path["path"] == str(Path(folder) / "a.txt") and "file_path" not in spelled_file_path
+    assert spelled_path["path"] == str(Path(folder) / "b.txt")
+    assert already_whole["path"] == str(Path(folder) / "c.txt")  # a whole path is left as it is
 
 
 @pytest.mark.asyncio
