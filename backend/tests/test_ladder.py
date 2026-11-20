@@ -777,3 +777,16 @@ async def test_a_question_the_person_already_answered_is_sent_back_twice_even_af
     assert one.metadata["operator_repeated_question_recovery_count"] == 1 and two.metadata["operator_repeated_question_recovery_count"] == 2
     assert three.status == TaskStatus.RUNNING and three.metadata["operator_history"][-1]["no_questions"] is True  # bounded: a model that will not stop asking gets one last step that may only answer
     assert (await worker.process_task(three.id)).status == TaskStatus.COMPLETED
+
+
+@pytest.mark.asyncio
+async def test_a_task_that_is_not_code_work_is_never_offered_to_claude_code(tmp_path, monkeypatch):
+    """The owner, 11/19: "for this type of super simplistic thing, we cannot ask it to Claude Code"."""
+    repos, audit = make_repos(tmp_path)
+    plan_failed = {"tool_name": "plan.manage", "input": {"operation": "update_step"}, "status": "failed", "error": "no such step"}
+    task = _task_with_history(repos, "Change the plan", [plan_failed, plan_failed], initiative_level=1)
+    operator = _Seen([OperatorDecision(action=OperatorAction.DONE, final_answer="I changed the plan.")])
+    worker = _worker(repos, audit, operator)
+    monkeypatch.setattr(worker, "_claude_code_ready", lambda: True)
+    result = await worker.process_task(task.id)
+    assert "claude_code_offer" not in result.metadata

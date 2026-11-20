@@ -88,6 +88,23 @@ def may_ask_to_hand_over(metadata: Mapping[str, Any] | None) -> bool:
     return autonomy_of(metadata) < AUTONOMOUS
 
 
+#: Tools whose use shows the task is code work, the one kind a coding agent is for.
+_CODE_TOOLS = frozenset({"code.interpreter", "coding.agent", "adapter.factory", "workspace.manage"})
+
+
+def is_code_work(metadata: Mapping[str, Any] | None) -> bool:
+    """Whether handing the task to a coding agent fits it: it was taken for development, or its own steps ran or wrote code. Judged from the record, not the
+    words. A plan edit, a search or a question about a date is not: on 11/19 a revised plan that was blocked by a false check ended with "say 'hand it to
+    Claude Code'", which the owner had said must never be offered for a simple thing (sealed exam, v4_plan_revise_twice)."""
+    metadata = metadata or {}
+    if str(metadata.get("task_type") or "") == "development":
+        return True
+    intent = metadata.get("orchestration_intent")
+    if isinstance(intent, Mapping) and str(intent.get("route") or "") in _CODE_TOOLS:
+        return True
+    return any(isinstance(entry, Mapping) and str(entry.get("tool_name") or "") in _CODE_TOOLS for entry in metadata.get("operator_history") or [])
+
+
 # --- approvals the assistant grants itself ----------------------------------------------------------------------------------------------
 
 def grants_itself(metadata: Mapping[str, Any] | None, request: ToolCallRequest) -> bool:

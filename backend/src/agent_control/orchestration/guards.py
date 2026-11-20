@@ -8,7 +8,7 @@ from typing import Any
 from agent_control.llm.cloud_gate import CloudFallbackNeeded, is_yes
 from agent_control.orchestration import call_policy, context, ladder, retry
 from agent_control.orchestration.asking import users_own_words
-from agent_control.orchestration.autonomy import may_ask_to_hand_over
+from agent_control.orchestration.autonomy import is_code_work, may_ask_to_hand_over
 from agent_control.orchestration.check_entries import (
     CHECK_ENTRY_APPROACH,
     CHECK_ENTRY_NAMES,
@@ -360,6 +360,7 @@ class GuardStage:
             task.metadata.get("claude_code_offer") is None
             and "claude_code" not in (task.metadata.get("declined_methods") or [])
             and may_ask_to_hand_over(task.metadata)
+            and is_code_work(task.metadata)
             and self._claude_code_ready()
         )
 
