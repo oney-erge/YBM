@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-19
+
+This release is the work of 11/19, from the failure of two "revise the plan" messages to the plan, the rule and the measures that came of it. It changes how the assistant sees (the open plan and the last exchange are always in front of it), remembers (an index of projects it can answer from, readable files), tries again (it works out why, and changes the kind of approach), and revises (a plan is changed through the planner that wrote it); it also fixes the call schema the server had refused on every call. `docs/PLAN.md` is the one plan and `docs/DESIGN.md` the rule for changing the product.
+
 ### Changed
 
 - An answer that says what will be written is not read as a claim that it was written. Found by the first case of the sealed Verdict 4 exam (`v4_plan_revise_twice`, 11/19): a plan revision answered that the pictures "will be generated inline ... within a single HTML file", the claims check took "generated ... file" for a write that never happened, asked twice, and blocked the task with a report that offered to hand it to Claude Code. The words that put a write out of a claim's reach (`not`, `could not`, `never` ...) now include `will`, `would`, `shall`, `going to` and `to be`; the same words in the past tense still need a recorded write.

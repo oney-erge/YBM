@@ -106,6 +106,8 @@ files or accounts. See [Security](SECURITY.md) to report a vulnerability.
 | [Architecture](docs/ARCHITECTURE.md) | Components, policy, and task flow |
 | [Threat model](docs/THREAT_MODEL.md) | Trust boundaries and residual risks |
 | [Roadmap](docs/ROADMAP.md) | Built features, known limits, and planned work |
+| [Plan](docs/PLAN.md) | What the assistant must do, where it stands, and the work in order |
+| [Design](docs/DESIGN.md) | Where each kind of thing lives, and the rule for changing it |
 | [Database inspection](docs/DATABASE_INSPECTION.md) | Inspecting, pruning, and tracing local state |
 | [Contributing](CONTRIBUTING.md) | Development setup and verification |
 
