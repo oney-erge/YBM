@@ -10,9 +10,9 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](backend/pyproject.toml)
 [![Docker ready](https://img.shields.io/badge/docker-ready-2496ED.svg)](docker-compose.yml)
 
-![Asking YBM to organize a Downloads folder: a local model (Qwen3.5 9B) plans the moves, YBM asks for approval in the console and on the phone before moving any file, then lists where every file went with a receipt of exactly what it moved. A real run's model responses, replayed at their recorded speed, with YBM, the files and the approval live](docs/screenshots/demo.gif)
+<a href="https://oneyerge.com/media/ybm-tour.mp4"><img src="docs/screenshots/ybm-organize.gif" width="880" alt="A phone asks YBM to organize a Downloads folder. On the computer, each of the 24 files gets a tag with the folder the model planned for it; the phone shows an approval naming the exact move, Approve once is tapped, the files fly into seven folders, and a receipt lists every move. A replay of a real Qwen3.5 9B run on an 8 GB laptop GPU, with the real-time clock and the playback speed on screen." /></a>
 
-<sub>A real Qwen3.5 9B run (local GPU, llama.cpp) on a sample folder of 24 files. The model's responses are replayed from that run at their recorded speed; YBM, its tools, the files and the approval are live. <a href="docs/screenshots/README.md">How it is recorded</a>.</sub>
+<sub>A replay of a real run: Qwen3.5 9B on an 8 GB laptop GPU organizes 24 downloads, stops for an approval, then moves them. The messages, files and clock come from the run's log. <a href="https://oneyerge.com/media/ybm-tour.mp4">Watch the 80-second tour</a>, <a href="https://oneyerge.com/demo/ybm/">try the replays in a browser</a>, or read <a href="docs/demo/README.md">how they are made</a>.</sub>
 
 </div>
 
@@ -29,6 +29,14 @@ A chat assistant answers in a window. YBM acts on this machine: it reads and cha
 - **Remembers.** It keeps facts you tell it and projects with their decisions, across chats. You can list, correct, and delete them.
 - **Repeats work.** Saved workflows on a schedule, folder watchers, and small monitors that speak only when something changes.
 - **Researches in the background.** A request such as "find all the daycares around me" becomes a job that keeps searching until new searches stop finding anything. It keeps a source for each value and saves a report as Markdown and Word. This is the least finished part.
+
+<p align="center"><img src="docs/screenshots/ybm-find.gif" width="760" alt="Asked from a phone how many Steam games are installed, YBM calls its inventory tool, which reads the Steam library files on the computer; 14 game names appear one by one with the total, about 203 GB, and the phone gets the answer 27 seconds after the question." /></p>
+
+<p align="center"><sub>Asked from a phone, it reads the Steam library on the computer: 14 games, about 203 GB, answered in 27 seconds. A replay of a real run.</sub></p>
+
+<p align="center"><img src="docs/screenshots/ybm-build.gif" width="760" alt="Asked for a small web page that adds a tip to a bill, YBM sets up a project folder, writes index.html line by line, starts it on the computer and sends the link, 78 seconds after the request. Then the page it wrote is opened and used: 64.50 with an 18 percent tip gives a total of 76.11." /></p>
+
+<p align="center"><sub>Asked for a tip calculator, it writes the page, starts it on the computer and sends the link, 78 seconds in all. Then the page it wrote is used. A replay of a real run.</sub></p>
 
 [Measured results](docs/MEASURED.md) lists the requests I test with and how many pass.
 

@@ -1,0 +1,109 @@
+"""Build docs/demo/stage/stories.js from saved YBM runs (python docs/demo/build_data.py [e2e result folder]). Every message, file name, number and time on screen comes from here.
+
+Sources (all on the author's machine, 2026-11-19):
+- find:     .agent_control/e2e_results/run_20261119_221301/01_v_steam/result.json         (real Telegram run, Qwen3.5 9B)
+- build:    .agent_control/e2e_results/run_20261119_221301/03_v_build_tip_calculator/result.json
+            .agent_control/workspaces/task_e84614cee1d846479aed8829a2304d33/index.html (the page the run wrote)
+- organize: docs/screenshots/demo-run.json (the README demo run: model responses replayed, YBM, files and approval live)
+            plus the console texts and clock times of that recording (docs/screenshots/demo.gif).
+"""
+
+import json
+import sys
+from datetime import datetime
+from pathlib import Path
+
+YBM = Path(__file__).resolve().parents[2]  # the repository root
+RUN = Path(sys.argv[1]) if len(sys.argv) > 1 else YBM / ".agent_control/e2e_results/run_20261119_221301"  # a live run's result folder
+OUT = Path(__file__).parent / "stage" / "stories.js"
+
+
+def ts(value: str) -> datetime:
+    return datetime.fromisoformat(value)
+
+
+def phone_events(case_dir: str) -> tuple[str, list[dict]]:
+    result = json.loads((RUN / case_dir / "result.json").read_text(encoding="utf-8"))["result"]
+    turn = result["turns"][0]
+    start = ts(turn["start_iso"])
+    events = []
+    for event in turn["telegram_sent_events"]:
+        payload = event["payload"]
+        events.append({
+            "t": round((ts(event["time"]) - start).total_seconds(), 1),
+            "kind": payload["kind"],          # "text" = a new message, "edit" = the same message rewritten
+            "id": payload["telegram_message_id"],
+            "text": payload.get("text", ""),
+        })
+    return turn["message"], events
+
+
+def tool_output(case_dir: str) -> str:
+    result = json.loads((RUN / case_dir / "result.json").read_text(encoding="utf-8"))["result"]
+    return result["turns"][0]["last_tool_output"]
+
+
+def main() -> int:
+    find_ask, find_events = phone_events("01_v_steam")
+    steam_out = tool_output("01_v_steam")
+    # "14 games are installed through Steam (about 203 GB in all): A, B, ..."
+    head, _, names = steam_out.partition(": ")
+    games = [name.strip().rstrip(".") for name in names.split(", ")]
+    assert len(games) == 14, games
+
+    build_ask, build_events = phone_events("03_v_build_tip_calculator")
+    page = (RUN.parents[1] / "workspaces/task_e84614cee1d846479aed8829a2304d33/index.html").read_text(encoding="utf-8")  # .agent_control/workspaces
+
+    demo = json.loads((YBM / "docs/screenshots/demo-run.json").read_text(encoding="utf-8"))
+    calls = demo["calls"]
+    manifest = None
+    for call in calls:
+        response = call["response"]
+        if isinstance(response, str) and '"apply_manifest"' in response:
+            manifest = json.loads(response)["tool_input"]["manifest"]
+    assert manifest and len(manifest) == 24
+    final_answer = json.loads(calls[4]["response"])["final_answer"]
+    model_ms = sum(call.get("latency_ms") or 0 for call in calls)
+
+    stories = {
+        "find": {
+            "source": "01_v_steam, 2026-11-19 22:13 CST, real Telegram run",
+            "ask": find_ask,
+            "events": find_events,
+            "tool": "system.inventory",
+            "toolOperation": "steam_games",
+            "toolHead": head,
+            "games": games,
+        },
+        "build": {
+            "source": "03_v_build_tip_calculator, 2026-11-19 22:14 CST, real Telegram run",
+            "ask": build_ask,
+            "events": build_events,
+            "page": page,
+            "url": "http://127.0.0.1:8001/",
+        },
+        "organize": {
+            "source": "docs/screenshots/demo-run.json: model responses replayed at their recorded speed; YBM, the files and the approval live",
+            "ask": "Organize my Downloads folder by type",
+            "manifest": manifest,
+            "finalAnswer": final_answer,
+            "modelSeconds": round(model_ms / 1000, 1),
+            # Console texts and clock of that recording (docs/screenshots/demo.gif, "Real time" stamp).
+            "events": [
+                {"t": 8, "kind": "text", "id": 1, "text": "Working\u2026"},
+                {"t": 29, "kind": "edit", "id": 1, "text": "Planned 24 move(s) in Downloads: 3 to archives, 1 to audio, 8 to documents, 5 to images, 3 to other, 2 to spreadsheets, 2 to video."},
+                {"t": 31, "kind": "approval", "id": 2, "text": "Move 24 files in Downloads into 7 folders: archives, audio, documents, images, other, spreadsheets, video."},
+                {"t": 35, "kind": "approved", "id": 2, "text": "Approve once"},
+                {"t": 42, "kind": "edit", "id": 1, "text": "Moved 24 file(s); changed 24 path(s)."},
+                {"t": 53, "kind": "text", "id": 3, "text": final_answer},
+            ],
+        },
+    }
+    OUT.write_text("// Generated by build_data.py from saved runs. Do not edit by hand.\nwindow.YBM_STORIES = "
+                   + json.dumps(stories, ensure_ascii=False, indent=1) + ";\n", encoding="utf-8")
+    print("wrote", OUT, "games", len(games), "moves", len(manifest), "model s", round(model_ms / 1000, 1))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

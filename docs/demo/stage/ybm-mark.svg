@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">YBM</title>
+  <path
+    d="M 150 150 L 256 256 L 362 150 M 256 256 V 366"
+    fill="none"
+    stroke="#6274e8"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    stroke-width="100"
+  />
+</svg>

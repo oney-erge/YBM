@@ -34,3 +34,6 @@ backend/src/agent_control/static/
 
 # pytest-testmon: which tests touch which code, per checkout
 .testmondata*
+
+# Screenshots written by docs/demo/test_web.mjs
+docs/demo/out/
