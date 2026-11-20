@@ -2,7 +2,8 @@
 
 Written 2026-11-19. This is the one plan. It replaces `FINAL_REMAINING_PLAN.md` (11/18) and `ULTIMATE_ASSISTANT_PLAN.md` (11/19), which are kept in
 [archive/](archive/) for the evidence and the exam candidates they hold. Where things live and how a change may touch them is [DESIGN.md](DESIGN.md).
-Planned behavior is not implemented behavior: the "State" column below says which is which.
+Planned behavior is not implemented behavior: the "State" column below says which is which. Updated 2026-11-20 after a full read of the
+repository and the live database: section 2 is where it stands now, section 8 is the cleanup cycle, section 9 is everything left, in order.
 
 ## 1. The bar
 
@@ -29,19 +30,19 @@ like it: take the job, work it out, do it, report. Twelve things:
 Local first stays the rule: nothing goes to a hosted model without asking. Money: nothing is bought, no card is used, at any level, without a yes to the
 exact order.
 
-## 2. Where it stands (11/19, measured on the real bot and PC, one runner at a time)
+## 2. Where it stands (11/20, measured on the real bot and PC, one runner at a time)
 
 | Behavior | State |
 |---|---|
-| 1, 2, 8 Understand, size, decide | Built. Frozen everyday cases at the top autonomy level: 30 of 32. `v_cannot_order` failed all 8 runs, including after its fix. |
-| 3, 4 Memory, projects | Built; the model now always sees an index of the projects (active, parked, finished) and can read a project's page (`memory.manage projects`, `project`, `set_project`), and the files are under `.agent_control/memory`; **not proven live**: one real remembered fact (the owner's name); the projects in the database were test-made, with every note repeated four times; no project has a hook. Never run across days. |
-| 5 Big builds | Partial: a skill that makes a bill of materials; no walk-through; the five-session check never ran. |
-| 6 Long work | Partial: the survey ran once (12 percent of its table filled; the fixes in #270 are not rerun); the 600-page research ran once and its report was thin (178 of 238 cited sentences removed by the claim check). |
-| 7 Hands | Measured: 9 of 10 on the hands suite. |
-| 9 Code, monitors | Built; `ult_devices` passes. |
-| 10 Blockers | Built at the end of a task; **the retry before it was a fixed ladder of generic hints** and it offered a hand-over to Claude Code on 11/19 for a text edit; now one retry loop (`orchestration/retry.py`) notices, diagnoses once and changes the kind of approach, and the hand-over is never asked at the autonomous level. |
-| 11 Proof | Mostly: an honest "I cannot" completes; "created" and "paid" claims need a record. Five separate checks do it. |
-| 12 Stay | Partial: backup, restore check, morning line, `ybm calibrate`. No model-swap procedure, no rollback, no three-day run. |
+| 1, 2, 8 Understand, size, decide | Built. Frozen everyday cases 30 of 32 on 11/19 (not rerun since; `v_cannot_order` passes alone since #289 and #296). The sealed Verdict 4, run once: 15 of 20. |
+| 3, 4 Memory, projects | Built: the index, project pages, readable files, the fact keeper. Measured 11/20: the memory suite 8 of 8, the continuity suite 11 of 11 (projects listed and returned, a fact that changes). **Not built:** the nightly rewrite of each project page; the project-questions (6) and switch-and-return (12) sets; never run across days. |
+| 5 Big builds | Partial: a bill of materials, the money walk, "what did I spend" passes live. **Not built:** the walk-through ("next step", reminders); the five-session check never ran. |
+| 6 Long work | Built, **not proven**: the survey and the 600-page research have had no full run since their fixes (both were cancelled on 11/19 by other live runs). |
+| 7 Hands | The hands suite 6 of 10 on 11/19 (two lost to the locked screen, two fixed and passing alone since). **Gaps found 11/20:** "make a folder and put these files in it" blocked in 5 of the 6 runs there have been; a login made for the owner is never told to him (that code is only on the unmerged branch `feat/tell-the-logins`). |
+| 9 Code, monitors | Built; `ult_devices` passes; code is asked for without the grammar (D6-2). |
+| 10 Blockers | Built: the retry loop (D4); the hand-over only for code work (#311) and never asked at the autonomous level. **Not built:** recording a lesson when a second approach works. |
+| 11 Proof | Five separate checks (`answer_checks`, the auditor, `claims`, `fulfillment`, `number_check`). The claims check fired falsely on drafts three times in a week. D3 reviewed, not built. |
+| 12 Stay | Backup, restore check, morning line, `ybm calibrate`, the computer kept awake during work (#315), one restart in the middle of a long job passed. **Not done:** a three-day run, a model swap tested on a copy. When idle, the laptop's standby takes the bot offline (the owner's decision, section 9). |
 
 Measured speeds (11/19): backend tests about 37 seconds; CI backend 0.8 to 1.9 minutes; pull request open to merge about 2 minutes; a budgeted live check
 5 minutes. No wait over 5 minutes is the rule.
@@ -51,7 +52,7 @@ Measured speeds (11/19): backend tests about 37 seconds; CI backend 0.8 to 1.9 m
 Both safety cases passed. [MEASURED.md](MEASURED.md) lists each miss. Three were bugs and are fixed: the claims check took "will be generated" for a write (#299); a short remark made the 9B write
 1,366 tokens into an open field, and the model server's one slot kept every other call waiting for three minutes (#300; same four messages now 2.9 s, 3.0 s, 2.4 s, 3.1 s); a date asked for with
 "tell me when" was taken for a watch (#301). One was the sealed phrase list, not the bot (`v4_retry_missing_notes`: the reply was "No price quote was found in the notes folder ... There is no file named
-or containing 'electrician'"). One is **open**: `v4_script_rename`, a `code.interpreter` step that ran 750 s with no model call logged; replaying its generation call alone takes 15 s, so the cause is not proven.
+or containing 'electrician'"). One was not the assistant: `v4_script_rename` stalled while the laptop was in connected standby (19:59:35 to 20:11:51 by Windows' power log; corrected in #316).
 
 After the fixes, on the real bot: the memory suite 8 of 8 (it was 7 of 8); the continuity suite 9 of 11. The two that failed are not the fixes: a QR-code case that ended after a package install and said the image was
 made (the claims check was right; the case is flaky), and a remark answered in chat in 10 to 18 seconds, as it should be, where the runner's stored classifier verdict said "task". The sealed exam is not rerun.
@@ -184,7 +185,7 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 | G0.2 | This plan replaces the two | Minimal | S | done (#271) |
 | G0.3 | Write and seal Verdict 4 before the work | Minimal | S | done: 20 cases, `e2e/verdict4_cases.sha256`, `--suite verdict4` |
 | G0.4 | Clean test leftovers from live memory; the runner removes what each case made | Minimal | S | done (#273): backup first, duplicate notes and two test skills cleaned, `e2e/residue.py` removes what each live case makes |
-| G0.5 | Re-record the fixtures in the owner's config; merge or drop the lifecycle branches | Minimal | S | not done: the recorded scenarios still use the code defaults (abilities, plans and vision off) and are re-keyed when a prompt changes (`ybm scenario rekey --all`); the old lifecycle branches are untouched and need a reading of their diffs |
+| G0.5 | Re-record the fixtures in the owner's config; merge or drop the lifecycle branches | Minimal | S | not done: the recorded scenarios still use the code defaults (abilities, plans and vision off) and are re-keyed when a prompt changes (`ybm scenario rekey --all`); the old lifecycle branches were read on 11/20: five are in main (squashed into `32f97f0`) and can go; `feat/tell-the-logins` is not, and holds the only code that tells the owner a login made for him (cleanup C4) |
 | D5a | What the model sees (section 4) | Design | M | built: notes keep their place, the catalog gives way, the last exchange is shown; the index and `PROJECT.md` layers come with D5b |
 | P1 | "Revise the plan" goes to the planner with the old plan; plans get versions | Design (a new operation) | S | built: `plan.manage revise`, a version line, step detail on the card |
 | D2 | One asking gate, including the hand-over offer | Design | S | the hand-over question is one test in one place and never asked at the autonomous level (#274); a question at the autonomous level is sent back twice, and a third one is not let through either: one last step may only answer or stop (the schema has no ask branch), so it ends with what was done, what could not be and the nearest thing (the fix for `v_cannot_order`, measured live next) |
@@ -193,14 +194,55 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 | D6 | Tool calls checked per operation; then delete the alias tables | Design | S | part 1 built: the strict call schema parses again (it was refused on every call); part 2 built (D6-2, 11/20): every field the model writes under the grammar has a size (an open field ran to the token cap, three minutes a call), code is asked for without the grammar (its field is the one that cannot have a size), and a slow structured call names its schema; next: measure with the schema in force, then delete the alias tables it makes unnecessary |
 | D1 | One front door for every channel; deletes the phrase patterns and Telegram-only routing | Design | L | reviewed, not built: Telegram's command chain (gaming, undo, accounts, workflows, chat) is scoped to Telegram by design (the account vault must not be readable from another channel), so a shared chain would change who can do what; the goal and Concierge path is already shared; the phrase patterns in `clarification.py` need the labeled intake set (150 messages) to show parity before they go |
 | D5b | Memory files, projects, index, hooks, `project.list`, nightly tidy-up (section 5) | Design | L | first part built: the index, `memory.manage projects/project/set_project`, the readable files, hooks when the model gives none, the nightly tidy; next: the model's nightly rewrite of each page, the memory suite |
-| G2 | Proof runs, unattended: survey rerun (at least 90 percent of the registry's daycares), 600-page research with two fixes in `jobs/research.py` (search again for unanswered questions; write from the collected quotes), the mailbox, speed (2, 6 and 15 s) | Minimal | S each | research: the gap stage is built (an unanswered question is searched again in other words before it is written up; the writer already works from the quotes); the long suite (`--suite long`) started both jobs on 11/19; the 600-page research was cancelled four seconds later by the second case (one open job per chat: the two cannot run together, so the research needs its own run after the survey); the survey is running with a 72-hour ceiling and **went through a restart in the middle** (11/19, 22:02): same job, same start time, its 6 queries kept, revision 39 to 49 with 8 new rows; its result, the 600-page run, the mailbox and the speed numbers are not measured yet |
+| G2 | Proof runs, unattended: survey rerun (at least 90 percent of the registry's daycares), 600-page research with two fixes in `jobs/research.py` (search again for unanswered questions; write from the collected quotes), the mailbox, speed (2, 6 and 15 s) | Minimal | S each | research: the gap stage is built (an unanswered question is searched again in other words before it is written up; the writer already works from the quotes); the long suite (`--suite long`) started both jobs on 11/19; the 600-page research was cancelled four seconds later by the second case (one open job per chat: the two cannot run together, so the research needs its own run after the survey); the survey **went through a restart in the middle** (11/19, 22:02: same job, its 6 queries kept, revision 39 to 49) and was then cancelled at 22:06 by another session's live run on the same bot; its result, the 600-page run, the mailbox and the speed numbers are not measured yet |
 | G3 | Big-build walk-through ("next step", reminders, "what did I spend"); a model swap tested on a copy and rollbackable updates; one export command | Minimal, one Design | M | export built (`ybm export`, D7); the model swap and going back are written down in USING.md and use the checks the repository already has (`ybm calibrate`, the five-minute live check, `ybm backup`), not run with a second model; the big-build walk-through is not built |
 | G4 | Verdict 4 once, a three-day run with a restart, release 0.2.0, README, site post | | S plus 3 days | Verdict 4 run once: 15 of 20, below the pass mark (above). Release 0.2.0 published 11/19 (`v0.2.0` on `bb3e1ec`; it has #299 but not #300, the stall fix). The restart in the middle of a long job passed; the three days have not run. The README is rewritten (#303); the site post is not done. |
 
 D5a, P1 and D2 come first, so "revise it" works and the hand-over offer stops within the first sessions. D3 and D6 are small and fix live failures. D1 gives D4 the
 goal it needs. D5b is the biggest, so it goes last.
 
-## 8. Tests: nothing the owner waits on runs over 5 minutes
+## 8. Cleanup cycle (11/20)
+
+From a full read of the repository, its documents and the live database, without running anything. Each item says what goes, the evidence, and its type under the rule.
+Nothing here removes a behavior the owner uses without saying so; where it would, the item is a decision for him.
+
+| # | What goes or is merged | Evidence | Type | Size |
+|---|---|---|---|---|
+| C1 | Dead code: `plans/review.py` (71 lines; only its own test calls it): wire it to `plan.manage` as the repair it says it is, or delete it with its test. `scripts/make_demo_gif.py`: replaced by the replay page in `docs/demo` (#317); delete it when no README image is made by it | Import graph of every module | Minimal | S |
+| C2 | Dead tables: `plans`, `subtasks` and `plan_steps` (empty; out of the schema since P3, kept only so `db_tools.py` sweeps old files): one migration that drops them when empty, then out of `db_tools.py`. Purge the 59 soft-deleted schedules | Live database | Minimal | S |
+| C3 | Config keys nothing reads: `server.public_base_url`, `identity.owner_label`, `approval_token_ttl_seconds`, `limits.tool_timeout_seconds`, `limits.max_log_chars`, the terminal adapter's `allowed_working_dirs` and `blocked_command_patterns`, the code interpreter's `jupyter` (and its `idle_timeout_seconds`) and `session_ttl_seconds`, the desktop adapter's `screenshot_interval_seconds`. Remove them; the loader accepts and ignores them with a warning, so an old `config.yaml` still loads | No product code reads them | Minimal | S |
+| C4 | Branches: delete the five remote branches whose work is in main (`feat/autonomy-levels`, `blocker-report`, `memory-that-lasts`, `monitors`, `survey-job`); review and merge `feat/tell-the-logins` (59 lines with its test; bar 7); prune the 60 local branches (28 merged, 7 closed, 25 never opened as a pull request: read before deleting) | git | none, then Minimal for the login | S |
+| C5 | Documents: one plan. ROADMAP keeps Built, Not doing and Known limits; its two "Next" sections fold into section 9 here; AGENTS.md and the README point here for what is next. ARCHITECTURE's account of the ladder follows D4. The archive stays: code cites it as evidence | Read of every document | none | S |
+| C6 | `call_rewrites.py` (854 lines, about 20 rules; the safety rules stay: a delete asked for by words only, an unrequested move, a blind persona overwrite): count each rule's firings; after a week of normal use, delete the alias and habit rules that never fired under the strict schema (D6 part 3). Its line count may only go down | Nothing records which rule fires today | Design | M |
+| C7 | The ladder and the retry loop: the escalation rungs (a wider search, a script, the hand-over) are the retry loop's kinds (D4); `ladder.py` keeps only its evidence checks (write receipts, move scope, forms and captchas, tallies), and its stale header goes | Read of both | Design | S |
+| C8 | The rolling chat summary: one 9B call before every reply. With the last exchange word for word (D5a), the facts, the past-chat search and the project index, it may say nothing new. Turned off on the same frozen cases (including `v_move_then_undo`, the reason it stayed) and the continuity suite; removed if they hold | `memory.summarize_memory_in_background` note; intake log | Design | M |
+| C9 | Saved workflows and folder triggers: a second way to keep a procedure (learned skills are the first) and a second folder watch (`jobs/watch.py` is the first); the live database has 0 workflows and 0 watched folders; 6 wording patterns. Retire them, or fold "run a saved procedure" into the watch job: the owner's decision | Live database | Design | M |
+| C10 | Five proof checks into one ordered check (D3): `answer_checks`, the auditor, `claims`, `fulfillment`, `number_check` (23 wording patterns between the last three). The claims check's false alarms on drafts are the live failure D3 was waiting for | Three false alarms, 11/14 to 11/20 | Design | L |
+
+Not in this cycle: splitting `admin.py` (4,154 lines) and `worker.py` (1,616): large moves with no defect waiting on them. The 17 e2e case files stay: the retired exams are the
+evidence of the same-case numbers.
+
+## 9. What is left, in order
+
+1. **The owner's decisions** (they change scope; nothing below waits on them). (a) Keep the computer awake whenever YBM runs, at least on mains power, so a message
+   never finds it asleep. (b) C9: retire saved workflows and folder triggers, or fold them into the watch job. (c) Release 0.2.2 with #310 to #318. (d) The mailbox
+   needs his credentials.
+2. **Quick cleanup, C1 to C5** (S each; Minimal or no label). C4 brings back the one missing piece of bar 7: telling the owner a login made for him.
+3. **The folder gap** (Design, M). A way to put chosen files into a new folder (an `organize_plan` strategy that takes a folder name and which files, applied by
+   `apply_manifest` as today, which already makes the folder); the continuity case made strict (the files really in the folder, "blocked" no longer a pass). Done
+   when the case passes 3 of 3 live; it was 1 of 6.
+4. **G0.5, the recorded fixtures in the owner's config** (abilities, plans and vision on). Any change to a tool's schema or description needs it: the folder gap and C6.
+5. **The proof runs (G2)**, each in its own window with the computer awake and no other live run: the survey (at least 90 percent of the registry's daycares), the
+   600-page research, and the speeds (2, 6 and 15 seconds).
+6. **The rest of D5b and D4**: the nightly rewrite of each project page; the project-questions (6) and switch-and-return (12) sets; a lesson recorded when a second
+   approach works, which becomes a procedure after review.
+7. **The Design cleanups, by evidence**: C8 (a model call saved on every message), C6 (after a week of counts), C7, C10 (D3), C9 (after the decision).
+8. **G3**: the big-build walk-through ("next step", reminders); a model swap tested on a copy and rolled back.
+9. **G4**: the three-day run with a restart, the computer awake; the site post.
+10. **The frozen sets of section 10 that do not exist yet**: intake (150 messages), size of the ask (20), diagnosis (10), stuck (8), asking (30), proof (planted false
+    answers), tool-call shape. Each is sealed before the work it measures; D1 waits on the intake set.
+
+## 10. Tests: nothing the owner waits on runs over 5 minutes
 
 | Check | When | Wait |
 |---|---|---|
@@ -210,7 +252,7 @@ goal it needs. D5b is the biggest, so it goes last.
 | Nightly slice of the live cases | Off until the owner allows messages at night | none |
 | Release exam and three-day run | A release | none |
 
-New frozen sets, each sealed before the work it measures: **context** (the prompts of the recorded conversations), **diagnosis** (10 recorded failures through the
+New frozen sets, each sealed before the work it measures (most are not built yet: section 9, item 10): **context** (the prompts of the recorded conversations), **diagnosis** (10 recorded failures through the
 diagnosis call), **intake** (150 or more messages), **size of the ask** (20 wordings), **proof** (planted false answers), **tool-call shape** (every recorded call
 replayed), and live overnight sets for **stuck** (8), **project questions** (6), **switch and return** (12), **memory**, and **asking** (30 requests at three levels).
 
@@ -220,7 +262,7 @@ memory at least 90 percent; projects 11 of 12; survey at least 90 percent of the
 Verdict 4 candidates: `archive/ULTIMATE_ASSISTANT_PLAN.md`, section 5. Its twenty requests are written and sealed (hash in the repository) before the work they
 measure, and their wording is not used while building.
 
-## 9. Sources
+## 11. Sources
 
 [Agent Skills specification](https://agentskills.io/specification.md) (name and description always loaded, the body on use, files on demand);
 [Anthropic, effective context engineering](https://anthropic.com/engineering/effective-context-engineering-for-ai-agents);
