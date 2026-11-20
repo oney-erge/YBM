@@ -1,8 +1,8 @@
 ---
 name: Tell me when something changes
 description: watch a folder or a web page in the background and message the person once for each change, instead of answering about it now
-when: Is the user asking to be told later when something changes or appears (a new file in a folder, a web page that changes), rather than asking about it now?
-when_at: 0.75
+when: Does the user want to be messaged later, each time something new happens (a new file appears in a folder, a web page changes), instead of an answer now? A question whose answer can be looked up now, such as the date or time something ends or happens, is not this, even when it says 'tell me when'.
+when_at: 0.55
 route: job
 tools:
   - job.manage
