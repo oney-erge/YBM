@@ -207,8 +207,9 @@ class CachedOperatorSchema:
         self._key: tuple | None = None
         self._schema: dict[str, Any] = {}
         self._finish_only = operator_response_schema([], actions=FINISH_ACTIONS)
-        # The same, for a step where the person may not be asked anything more (the autonomous level, after its question was sent back twice).
-        self._finish_without_asking = operator_response_schema([], actions=[a for a in FINISH_ACTIONS if a != OperatorAction.ASK_USER.value])
+        # The same, for a step where the person may not be asked anything more (the autonomous level, after its question was sent back twice): it can only answer. A "blocked"
+        # here was the model's reasoning pasted as the reason (live 11/19, ult_phone); an answer says what was done, what could not be, and the nearest thing.
+        self._finish_without_asking = operator_response_schema([], actions=[OperatorAction.DONE.value])
 
     def __call__(self, *, finish_only: bool = False, may_ask: bool = True) -> dict[str, Any]:
         if finish_only:
