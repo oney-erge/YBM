@@ -83,6 +83,15 @@ class AccountVault:
                 entries.append({"host": host, "username": entry.get("username"), "created_at": entry.get("created_at"), "url": entry.get("url")})
         return entries
 
+    def made_by(self, task_id: str) -> list[dict[str, Any]]:
+        """The logins this task made, with their passwords: what the person is told when an account was made for them (channels/telegram_notifications.py)."""
+        found = []
+        for host in self.vault.list_secrets().get(SERVICE, []):
+            entry = self.get(host)
+            if entry is not None and entry.get("task_id") == task_id and entry.get("password"):
+                found.append({"host": host, "username": entry.get("username") or "", "password": entry["password"], "url": entry.get("url") or ""})
+        return found
+
     def find(self, text: str) -> list[str]:
         """The saved hosts a person's words point at (``pinecone`` finds ``pinecone.local`` and ``notes.pinecone.io``)."""
         wanted = re.sub(r"[^a-z0-9.]+", "", text.lower())

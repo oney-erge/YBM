@@ -140,13 +140,14 @@ class TelegramBotApi:
         return list(data.get("result", []))
 
     async def send_message(
-        self, chat_id: str | int, text: str, reply_markup: dict[str, Any] | None = None
+        self, chat_id: str | int, text: str, reply_markup: dict[str, Any] | None = None, *, private: bool = False
     ) -> dict[str, Any]:
+        """``private``: the text holds a secret (a login made for the person); the audit trail records that it was sent, not what it said."""
         payload: dict[str, Any] = {"chat_id": chat_id, "text": text}
         if reply_markup is not None:
             payload["reply_markup"] = reply_markup
         data = await self._post("sendMessage", payload)
-        self._log_sent(chat_id, kind="text", text=text, response=data)
+        self._log_sent(chat_id, kind="private" if private else "text", text=None if private else text, response=data)
         return data
 
     async def set_my_commands(self, commands: list[tuple[str, str]]) -> dict[str, Any]:

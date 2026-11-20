@@ -37,7 +37,8 @@ class FakeTelegramClient:
         self.photos: list[tuple[str | int, str, str | None]] = []
         self.last_reply_markup: dict | None = None
 
-    async def send_message(self, chat_id: str | int, text: str, reply_markup: dict | None = None) -> dict:
+    async def send_message(self, chat_id: str | int, text: str, reply_markup: dict | None = None, *, private: bool = False) -> dict:
+        self.private_messages = [*getattr(self, "private_messages", []), text] if private else getattr(self, "private_messages", [])
         self.messages.append((chat_id, text))
         self.last_reply_markup = reply_markup
         return {"ok": True}
@@ -448,3 +449,53 @@ def test_failed_task_message_includes_the_last_real_step() -> None:
 
     assert "The last thing I tried was reading a document, and it did not work: PDF is password protected." in message
     assert "document.manage" not in message
+
+
+@pytest.mark.asyncio
+async def test_an_account_made_for_the_person_is_told_to_them_with_its_login_after_the_answer(tmp_path, monkeypatch) -> None:
+    from agent_control.accounts import AccountVault
+    from agent_control.config import SecretVaultConfig
+    from agent_control.storage.secrets import SecretVault
+
+    monkeypatch.setenv("AGENT_SECRET_VAULT_KEY", SecretVault.generate_key())
+    vault = AccountVault(SecretVaultConfig(path=str(tmp_path / "vault.json")))
+    password = vault.password_for_new_account("daycare.example", task_id="task_1", username="oney@example.com")
+    vault.password_for_new_account("other.example", task_id="task_2", username="someone")
+    client = FakeTelegramClient()
+    notifier = TelegramTaskNotifier(client, logins=vault.made_by)  # type: ignore[arg-type]
+    metadata = {"source_channel": ChannelType.TELEGRAM.value, "source_chat_id": "42", "synthesized_answer": "Your account is ready."}
+
+    await notifier.notify(TaskRecord(id="task_1", objective="Make me an account on daycare.example", status=TaskStatus.COMPLETED, metadata=metadata))
+
+    assert [text for _, text in client.messages][0] == "Your account is ready."  # the answer carries no password: the standard message strips credentials
+    login = client.messages[1][1]
+    assert "daycare.example: username oney@example.com" in login and f"password {password}" in login and "other.example" not in login
+    assert client.private_messages == [login]  # sent as private: its text is not recorded in the audit trail
+    plain = FakeTelegramClient()
+    await TelegramTaskNotifier(plain, logins=vault.made_by).notify(  # type: ignore[arg-type]
+        TaskRecord(id="task_3", objective="Say hi", status=TaskStatus.COMPLETED, metadata={**metadata, "synthesized_answer": "Hi."})
+    )
+    assert [text for _, text in plain.messages] == ["Hi."]  # a task that made no account says nothing about logins
+
+
+@pytest.mark.asyncio
+async def test_a_private_message_is_audited_as_sent_but_its_text_is_not_kept(tmp_path, monkeypatch) -> None:
+    """The login of an account made for the person is read out in chat; the audit trail (the database, its backups, the console) must never hold it."""
+    from agent_control.channels.telegram import TelegramBotApi
+    from agent_control.schemas import AuditEventType
+    from helpers import make_repos
+
+    repos, audit = make_repos(tmp_path)
+    api = TelegramBotApi("token", audit=audit)
+
+    async def fake_post(method, payload):
+        return {"ok": True, "result": {"message_id": 7}}
+
+    monkeypatch.setattr(api, "_post", fake_post)
+    await api.send_message("42", "login: daycare.example, password iq5E#4XLFq-48GzwM*A7", private=True)
+    await api.send_message("42", "an ordinary reply")
+
+    sent = [event for event in repos.audit.list_recent(50) if event.type == AuditEventType.MESSAGE_SENT]
+    assert "iq5E#4XLFq-48GzwM*A7" not in str([event.payload for event in sent])
+    assert {event.payload.get("kind") for event in sent} == {"private", "text"}
+    assert any(event.payload.get("text") == "an ordinary reply" for event in sent)

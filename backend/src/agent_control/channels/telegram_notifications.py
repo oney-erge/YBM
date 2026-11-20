@@ -77,8 +77,11 @@ class TelegramTaskNotifier:
     def __init__(
         self, client: TelegramBotApi, approvals: ApprovalRepository | None = None,
         clock: Callable[[], float] = time.monotonic, plans: PlanRepository | None = None,
+        logins: Callable[[str], list[dict[str, Any]]] | None = None,
     ) -> None:
         self.client = client
+        # task id -> the logins that task made (accounts.AccountVault.made_by): the person is told them once the answer is sent.
+        self.logins = logins
         self._clock = clock
         # Optional: lets the answer that drafted a plan carry the plan, with its Start and Cancel buttons.
         self.plans = plans
@@ -117,6 +120,9 @@ class TelegramTaskNotifier:
             except Exception:  # noqa: BLE001 - tidying the chat must never lose the answer
                 pass
 
+        if task.status == TaskStatus.COMPLETED and self.logins is not None:
+            await self._tell_logins(chat_id, task)
+
         # Send screenshot as separate photo if available
         screenshot_path = _get_screenshot_path(task)
         if screenshot_path:
@@ -130,6 +136,19 @@ class TelegramTaskNotifier:
                     f"Local file: {screenshot_path}\n"
                     f"Error: {_trim(str(exc), 600)}",
                 )
+
+    async def _tell_logins(self, chat_id: str, task: TaskRecord) -> None:
+        """An account was made for the person: say the username and the password, once, in a message of its own (it is the person's PC and chat; the model never saw the password)."""
+        try:
+            made = self.logins(task.id) if self.logins is not None else []
+            if not made:
+                return
+            lines = ["I made you an account, so here is the login:"]
+            lines.extend(f"- {entry['host']}: username {entry['username'] or '(none)'}, password {entry['password']}" for entry in made)
+            lines.append("You can delete this message once you have saved it; the console's Accounts page keeps the record.")
+            await self.client.send_message(chat_id, "\n".join(lines), private=True)  # the audit trail must not keep the password
+        except Exception:  # noqa: BLE001 - the answer was already sent; a login that could not be read out is not worth a failure
+            return
 
     def _plan_card(self, task: TaskRecord) -> tuple[str, dict[str, Any] | None] | None:
         """The plan this task drafted, as the message under its answer: the steps (whatever the model wrote around them) and the buttons."""

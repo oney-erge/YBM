@@ -7,6 +7,7 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- An account the assistant made for the person is told to them: after the answer, a message of its own gives the site, the username and the password (the model never saw the password: the vault made it, the browser typed it). `AccountVault.made_by(task_id)` reads what that task made; the standard answer still strips credentials. The console's Accounts page keeps the record. The message is sent as private: the audit trail records that it was sent, not what it said, so the password is never kept in the database or its backups (the branch as first written stored it in the clear; found 11/20 before it merged).
 - Replays of real runs for the README, the oneyerge.com tour and a browser demo (`docs/demo`). One page draws a phone and the computer from the logs of three runs on Qwen3.5 9B (finding the Steam games, organizing 24 downloads with an approval, writing and starting a small web page), with the real-time clock and the playback speed on screen. `build_data.py` reads the runs, `record.mjs` records any scene frame by frame, and `test_web.mjs` plays the browser version like a visitor. The README opens with the Organize replay and shows the other two; the social preview image was redrawn from the same frames.
 
 ### Changed
