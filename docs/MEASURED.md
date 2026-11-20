@@ -41,6 +41,19 @@ I have not rerun the exam, because a sealed exam is run once. The three fixed mi
 
 **Hands.** The cases that open Notepad and the calculator need an unlocked screen and a model that reads images. On the evening of 19 November the screen was locked and the image model returned errors, so those two were cancelled. That run scored 6 of 10. Two other misses (a download and a search on a page) were fixed afterward and passed when run alone.
 
+## Requests chosen for demonstrations
+
+Before recording any demonstration, I ran four requests from the everyday suite three times each on the running assistant, one run at a time, on the evening of 19 November.
+
+| Request | Passed |
+|---|---|
+| How many Steam games are installed on this PC? | 3 of 3 |
+| Build a small web page for a bill and a tip percentage | 3 of 3 |
+| Move the PNG files into a subfolder, then put them back | 3 of 3 |
+| The exact page title of three websites | 2 of 3 |
+
+The miss: the assistant tried a Steam inventory and a search instead of opening the three pages, and stopped at its limit of 12 steps with the titles unread. The 11 passes took from 30 to 82 seconds each. The undo in the third request is Telegram's. The console's Undo button has not been run against a real move.
+
 ## Speed
 
 | Measurement | Value | Source |
