@@ -140,7 +140,7 @@ field of its models has a size or is asked for without the grammar. **What it re
 structured answer. The operator's own reply stays with its per-tool schema (D6 part 1): none of its 2,362 recorded calls on 11/19 came near the cap. No recorded fixture
 changes (they are keyed on the prompts, and the scripted provider takes the new argument and ignores it). **Measured.** On the live model, the same calls before and after:
 classify 6.8 / 6.9 / 10.5 s and 8.9 / 6.8 / 6.1 s, a plan 32.4 s and 13.0 s, survey rows 20.2 s and 13.8 s, the fact keeper 3.9 s and 3.3 s; the server took every sized
-grammar. Live after the deploy: `cont_plan_revised_twice_stays_the_plan` (533 s before) and the count of calls that ran to the cap in the server's log.
+grammar. Live after the deploy (11/20, the computer kept awake, no standby in Windows' power log): the continuity suite 11 of 11 (9 of 11 on 11/19), `cont_plan_revised_twice_stays_the_plan` 189.5 s (533 s), and no call ran to the cap in 235 (19 in 2,523 on 11/19).
 
 ### D7. Your data in open formats (2026-11-19)
 
