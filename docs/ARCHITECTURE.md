@@ -183,6 +183,30 @@ None of them touches storage, runs a tool or calls a model, so each is tested on
 scenarios, the same frozen end-to-end suites. To add a rule, add it to the list where it belongs, with a test, not a branch in the tick.
 What follows the checks (the Auditor's grounding pass, fulfillment, the voice pass) stays in the worker, which owns the model calls.
 
+### What the model sees, and what happens when it keeps failing
+
+The Operator's prompt has a tool catalog that is large and fixed, and a few notes that are about this person and this moment. `orchestration/context.py` gives the notes their own
+room: the date, what was said just before (the person's last message and the assistant's last answer, word for word, when it was within six hours), the goal this continues, an
+index of the projects held for the person (`projects_memory.index_text`: active, parked, finished), the project's own instructions, and what bears on the request (the open plan
+and job first, then the abilities and skills). They go to the Operator as `situation`; when they do not fit, the least important is shortened first, at a line, with a note, and
+the catalog is cut to what is left, never the other way round. (Before this the notes were glued behind the catalog and the whole was cut from the end, so with a big catalog the
+open plan was the first thing lost.)
+
+`orchestration/retry.py` is what happens after a failure. Plain code notices that a task is going nowhere (the same call failing with the same error twice, two lookups in a row
+that found nothing, three failed steps, a sub-task out of steps); one short model call says what the person asked, what the attempts took for granted and which assumption was the
+first wrong one; code chooses a kind of approach that suits the cause, was not tried and fits the task (answer from the conversation, use the part that owns it, fix the call from its
+error, do one small part, another tool, a short program, look it up, step back), and what the tool's own error names comes before the model's guess; the note it writes into the
+history says what went wrong, what to do instead and what already failed, and the prompt then shows what came before as a short list, not the failed transcript. At most three
+changes, then the task ends with the blocker report. At the autonomous level the person is not asked "hand it to Claude Code?", and a question that comes a third time becomes one
+last step whose reply schema allows only an answer.
+
+The strict call schema (`tools/call_schema.py`) holds the Operator's reply to a real tool, a real operation and its real arguments while the local server writes it. llama.cpp spells
+`maxItems` and `maxLength` out as repeated grammar rules, so bounds above 16 items and 240 characters are left out of the schema and left to each tool's own validation; with
+`document.manage`'s 2,000 rows in it the server refused the whole schema on every call (2,266 times on 11/19) and the Operator ran with no constraint at all.
+
+Projects are held by `projects_memory.py` and the `memory.manage` tool (`projects`, `project`, `set_project`), with a readable copy of what is remembered under
+`.agent_control/memory` and `ybm export` for everything that is the person's, as text and JSON. Where each of these lives, and the rule for changing it, is `docs/DESIGN.md`.
+
 ### How the worker is laid out
 
 `orchestration/worker.py` held the tick, every stage of it and a thousand lines of helpers in one 4,100-line file. The tick is still there
