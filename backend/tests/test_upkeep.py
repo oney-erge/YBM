@@ -126,3 +126,20 @@ async def test_calibration_says_when_a_mark_no_longer_separates_and_where_to_mov
     assert not by_name["missing.md"].ok
     text = render(results)
     assert "2 of 3 skill(s) need a look" in text or "1 of 3" in text
+
+
+def test_a_schedule_the_person_deleted_a_month_ago_is_removed_by_the_daily_upkeep(tmp_path) -> None:
+    """docs/PLAN.md C2: the live database held 59 deleted schedules, every one of them a test's."""
+    from agent_control.schemas import ScheduleRecord, ScheduleStatus
+
+    repos, _audit = make_repos(tmp_path)
+    old = repos.schedules.create(ScheduleRecord(objective="old", cadence="daily", next_run_at=datetime.now(timezone.utc)))
+    new = repos.schedules.create(ScheduleRecord(objective="new", cadence="daily", next_run_at=datetime.now(timezone.utc)))
+    keep = repos.schedules.create(ScheduleRecord(objective="live", cadence="daily", next_run_at=datetime.now(timezone.utc)))
+    repos.schedules.update_status(old.id, ScheduleStatus.DELETED)
+    repos.schedules.update_status(new.id, ScheduleStatus.DELETED)
+    with repos.schedules.database.connect() as connection:
+        connection.execute("UPDATE schedules SET updated_at = ? WHERE id = ?", ((datetime.now(timezone.utc) - timedelta(days=45)).isoformat(), old.id))
+    removed = repos.schedules.purge_deleted((datetime.now(timezone.utc) - timedelta(days=30)).isoformat())
+    assert removed == 1
+    assert repos.schedules.get(old.id) is None and repos.schedules.get(new.id) is not None and repos.schedules.get(keep.id) is not None

@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import ipaddress
 from pathlib import Path
+import logging
 from typing import Any, Literal
 
-from pydantic import Field, SecretStr, ValidationError, field_validator
+from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict, YamlConfigSettingsSource
 
 from agent_control.config_sync import read_env_value
@@ -48,7 +49,6 @@ def is_loopback_host(host: str) -> bool:
 
 class IdentityConfig(StrictBaseModel):
     instance_name: str = "ybm-control"
-    owner_label: str = "local-user"
 
 
 class TelegramConfig(StrictBaseModel):
@@ -157,7 +157,6 @@ class CapabilityPolicy(StrictBaseModel):
 class ApprovalPolicyConfig(StrictBaseModel):
     default_timeout_seconds: int = Field(default=900, ge=1)
     require_approval_at_or_above: RiskLevel = RiskLevel.MEDIUM
-    approval_token_ttl_seconds: int = Field(default=900, ge=1)
 
 
 class StorageConfig(StrictBaseModel):
@@ -270,8 +269,6 @@ class LimitsConfig(StrictBaseModel):
     # indistinguishable, from the outside, from having died. 0 disables.
     heartbeat_interval_seconds: int = Field(default=300, ge=0)
     max_retries: int = Field(default=3, ge=0)
-    tool_timeout_seconds: int = Field(default=900, ge=1)
-    max_log_chars: int = Field(default=12000, ge=100)
     retry_backoff_seconds: int = Field(default=30, ge=1)
     # Wall-clock budget per task enforced by the worker. When exceeded the
     # task is forcibly transitioned to FAILED so the queue keeps moving.
@@ -411,12 +408,6 @@ class WebSearchAdapterConfig(StrictBaseModel):
     user_agent: str = "Mozilla/5.0 (compatible; YBM/1.0)"
 
 
-class TerminalAdapterConfig(StrictBaseModel):
-    enabled: bool = False
-    allowed_working_dirs: list[str] = Field(default_factory=list)
-    blocked_command_patterns: list[str] = Field(default_factory=lambda: ["rm -rf", "del /s", "format "])
-
-
 class CodingAssistantAdapterConfig(StrictBaseModel):
     enabled: bool = False
     command_template: list[str] = Field(default_factory=list)
@@ -506,12 +497,6 @@ class CodeInterpreterDockerConfig(StrictBaseModel):
     run_as_user: str | None = None
 
 
-class CodeInterpreterJupyterConfig(StrictBaseModel):
-    enabled: bool = False
-    image: str = "python:3.12-slim"
-    idle_timeout_seconds: int = Field(default=900, ge=30, le=86400)
-
-
 class CodeInterpreterRemoteBackendConfig(StrictBaseModel):
     enabled: bool = False
     api_key_env: str | None = None
@@ -567,15 +552,12 @@ class CodeInterpreterAdapterConfig(StrictBaseModel):
     allowed_packages: list[str] = Field(default_factory=list)
     resource_limits: CodeInterpreterResourceLimitsConfig = Field(default_factory=CodeInterpreterResourceLimitsConfig)
     docker: CodeInterpreterDockerConfig = Field(default_factory=CodeInterpreterDockerConfig)
-    jupyter: CodeInterpreterJupyterConfig = Field(default_factory=CodeInterpreterJupyterConfig)
     remote_backends: dict[str, CodeInterpreterRemoteBackendConfig] = Field(default_factory=dict)
-    session_ttl_seconds: int = Field(default=900, ge=30, le=86400)
 
 
 class DesktopAdapterConfig(StrictBaseModel):
     screenshot_enabled: bool = False
     control_enabled: bool = False
-    screenshot_interval_seconds: int = Field(default=10, ge=1)
     screenshot_format: Literal["png"] = "png"
 
 
@@ -705,7 +687,6 @@ class AdaptersConfig(StrictBaseModel):
     browser: BrowserAdapterConfig = Field(default_factory=BrowserAdapterConfig)
     adapter_factory: AdapterFactoryConfig = Field(default_factory=AdapterFactoryConfig)
     http_request: HttpRequestAdapterConfig = Field(default_factory=HttpRequestAdapterConfig)
-    terminal: TerminalAdapterConfig = Field(default_factory=TerminalAdapterConfig)
     coding_assistant: CodingAssistantAdapterConfig = Field(default_factory=CodingAssistantAdapterConfig)
     coding_agent: CodingAgentAdapterConfig = Field(default_factory=CodingAgentAdapterConfig)
     code_interpreter: CodeInterpreterAdapterConfig = Field(default_factory=CodeInterpreterAdapterConfig)
@@ -843,6 +824,15 @@ class VisionConfig(StrictBaseModel):
     swap_models: bool = True
 
 
+logger = logging.getLogger(__name__)
+
+#: Settings that nothing read and that were removed (docs/PLAN.md, C3). A config.yaml that still sets one loads: the key is dropped with a warning, not refused.
+REMOVED_SETTINGS = (
+    "identity.owner_label", "approval_policy.approval_token_ttl_seconds", "limits.tool_timeout_seconds", "limits.max_log_chars",
+    "adapters.terminal", "adapters.code_interpreter.jupyter", "adapters.code_interpreter.session_ttl_seconds", "adapters.desktop.screenshot_interval_seconds",
+)
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="AGENT_",
@@ -878,6 +868,21 @@ class AppSettings(BaseSettings):
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     upkeep: UpkeepConfig = Field(default_factory=UpkeepConfig)
     vision: VisionConfig = Field(default_factory=VisionConfig)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_removed_settings(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for path in REMOVED_SETTINGS:
+            *parents, key = path.split(".")
+            node: Any = data
+            for part in parents:
+                node = node.get(part) if isinstance(node, dict) else None
+            if isinstance(node, dict) and key in node:
+                del node[key]
+                logger.warning("the setting %s was removed (nothing read it); delete it from your config", path)
+        return data
 
     @classmethod
     def settings_customise_sources(

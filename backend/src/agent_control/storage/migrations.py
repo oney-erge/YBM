@@ -374,6 +374,22 @@ ADDITIVE_MIGRATIONS = [
 ]
 
 
+#: Tables that an older schema made and no code reads or writes any more (plans of a task, its subtasks and their steps; unused since P3). Dropped when empty, children first;
+#: one that still holds rows is left as it is. A new database never has them.
+LEGACY_TABLES = ("plan_steps", "subtasks", "plans")
+
+
+def drop_empty_legacy_tables(connection) -> list[str]:
+    dropped = []
+    for table in LEGACY_TABLES:
+        if connection.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone() is None:
+            continue
+        if connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is None:
+            connection.execute(f"DROP TABLE {table}")
+            dropped.append(table)
+    return dropped
+
+
 def apply_additive_migrations(connection) -> None:
     """Run each additive migration if its column is missing.
 
@@ -385,6 +401,7 @@ def apply_additive_migrations(connection) -> None:
         existing = {row[1] for row in rows}
         if column not in existing:
             connection.execute(statement)
+    drop_empty_legacy_tables(connection)
     backfill_episodes(connection)
 
 
