@@ -358,7 +358,8 @@ class BrowserAdapter:
             where = "a blank tab" if url in {"", "about:blank"} else url
             raise ValueError(
                 f"None of the fields ({', '.join(str(key) for key in fields)}) matched anything on {where}, so nothing was filled in. "
-                "Open the form's page first (browser.open) and use the field labels exactly as the page shows them."
+                "Open the form's page first (browser.open) and use the words it lists under Fields exactly as the page shows them; for a page's own search box, "
+                "browser.open with operation search, the page's url and your query does it in one call."
             )
         if isinstance(filled_items, list):
             unmatched = [str(key) for key in fields if str(key) not in {str(item) for item in filled_items}]
@@ -855,6 +856,20 @@ def _tabs_summary(tabs: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _field_words(forms: list[Any]) -> list[str]:
+    """What each box on the page is called, in every way the fill tool finds it (label, name, id, placeholder), so a model fills a field by words that exist.
+    A search box with only a placeholder used to show as "Forms detected: 1", and the model wrote a field name of its own for it (live 11/19, hands_search_page)."""
+    found = []
+    for form in forms:
+        for item in (form.get("inputs") or []) if isinstance(form, dict) else []:
+            if not isinstance(item, dict) or str(item.get("type") or "").lower() in {"hidden", "submit", "button", "password"}:
+                continue
+            words = list(dict.fromkeys(str(item.get(key)).strip() for key in ("label", "name", "id", "placeholder", "ariaLabel") if str(item.get(key) or "").strip()))
+            if words:
+                found.append(" / ".join(words))
+    return found[:12]
+
+
 def _page_summary_text(page: dict[str, Any]) -> str:
     lines = [
         f"Title: {page.get('title') or 'Untitled'}",
@@ -868,6 +883,9 @@ def _page_summary_text(page: dict[str, Any]) -> str:
     forms = page.get("forms") if isinstance(page.get("forms"), list) else []
     if forms:
         lines.append(f"Forms detected: {len(forms)}")
+        fields = _field_words(forms)
+        if fields:
+            lines.append("Fields (any of these words names a field): " + "; ".join(fields))
     buttons = page.get("buttons") if isinstance(page.get("buttons"), list) else []
     if buttons:
         lines.append("Buttons: " + "; ".join(str(item) for item in buttons[:12]))

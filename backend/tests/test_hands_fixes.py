@@ -157,3 +157,20 @@ def test_the_whole_fields_object_and_the_button_to_press_have_other_names_too() 
     with pytest.raises(ValueError):
         BrowserFillFormStepInput(operation="fill_form_step", submit_button="Search", url="http://x/")  # a button with nothing to fill is still refused
 
+
+
+def test_a_page_lists_its_boxes_by_every_word_that_names_them_so_a_field_is_filled_by_words_that_exist() -> None:
+    """Live 11/19 (hands_search_page): a search box with only a placeholder was shown as "Forms detected: 1" and the model wrote a field name of its own, eleven times."""
+    from agent_control.tools.browser import _page_summary_text
+
+    page = {
+        "title": "Hands search", "url": "http://x/search.html", "headings": ["Library search"], "buttons": ["Search"],
+        "forms": [{"inputs": [
+            {"type": "text", "name": "", "id": "q", "placeholder": "Search", "label": ""},
+            {"type": "hidden", "name": "csrf"}, {"type": "password", "name": "pw"}, {"type": "submit", "name": "go"},
+            {"type": "email", "name": "email", "id": "email", "label": "Your email"},
+        ]}],
+    }
+    text = _page_summary_text(page)
+    assert "Fields (any of these words names a field): q / Search; Your email / email" in text
+    assert "csrf" not in text and "pw" not in text
