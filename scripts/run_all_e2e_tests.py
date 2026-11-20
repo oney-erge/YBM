@@ -2576,8 +2576,21 @@ def _estimate_eta(elapsed_s: float, done: int, total: int) -> str:
 
 
 if __name__ == "__main__":
+    # A live run is not measured on a sleeping computer: on 11/19 and 11/20 the PC went into connected standby three times during one suite (6, 7 and 27
+    # minutes) and the cases running then stalled. The run holds the computer awake the way a long job does (agent_control/jobs/awake.py), and lets go at the end.
+    try:
+        from agent_control.jobs.awake import KeepAwake
+
+        _awake = KeepAwake()
+    except Exception:  # noqa: BLE001 - a run outside the backend's environment still runs
+        _awake = None
+    if _awake is not None:
+        _awake.want(True)
     try:
         sys.exit(asyncio.run(main()))
     except KeyboardInterrupt:
         print("\nInterrupted.")
         sys.exit(130)
+    finally:
+        if _awake is not None:
+            _awake.want(False)

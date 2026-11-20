@@ -850,3 +850,25 @@ async def test_status_names_the_job_just_started_in_a_chat_with_many_old_ones(tm
     listed = repos.jobs.list(chat_id="100", limit=20)
     assert len(listed) == 20 and listed[-1].id == new.id and listed[0].goal == "old research 11"  # the newest twenty, oldest first
     assert all(job.routing.get("source_chat_id") == "100" for job in listed)
+
+
+def test_a_task_being_worked_on_keeps_the_computer_awake_and_one_waiting_for_the_person_does_not(tmp_path) -> None:
+    """Live 11/20: the laptop went into connected standby in the middle of a task three times in one hour (6, 7 and 27 minutes)."""
+    from agent_control.jobs.awake import KeepAwake
+    from agent_control.schemas import TaskStatus
+
+    repos, audit = make_repos(tmp_path)
+    seen: list[bool] = []
+
+    class Spy(KeepAwake):
+        def want(self, awake: bool) -> None:
+            seen.append(awake)
+
+    runner = JobRunner(repos, audit, lambda _job: _Io().io, say=_Chat().say, reports_dir=tmp_path / "jobs", awake=Spy())
+    task = repos.tasks.create("Revise the plan")
+    repos.tasks.update_status(task.id, TaskStatus.RUNNING)
+    asyncio.run(runner.tick())
+    assert seen[-1] is True
+    repos.tasks.update_status(task.id, TaskStatus.AWAITING_APPROVAL)
+    asyncio.run(runner.tick())
+    assert seen[-1] is False  # waiting for the person can last hours
