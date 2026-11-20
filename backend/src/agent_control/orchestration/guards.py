@@ -329,9 +329,12 @@ class GuardStage:
         definitions = getattr(self.executor, "tool_definitions", {}) if self.executor is not None else {}
         untried = tuple(sorted(name for name, definition in definitions.items() if definition.enabled and name not in used and name not in _NOT_AN_APPROACH))
         home = ""
-        plans = self.repositories.plans.list(statuses=[PlanStatus.PROPOSED, PlanStatus.ACTIVE, PlanStatus.PAUSED], conversation_id=task.conversation_id, limit=1)
-        if plans:
-            home = "plan.manage with operation revise and the person's own words as the instruction: the plan open in this chat is the one they mean"
+        # A plan owns this request only when the task's own steps went to it. An open plan in the chat is not evidence that a download is about the plan (live 11/19: a failed
+        # download was told to revise a plan).
+        if "plan.manage" in used:
+            plans = self.repositories.plans.list(statuses=[PlanStatus.PROPOSED, PlanStatus.ACTIVE, PlanStatus.PAUSED], conversation_id=task.conversation_id, limit=1)
+            if plans:
+                home = "plan.manage with operation revise and the person's own words as the instruction: the plan open in this chat is the one they mean"
         return retry.Facts(home=home, last_error=last_error, untried_tools=untried)
 
     def _retry_available(self, facts: retry.Facts, history: list[dict[str, Any]]) -> set[str]:

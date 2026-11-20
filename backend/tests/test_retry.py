@@ -214,3 +214,15 @@ async def test_when_no_kind_fits_it_is_written_down_and_the_task_ends_the_way_it
     result = await worker._retry_step(task, list(history), "s1")
     assert result is not None and result.metadata["retry_handled_through"] == 2
     assert result.metadata["operator_history"] == history  # no note was added: there was nothing left to try
+
+
+@pytest.mark.asyncio
+async def test_an_open_plan_is_not_the_home_of_a_request_that_never_went_to_it(tmp_path):
+    """Live 11/19 (hands_download): a download failed while a plan was open in the chat, and the note told it to revise the plan."""
+    repos, audit = make_repos(tmp_path)
+    worker = _worker(repos, audit, _Provider(retry.Diagnosis(asked="a", assumed="b", mistake="c", cause="wrong_tool")))
+    history = [_failed(tool="web.search", error="blocked"), _failed(tool="web.search", error="blocked")]
+    task = _task(repos, history)  # a plan is open in this chat
+    changed = await worker._retry_step(task, list(history), "s1")
+    assert changed.metadata["retry_changes"][0]["kind"] != "owning_home"
+    assert "operation revise" not in changed.metadata["operator_history"][-1]["error"]
