@@ -1041,3 +1041,40 @@ def test_diagnose_turn_fills_in_values_measured_when_the_fixtures_were_built() -
     assert passed is False and "99" in reason and "{{" not in reason
     passed, reason = runner._diagnose_turn(case(bot_reply_excludes_all=["{{h3_steam_count}}"]), turn, is_followup=False, fixtures=fixtures)
     assert passed is False and "14" in reason
+
+
+@pytest.mark.asyncio
+async def test_in_auto_mode_a_chat_reply_with_no_task_is_the_answer_whatever_the_stored_verdict(monkeypatch) -> None:
+    """Live 11/20 (cont_a_fact_that_changes_keeps_its_history): "I work at Initech." was answered in chat in 18 s, the stored verdict said "task", and the turn
+    was failed as "intake or worker layer dropped it"."""
+    runner = _runner_module()
+    reply = {"text": "Noted: you work at Initech.", "created_at": "2026-11-20T03:49:06+00:00"}
+
+    async def no_task(*_args, **_kwargs):
+        return None
+
+    async def sent(*_args, **_kwargs):
+        return None
+
+    async def no_wait(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(runner, "admin_summary", lambda: {"tasks": []})
+    monkeypatch.setattr(runner, "_send_message", sent)
+    monkeypatch.setattr(runner, "_find_new_task", no_task)
+    monkeypatch.setattr(runner, "fetch_classifier_verdict_for_text", lambda *_a, **_k: {"is_task": True, "reason": "a fact about the person"})
+    monkeypatch.setattr(runner, "fetch_message_sent_events", lambda _since: [reply])
+    monkeypatch.setattr(runner, "_is_filler_reply", lambda event: False)
+    monkeypatch.setattr(runner.asyncio, "sleep", no_wait)
+
+    def capture(turn, _start):
+        turn.telegram_sent_events = [reply]
+        turn.telegram_confirmed_text = reply["text"]
+        turn.telegram_update_count = 1
+
+    monkeypatch.setattr(runner, "_capture_sent_messages", capture)
+
+    turn = await runner._run_turn("initial", "I work at Initech.", 60, expects_task="auto")
+
+    assert turn.error is None or "dropped" not in turn.error
+    assert turn.final_status == "chat" and turn.bot_reply_text == "Noted: you work at Initech."
