@@ -6,7 +6,7 @@ import pytest
 
 from agent_control.orchestration import answer_checks
 from agent_control.orchestration.check_entries import CHECK_ENTRY_STRATEGY
-from agent_control.orchestration.claims import Claim, unbacked_claims
+from agent_control.orchestration.claims import Claim, unbacked_claims, unsupported_write_claim
 from agent_control.schemas import TaskRecord
 
 
@@ -119,3 +119,16 @@ def test_a_file_named_by_its_extension_is_a_write_claim_nothing_backs(answer) ->
 @pytest.mark.parametrize("answer", ["I could not create code.txt.", "code.txt was not created.", "The report lives in notes.md and I changed nothing.", "Pi is 3.14159."])
 def test_a_denial_or_a_file_name_without_a_creation_is_not_a_claim(answer) -> None:
     assert unbacked_claims(answer, [], {}) == []
+
+
+def test_a_write_that_has_not_happened_yet_is_not_a_claim_that_it_did():
+    """Sealed exam 11/19 (v4_plan_revise_twice): an answer about a plan's contents, in the future tense, was read as "files were created"."""
+    plan_answer = (
+        "The plan has been updated (version 3) to explicitly specify that all visual assets, including icons and background images, "
+        "will be generated inline using CSS and JavaScript within a single HTML file."
+    )
+    assert unsupported_write_claim(plan_answer, [], {}) is None
+    assert unsupported_write_claim("The files would be created in the Reports folder once you approve.", [], {}) is None
+    # The same words in the past tense still need a recorded write.
+    assert unsupported_write_claim("The images were generated inline within a single HTML file.", [], {}) is not None
+    assert unsupported_write_claim("I created the file notes.txt in the Reports folder.", [], {}) is not None

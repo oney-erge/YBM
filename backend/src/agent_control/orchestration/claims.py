@@ -29,9 +29,12 @@ _WRITE_CLAIM = re.compile(
 )
 
 
+#: Words that put a write out of the claim's reach: it did not happen ("could not create"), or it has not happened yet ("will be generated inline"). The sealed
+#: exam (11/19, v4_plan_revise_twice) refused a plan revision that said where a page's pictures "will be generated" in "a single HTML file", twice, and blocked the task.
 _NEGATED_CLAIM = re.compile(
     r"(?i)\b(?:not|cannot|can't|can’t|could\s?n[o']?t|couldn’t|un(?:able|successful)|"
-    r"fail(?:ed|s|ure)?|did\s?n[o']?t|was\s?n[o']?t|were\s?n[o']?t|no|never|without|skip(?:ped)?)\b"
+    r"fail(?:ed|s|ure)?|did\s?n[o']?t|was\s?n[o']?t|were\s?n[o']?t|no|never|without|skip(?:ped)?|"
+    r"will|would|shall|going\s+to|to\s+be)\b"
 )
 
 
@@ -91,11 +94,13 @@ def _clause_before(answer: str, end: int) -> str:
 
 
 def _claim_is_negated(answer: str, start: int) -> bool:
-    """Whether a write claim sits inside a denial of that same write.
+    """Whether a write claim sits inside a denial of that same write, or a statement of one that has not happened yet.
 
     "I could not create the files" states the truth this guard exists to
     protect; flagging it would push a correctly-behaving run into a pointless
-    replan and teach the operator that honesty is penalized.
+    replan and teach the operator that honesty is penalized. "The images will
+    be generated inline" describes a plan, which is what an answer about a
+    plan says.
     """
     clause_start = max(
         answer.rfind(".", 0, start), answer.rfind("\n", 0, start), answer.rfind(";", 0, start)
