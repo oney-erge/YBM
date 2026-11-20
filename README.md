@@ -23,7 +23,7 @@ I built it because I wanted to message my own computer and have it do the work. 
 ## What it does
 
 - **Finds things and answers questions about them.** "How many Steam games do I have?" or "Which paper says when the warranty ends?" It says how thoroughly it looked, and it says "not found" only after a search finished or a read of the exact path failed.
-- **Changes files after showing a plan.** Organizing a folder, renaming, moving. It lists the moves, waits for your approval, and writes a receipt. On Telegram, "undo that" moves the files back.
+- **Changes files after showing a plan.** Organizing a folder, renaming, moving. It lists the moves, waits for your approval, and writes a receipt. An Undo button on the receipt, or "undo that" on Telegram, moves the files back.
 - **Writes a program when no tool fits.** A small web page that does a calculation, or a script that reads five websites and compares them. It runs the program on your machine and gives you the link or the result.
 - **Researches in the background.** A request such as "find all the daycares around me" becomes a job that keeps searching until new searches stop finding anything. It keeps a source for each value and saves a report as Markdown and Word. This is the least finished part; see [Measured results](docs/MEASURED.md).
 - **Works in a browser and on the desktop.** It opens pages, fills in forms, and reads what is on the screen. Desktop control is Windows only.
@@ -65,7 +65,7 @@ Run `~/ybm/ybm.sh` later. For a source checkout, use `run.bat` on Windows, `./ru
 
 1. YBM opens in your browser and shows the model it found. It can use a local model through Ollama, LM Studio, or LocalDeploy, or a provider API key you already have. It does not call a paid API just to choose a model. If it finds none, a short wizard lists the local models that fit your hardware and downloads the one you pick, or takes a provider API key.
 2. Create a disposable test folder containing a few sample files. File access starts off; select that folder and allow changes after approval.
-3. Ask: **"Organize the files in my test folder by type."** Review the plan and approve it. The receipt records what happened. If you use Telegram, send **"undo that"** and approve the move back.
+3. Ask: **"Organize the files in my test folder by type."** Review the plan and approve it. The receipt records what happened. Press **Undo** on the receipt (on Telegram, send "undo that") and approve the move back.
 
 [Using YBM](docs/USING.md) explains the console, approvals, and troubleshooting.
 
@@ -99,7 +99,7 @@ The second row missed my target of 18. [Measured results](docs/MEASURED.md) list
 - **Supervision.** At *Ask* and *Balanced* it stops for consequential actions. At *Autonomous* it does not, apart from money and critical operations. It is not a hardened production service. Keep the admin console on localhost unless you understand the authentication and network implications.
 - **Small models make mistakes.** A 9B model can misread a request, take a wrong route, or claim a result without a record behind it. YBM checks its claims against what was recorded, and it says when it cannot do a task. These checks are imperfect; the measured results list the misses.
 - **WhatsApp** uses an unofficial client and carries account risk. Voice transcription is off by default and needs the `voice` extra.
-- **Undo is on Telegram only.** The web console has no undo yet.
+- **Undo covers moves and renames only.** It does not restore a deleted or edited file.
 - **Start with a test folder** and review access settings before granting them.
 
 Read the [threat model](docs/THREAT_MODEL.md) before granting access to important files or accounts. See [Security](SECURITY.md) to report a vulnerability.

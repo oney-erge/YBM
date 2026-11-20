@@ -1,8 +1,8 @@
 import { useState } from "react"
 import { Link } from "react-router"
 import { AlertTriangle, Download, ExternalLink, Globe, HardDrive, LoaderCircle, ShieldCheck, ShieldQuestion } from "lucide-react"
-import type { TaskReceipt, TaskStatus } from "@/lib/api"
-import { useTaskReceipt } from "@/lib/queries"
+import { ApiError, type TaskReceipt, type TaskStatus } from "@/lib/api"
+import { useTaskReceipt, useUndoTask } from "@/lib/queries"
 import { cn } from "@/lib/utils"
 import { StatusBadge } from "@/components/tasks/StatusBadge"
 import { formatDuration } from "@/lib/time"
@@ -110,6 +110,7 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
   const { data: receipt, isPending } = useTaskReceipt(taskId)
   // Declared before the loading early-return: hooks cannot be conditional.
   const [expanded, setExpanded] = useState(false)
+  const undo = useUndoTask()
 
   if (isPending || !receipt) {
     return (
@@ -268,6 +269,29 @@ export function TaskReceiptCard({ taskId }: { taskId: string }) {
           </Link>
         </div>
       </div>
+      {(receipt.can_undo || undo.isSuccess || undo.isError) && (
+        <div className="flex items-center justify-between gap-3 text-[11px]">
+          {undo.isSuccess ? (
+            <span className="text-muted-foreground">{undo.data.message}</span>
+          ) : undo.isError ? (
+            <span className="text-destructive">
+              {undo.error instanceof ApiError ? undo.error.message : "Could not start the undo."}
+            </span>
+          ) : (
+            <span className="text-muted-foreground">Moved files can be put back where they were.</span>
+          )}
+          {receipt.can_undo && !undo.isSuccess && (
+            <button
+              type="button"
+              disabled={undo.isPending}
+              onClick={() => undo.mutate(taskId)}
+              className="rounded-md border border-border px-2 py-0.5 font-medium hover:bg-muted disabled:opacity-60"
+            >
+              {undo.isPending ? "Starting..." : "Undo"}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   )
 }

@@ -44,6 +44,7 @@ import {
   scheduleWorkflow,
   watchWorkflow,
   saveWorkflow,
+  undoTask,
   selectLLMPreset,
   sendChatMessage,
   sendTaskSignal,
@@ -249,6 +250,18 @@ export function useTaskSignal() {
     onSuccess: (_data, variables) => {
       void queryClient.invalidateQueries({ queryKey: ["tasks"] })
       void queryClient.invalidateQueries({ queryKey: ["tasks", "trace", variables.taskId] })
+      void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
+    },
+  })
+}
+
+export function useUndoTask() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (taskId: string) => undoTask(taskId),
+    onSuccess: (_result, taskId) => {
+      void queryClient.invalidateQueries({ queryKey: ["tasks"] })
+      void queryClient.invalidateQueries({ queryKey: ["tasks", "receipt", taskId] })
       void queryClient.invalidateQueries({ queryKey: ["chat", "messages"] })
     },
   })

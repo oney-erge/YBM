@@ -778,10 +778,20 @@ export const TaskReceiptSchema = z.object({
   token_usage: TokenUsageSchema.partial(),
   duration_seconds: z.number(),
   uncertainties: z.array(z.string()),
+  // True while Undo is offered: a finished move that was recorded and not yet undone.
+  can_undo: z.boolean().default(false),
   created_at: z.string(),
   updated_at: z.string(),
 })
 export type TaskReceipt = z.infer<typeof TaskReceiptSchema>
+
+const UndoTaskResponseSchema = z.object({ message: z.string(), task: TaskRecordSchema })
+
+// Puts a task's moved files back, the same as "undo that" on Telegram: a new
+// task that asks for approval like the move did and never overwrites.
+export function undoTask(taskId: string) {
+  return apiFetch(`/api/tasks/${taskId}/undo`, UndoTaskResponseSchema, { method: "POST" })
+}
 
 export function getTaskReceipt(taskId: string) {
   return apiFetch(`/api/tasks/${taskId}/receipt`, TaskReceiptSchema)

@@ -68,6 +68,7 @@ from agent_control.supervisor import read_log_tail
 from agent_control.channels.base import remember_standing_instruction
 from agent_control.channels.memory import detect_remember_request, memory_context, recent_artifacts_context
 from agent_control.channels.quick_answers import clarification_token
+from agent_control.channels.undo_command import can_undo, start_undo
 from agent_control.llm.call_log import record_concierge_call
 from agent_control.clarification import assess_unaddressed_reply, expire_stale_clarifications, is_user_plan_step, reply_candidates, resume_clarifying_task
 from agent_control.schemas import (
@@ -78,8 +79,10 @@ from agent_control.schemas import (
     Capability,
     CapabilityAccessMode,
     ChannelType,
+    InboundMessage,
     IntentRoute,
     MemoryFact,
+    MessageKind,
     MemorySource,
     ProjectRecord,
     RiskLevel,
@@ -1612,6 +1615,32 @@ def create_admin_router(
             payload={"replay_of": source.id, "step_count": len(plan)},
         )
         return {"task": _redact_admin_output(replay_task.model_dump(mode="json"), loaded)}
+
+    @router.post("/api/tasks/{task_id}/undo")
+    def admin_undo_task(request: Request, task_id: str) -> dict[str, Any]:
+        """Puts a task's moved files back: the console's Undo button, the same as "undo that" on Telegram.
+
+        The move back is a new task through the ordinary replay pipeline, so it asks for approval like the move did, and it never
+        overwrites (channels/undo_command.py).
+        """
+        loaded = require_admin(request)
+        repositories = repositories_loader()
+        source = repositories.tasks.get(task_id)
+        if source is None:
+            raise HTTPException(status_code=404, detail="task not found")
+        if not can_undo(source):
+            raise HTTPException(status_code=409, detail="there is nothing to undo for this task")
+        inbound = InboundMessage(
+            channel=ChannelType.WEB, kind=MessageKind.TEXT, sender_id="admin",
+            chat_id=str(source.metadata.get("source_chat_id") or WEB_CHAT_ID), text="undo that",
+        )
+        audit = AuditLogger(repositories.audit, loaded.logging.redact_patterns)
+        message = start_undo(repositories, audit, source, inbound=inbound, conversation_id=source.conversation_id)
+        started = repositories.tasks.get(task_id)
+        undo_task = repositories.tasks.get(str(started.metadata.get("undo_task_id") or "")) if started else None
+        if undo_task is None:
+            raise HTTPException(status_code=409, detail=message)
+        return {"message": message, "task": _redact_admin_output(_task_snapshot(undo_task), loaded)}
 
     @router.post("/api/tasks/{task_id}/save_workflow")
     def admin_save_workflow(request: Request, task_id: str, payload: AdminSaveWorkflowRequest) -> dict[str, Any]:
@@ -3610,6 +3639,7 @@ def build_task_receipt(repositories: Repositories, settings: AppSettings, task_i
         "token_usage": token_usage,
         "duration_seconds": duration_seconds,
         "uncertainties": uncertainties,
+        "can_undo": can_undo(task),
         "created_at": task.created_at.isoformat(),
         "updated_at": task.updated_at.isoformat(),
     }

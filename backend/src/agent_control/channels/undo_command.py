@@ -24,6 +24,17 @@ _UNDO = re.compile(
 MAX_UNDO_MOVES = 300
 
 
+def can_undo(task: TaskRecord) -> bool:
+    """Whether Undo is offered for a task: a finished move that was recorded, not yet undone, and not itself an undo."""
+    metadata = task.metadata
+    return (
+        task.status == TaskStatus.COMPLETED
+        and bool(metadata.get("undo_moves"))
+        and not metadata.get("undo_task_id")
+        and not metadata.get("undo_of_task_id")
+    )
+
+
 def _reply(inbound: InboundMessage, text: str) -> OutboundMessage:
     return OutboundMessage(channel=inbound.channel, chat_id=inbound.chat_id, text=text)
 

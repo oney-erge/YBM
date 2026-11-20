@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- An Undo button on the console's task receipt. Undo ("undo that", `/undo`, the button under the answer) existed only on Telegram, so after a move started from the web console, the channel most people begin with, there was no way back. `POST /admin/api/tasks/{id}/undo` starts the same move-back task as the Telegram button (it asks for approval and never overwrites), the receipt says `can_undo`, and `channels/undo_command.can_undo` is the one place that decides whether Undo is offered, for the receipt, the route and the Telegram button. Two tests in `test_admin.py`; the existing undo tests pass.
+
 ### Changed
 
 - The continuity suite has an eleventh case, `cont_a_date_asked_for_is_answered_not_watched`: a lease is read for its end date (asked with "tell me when") and the next message asks for the rent in the same lease. It holds the answer against the skill change above on the real bot: the date is given, no watch is started.
