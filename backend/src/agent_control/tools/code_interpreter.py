@@ -400,7 +400,7 @@ class CodeInterpreterAdapter:
                     previous_attempt=previous_attempt,
                 ),
                 GeneratedPythonScript,
-                grammar=False,  # code inside a JSON string, under the grammar, crawled for twelve minutes (docs/DESIGN.md, D6)
+                grammar=False,  # the script is the one field that cannot have a size (docs/DESIGN.md, D6-2)
             )
 
         try:
