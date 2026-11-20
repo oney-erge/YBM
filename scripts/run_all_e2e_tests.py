@@ -1567,7 +1567,10 @@ async def _run_turn(
             turn.classifier_verdict = verdict
             # No verdict at all means a chat command ("save that as a workflow", "forget my cat") answered the message before it was
             # classified; collect_chat_reply still fails the turn when no reply arrives.
-            if expects_task == "auto" and (verdict is None or verdict.get("is_task") is False):
+            # In auto mode a real reply that came with no task is the answer, whatever the stored verdict says. On 11/20 "I work at Initech." was answered in chat
+            # in 18 seconds (a remark is not a task); the stored verdict said "task", and the turn was failed as dropped.
+            answered_in_chat = any(not _is_filler_reply(event) for event in fetch_message_sent_events(turn_start_iso))
+            if expects_task == "auto" and (verdict is None or verdict.get("is_task") is False or answered_in_chat):
                 return await collect_chat_reply()
             if verdict is not None:
                 reason = str(verdict.get("reason") or "")
