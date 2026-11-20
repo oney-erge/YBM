@@ -15,6 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent_control.human_text import describe_action, humanize, progress_phrase
+from agent_control.orchestration.autonomy import is_code_work
 from agent_control.error_text import explain_for_user, explain_tool_input_error, readable_reason
 from agent_control.text import trim_text as _trim
 from agent_control.schemas import TaskRecord, TaskStatus, utc_now
@@ -419,7 +420,7 @@ def _blocker_report(task: TaskRecord, error: str | None) -> list[str]:
     if any(marker in low for marker in ("devtools", "remote debugging", "chrome is not")):
         routes.append("Start Chrome with remote debugging (the command above), then say 'try again'.")
     routes.append("Say 'try again' and I will keep working on it from where it stopped, using a different way than the ones above.")
-    if "claude_code" not in (metadata.get("declined_methods") or []):
+    if "claude_code" not in (metadata.get("declined_methods") or []) and is_code_work(metadata):
         routes.append("Say 'hand it to Claude Code' and a coding agent on this computer takes it, with what I learned.")
     routes.append("Tell me what you see or what you would change (a name, a place, a folder), and I will use it.")
     lines.extend(["", "Ways forward:", *(f"{chr(65 + index)}. {route}" for index, route in enumerate(routes[:4]))])
