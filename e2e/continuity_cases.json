@@ -773,5 +773,70 @@
         "expects_task": "auto"
       }
     ]
+  },
+  {
+    "id": "cont_a_date_asked_for_is_answered_not_watched",
+    "requirement": "continuity",
+    "message": "Read the lease in {{c_lease}} and tell me when the lease ends.",
+    "setup": [],
+    "tags": [
+      "continuity",
+      "followup"
+    ],
+    "suites": [
+      "continuity"
+    ],
+    "heldout": false,
+    "size": "small",
+    "timeout_seconds": 900,
+    "claims": true,
+    "rubric": [
+      "Gives the end date from the file (30 June 2029) and does not start a watch on the folder",
+      "The follow-up is about the same file: gives the rent from it"
+    ],
+    "assertions": {
+      "final_status_in": [
+        "completed",
+        "clarifying",
+        "blocked",
+        "chat"
+      ],
+      "bot_reply_excludes_all": [
+        "task_",
+        "tool_name",
+        "operation:",
+        "every 15 minutes",
+        "watching"
+      ],
+      "bot_reply_contains_all": [
+        "2029"
+      ]
+    },
+    "source_file": "continuity_cases.json",
+    "expects_task": "auto",
+    "follow_ups": [
+      {
+        "id": "rent",
+        "message": "And what is the rent in that lease?",
+        "timeout_seconds": 600,
+        "assertions": {
+          "final_status_in": [
+            "completed",
+            "clarifying",
+            "blocked",
+            "chat"
+          ],
+          "bot_reply_excludes_all": [
+            "task_",
+            "tool_name",
+            "operation:"
+          ],
+          "bot_reply_contains_all": [
+            "1450"
+          ]
+        },
+        "expects_task": "auto"
+      }
+    ]
   }
 ]
