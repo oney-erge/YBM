@@ -39,9 +39,11 @@ class LLMProvider(Protocol):
         *,
         temperature: float | None = None,
         response_schema: dict | None = None,
+        grammar: bool = True,
     ) -> T:
         """``response_schema`` is an optional, stricter JSON schema than ``output_model``'s own, for a server that can
-        enforce one while the model writes. The reply is still validated as ``output_model``."""
+        enforce one while the model writes. The reply is still validated as ``output_model``. ``grammar=False`` asks for the JSON in words
+        instead, for an answer that carries long free text such as code (docs/DESIGN.md, D6)."""
         ...
 
 
@@ -104,10 +106,11 @@ class OpenAICompatibleProvider:
         *,
         temperature: float | None = None,
         response_schema: dict | None = None,
+        grammar: bool = True,
     ) -> T:
         schema = output_model.model_json_schema()
         data = None
-        if response_schema is not None and not is_hosted(self.profile.provider, self.profile.base_url):
+        if grammar and response_schema is not None and not is_hosted(self.profile.provider, self.profile.base_url):
             # The strict schema is only worth its size to a local server that enforces it. A server that refuses it
             # (an older LocalDeploy counts its size against the prompt limit) gets the plain schema instead.
             try:
@@ -125,7 +128,7 @@ class OpenAICompatibleProvider:
                     raise
                 logger.warning("the server refused the strict response schema; using the plain one: %s", str(exc)[:200])
         try:
-            if data is None:
+            if data is None and grammar:
                 data = await self._chat(
                     system_prompt,
                     user_prompt,
@@ -138,6 +141,8 @@ class OpenAICompatibleProvider:
         except ValueError as exc:
             if not _should_retry_structured_without_response_format(exc):
                 raise
+        if data is None:
+            # No grammar: asked for (code, live 11/19: under the grammar a script crawled at 0.05 tokens a second for twelve minutes), or refused by the server.
             fallback_prompt = render_prompt(
                 "tasks/structured_json_fallback.md",
                 user_prompt=user_prompt,
@@ -149,6 +154,7 @@ class OpenAICompatibleProvider:
                 response_format=None,
                 temperature=temperature,
             )
+        _say_when_it_ran_long(output_model.__name__, data, self.last_latency_ms, self.last_usage)
         content = data["choices"][0]["message"]["content"]
         try:
             payload = _loads_json_object(str(content))
@@ -259,8 +265,11 @@ class FailoverLLMProvider:
         *,
         temperature: float | None = None,
         response_schema: dict | None = None,
+        grammar: bool = True,
     ) -> T:
         extra = {} if response_schema is None else {"response_schema": response_schema}
+        if not grammar:
+            extra["grammar"] = False
         return await self._call(
             "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature, **extra
         )
@@ -399,8 +408,11 @@ class ChainLLMProvider:
         *,
         temperature: float | None = None,
         response_schema: dict | None = None,
+        grammar: bool = True,
     ) -> T:
         extra = {} if response_schema is None else {"response_schema": response_schema}
+        if not grammar:
+            extra["grammar"] = False
         return await self._call(
             "generate_structured", system_prompt, user_prompt, output_model, temperature=temperature, **extra
         )
@@ -604,6 +616,24 @@ def strip_code_fences(text: str) -> str:
     if lines and lines[-1].startswith("```"):
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+#: A structured answer that takes longer than this, or stops at the token cap, is named in the log with its schema. On 11/19 calls ran to the 4,096-token cap for
+#: three minutes and nothing said which one; it took the model server's own log to find the planner and the fact keeper (docs/DESIGN.md, D6).
+SLOW_STRUCTURED_SECONDS = 60
+
+
+def _say_when_it_ran_long(schema_name: str, data: dict, latency_ms: float | None, usage: dict | None) -> None:
+    try:
+        finish = str(data["choices"][0].get("finish_reason") or "")
+    except (KeyError, IndexError, TypeError, AttributeError):
+        finish = ""
+    seconds = (latency_ms or 0.0) / 1000
+    if finish == "length" or seconds > SLOW_STRUCTURED_SECONDS:
+        logger.warning(
+            "structured_call_ran_long schema=%s seconds=%.0f finish=%s completion_tokens=%s",
+            schema_name, seconds, finish or "unknown", (usage or {}).get("completion_tokens"),
+        )
 
 
 def _loads_json_object(content: str) -> dict:

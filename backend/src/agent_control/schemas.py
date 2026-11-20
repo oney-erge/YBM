@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import StrEnum
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
@@ -318,21 +318,22 @@ class OrchestrationIntent(StrictBaseModel):
     )
 
     route: IntentRoute
-    operation: str | None = None
-    objective: str | None = None
-    reasoning: str
-    tool_name: str | None = None
-    url: str | None = None
-    path: str | None = None
-    folder_path: str | None = None
-    file_path: str | None = None
-    query: str | None = None
-    provider: str | None = None
-    cadence: str | None = None
-    schedule_id: str | None = None
-    scheduled_objective: str | None = None
+    # Each text field has a size for the grammar the classifier writes under; what is read back is not held to it (docs/DESIGN.md, D6).
+    operation: Annotated[str, Field(json_schema_extra={"maxLength": 60})] | None = None
+    objective: Annotated[str, Field(json_schema_extra={"maxLength": 1000})] | None = None
+    reasoning: str = Field(json_schema_extra={"maxLength": 400})
+    tool_name: Annotated[str, Field(json_schema_extra={"maxLength": 60})] | None = None
+    url: Annotated[str, Field(json_schema_extra={"maxLength": 500})] | None = None
+    path: Annotated[str, Field(json_schema_extra={"maxLength": 300})] | None = None
+    folder_path: Annotated[str, Field(json_schema_extra={"maxLength": 300})] | None = None
+    file_path: Annotated[str, Field(json_schema_extra={"maxLength": 300})] | None = None
+    query: Annotated[str, Field(json_schema_extra={"maxLength": 300})] | None = None
+    provider: Annotated[str, Field(json_schema_extra={"maxLength": 40})] | None = None
+    cadence: Annotated[str, Field(json_schema_extra={"maxLength": 80})] | None = None
+    schedule_id: Annotated[str, Field(json_schema_extra={"maxLength": 60})] | None = None
+    scheduled_objective: Annotated[str, Field(json_schema_extra={"maxLength": 600})] | None = None
     delivery: DeliveryKind = DeliveryKind.NONE
-    artifact_type: str | None = None
+    artifact_type: Annotated[str, Field(json_schema_extra={"maxLength": 40})] | None = None
     page_limit: int | None = Field(default=None, ge=1, le=50)
     form_fields: dict[str, str] = Field(default_factory=dict)
     submit: bool = False
@@ -390,9 +391,10 @@ class OrchestrationIntent(StrictBaseModel):
 class MessageClassification(StrictBaseModel):
     is_task: bool
     task_type: TaskType = TaskType.OTHER
-    normalized_objective: str | None = None
+    # Run on every message: an open field here held every message up while the model wrote to the token cap (docs/DESIGN.md, D6).
+    normalized_objective: Annotated[str, Field(json_schema_extra={"maxLength": 1000})] | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
-    reason: str
+    reason: str = Field(json_schema_extra={"maxLength": 400})
     intent: OrchestrationIntent | None = None
     # True when this message is a correction or addition to work already
     # running, rather than a new job. Set only when the context shows an
@@ -402,7 +404,9 @@ class MessageClassification(StrictBaseModel):
     steers_active_task: bool = False
     # Which open goal of the chat this message belongs to (its label, G1, G2...) and what the message does to it. Filled only when the context lists open goals
     # (goals.py); in the structured-output schema, not in the prompt text, so adding them changes no recorded fixture key.
-    goal_ref: str | None = Field(default=None, description="the label (G1, G2...) of the open goal this message answers, continues, plans for or declines something in; null for a new request")
+    goal_ref: Annotated[str, Field(json_schema_extra={"maxLength": 12})] | None = Field(
+        default=None, description="the label (G1, G2...) of the open goal this message answers, continues, plans for or declines something in; null for a new request"
+    )
     act: Literal["new", "answer", "delegate", "decline", "continue", "plan", "control", "chat"] | None = Field(
         default=None, description="what the message does: new request, answer to a goal's question, delegate the choice, decline an offered method, continue, plan for the goal, control a job, chat"
     )
@@ -411,7 +415,7 @@ class MessageClassification(StrictBaseModel):
     # a non-task message doesn't need a second LLM round trip. None/empty falls
     # back to TelegramIntakeService's separate `responder` if one is configured
     # (see channels/responder.py) - kept for classifiers that don't populate this.
-    reply: str | None = None
+    reply: Annotated[str, Field(json_schema_extra={"maxLength": 3000})] | None = None
     # Optional: which fixed outcome type(s) (docs/ROADMAP.md "Finish the
     # Proof") this specific request objectively requires to count as done,
     # when that's plain from the request itself - e.g. "make me a slide
@@ -432,6 +436,7 @@ class MessageClassification(StrictBaseModel):
             "'make me a slide deck' implies presentation_file). Leave empty when it is not "
             "obvious - an empty list is the safe default, not a wrong answer."
         ),
+        json_schema_extra={"maxItems": 6},
     )
 
     @field_validator("expected_postconditions", mode="before")

@@ -20,7 +20,7 @@ approvals. A cause is "supported" only when a result shows it; what the results 
 from __future__ import annotations
 
 import re
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -37,49 +37,58 @@ MAX_OPTIONS = 4
 SUMMARY_CHARS = 1_400  # of one check's result that the model reads
 
 
+# Each field below has a size for the grammar the model writes under (docs/DESIGN.md, D6): an open field is where a small model writes on to the token cap.
+_Name = Annotated[str, Field(json_schema_extra={"maxLength": 40})]
+_Sentence = Annotated[str, Field(json_schema_extra={"maxLength": 300})]
+
+
 class _Plan(BaseModel):
-    probes: list[str] = Field(default_factory=list, description="the checks to run first, in order, by name")
-    hypotheses: list[str] = Field(default_factory=list, description="3 to 6 likely causes, one sentence each")
+    probes: list[_Name] = Field(default_factory=list, description="the checks to run first, in order, by name", json_schema_extra={"maxItems": 12})
+    hypotheses: list[_Sentence] = Field(default_factory=list, description="3 to 6 likely causes, one sentence each", json_schema_extra={"maxItems": MAX_HYPOTHESES})
 
 
 class _Finding(BaseModel):
-    text: str = Field(description="one thing the results show, with the numbers or names in them")
-    probe: str = Field(description="the name of the check whose result shows it")
+    text: str = Field(description="one thing the results show, with the numbers or names in them", json_schema_extra={"maxLength": 300})
+    probe: str = Field(description="the name of the check whose result shows it", json_schema_extra={"maxLength": 40})
 
 
 class _Hypothesis(BaseModel):
-    id: str = Field(description="H1, H2... as listed")
-    status: str = Field(description="supported, refuted or open")
+    id: str = Field(description="H1, H2... as listed", json_schema_extra={"maxLength": 8})
+    status: str = Field(description="supported, refuted or open", json_schema_extra={"maxLength": 12})
 
 
 class _Next(BaseModel):
-    op: str = Field(default="", description="the one more check that would settle an open cause, by name; empty for none")
-    host: str = Field(default="", description="for host_check: the address, as it appears in the results")
-    word: str = Field(default="", description="for event_log: a word the messages must mention")
+    op: str = Field(default="", description="the one more check that would settle an open cause, by name; empty for none", json_schema_extra={"maxLength": 40})
+    host: str = Field(default="", description="for host_check: the address, as it appears in the results", json_schema_extra={"maxLength": 120})
+    word: str = Field(default="", description="for event_log: a word the messages must mention", json_schema_extra={"maxLength": 60})
 
 
 class _Analysis(BaseModel):
-    findings: list[_Finding] = Field(default_factory=list)
-    hypotheses: list[_Hypothesis] = Field(default_factory=list)
+    findings: list[_Finding] = Field(default_factory=list, json_schema_extra={"maxItems": MAX_FINDINGS})
+    hypotheses: list[_Hypothesis] = Field(default_factory=list, json_schema_extra={"maxItems": MAX_HYPOTHESES})
     next: _Next = Field(default_factory=_Next)
     enough: bool = Field(default=False, description="true when the results explain the problem, or no listed check would add anything")
 
 
 class _Queries(BaseModel):
-    searches: list[str] = Field(default_factory=list, description="up to 2 web searches for what is known about the causes still open")
+    searches: list[Annotated[str, Field(json_schema_extra={"maxLength": 160})]] = Field(
+        default_factory=list, description="up to 2 web searches for what is known about the causes still open", json_schema_extra={"maxItems": MAX_QUERIES}
+    )
 
 
 class _Option(BaseModel):
-    title: str = Field(description="what to do, in a few words")
-    why: str = Field(description="why it should help, in one sentence")
-    how: str = Field(description="the steps, in plain words")
+    title: str = Field(description="what to do, in a few words", json_schema_extra={"maxLength": 120})
+    why: str = Field(description="why it should help, in one sentence", json_schema_extra={"maxLength": 300})
+    how: str = Field(description="the steps, in plain words", json_schema_extra={"maxLength": 1000})
     changes_something: bool = Field(default=False, description="true when it changes a setting, installs something or moves files")
-    undo: str = Field(default="", description="how to undo it, when it changes something")
-    evidence: list[str] = Field(default_factory=list, description="the ids of the findings (F1...) and notes (W1...) it rests on")
+    undo: str = Field(default="", description="how to undo it, when it changes something", json_schema_extra={"maxLength": 300})
+    evidence: list[Annotated[str, Field(json_schema_extra={"maxLength": 8})]] = Field(
+        default_factory=list, description="the ids of the findings (F1...) and notes (W1...) it rests on", json_schema_extra={"maxItems": 8}
+    )
 
 
 class _Options(BaseModel):
-    options: list[_Option] = Field(default_factory=list)
+    options: list[_Option] = Field(default_factory=list, json_schema_extra={"maxItems": MAX_OPTIONS})
 
 
 def _menu() -> str:

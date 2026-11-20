@@ -355,3 +355,55 @@ async def test_failover_provider_proxies_llm_call_persistence_fields_too() -> No
     assert provider.last_model == "primary"
     assert provider.last_started_at == "2026-01-01T00:00:00+00:00"
     assert provider.last_latency_ms == 42.0
+
+
+def _capturing_client(payloads: list[dict], reply: dict):
+    class FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return reply
+
+    class FakeAsyncClient:
+        def __init__(self, timeout: int) -> None:
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb) -> None:
+            return None
+
+        async def post(self, url: str, *, headers: dict, json: dict):
+            payloads.append(json)
+            return FakeResponse()
+
+    return FakeAsyncClient
+
+
+@pytest.mark.asyncio
+async def test_a_structured_answer_asked_for_without_the_grammar_sends_none(monkeypatch) -> None:
+    """docs/DESIGN.md D6: code held in a JSON string crawled under the grammar for twelve minutes (live 11/19); such an answer is asked for in words, in one call."""
+    provider = OpenAICompatibleProvider(LLMProfileConfig(model="local", base_url="http://127.0.0.1:8000/v1", max_tokens=128))
+    payloads: list[dict] = []
+    monkeypatch.setattr("agent_control.llm.providers.httpx.AsyncClient", _capturing_client(payloads, {"choices": [{"message": {"content": '{"route": "desktop.observe"}'}}]}))
+
+    result = await provider.generate_structured("system", "user", TinyStructuredOutput, grammar=False)
+
+    assert result.route == "desktop.observe"
+    assert len(payloads) == 1 and "response_format" not in payloads[0]
+    assert "Return JSON only." in payloads[0]["messages"][0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_a_structured_answer_that_stops_at_the_cap_is_named_in_the_log(monkeypatch, caplog) -> None:
+    """docs/DESIGN.md D6: calls ran to the 4,096-token cap and nothing said which; the next one names its schema."""
+    provider = OpenAICompatibleProvider(LLMProfileConfig(model="local", base_url="http://127.0.0.1:8000/v1", max_tokens=128))
+    reply = {"choices": [{"message": {"content": '{"route": "desktop.observe"}'}, "finish_reason": "length"}], "usage": {"completion_tokens": 128}}
+    monkeypatch.setattr("agent_control.llm.providers.httpx.AsyncClient", _capturing_client([], reply))
+
+    with caplog.at_level("WARNING", logger="agent_control.llm.providers"):
+        await provider.generate_structured("system", "user", TinyStructuredOutput)
+
+    assert any("structured_call_ran_long" in record.getMessage() and "TinyStructuredOutput" in record.getMessage() for record in caplog.records)

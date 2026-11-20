@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Every field the model writes under the JSON grammar has a size, and code is asked for without the grammar (docs/DESIGN.md, D6-2). Found by the sealed Verdict 4 exam and the suites after it: an open field let the 9B write on to the 4,096-token cap (a plan made and revised lost three minutes to each of two planner calls; 19 such calls in 2,523 on 11/19), and code held in a JSON string crawled at 0.05 tokens a second for twelve minutes (`v4_script_rename`). The classifier that reads every message, the planner, the research, survey and investigation jobs, the job starter and the learning calls now have sizes the grammar holds (what is read back is not refused for its length); the code interpreter asks for its script in words; a structured call that stops at the cap or takes over a minute is named in the log (`structured_call_ran_long`); `tests/test_grammar_sizes.py` fails when a field is left open. Same calls on the live model, before and after: a plan 32.4 s and 13.0 s, survey rows 20.2 s and 13.8 s.
+
 ## [0.2.1] - 2026-11-19
 
 This release adds an Undo button to the web console, which had no way back after a move while Telegram did, and two fixes found by the sealed Verdict 4 exam: a short remark that held the assistant up for three minutes, and a question about a date that was taken for a request to watch a folder. The README and `docs/MEASURED.md` (what was measured, what missed, and what has not been measured) were rewritten for it.

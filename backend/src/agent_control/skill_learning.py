@@ -51,9 +51,9 @@ class _Proposal(BaseModel):
     """A schema, because a small model asked for JSON in free text answered in sentences or wrapped it in prose."""
 
     worth_keeping: bool = Field(description="true only when the steps are a procedure that will apply to the next job of this kind")
-    name: str = Field(default="", description="3 to 5 words, the kind of job")
-    description: str = Field(default="", description="one line on when to use it")
-    body: str = Field(default="", description="numbered steps, naming the tools and operations that worked")
+    name: str = Field(default="", description="3 to 5 words, the kind of job", json_schema_extra={"maxLength": 60})
+    description: str = Field(default="", description="one line on when to use it", json_schema_extra={"maxLength": 200})
+    body: str = Field(default="", description="numbered steps, naming the tools and operations that worked", json_schema_extra={"maxLength": 2400})
 
 
 @dataclass

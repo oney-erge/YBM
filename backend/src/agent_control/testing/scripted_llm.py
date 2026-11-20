@@ -48,7 +48,7 @@ class _LiveProvider(Protocol):
     async def generate_text(self, system_prompt: str, user_prompt: str) -> str: ...
     async def generate_multimodal_text(self, system_prompt: str, user_prompt: str, image_paths: list[str]) -> str: ...
     async def generate_structured(
-        self, system_prompt: str, user_prompt: str, output_model: type[T], *, temperature: float | None = None
+        self, system_prompt: str, user_prompt: str, output_model: type[T], *, temperature: float | None = None, grammar: bool = True
     ) -> T: ...
 
 
@@ -523,6 +523,7 @@ class ScriptedLLMProvider:
         output_model: type[T],
         *,
         temperature: float | None = None,
+        grammar: bool = True,
     ) -> T:
         entry = self._lookup("generate_structured", system_prompt, user_prompt)
         return output_model.model_validate(entry["response"])
@@ -585,9 +586,10 @@ class RecordingLLMProvider:
         output_model: type[T],
         *,
         temperature: float | None = None,
+        grammar: bool = True,
     ) -> T:
         result = await self.live_provider.generate_structured(
-            system_prompt, user_prompt, output_model, temperature=temperature
+            system_prompt, user_prompt, output_model, temperature=temperature, **({} if grammar else {"grammar": False})
         )
         self.last_usage = getattr(self.live_provider, "last_usage", None)
         self._store("generate_structured", system_prompt, user_prompt, result.model_dump(mode="json"))
