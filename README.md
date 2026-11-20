@@ -63,7 +63,7 @@ Run `~/ybm/ybm.sh` later. For a source checkout, use `run.bat` on Windows, `./ru
 
 ## Your first task
 
-1. YBM opens in your browser and shows the model it found. It can use a local model through Ollama, LM Studio, or LocalDeploy, or a provider API key you already have. It does not call a paid API just to choose a model. If it finds none, a short wizard offers a local model or a cloud provider.
+1. YBM opens in your browser and shows the model it found. It can use a local model through Ollama, LM Studio, or LocalDeploy, or a provider API key you already have. It does not call a paid API just to choose a model. If it finds none, a short wizard lists the local models that fit your hardware and downloads the one you pick, or takes a provider API key.
 2. Create a disposable test folder containing a few sample files. File access starts off; select that folder and allow changes after approval.
 3. Ask: **"Organize the files in my test folder by type."** Review the plan and approve it. The receipt records what happened. If you use Telegram, send **"undo that"** and approve the move back.
 
@@ -95,7 +95,7 @@ The second row missed my target of 18. [Measured results](docs/MEASURED.md) list
 
 ## Limits
 
-- **Platforms.** Continuous integration tests the backend and the launcher on Windows, macOS, and Linux. Almost all of my use is on Windows. Desktop observation and control are Windows only. Docker cannot reach the host desktop or editor, and can see only mounted paths.
+- **Platforms.** Continuous integration starts YBM and tests the backend on Windows, macOS, and Linux, including 16 recorded task scenarios. Almost all of my own use, and every run on a real model, is on Windows. Desktop observation and control are Windows only. Docker cannot reach the host desktop or editor, and can see only mounted paths.
 - **Supervision.** At *Ask* and *Balanced* it stops for consequential actions. At *Autonomous* it does not, apart from money and critical operations. It is not a hardened production service. Keep the admin console on localhost unless you understand the authentication and network implications.
 - **Small models make mistakes.** A 9B model can misread a request, take a wrong route, or claim a result without a record behind it. YBM checks its claims against what was recorded, and it says when it cannot do a task. These checks are imperfect; the measured results list the misses.
 - **WhatsApp** uses an unofficial client and carries account risk. Voice transcription is off by default and needs the `voice` extra.

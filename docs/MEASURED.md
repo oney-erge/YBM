@@ -55,7 +55,7 @@ The time is measured from the person's message to the last reply that is not an 
 ## What I have not measured
 
 - **Other people's machines.** No one except me has used YBM for a task that I know of. I do not know how it behaves on a different GPU, a different model, or a different language.
-- **macOS and Linux tasks.** Continuous integration tests the backend and the launcher on all three systems, but no task has been run against a real model on macOS or Linux. Desktop control exists only on Windows.
+- **macOS and Linux tasks.** On every change, continuous integration starts YBM and passes a health check on Windows, macOS, and Linux, and replays 16 recorded task scenarios (find a file, summarize a PDF, run code, schedule a job, call a tool server) on all three. No task has been run against a real model on macOS or Linux. Desktop control exists only on Windows.
 - **Long runs.** A three-day run with a restart has not been done. A 600-page research run produced a thin report: the claim check removed 178 of 238 cited sentences. A survey of daycares filled 12 percent of its table cells, and the fix for that has not been rerun. See [PLAN.md](PLAN.md), section 2.
 - **Memory across days.** Memory has passed its suite, but a fact remembered across weeks of real use has not been shown.
 - **Comparisons.** I have not run these requests against any other assistant, so I make no claim about how YBM compares.
