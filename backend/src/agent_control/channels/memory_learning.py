@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 import re
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -47,23 +47,29 @@ SYSTEM = """You keep a list of facts about one person for their assistant. You a
 - If nothing lasting was said, return no changes and no notes. Most messages have none."""
 
 
+# The bounds below are for the grammar the model writes under; what is read back after the call is not held to them. A field with no bound lets the 9B write on and on when it has
+# nothing true to put there: with no facts on the list, "for change and end: the id of the fact" made it write 1,366 tokens of invented letters and digits for "I live in Dallas.",
+# and the model server, which has one slot, kept every other call waiting for over three minutes (live 11/19, the sealed exam's v4_fact_moves; the same call with no grammar took 1.8 s).
+_Word = Annotated[str, Field(json_schema_extra={"maxLength": 40})]
+
+
 class _Change(BaseModel):
     op: Literal["add", "change", "end"]
-    about: str = Field(default="", description="a short label for what it is about")
-    text: str = Field(default="", description="the fact, one short sentence; empty for end")
-    id: str = Field(default="", description="for change and end: the id of the fact on the list")
+    about: str = Field(default="", description="a short label for what it is about", json_schema_extra={"maxLength": 80})
+    text: str = Field(default="", description="the fact, one short sentence; empty for end", json_schema_extra={"maxLength": MAX_FACT_CHARS})
+    id: str = Field(default="", description="for change and end: the id of the fact on the list", json_schema_extra={"maxLength": 48})
 
 
 class _Note(BaseModel):
-    project: str = Field(description="a short name for the long-lived thing the person is working on (a pool, a robot, a daycare search)")
-    hooks: list[str] = Field(default_factory=list, description="3 to 6 words or names that point to it")
+    project: str = Field(description="a short name for the long-lived thing the person is working on (a pool, a robot, a daycare search)", json_schema_extra={"maxLength": 80})
+    hooks: list[_Word] = Field(default_factory=list, description="3 to 6 words or names that point to it", json_schema_extra={"maxItems": 6})
     kind: Literal["decision", "fact", "question", "purchase", "step", "result"]
-    text: str = Field(description="one sentence: what was decided, found, asked, bought, done or achieved")
+    text: str = Field(description="one sentence: what was decided, found, asked, bought, done or achieved", json_schema_extra={"maxLength": MAX_FACT_CHARS})
 
 
 class _Changes(BaseModel):
-    changes: list[_Change] = Field(default_factory=list)
-    notes: list[_Note] = Field(default_factory=list)
+    changes: list[_Change] = Field(default_factory=list, json_schema_extra={"maxItems": MAX_CHANGES})
+    notes: list[_Note] = Field(default_factory=list, json_schema_extra={"maxItems": 3})
 
 
 def worth_asking(text: str) -> bool:
