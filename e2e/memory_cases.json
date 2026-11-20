@@ -197,7 +197,7 @@
     "follow_ups": [
       {
         "id": "moved",
-        "message": "Update: we moved to Plano last month.",
+        "message": "We moved to Plano last month.",
         "timeout_seconds": 600,
         "assertions": {
           "final_status_in": [

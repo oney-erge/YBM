@@ -711,3 +711,13 @@ async def test_a_listing_says_which_folders_it_did_not_open_so_a_largest_file_is
     assert deeper.output["not_opened"] == [] and "glacier.bin" in deeper.output["terminal_output"][0]["content"] and "Not opened" not in deeper.output["summary"]
     capped = await adapter.execute(_request(tmp_path, "inspect_folder", max_depth=3, max_entries=2))
     assert "Stopped at 2 items; there may be more." in capped.output["summary"]
+
+
+def test_the_message_after_an_auto_rename_names_adding_to_the_file_as_well_as_replacing_it() -> None:
+    """Live 11/19 (cont_that_file_is_the_one_just_made): "add a fifth one to that file" wrote errands_2.txt and the message only offered a replacement."""
+    import inspect
+
+    from agent_control.tools import filesystem_manage
+
+    source = inspect.getsource(filesystem_manage)
+    assert "To add to the end of it, call write_text_file again with the same" in source and "append set to true; to replace it, with overwrite set to true" in source
