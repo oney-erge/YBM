@@ -18,19 +18,19 @@
 
 YBM is an assistant that runs on your own computer. You send it a request from a web console, Telegram, or WhatsApp, and it works on the files, web pages, and programs on that machine. It uses a language model that you choose. I built and tested it on a small local model, Qwen3.5 9B on an 8 GB laptop GPU, so a task costs no API fees and your files stay on your machine.
 
-I built it because I wanted to message my own computer and have it do the work. It is alpha software. The sections below say what it does, how it asks before it acts, how to try it, what I measured, and what I have not.
+A chat assistant answers in a window. YBM acts on this machine: it reads and changes files, opens pages, and runs programs, and it records what it did. I built it because I wanted to message my own computer and have it do the work. It is alpha software. The sections below say what it does, how it asks before it acts, how to try it, what I measured, and what I have not.
 
 ## What it does
 
-- **Finds things and answers questions about them.** "How many Steam games do I have?" or "Which paper says when the warranty ends?" It says how thoroughly it looked, and it says "not found" only after a search finished or a read of the exact path failed.
+- **Finds things and answers questions about them.** "How many Steam games do I have?" or "Which paper says when the warranty ends?" It says how thoroughly it looked.
 - **Changes files after showing a plan.** Organizing a folder, renaming, moving. It lists the moves, waits for your approval, and writes a receipt. An Undo button on the receipt, or "undo that" on Telegram, moves the files back.
 - **Writes a program when no tool fits.** A small web page that does a calculation, or a script that reads five websites and compares them. It runs the program on your machine and gives you the link or the result.
-- **Researches in the background.** A request such as "find all the daycares around me" becomes a job that keeps searching until new searches stop finding anything. It keeps a source for each value and saves a report as Markdown and Word. This is the least finished part; see [Measured results](docs/MEASURED.md).
 - **Works in a browser and on the desktop.** It opens pages, fills in forms, and reads what is on the screen. Desktop control is Windows only.
 - **Remembers.** It keeps facts you tell it and projects with their decisions, across chats. You can list, correct, and delete them.
 - **Repeats work.** Saved workflows on a schedule, folder watchers, and small monitors that speak only when something changes.
+- **Researches in the background.** A request such as "find all the daycares around me" becomes a job that keeps searching until new searches stop finding anything. It keeps a source for each value and saves a report as Markdown and Word. This is the least finished part.
 
-Most of these have requests in the test suites. [Measured results](docs/MEASURED.md) says how many pass.
+[Measured results](docs/MEASURED.md) lists the requests I test with and how many pass.
 
 ## How it asks before it acts
 
@@ -44,7 +44,9 @@ Underneath, each task goes through the same stages: plan, approve, execute, veri
 
 ## Install
 
-The first start installs what YBM needs, opens the console, and finds a model already available on your machine. It takes about 2 to 5 minutes; later starts take seconds.
+The first start installs what YBM needs, opens the console, and finds a model already available on your machine. It takes about 2 to 5 minutes, not counting a model download; later starts take seconds.
+
+**What you need.** A computer running Windows, macOS, or Linux, and a language model. I tested with Qwen3.5 9B, a 5.7 GB download, on an 8 GB GPU. A smaller model needs less memory, but I have not measured one. Without a GPU, a provider API key works, and your prompts then go to that provider.
 
 **Windows**
 
@@ -63,7 +65,7 @@ Run `~/ybm/ybm.sh` later. For a source checkout, use `run.bat` on Windows, `./ru
 
 ## Your first task
 
-1. YBM opens in your browser and shows the model it found. It can use a local model through Ollama, LM Studio, or LocalDeploy, or a provider API key you already have. It does not call a paid API just to choose a model. If it finds none, a short wizard lists the local models that fit your hardware and downloads the one you pick, or takes a provider API key.
+1. YBM opens in your browser and shows the model it found. It can use a local model through Ollama, LM Studio, or [LocalDeploy](https://github.com/oney-erge/LocalDeploy) (a tool I wrote that picks, downloads, and runs a model for your hardware), or a provider API key you already have. It does not call a paid API just to choose a model. If it finds none, a short wizard lists the local models that fit your hardware and downloads the one you pick, or takes a provider API key.
 2. Create a disposable test folder containing a few sample files. File access starts off; select that folder and allow changes after approval.
 3. Ask: **"Organize the files in my test folder by type."** Review the plan and approve it. The receipt records what happened. Press **Undo** on the receipt (on Telegram, send "undo that") and approve the move back.
 
@@ -97,12 +99,12 @@ The second row missed my target of 18. [Measured results](docs/MEASURED.md) list
 
 - **Platforms.** Continuous integration starts YBM and tests the backend on Windows, macOS, and Linux, including 16 recorded task scenarios. Almost all of my own use, and every run on a real model, is on Windows. Desktop observation and control are Windows only. Docker cannot reach the host desktop or editor, and can see only mounted paths.
 - **Supervision.** At *Ask* and *Balanced* it stops for consequential actions. At *Autonomous* it does not, apart from money and critical operations. It is not a hardened production service. Keep the admin console on localhost unless you understand the authentication and network implications.
-- **Small models make mistakes.** A 9B model can misread a request, take a wrong route, or claim a result without a record behind it. YBM checks its claims against what was recorded, and it says when it cannot do a task. These checks are imperfect; the measured results list the misses.
+- **Small models make mistakes.** A 9B model can misread a request, take a wrong route, or claim a result without a record behind it. YBM checks a claim such as "I created the file" against a recorded write, and it says when it cannot do a task. These checks are imperfect; the measured results list the misses.
 - **WhatsApp** uses an unofficial client and carries account risk. Voice transcription is off by default and needs the `voice` extra.
 - **Undo covers moves and renames only.** It does not restore a deleted or edited file.
 - **Start with a test folder** and review access settings before granting them.
 
-Read the [threat model](docs/THREAT_MODEL.md) before granting access to important files or accounts. See [Security](SECURITY.md) to report a vulnerability.
+YBM keeps its data in its own folder, and [Install](docs/INSTALL.md#local-data) lists every path. Read the [threat model](docs/THREAT_MODEL.md) before granting access to important files or accounts. See [Security](SECURITY.md) to report a vulnerability.
 
 ## Documentation
 
