@@ -26,7 +26,7 @@ def values(tmp_path_factory) -> dict[str, str]:
 
 
 def test_the_cases_are_chains_in_the_suite_and_use_variables_that_exist(cases, values) -> None:
-    assert len(cases) == 10 and len({c["id"] for c in cases}) == 10
+    assert len(cases) == 11 and len({c["id"] for c in cases}) == 11
     assert all(c["id"].startswith("cont_") and c["suites"] == ["continuity"] and c["follow_ups"] and c["rubric"] for c in cases)
     for case in cases:
         for name in re.findall(r"\{\{(\w+)\}\}", json.dumps(case)):
@@ -45,4 +45,9 @@ def test_the_runner_knows_the_suite() -> None:
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
-    assert sum(1 for case in module.load_cases() if "continuity" in (case.get("suites") or [])) == 10
+    assert sum(1 for case in module.load_cases() if "continuity" in (case.get("suites") or [])) == 11
+
+
+def test_the_lease_holds_the_date_and_the_rent_the_case_expects(values) -> None:
+    text = (Path(values["c_lease"]) / "lease.txt").read_text(encoding="utf-8")
+    assert "30 June 2029" in text and "1450" in text
