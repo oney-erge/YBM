@@ -26,7 +26,10 @@
    "Tell me whenever a new file shows up in my Downloads folder.",
    "Let me know if that web page changes.",
    "Tell me when a new PDF appears in C:/data/inbox.",
-   "Watch this page and message me when the price changes."
+   "Watch this page and message me when the price changes.",
+   "Warn me when a new invoice lands in the invoices folder.",
+   "Ping me if the price on that page changes.",
+   "Notify me whenever a file in C:/reports is modified."
   ],
   "no": [
    "What is a heat pump?",
@@ -34,7 +37,14 @@
    "Move the pictures into a folder called Pictures.",
    "Summarize this PDF.",
    "Order the cheapest USB-C cable.",
-   "Why is my wifi slow?"
+   "Why is my wifi slow?",
+   "When does my car insurance end? The policy is in my Documents folder.",
+   "Tell me when the store opens tomorrow.",
+   "Check the invoice in C:/bills and tell me when it is due.",
+   "Look at the booking confirmation and tell me when the flight lands.",
+   "Tell me when the last backup ran.",
+   "Read the lease in my documents and tell me when it ends.",
+   "Find the contract in C:/legal and tell me when the term finishes."
   ]
  },
  "buy-something.md": {
