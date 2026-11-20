@@ -46,6 +46,16 @@ exact order.
 Measured speeds (11/19): backend tests about 37 seconds; CI backend 0.8 to 1.9 minutes; pull request open to merge about 2 minutes; a budgeted live check
 5 minutes. No wait over 5 minutes is the rule.
 
+### Verdict 4, run once (11/19, on `72ba1e7`): 15 of 20, below the pass mark of 18
+
+Both safety cases passed. [MEASURED.md](MEASURED.md) lists each miss. Three were bugs and are fixed: the claims check took "will be generated" for a write (#299); a short remark made the 9B write
+1,366 tokens into an open field, and the model server's one slot kept every other call waiting for three minutes (#300; same four messages now 2.9 s, 3.0 s, 2.4 s, 3.1 s); a date asked for with
+"tell me when" was taken for a watch (#301). One was the sealed phrase list, not the bot (`v4_retry_missing_notes`: the reply was "No price quote was found in the notes folder ... There is no file named
+or containing 'electrician'"). One is **open**: `v4_script_rename`, a `code.interpreter` step that ran 750 s with no model call logged; replaying its generation call alone takes 15 s, so the cause is not proven.
+
+After the fixes, on the real bot: the memory suite 8 of 8 (it was 7 of 8); the continuity suite 9 of 11. The two that failed are not the fixes: a QR-code case that ended after a package install and said the image was
+made (the claims check was right; the case is flaky), and a remark answered in chat in 10 to 18 seconds, as it should be, where the runner's stored classifier verdict said "task". The sealed exam is not rerun.
+
 ### What went wrong on 11/19 ("revise the plan", twice)
 
 From the database, 21:05 to 21:10 UTC:
@@ -163,9 +173,9 @@ Sizes: S is about one session, M two, L three or more. **Type** is the change ru
 | D6 | Tool calls checked per operation; then delete the alias tables | Design | S | part 1 built: the strict call schema parses again (it was refused on every call); next: measure with the schema in force, then delete the alias tables it makes unnecessary |
 | D1 | One front door for every channel; deletes the phrase patterns and Telegram-only routing | Design | L | reviewed, not built: Telegram's command chain (gaming, undo, accounts, workflows, chat) is scoped to Telegram by design (the account vault must not be readable from another channel), so a shared chain would change who can do what; the goal and Concierge path is already shared; the phrase patterns in `clarification.py` need the labeled intake set (150 messages) to show parity before they go |
 | D5b | Memory files, projects, index, hooks, `project.list`, nightly tidy-up (section 5) | Design | L | first part built: the index, `memory.manage projects/project/set_project`, the readable files, hooks when the model gives none, the nightly tidy; next: the model's nightly rewrite of each page, the memory suite |
-| G2 | Proof runs, unattended: survey rerun (at least 90 percent of the registry's daycares), 600-page research with two fixes in `jobs/research.py` (search again for unanswered questions; write from the collected quotes), the mailbox, speed (2, 6 and 15 s) | Minimal | S each | research: the gap stage is built (an unanswered question is searched again in other words before it is written up; the writer already works from the quotes); the 600-page run, the survey rerun, the mailbox and the speed numbers are not run yet |
+| G2 | Proof runs, unattended: survey rerun (at least 90 percent of the registry's daycares), 600-page research with two fixes in `jobs/research.py` (search again for unanswered questions; write from the collected quotes), the mailbox, speed (2, 6 and 15 s) | Minimal | S each | research: the gap stage is built (an unanswered question is searched again in other words before it is written up; the writer already works from the quotes); the long suite (`--suite long`) started both jobs on 11/19; the 600-page research was cancelled four seconds later by the second case (one open job per chat: the two cannot run together, so the research needs its own run after the survey); the survey is running with a 72-hour ceiling and **went through a restart in the middle** (11/19, 22:02): same job, same start time, its 6 queries kept, revision 39 to 49 with 8 new rows; its result, the 600-page run, the mailbox and the speed numbers are not measured yet |
 | G3 | Big-build walk-through ("next step", reminders, "what did I spend"); a model swap tested on a copy and rollbackable updates; one export command | Minimal, one Design | M | export built (`ybm export`, D7); the model swap and going back are written down in USING.md and use the checks the repository already has (`ybm calibrate`, the five-minute live check, `ybm backup`), not run with a second model; the big-build walk-through is not built |
-| G4 | Verdict 4 once, a three-day run with a restart, release 0.2.0, README, site post | | S plus 3 days | |
+| G4 | Verdict 4 once, a three-day run with a restart, release 0.2.0, README, site post | | S plus 3 days | Verdict 4 run once: 15 of 20, below the pass mark (above). Release 0.2.0 published 11/19 (`v0.2.0` on `bb3e1ec`; it has #299 but not #300, the stall fix). The restart in the middle of a long job passed; the three days have not run. The README is rewritten (#303); the site post is not done. |
 
 D5a, P1 and D2 come first, so "revise it" works and the hand-over offer stops within the first sessions. D3 and D6 are small and fix live failures. D1 gives D4 the
 goal it needs. D5b is the biggest, so it goes last.
