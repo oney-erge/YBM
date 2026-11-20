@@ -1,8 +1,8 @@
 """Every field the model writes under a JSON grammar has a size (docs/DESIGN.md, D6).
 
 Live 11/19: an open field is where the 9B writes on to the 4,096-token cap. "I live in Dallas." waited three and a half minutes behind a fact's invented `id`; a plan, made and
-then revised, lost three minutes to each of two planner calls; the model server has one slot, so every other call waits too. Under the grammar the same model also crawls on
-code held in a JSON string (0.05 tokens a second for twelve minutes), so an answer that carries code is asked for without the grammar instead.
+then revised, lost three minutes to each of two planner calls; the model server has one slot, so every other call waits too. Code is the one answer whose field cannot
+have a size, so it is asked for without the grammar instead.
 """
 
 from __future__ import annotations

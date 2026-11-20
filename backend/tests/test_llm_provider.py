@@ -384,7 +384,7 @@ def _capturing_client(payloads: list[dict], reply: dict):
 
 @pytest.mark.asyncio
 async def test_a_structured_answer_asked_for_without_the_grammar_sends_none(monkeypatch) -> None:
-    """docs/DESIGN.md D6: code held in a JSON string crawled under the grammar for twelve minutes (live 11/19); such an answer is asked for in words, in one call."""
+    """docs/DESIGN.md D6-2: an answer whose field cannot have a size (code) is asked for in words, in one call."""
     provider = OpenAICompatibleProvider(LLMProfileConfig(model="local", base_url="http://127.0.0.1:8000/v1", max_tokens=128))
     payloads: list[dict] = []
     monkeypatch.setattr("agent_control.llm.providers.httpx.AsyncClient", _capturing_client(payloads, {"choices": [{"message": {"content": '{"route": "desktop.observe"}'}}]}))

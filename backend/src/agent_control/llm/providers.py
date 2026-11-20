@@ -142,7 +142,7 @@ class OpenAICompatibleProvider:
             if not _should_retry_structured_without_response_format(exc):
                 raise
         if data is None:
-            # No grammar: asked for (code, live 11/19: under the grammar a script crawled at 0.05 tokens a second for twelve minutes), or refused by the server.
+            # No grammar: asked for (an answer whose field can have no size, such as code: docs/DESIGN.md, D6-2), or refused by the server.
             fallback_prompt = render_prompt(
                 "tasks/structured_json_fallback.md",
                 user_prompt=user_prompt,

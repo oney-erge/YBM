@@ -125,16 +125,16 @@ is the next piece. **Measured.** Unit tests (`test_projects_index.py`); live, pr
 
 ### D6-2. Every field the model writes under a grammar has a size (2026-11-20)
 
-**What failed.** Three of the five misses of the sealed Verdict 4 exam, and the slowest live case after it, were one thing: the 9B under the JSON grammar. Where a field is
+**What failed.** One of the five misses of the sealed Verdict 4 exam, and the slowest live case after it, were one thing: the 9B under the JSON grammar. Where a field is
 open it can write on to the 4,096-token cap (90 to 210 seconds): "I live in Dallas." waited three and a half minutes behind an invented fact `id`, and a plan, made and then
-revised, lost three minutes to each of two planner calls (`cont_plan_revised_twice_stays_the_plan`, 533 s). Where the field holds code it can crawl: the rename script of
-`v4_script_rename` went at 0.05 tokens a second for twelve minutes and was cancelled. The model server has one slot, so every other call waits behind such a call, and giving
+revised, lost three minutes to each of two planner calls (`cont_plan_revised_twice_stays_the_plan`, 533 s). (Correction, 11/20: the twelve-minute stall of
+`v4_script_rename`, first given here as code crawling under the grammar, was the laptop in connected standby, 19:59:35 to 20:11:51 on 11/19 by Windows' power log; see the keep-awake change, #315.) The model server has one slot, so every other call waits behind such a call, and giving
 up on it does not help (the server goes on writing; the next call waited 104 s). The model server's log for 11/19 shows 19 calls that ran to the cap in 2,523; nothing in
 YBM's own logs said which call it was. **Home.** The output models of the structured calls (`schemas.MessageClassification`, the planner, the three jobs, the job starter, the
 learning calls) and `llm/providers.py`. **What it adds.** (1) A size on every string and every list those models write under the grammar, in `json_schema_extra`, so the grammar
 holds it and what is read back is not refused for its length; the sizes are the ones the code keeps after the call (25 rows a page, a quote of 300, a search of 160), and on an
-optional field the size sits on the string itself, where the grammar sees it. (2) `generate_structured(..., grammar=False)`: an answer that carries long free text is asked for
-as JSON in words, through the path a refused schema already took; the code interpreter's script is the one that does. (3) A warning that names the schema when a structured call
+optional field the size sits on the string itself, where the grammar sees it. (2) `generate_structured(..., grammar=False)`: an answer whose field cannot have a size is asked for
+as JSON in words, through the path a refused schema already took; the code interpreter's script is the one that does (on the rename prompt, three tries each, it was as valid and as fast as with the grammar). (3) A warning that names the schema when a structured call
 stops at the cap or takes more than a minute (`structured_call_ran_long`). (4) `tests/test_grammar_sizes.py`: every file that asks for a structured answer is listed, and every
 field of its models has a size or is asked for without the grammar. **What it replaces and deletes.** Nothing is removed: it is #300's four sizes made the rule for every
 structured answer. The operator's own reply stays with its per-tool schema (D6 part 1): none of its 2,362 recorded calls on 11/19 came near the cap. No recorded fixture

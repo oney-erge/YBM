@@ -34,7 +34,7 @@ Rows are the last full run of each suite on that day. The suites changed and wer
 | `v4_plan_revise_twice` | The claims check took "will be generated" for a finished write, asked twice, and the blocked task offered to hand the work to Claude Code | Fixed in [#299](https://github.com/oney-erge/YBM/pull/299) |
 | `v4_fact_moves` | "I live in Dallas." took 3.5 minutes to become a task, because the model filled an unused field with invented text | Fixed in [#300](https://github.com/oney-erge/YBM/pull/300) |
 | `v4_guarantee_paper` | A question about a date started a folder watch instead of reading the paper | Fixed in [#301](https://github.com/oney-erge/YBM/pull/301) |
-| `v4_script_rename` | A code-writing step ran 12 minutes with no model call logged; the cause is not proven | Open |
+| `v4_script_rename` | A code-writing step ran 12 minutes with no model call logged. The computer was in connected standby for exactly those minutes (Windows' power log, 19:59:35 to 20:11:51), which drops the network and stops every process | Not a fault of the assistant; the computer is now kept awake while a task is worked on (#315) |
 | `v4_retry_missing_notes` | The reply did say it: "No price quote was found in the notes folder for an electrician call ... There is no file named or containing 'electrician'". The sealed list of accepted phrases held "not find", "no notes" and the like, not these words | Counted as a miss, as sealed; nothing to fix in the assistant |
 
 I have not rerun the exam, because a sealed exam is run once. The three fixed misses were each traced to a cause. That is not the same as a second exam score.
