@@ -3490,3 +3490,50 @@ def test_admin_schedules_workflow_through_replay_metadata(monkeypatch, tmp_path)
     schedule = repositories.schedules.get(response.json()["schedule"]["id"])
     assert schedule is not None
     assert schedule.metadata["replay_plan"][0]["tool_input"]["path"] == "C:/work"
+
+
+def _moved_task(repositories, tmp_path):
+    """A finished task that moved one file into a folder, recorded the way the worker records it (see test_undo.py)."""
+    folder = tmp_path / "pdfs"
+    folder.mkdir()
+    (folder / "a.pdf").write_text("x")
+    task = repositories.tasks.create("sort my pdfs")
+    moves = [{"from": str(folder / "a.pdf"), "to": str(tmp_path / "a.pdf")}]
+    return repositories.tasks.update_metadata(
+        task.id, {**task.metadata, "undo_moves": {"root": str(tmp_path), "moves": moves}}, TaskStatus.COMPLETED,
+    )
+
+
+def test_admin_undo_makes_the_move_back_a_task_and_offers_it_once(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    source = _moved_task(repositories, tmp_path)
+    client = _admin_client(repositories)
+    assert client.get(f"/admin/api/tasks/{source.id}/receipt").json()["can_undo"] is True
+
+    response = client.post(f"/admin/api/tasks/{source.id}/undo")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["message"].startswith("Putting 1 file(s) back where they were")
+    undo_task = repositories.tasks.get(body["task"]["id"])
+    assert undo_task.metadata["undo_of_task_id"] == source.id
+    assert undo_task.metadata["replay_plan"][0]["tool_input"]["operation"] == "apply_manifest"
+    assert undo_task.status == TaskStatus.RECEIVED
+    assert client.get(f"/admin/api/tasks/{source.id}/receipt").json()["can_undo"] is False
+    assert client.post(f"/admin/api/tasks/{source.id}/undo").status_code == 409
+
+
+def test_admin_undo_says_why_when_there_is_nothing_to_undo(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    repositories = _repositories(f"sqlite:///{tmp_path / 'admin.db'}")
+    client = _admin_client(repositories)
+    plain = repositories.tasks.create("a task that moved nothing")
+    moved = _moved_task(repositories, tmp_path)
+    (tmp_path / "pdfs" / "a.pdf").unlink()
+
+    assert client.post("/admin/api/tasks/task_does_not_exist/undo").status_code == 404
+    assert client.post(f"/admin/api/tasks/{plain.id}/undo").status_code == 409
+    gone = client.post(f"/admin/api/tasks/{moved.id}/undo")
+    assert gone.status_code == 409
+    assert "not where I left them" in gone.json()["detail"]

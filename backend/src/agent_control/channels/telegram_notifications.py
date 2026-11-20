@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agent_control.channels.quick_answers import clarification_token, clarifying_options
 from agent_control.channels.task_notify import format_task_message
+from agent_control.channels.undo_command import can_undo
 from agent_control.plans.card import card_keyboard, card_text
 from agent_control.text import trim_text as _trim
 from agent_control.channels.telegram import TelegramBotApi
@@ -35,10 +36,8 @@ def _stop_keyboard(task_id: str) -> dict[str, Any]:
 
 def _undo_keyboard(task: TaskRecord) -> dict[str, Any] | None:
     """Under the answer to a move or rename: put the files back. Not offered once it was undone or when nothing was recorded."""
-    if task.status != TaskStatus.COMPLETED or not task.metadata.get("undo_moves") or task.metadata.get("undo_task_id"):
+    if not can_undo(task):
         return None
-    if task.metadata.get("undo_of_task_id"):
-        return None  # the answer to an undo is not itself undoable
     return {"inline_keyboard": [[{"text": "Undo", "callback_data": f"undo:{task.id}"}]]}
 
 
