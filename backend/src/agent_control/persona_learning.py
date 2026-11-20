@@ -52,7 +52,7 @@ class _Preference(BaseModel):
     states_a_lasting_preference: bool = Field(
         description="true only if the user says how the assistant should behave from now on, not just what they want done this time"
     )
-    preference: str = Field(default="", description="the preference as one short imperative line; empty when there is none")
+    preference: str = Field(default="", description="the preference as one short imperative line; empty when there is none", json_schema_extra={"maxLength": 240})
 
 
 @dataclass

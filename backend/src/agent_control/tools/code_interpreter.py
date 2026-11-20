@@ -13,7 +13,7 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Any
+from typing import Annotated, Any
 from uuid import uuid4
 
 from pydantic import BaseModel, Field
@@ -50,9 +50,10 @@ logger = logging.getLogger(__name__)
 
 
 class GeneratedPythonScript(BaseModel):
-    summary: str = Field(min_length=1)
+    # The bounds on the side fields are for the grammar only (see channels/memory_learning.py): the code itself is as long as the script is.
+    summary: str = Field(min_length=1, json_schema_extra={"maxLength": 240})
     code: str = Field(min_length=1)
-    expected_files: list[str] = Field(default_factory=list)
+    expected_files: list[Annotated[str, Field(json_schema_extra={"maxLength": 160})]] = Field(default_factory=list, json_schema_extra={"maxItems": 8})
 
 
 class ApprovalRequired(RuntimeError):

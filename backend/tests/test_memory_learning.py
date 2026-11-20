@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from agent_control.channels.memory import ConversationMemoryService
+from agent_control.channels import memory_learning
 from agent_control.channels.memory_learning import FactLearner, _Change, _Changes, worth_asking
 from agent_control.config import AppSettings
 from agent_control.schemas import ChannelType, InboundMessage, MemoryFact, MessageKind, ToolCallRequest, Capability
@@ -146,3 +147,16 @@ def test_a_database_made_before_episodes_gets_what_was_already_said_as_episodes(
         connection.execute("DELETE FROM episodes")
         backfill_episodes(connection)
     assert repos.episodes.search("Pearland")[0]["kind"] == "said"
+
+
+def test_the_models_answer_cannot_run_on_in_a_field_it_has_nothing_to_put_in():
+    """Live 11/19 (v4_fact_moves): with no facts on the list the 9B filled `id` with 1,366 tokens of invented letters, and every other call waited three minutes behind it."""
+    schema = memory_learning._Changes.model_json_schema()
+    change = schema["$defs"]["_Change"]["properties"]
+    note = schema["$defs"]["_Note"]["properties"]
+    assert schema["properties"]["changes"]["maxItems"] == memory_learning.MAX_CHANGES and schema["properties"]["notes"]["maxItems"] == 3
+    assert all("maxLength" in change[name] for name in ("about", "text", "id")) and change["id"]["maxLength"] >= 37  # an id is "fact_" and 32 hex digits
+    assert "maxLength" in note["project"] and "maxLength" in note["text"] and note["hooks"]["maxItems"] == 6 and note["hooks"]["items"]["maxLength"] == 40
+    # What is read back is not held to the grammar's bounds: a longer answer from a model with no grammar is still an answer.
+    long = "x" * 500
+    assert memory_learning._Change(op="add", text=long, id=long).text == long
