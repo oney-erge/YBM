@@ -18,7 +18,11 @@
    "Install ffmpeg on this computer.",
    "Explain how Wi-Fi works.",
    "How much RAM does this computer have?",
-   "How many lines containing the word ERROR are there in the log files?"
+   "How many lines containing the word ERROR are there in the log files?",
+   "Why do cats purr?",
+   "Look into flights to Denver for next week.",
+   "My printer is an HP 4100. What toner does it use?",
+   "Find out what time the pharmacy on Main Street closes."
   ]
  },
  "tell-me-when.md": {
@@ -65,7 +69,12 @@
    "Summarize this PDF.",
    "Move the pictures into a folder.",
    "Research the best heat pump for Chicago.",
-   "Write a script that renames my photos."
+   "Write a script that renames my photos.",
+   "How much does the red mug cost on that page?",
+   "Add milk and eggs to my shopping list.",
+   "Which laptop should I buy for under 800 dollars?",
+   "Did my order from last week ship yet?",
+   "Find the receipt for the vacuum I bought in March."
   ]
  },
  "sign-in-and-sign-up.md": {
@@ -83,7 +92,11 @@
    "Move the pictures into a folder.",
    "Explain how passwords are stored.",
    "Summarize this PDF.",
-   "Tell me when my package ships."
+   "Tell me when my package ships.",
+   "Sign this PDF for me.",
+   "How do I reset my router password?",
+   "Log the hours I worked today: six.",
+   "Which email address did I use for my Amazon account?"
   ]
  },
  "find-them-all.md": {
@@ -104,7 +117,11 @@
    "Summarize this PDF.",
    "Tell me when a new file shows up in that folder.",
    "Why is my wifi slow?",
-   "Find the cheapest USB-C cable."
+   "Find the cheapest USB-C cable.",
+   "Find the closest daycare to my house.",
+   "Find all the PDF files in my Downloads folder.",
+   "List every meeting on my calendar tomorrow.",
+   "Find every photo from 2023 on this computer."
   ]
  },
  "monitor-something.md": {
@@ -123,7 +140,11 @@
    "Why is my wifi slow?",
    "Summarize this PDF.",
    "Order the cheapest USB-C cable.",
-   "Back up my documents every night."
+   "Back up my documents every night.",
+   "Check my disk space now.",
+   "Is the D drive full?",
+   "Keep these meeting notes for me.",
+   "Which programs are using the most memory right now?"
   ]
  }
 }
