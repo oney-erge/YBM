@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-11-19
+
+This release adds an Undo button to the web console, which had no way back after a move while Telegram did, and two fixes found by the sealed Verdict 4 exam: a short remark that held the assistant up for three minutes, and a question about a date that was taken for a request to watch a folder. The README and `docs/MEASURED.md` (what was measured, what missed, and what has not been measured) were rewritten for it.
+
 ### Added
 
 - An Undo button on the console's task receipt. Undo ("undo that", `/undo`, the button under the answer) existed only on Telegram, so after a move started from the web console, the channel most people begin with, there was no way back. `POST /admin/api/tasks/{id}/undo` starts the same move-back task as the Telegram button (it asks for approval and never overwrites), the receipt says `can_undo`, and `channels/undo_command.can_undo` is the one place that decides whether Undo is offered, for the receipt, the route and the Telegram button. Two tests in `test_admin.py`; the existing undo tests pass.
