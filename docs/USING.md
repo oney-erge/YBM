@@ -145,6 +145,12 @@ Access modes control availability, never approvals: even **Full access** does no
 tool declares for risky operations such as installing an MCP server, promoting generated code, or running
 generated Python. See [CAPABILITIES.md](CAPABILITIES.md) and the [threat model](THREAT_MODEL.md).
 
+## Undoing a move
+
+After YBM moves or renames files, you can put them back. On Telegram, send `undo that` (also `undo`, `revert`, `put them back`, or the `/undo` command), or press the Undo button under the task's result. YBM records where every file came from, so a file that was moved twice goes back to where it started. The move back is a new task and asks for approval like the first one did.
+
+It never overwrites. A file that is no longer where YBM left it is skipped, and a name that is taken is saved as a copy. Folders that the move created are removed only if they are empty. A task keeps at most 300 moves. Undo covers moves and renames only: it does not restore a deleted or edited file. The web console has no undo yet.
+
 ## Check that the whole chain works
 
 This proves intake, classification, persistence, the worker, tool execution, the audit trail, and result
