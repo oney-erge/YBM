@@ -2185,17 +2185,19 @@ class JobRepository:
         return self._row_to_job(row) if row is not None else None
 
     def list(self, *, statuses: list[JobStatus] | None = None, chat_id: str | None = None, limit: int = 50) -> list[Job]:
+        """The newest `limit` jobs, oldest first, so `[-1]` is the latest. It kept the oldest ones: in a chat with 54 jobs, "status" showed a report
+        from the day before and not the investigation started a minute earlier, and the task asked again until it was stopped (live 11/20)."""
         clauses, params = [], []
         if statuses:
             clauses.append(f"status IN ({','.join('?' * len(statuses))})")
             params.extend(status.value for status in statuses)
+        if chat_id is not None:
+            clauses.append("json_extract(routing_json, '$.source_chat_id') = ?")
+            params.append(chat_id)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         with self.database.connect() as connection:
-            rows = connection.execute(f"SELECT * FROM background_jobs {where} ORDER BY created_at, rowid LIMIT ?", (*params, limit * 4 if chat_id else limit)).fetchall()
-        jobs = [self._row_to_job(row) for row in rows]
-        if chat_id is not None:
-            jobs = [job for job in jobs if job.routing.get("source_chat_id") == chat_id]
-        return jobs[:limit]
+            rows = connection.execute(f"SELECT * FROM background_jobs {where} ORDER BY created_at DESC, rowid DESC LIMIT ?", (*params, limit)).fetchall()
+        return [self._row_to_job(row) for row in reversed(rows)]
 
     def save(self, job_id: str, *, state: dict[str, Any] | None = None, status: JobStatus | None = None) -> None:
         """Keep a job's state and, when it changes, its status. The one write after every unit of work."""
