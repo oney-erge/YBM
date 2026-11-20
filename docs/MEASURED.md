@@ -41,6 +41,19 @@ I have not rerun the exam, because a sealed exam is run once. The three fixed mi
 
 **Hands.** The cases that open Notepad and the calculator need an unlocked screen and a model that reads images. On the evening of 19 November the screen was locked and the image model returned errors, so those two were cancelled. That run scored 6 of 10. Two other misses (a download and a search on a page) were fixed afterward and passed when run alone.
 
+## Requests chosen for demonstrations
+
+Before recording any demonstration, I ran four requests from the everyday suite three times each on the running assistant, one run at a time, on the evening of 19 November.
+
+| Request | Passed |
+|---|---|
+| How many Steam games are installed on this PC? | 3 of 3 |
+| Build a small web page for a bill and a tip percentage | 3 of 3 |
+| Move the PNG files into a subfolder, then put them back | 3 of 3 |
+| The exact page title of three websites | 2 of 3 |
+
+The miss: the assistant tried a Steam inventory and a search instead of opening the three pages, and stopped at its limit of 12 steps with the titles unread. The 11 passes took from 30 to 82 seconds each. The undo in the third request is Telegram's. The console's Undo button has not been run against a real move.
+
 ## Speed
 
 | Measurement | Value | Source |
@@ -55,7 +68,7 @@ The time is measured from the person's message to the last reply that is not an 
 ## What I have not measured
 
 - **Other people's machines.** No one except me has used YBM for a task that I know of. I do not know how it behaves on a different GPU, a different model, or a different language.
-- **macOS and Linux tasks.** On every change, continuous integration starts YBM and passes a health check on Windows, macOS, and Linux, and replays 16 recorded task scenarios (find a file, summarize a PDF, run code, schedule a job, call a tool server) on all three. No task has been run against a real model on macOS or Linux. Desktop control exists only on Windows.
+- **macOS and Linux tasks.** On every change, continuous integration starts YBM and passes a health check on Windows, macOS, and Linux, and replays 16 recorded task scenarios (find a file, summarize a PDF, run code, schedule a job, call a tool server) on all three. No task has been run against a real model on macOS or Linux. On 19 November I ran the published one-line installer once on Ubuntu 24.04 under WSL2, in a new folder: it finished in 21 seconds (the packages were already cached on that machine), `ybm doctor` reported 29 ok, 0 warnings and 0 failures, and the console answered. I have not timed an install on a clean machine, and I have not installed on macOS. Desktop control exists only on Windows.
 - **Long runs.** A three-day run with a restart has not been done. A 600-page research run produced a thin report: the claim check removed 178 of 238 cited sentences. A survey of daycares filled 12 percent of its table cells, and the fix for that has not been rerun. See [PLAN.md](PLAN.md), section 2.
 - **Memory across days.** Memory has passed its suite, but a fact remembered across weeks of real use has not been shown.
 - **Comparisons.** I have not run these requests against any other assistant, so I make no claim about how YBM compares.
