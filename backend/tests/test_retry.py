@@ -55,17 +55,23 @@ def test_one_failure_a_success_in_between_and_the_notes_a_check_leaves_are_not_s
 
 
 def test_the_kind_follows_the_cause_is_never_repeated_and_must_fit_the_task():
-    everything = set(retry.KINDS)
+    everything = set(retry.KINDS) - {"fix_the_call"}  # the error did not say what to change
     assert retry.choose("misread_the_request", [], everything) == "answer_from_context"
-    assert retry.choose("wrong_arguments", [], everything) == "fix_the_call"
-    assert retry.choose("wrong_arguments", ["fix_the_call"], everything) == "owning_home"
-    assert retry.choose("wrong_arguments", ["fix_the_call"], everything - {"owning_home"}) == "other_tool"
+    assert retry.choose("wrong_arguments", [], everything) == "owning_home"
+    assert retry.choose("wrong_arguments", [], everything - {"owning_home"}) == "other_tool"
     assert retry.choose("too_big", [], everything) == "break_down"
     assert retry.choose("does_not_exist", [], everything) == "step_back"
 
 
+def test_what_the_tools_own_error_names_comes_before_the_models_guess_at_a_cause():
+    available = set(retry.KINDS)
+    for cause in ("misread_the_request", "missing_context", "wrong_tool", "does_not_exist"):
+        assert retry.choose(cause, [], available) == "fix_the_call"  # whatever the diagnosis said
+    assert retry.choose("misread_the_request", ["fix_the_call"], available) == "answer_from_context"  # once, and then the cause decides
+
+
 def test_when_every_kind_that_fits_was_tried_there_is_nothing_left_to_choose():
-    assert retry.choose("refused", ["other_tool", "step_back", "look_up"], set(retry.KINDS)) is None
+    assert retry.choose("refused", ["other_tool", "step_back", "look_up"], set(retry.KINDS) - {"fix_the_call"}) is None
     assert retry.choose("misread_the_request", [], set()) is None
 
 

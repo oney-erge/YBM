@@ -134,8 +134,16 @@ ORDER = {
 }
 
 
+#: Kinds that come from the tool's own error, not from the model's guess at a cause: `available` has them only when the error says what to change. Live 11/19 (hands_search_page): the
+#: 9B's diagnosis was nonsense (it blamed the url) and sent the next attempts to "answer from the conversation" while the error said which field names did not match.
+EVIDENCE_FIRST = ("fix_the_call",)
+
+
 def choose(cause: str, tried: list[str], available: set[str]) -> str | None:
-    """The first kind that suits the cause, has not been tried and fits this task; None when there is none left."""
+    """The kind the evidence names, else the first that suits the cause, has not been tried and fits this task; None when there is none left."""
+    for kind in EVIDENCE_FIRST:
+        if kind in available and kind not in tried:
+            return kind
     for kind in ORDER.get(cause, ORDER["missing_context"]):
         if kind in available and kind not in tried:
             return kind
