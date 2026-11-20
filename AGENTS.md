@@ -12,7 +12,7 @@ Use these as the durable sources of truth:
 - `docs/ARCHITECTURE.md` for current components and message flow.
 - `docs/STATE_MACHINES.md` for task-control ownership and recovery boundaries.
 - `docs/CAPABILITIES.md` for the tool catalog and the access each tool needs.
-- `docs/ROADMAP.md` for what is built, what is next, and the known limits.
+- `docs/PLAN.md` for where it stands and what is left, in order; `docs/ROADMAP.md` for what is built, the backlog and the known limits.
 - `config/config.example.yaml` for supported configuration.
 - `docs/INSTALL.md` and `docs/USING.md` for operator-facing setup, commands, and the console tour.
   `README.md` is a short front door; keep detail in the docs and link to it rather than repeating it.
