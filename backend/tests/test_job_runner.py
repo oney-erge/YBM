@@ -831,3 +831,22 @@ def test_the_computer_is_kept_awake_while_a_long_job_runs_and_let_go_when_none_d
     _job(repos)
     asyncio.run(runner.tick())
     assert seen[-1] is True
+
+
+@pytest.mark.asyncio
+async def test_status_names_the_job_just_started_in_a_chat_with_many_old_ones(tmp_path) -> None:
+    """Live 11/20 (cont_plan_for_it_stays_on_the_goal): the chat had 54 jobs; the list kept the oldest 20, so "status" named a report from the day before
+    and not the investigation started a minute earlier, four times, until the task was stopped."""
+    repos, call = _tool(tmp_path)
+    for index in range(30):
+        repos.jobs.create(Job(kind="research", goal=f"old research {index}", status=JobStatus.DONE, routing=ROUTING))
+    repos.jobs.create(Job(kind="research", goal="elsewhere", routing={"source_chat_id": "200"}))
+    new = repos.jobs.create(Job(kind="investigate", goal="the label printer stopped printing", routing=ROUTING))
+
+    result = await call(operation="status")
+
+    assert result.status == ToolResultStatus.SUCCEEDED
+    assert result.output["job_id"] == new.id and "label printer" in result.output["summary"]
+    listed = repos.jobs.list(chat_id="100", limit=20)
+    assert len(listed) == 20 and listed[-1].id == new.id and listed[0].goal == "old research 11"  # the newest twenty, oldest first
+    assert all(job.routing.get("source_chat_id") == "100" for job in listed)
