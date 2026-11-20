@@ -17,9 +17,8 @@ from agent_control.storage.database import Database
 # task_signals/tool_invocations/artifacts/approvals/llm_calls reference tasks;
 # tasks/messages/conversation_memory reference conversations. audit_events and
 # schedules carry no FK. See backend/src/agent_control/storage/migrations.py.
-# "plans"/"subtasks" are kept in the lists below only so a pre-existing
-# database that still has those (now-schema-dropped, unused since P3) tables
-# gets them swept by `ybm db reset`/`db clean` too, not left behind forever.
+# "plans"/"subtasks" are kept in the lists below for a database that still holds rows in those legacy tables (storage/migrations.py drops them when empty);
+# `ybm db reset`/`db clean` sweeps them too.
 # "project_plan_steps"/"project_plans" are the plans of plans/model.py (goals too big for one task): they do not reference tasks.
 TABLES_CHILD_FIRST = (
     "task_signals", "subtasks", "tool_invocations", "plans", "artifacts", "approvals", "llm_calls",

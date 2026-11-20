@@ -133,3 +133,22 @@ def test_upgrades_an_approval_grants_table_from_before_scope_and_revocation(tmp_
     assert grant.revoked is False and grant.operations_used == 0 and grant.max_operations is None
 
     database.initialize()  # idempotent: a second start must not fail on the now-present columns
+
+
+def test_legacy_plan_tables_are_dropped_when_empty_and_kept_when_they_hold_rows(tmp_path) -> None:
+    """docs/PLAN.md C2: `plans`, `subtasks` and `plan_steps` were left by an older schema; empty ones go, one with rows stays."""
+    import sqlite3
+
+    from agent_control.storage.database import Database
+
+    path = tmp_path / "agent.db"
+    Database(f"sqlite:///{path}").initialize()
+    with sqlite3.connect(path) as connection:
+        for table in ("plan_steps", "subtasks", "plans"):
+            connection.execute(f"CREATE TABLE {table} (id TEXT PRIMARY KEY, note TEXT)")
+        connection.execute("INSERT INTO subtasks (id, note) VALUES ('s1', 'kept')")
+    Database(f"sqlite:///{path}").initialize()
+    with sqlite3.connect(path) as connection:
+        names = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        assert "plans" not in names and "plan_steps" not in names  # empty: dropped
+        assert "subtasks" in names and connection.execute("SELECT note FROM subtasks").fetchone() == ("kept",)  # one row: left alone

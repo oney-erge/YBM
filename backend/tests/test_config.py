@@ -192,3 +192,28 @@ def test_is_loopback_host_covers_full_loopback_range(host: str) -> None:
 )
 def test_is_loopback_host_rejects_non_loopback(host: str) -> None:
     assert is_loopback_host(host) is False
+
+
+def test_settings_nothing_read_are_removed_and_an_old_config_that_still_sets_them_loads(tmp_path, caplog) -> None:
+    """docs/PLAN.md C3: eleven settings that no code read (and a whole terminal adapter block) are gone; a config.yaml written before still loads, with a warning, not an error."""
+    import yaml
+
+    from agent_control.config import REMOVED_SETTINGS, AppSettings, load_settings
+
+    old = {
+        "identity": {"instance_name": "ybm-old", "owner_label": "me"},
+        "approval_policy": {"approval_token_ttl_seconds": 60},
+        "limits": {"tool_timeout_seconds": 5, "max_log_chars": 500},
+        "adapters": {"terminal": {"enabled": True, "blocked_command_patterns": ["x"]}, "code_interpreter": {"jupyter": {"enabled": True}, "session_ttl_seconds": 60}, "desktop": {"screenshot_interval_seconds": 3}},
+    }
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(old), encoding="utf-8")
+    with caplog.at_level("WARNING", logger="agent_control.config"):
+        settings = load_settings(path)
+    assert settings.identity.instance_name == "ybm-old"
+    assert sum("was removed" in record.getMessage() for record in caplog.records) == len(REMOVED_SETTINGS)
+    for gone in ("owner_label",):
+        assert not hasattr(settings.identity, gone)
+    assert not hasattr(settings.adapters, "terminal") and not hasattr(settings.adapters.code_interpreter, "jupyter")
+    with pytest.raises(ValidationError):
+        AppSettings(_env_file=None, identity={"not_a_setting": 1})  # a key that was never a setting is still refused

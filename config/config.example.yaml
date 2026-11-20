@@ -7,7 +7,6 @@ server:
 
 identity:
   instance_name: "ybm-control"
-  owner_label: "local-user"
 
 channels:
   telegram:
@@ -211,7 +210,6 @@ approval_policy:
   # Authoritative across every capability and access mode. A capability's
   # requires_approval: false does not bypass this floor.
   require_approval_at_or_above: "medium"
-  approval_token_ttl_seconds: 900
 
 storage:
   database_url: "sqlite:///.agent_control/agent_control.db"
@@ -262,8 +260,6 @@ logging:
 limits:
   max_parallel_tasks: 1
   max_retries: 3
-  tool_timeout_seconds: 900
-  max_log_chars: 12000
   retry_backoff_seconds: 30
 
 # One index of everything the assistant can do, could do with your help, or cannot do (tools, MCP tools, skills, saved workflows,
@@ -376,13 +372,6 @@ adapters:
     max_response_chars: 400000
     max_body_chars: 100000
     user_agent: "YBM-http-request/1.0"
-  terminal:
-    enabled: false
-    allowed_working_dirs: []
-    blocked_command_patterns:
-      - "rm -rf"
-      - "del /s"
-      - "format "
   coding_assistant:
     enabled: false
     command_template: []
@@ -462,12 +451,7 @@ adapters:
       workspace_mount_target: "/workspace"
       remove_container: true
       run_as_user: null
-    jupyter:
-      enabled: false
-      image: "python:3.12-slim"
-      idle_timeout_seconds: 900
     remote_backends: {}
-    session_ttl_seconds: 900
     allowed_imports:
       - "base64"
       - "collections"
@@ -503,7 +487,6 @@ adapters:
   desktop:
     screenshot_enabled: false
     control_enabled: false
-    screenshot_interval_seconds: 10
     screenshot_format: "png"
   computer_use:
     enabled: false

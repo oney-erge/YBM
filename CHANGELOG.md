@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- Removed what nothing used (docs/PLAN.md, C1 to C3): ten settings that no code read, among them the whole `adapters.terminal` block (its blocked-command list promised a check that was never applied; the `terminal.run` capability and its approval are the control), the code interpreter's `jupyter` block, and four limits and timeouts; the module `plans/review.py`; and, from a database, the empty legacy tables `plans`, `subtasks` and `plan_steps`. A `config.yaml` that still sets a removed key loads, the key dropped with a warning. Schedules the person deleted are removed after 30 days by the daily upkeep (the live database held 59).
+
 ### Added
 
 - An account the assistant made for the person is told to them: after the answer, a message of its own gives the site, the username and the password (the model never saw the password: the vault made it, the browser typed it). `AccountVault.made_by(task_id)` reads what that task made; the standard answer still strips credentials. The console's Accounts page keeps the record. The message is sent as private: the audit trail records that it was sent, not what it said, so the password is never kept in the database or its backups (the branch as first written stored it in the clear; found 11/20 before it merged).

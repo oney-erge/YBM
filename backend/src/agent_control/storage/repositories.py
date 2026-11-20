@@ -1821,6 +1821,11 @@ class ScheduleRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
+    def purge_deleted(self, older_than_iso: str) -> int:
+        """Remove the schedules the person deleted before `older_than_iso` (their watched-file rows go with them: ON DELETE CASCADE)."""
+        with self.database.connect() as connection:
+            return connection.execute("DELETE FROM schedules WHERE status = 'deleted' AND updated_at < ?", (older_than_iso,)).rowcount
+
     def create(self, schedule: ScheduleRecord) -> ScheduleRecord:
         with self.database.connect() as connection:
             self.insert(connection, schedule)

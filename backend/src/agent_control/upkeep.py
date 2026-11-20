@@ -155,6 +155,10 @@ async def run_daily(settings: Any, repositories: Any, say, *, now: datetime | No
         state["restore_check"] = restore_check(latest)
         state["restore_checked_on"] = today
     try:
+        repositories.schedules.purge_deleted((local - timedelta(days=30)).astimezone(timezone.utc).isoformat())  # deleted a month ago: gone
+    except Exception:  # noqa: BLE001 - a chore that fails must not stop the others
+        pass
+    try:
         from agent_control import projects_memory
 
         projects_memory.tidy(repositories)  # notes written twice are kept once, and the readable copy under .agent_control/memory is rewritten
