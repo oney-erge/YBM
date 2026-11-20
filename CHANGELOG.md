@@ -5,6 +5,10 @@ versions follow [semantic versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- Replays of real runs for the README, the oneyerge.com tour and a browser demo (`docs/demo`). One page draws a phone and the computer from the logs of three runs on Qwen3.5 9B (finding the Steam games, organizing 24 downloads with an approval, writing and starting a small web page), with the real-time clock and the playback speed on screen. `build_data.py` reads the runs, `record.mjs` records any scene frame by frame, and `test_web.mjs` plays the browser version like a visitor. The README opens with the Organize replay and shows the other two; the social preview image was redrawn from the same frames.
+
 ### Changed
 
 - The computer is kept awake while a task is being worked on, not only during a long job, and during a live test run. On 11/19 and 11/20 the laptop went into connected standby in the middle of work (6, 7, 12 and 27 minutes; Windows' own power log), its standby drops the network, and every process stopped until it woke: a plan revision waited 27 minutes and the sealed exam's 12-minute rename stall was one of these. A task waiting for the person does not keep it awake. The hold is the one a long job already used (`jobs/awake.py`, `jobs.keep_awake`); it stops idle sleep, not a closed lid or the power button.

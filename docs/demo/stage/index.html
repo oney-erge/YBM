@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YBM replay demo</title>
+<meta name="description" content="Replays of real YBM runs on a local 9B model: ask from a phone, and watch it find, organize and build on the computer. Messages, files and timings come from the run logs.">
+<link rel="canonical" href="https://oneyerge.com/demo/ybm/">
+<link rel="icon" href="ybm-mark.svg" type="image/svg+xml">
+<meta property="og:title" content="YBM replay demo">
+<meta property="og:description" content="Replays of real YBM runs on a local 9B model, from the run logs.">
+<meta property="og:image" content="https://oneyerge.com/media/ybm-tour-poster.webp">
+<link rel="stylesheet" href="stage.css">
+<style>
+  body { background: #070b16; }
+  .tabs button:focus-visible, .ctl button:focus-visible { outline: 2px solid var(--indigo-2); outline-offset: 2px; }
+  .player-head .by { font-size: 14px; color: var(--muted); }
+  .player-head .by a { color: var(--indigo-2); }
+  details { margin-top: 18px; color: #c9d0e4; font-size: 15px; line-height: 1.55; }
+  details summary { cursor: pointer; color: var(--text); font-weight: 600; }
+  details p { margin: 8px 0; }
+  .scene-desc { font-size: 15px; color: var(--muted); margin: 0 0 12px; min-height: 22px; }
+</style>
+</head>
+<body class="web">
+<main class="player">
+  <div class="player-head">
+    <h1><img src="ybm-mark.svg" alt="">YBM, replayed</h1>
+    <div class="tabs" role="group" aria-label="Choose a replay">
+      <button data-scene="find" aria-pressed="false">Find</button>
+      <button data-scene="organize" aria-pressed="true">Organize</button>
+      <button data-scene="build" aria-pressed="false">Build</button>
+    </div>
+    <div class="ctl">
+      <button id="play" aria-label="Pause">Pause</button>
+      <button id="restart">Restart</button>
+    </div>
+  </div>
+  <p class="scene-desc" id="desc"></p>
+  <div class="viewport" id="viewport"><div id="host"></div></div>
+  <input class="scrub" id="scrub" type="range" min="0" max="1000" value="0" aria-label="Position in the replay">
+  <div class="player-foot">
+    Each replay is drawn from a saved run: the messages, file names, numbers and real-time clock come from the run's log, and the
+    page in Build is the file the run wrote. Model: Qwen3.5 9B (4-bit, llama.cpp) on an 8 GB laptop GPU, November 19, 2026.
+    Waiting is shown faster, with the speed on screen.
+    <a href="https://github.com/oney-erge/YBM">The repository</a> &middot;
+    <a href="https://github.com/oney-erge/YBM/blob/main/docs/MEASURED.md">What was measured, and what failed</a> &middot;
+    <a href="/media/ybm-tour.mp4">The tour video</a>
+  </div>
+  <details>
+    <summary>What happens in each replay, as text</summary>
+    <div id="transcript"></div>
+  </details>
+</main>
+<script src="stories.js"></script>
+<script src="stage.js"></script>
+<script>
+(() => {
+  const Y = window.__ybm;
+  const host = document.getElementById("host"), viewport = document.getElementById("viewport");
+  const scrub = document.getElementById("scrub"), playBtn = document.getElementById("play"), desc = document.getElementById("desc");
+  const DESC = {
+    find: "Asked from a phone: how many Steam games are installed. It reads the Steam library on the computer and answers.",
+    organize: "Asked to organize 24 downloads. It plans the moves, stops for an approval, then moves them. Tap Approve once when it asks.",
+    build: "Asked for a small web page. It writes the page, starts it on the computer and sends the link. At the end the page is yours to try.",
+  };
+  let cur = null, t = 0, playing = true, last = 0, scale = 1, approved = false, layout = "landscape", ended = false;
+  const hint = document.createElement("div");
+  hint.className = "hint"; hint.textContent = "Tap Approve once"; hint.style.display = "none";
+
+  function pickLayout() { return viewport.clientWidth < 720 ? "portrait" : "landscape"; }
+  function fit() {
+    const w = viewport.clientWidth, sw = layout === "portrait" ? 1080 : 1920, sh = layout === "portrait" ? 1920 : 1080;
+    scale = w / sw;
+    cur.stage.style.transform = `scale(${scale})`;
+    viewport.style.height = `${sh * scale}px`;
+  }
+  function load(name) {
+    layout = pickLayout();
+    cur = Y.mount(name, host, layout);
+    cur.stage.appendChild(hint);
+    t = 0; approved = false; ended = false; playing = true; playBtn.textContent = "Pause";
+    document.querySelectorAll(".tabs button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.scene === name)));
+    desc.textContent = DESC[name];
+    const ok = cur.stage.querySelector(".approval .ok");
+    if (ok) ok.addEventListener("click", () => { approved = true; hint.style.display = "none"; playing = true; playBtn.textContent = "Pause"; });
+    const frame = cur.stage.querySelector("iframe");
+    if (frame) frame.style.pointerEvents = "none";
+    fit();
+    (cur.render.ready || Promise.resolve()).then(() => cur.render(0));
+  }
+  function step(now) {
+    const dt = last ? Math.min(0.1, (now - last) / 1000) : 0;
+    last = now;
+    if (cur && playing && !ended) {
+      let next = t + dt;
+      const gate = cur.scene.gate;
+      if (gate && !approved && next >= gate - 0.02) {
+        next = gate - 0.02;
+        const ok = cur.stage.querySelector(".approval .ok");
+        if (ok) {
+          const r = ok.getBoundingClientRect(), s = cur.stage.getBoundingClientRect();
+          hint.style.display = "";
+          hint.style.left = `${(r.left - s.left) / scale - 10}px`;
+          hint.style.top = `${(r.bottom - s.top) / scale + 16}px`;
+        }
+      }
+      if (next >= cur.duration) {
+        next = cur.duration; ended = true; playBtn.textContent = "Replay";
+        const frame = cur.stage.querySelector("iframe");
+        if (frame) frame.style.pointerEvents = "auto";
+      }
+      t = next;
+      cur.render(t);
+      scrub.value = String(Math.round((t / cur.duration) * 1000));
+    }
+    requestAnimationFrame(step);
+  }
+  document.querySelectorAll(".tabs button").forEach((b) => b.addEventListener("click", () => load(b.dataset.scene)));
+  playBtn.addEventListener("click", () => {
+    if (ended) { load(cur.name); return; }
+    playing = !playing; playBtn.textContent = playing ? "Pause" : "Play";
+  });
+  document.getElementById("restart").addEventListener("click", () => load(cur.name));
+  scrub.addEventListener("input", () => {
+    t = (Number(scrub.value) / 1000) * cur.duration;
+    if (cur.scene.gate && t >= cur.scene.gate) approved = true;
+    ended = t >= cur.duration - 0.01;
+    cur.render(t);
+  });
+  window.addEventListener("resize", () => { const want = pickLayout(); if (want !== layout) { const keep = t; load(cur.name); t = keep; } else fit(); });
+
+  // A plain-text account of each replay, from the same data.
+  const S = window.YBM_STORIES, tr = document.getElementById("transcript");
+  const msg = (who, text) => `<p><b>${who}:</b> ${text.replace(/&/g, "&amp;").replace(/</g, "&lt;")}</p>`;
+  tr.innerHTML = `<p><b>Find</b></p>${msg("Person", S.find.ask)}${S.find.events.map((e) => msg("YBM", e.text)).join("")}`
+    + `<p><b>Organize</b></p>${msg("Person", S.organize.ask)}${S.organize.events.map((e) => msg(e.kind === "approved" ? "Person" : "YBM", e.kind === "approval" ? "Approval needed: " + e.text : e.text)).join("")}`
+    + `<p><b>Build</b></p>${msg("Person", S.build.ask)}${S.build.events.map((e) => msg("YBM", e.text)).join("")}`;
+
+  document.fonts.ready.then(() => { load(new URLSearchParams(location.search).get("scene") || "organize"); requestAnimationFrame(step); });
+})();
+</script>
+</body>
+</html>

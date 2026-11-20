@@ -1,6 +1,8 @@
 # Screenshots
 
-`demo.gif` is the README's opening demo: a real run, replayed. Qwen3.5 9B (on
+The README's three GIFs (`ybm-organize.gif`, `ybm-find.gif`, `ybm-build.gif`) are replays of real runs drawn from their logs; [docs/demo](../demo/README.md) says how they are made and what in them is real. `demo-run.json` below is the source of the Organize replay.
+
+`demo.gif` was the README's opening demo until November 2026: a real run, replayed in the console. Qwen3.5 9B (on
 a laptop GPU through llama.cpp) organized a sample Downloads folder of 24
 placeholder files in 44 seconds. YBM logged every model call of that run, and
 [`demo-run.json`](demo-run.json) holds them: each prompt, the model's exact
