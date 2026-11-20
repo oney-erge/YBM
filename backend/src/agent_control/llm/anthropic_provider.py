@@ -91,8 +91,9 @@ class AnthropicProvider:
         *,
         temperature: float | None = None,
         response_schema: dict | None = None,
+        grammar: bool = True,
     ) -> T:
-        # response_schema is for local servers that enforce a schema while writing; this API uses output_model's own.
+        # response_schema and grammar are for local servers that enforce a schema while writing; this API uses output_model's own.
         schema = output_model.model_json_schema()
         tool_name = _tool_name(output_model.__name__)
         message = await self._create(

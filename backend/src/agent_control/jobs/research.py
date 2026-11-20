@@ -19,7 +19,7 @@ from __future__ import annotations
 import re
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Annotated, Any
 from urllib.parse import urlparse, urlunparse
 
 from pydantic import BaseModel, Field
@@ -88,32 +88,41 @@ GAP_PAGES = 4
 USUAL_MAX_PAGES = 150
 
 
+# Each field below has a size for the grammar the model writes under (docs/DESIGN.md, D6): an open field is where a small model writes on to the token cap.
+_Question = Annotated[str, Field(json_schema_extra={"maxLength": 240})]
+_Search = Annotated[str, Field(json_schema_extra={"maxLength": 160})]
+
+
 class _Questions(BaseModel):
-    questions: list[str] = Field(default_factory=list, description="the sub-questions that, answered, answer the goal; each a full question")
+    questions: list[_Question] = Field(
+        default_factory=list, description="the sub-questions that, answered, answer the goal; each a full question", json_schema_extra={"maxItems": MAX_QUESTIONS}
+    )
 
 
 class _Chapters(BaseModel):
-    chapters: list[str] = Field(default_factory=list, description="the chapters of the report, each a short title; together they cover the goal, each a different area")
+    chapters: list[Annotated[str, Field(json_schema_extra={"maxLength": 120})]] = Field(
+        default_factory=list, description="the chapters of the report, each a short title; together they cover the goal, each a different area", json_schema_extra={"maxItems": MAX_CHAPTERS}
+    )
 
 
 class _Supported(BaseModel):
     supported: bool = Field(description="true only if the quotations say what the sentence says: the same subject, the same numbers, the same units and conditions")
-    reason: str = Field(default="", description="one short phrase: what matches, or what differs")
+    reason: str = Field(default="", description="one short phrase: what matches, or what differs", json_schema_extra={"maxLength": 200})
 
 
 class _Phrasings(BaseModel):
-    searches: list[str] = Field(default_factory=list, description="one web search for each question, in the same order, in different words")
+    searches: list[_Search] = Field(default_factory=list, description="one web search for each question, in the same order, in different words", json_schema_extra={"maxItems": MAX_QUESTIONS})
 
 
 class _Fact(BaseModel):
-    claim: str = Field(description="what the page says, in one short sentence with its numbers")
-    quote: str = Field(description="the exact words from the page that say it, copied character for character")
+    claim: str = Field(description="what the page says, in one short sentence with its numbers", json_schema_extra={"maxLength": 300})
+    quote: str = Field(description="the exact words from the page that say it, copied character for character", json_schema_extra={"maxLength": 500})
 
 
 class _Notes(BaseModel):
     # No "is this page relevant" flag: asked that first, the 9B said "not relevant" about a page of monthly running costs by system size and season.
     # Asked only for facts with their quotations, it found four on that page and none on a page about something else; no verified fact means not relevant.
-    facts: list[_Fact] = Field(default_factory=list, description="up to 4 facts that help answer the question; empty if the page has none")
+    facts: list[_Fact] = Field(default_factory=list, description="up to 4 facts that help answer the question; empty if the page has none", json_schema_extra={"maxItems": MAX_FACTS_PER_PAGE})
 
 
 PLAN_SYSTEM = (

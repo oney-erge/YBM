@@ -39,10 +39,10 @@ for line in sorted(set(out.splitlines())):
 class _Start(BaseModel):
     action: Literal["start", "survey", "monitor", "investigate", "watch", "status", "pause", "resume", "stop", "other"] = Field(description="what the person wants done with research, a list to find, something to monitor, a problem to find out, or something to watch")
     name: str = Field(default="", description="for monitor: a plain lower-case name for the script", json_schema_extra={"maxLength": 60})
-    script: str = Field(default="", description="for monitor: the short read-only Python script that prints one line for each thing it sees")
+    script: str = Field(default="", description="for monitor: the short read-only Python script that prints one line for each thing it sees", json_schema_extra={"maxLength": 2400})
     target: str = Field(default="", description="for watch: the folder path or web address to watch, exactly as the person wrote it", json_schema_extra={"maxLength": 240})
     every_minutes: int | None = Field(default=None, description="for watch: how often to look, in minutes, when the person said")
-    goal: str = Field(default="", description="for start: what to find out, with everything the person said that matters, and nothing about how to work")
+    goal: str = Field(default="", description="for start: what to find out, with everything the person said that matters, and nothing about how to work", json_schema_extra={"maxLength": 1000})
     pages: int | None = Field(default=None, description="for start: how many sources or pages the person asked to read; empty when they gave no number")
 
 

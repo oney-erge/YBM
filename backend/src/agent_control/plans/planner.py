@@ -10,7 +10,7 @@ are on) and what it cannot (known gaps, such as paying); the result is checked l
 from __future__ import annotations
 
 from datetime import date
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -53,8 +53,9 @@ class StepDraft(BaseModel):
     detail: str = Field(default="", max_length=600)
     owner: Literal["ybm", "user", "access"] = "ybm"
     choice_only: bool = False
-    needs: list[str] = Field(default_factory=list)
-    depends_on: list[int] = Field(default_factory=list)
+    # Sizes for the grammar only (docs/DESIGN.md, D6): these were the open fields of a plan, and its call ran to the token cap, three minutes each (11/19, a plan made and revised).
+    needs: list[Annotated[str, Field(json_schema_extra={"maxLength": 80})]] = Field(default_factory=list, json_schema_extra={"maxItems": 6})
+    depends_on: list[int] = Field(default_factory=list, json_schema_extra={"maxItems": 10})
     due: str = Field(default="", max_length=20)
 
 
@@ -62,7 +63,7 @@ class PlanDraft(BaseModel):
     summary: str = Field(default="", max_length=1200)
     steps: list[StepDraft] = Field(default_factory=list, max_length=20)
     question: str = Field(default="", max_length=300)
-    options: list[str] = Field(default_factory=list, max_length=4)
+    options: list[Annotated[str, Field(json_schema_extra={"maxLength": 120})]] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def steps_or_a_question(self) -> "PlanDraft":

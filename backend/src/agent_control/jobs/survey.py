@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import BaseModel, Field
 
@@ -43,41 +43,52 @@ DEFAULT_CEILING_HOURS = 72
 SUMMARY_ROWS = 5
 
 
+# Each field below has a size for the grammar the model writes under (docs/DESIGN.md, D6): an open field is where a small model writes on to the token cap.
+# The sizes are the ones the code keeps after the call.
+_Search = Annotated[str, Field(json_schema_extra={"maxLength": 160})]
+
+
 class _Plan(BaseModel):
-    entity: str = Field(description="what one row is, as a short singular noun (daycare, bakery that serves pastel de nata, pool builder)")
-    area: str = Field(default="", description="the place, as the person said or as it can be taken from what they said (a city, a county, 'within 40 miles of Pearland, Texas')")
-    criteria: list[str] = Field(default_factory=list, description="3 to 8 things to find out about each one, short (monthly cost, license status, hours, reviews)")
-    searches: list[str] = Field(default_factory=list, description="web searches: the first two look for an official list or registry, then directories, then maps and reviews")
+    entity: str = Field(description="what one row is, as a short singular noun (daycare, bakery that serves pastel de nata, pool builder)", json_schema_extra={"maxLength": 80})
+    area: str = Field(
+        default="", description="the place, as the person said or as it can be taken from what they said (a city, a county, 'within 40 miles of Pearland, Texas')", json_schema_extra={"maxLength": 120}
+    )
+    criteria: list[Annotated[str, Field(json_schema_extra={"maxLength": 60})]] = Field(
+        default_factory=list, description="3 to 8 things to find out about each one, short (monthly cost, license status, hours, reviews)", json_schema_extra={"maxItems": MAX_CRITERIA}
+    )
+    searches: list[_Search] = Field(
+        default_factory=list, description="web searches: the first two look for an official list or registry, then directories, then maps and reviews", json_schema_extra={"maxItems": MAX_PHRASINGS_PER_ROUND}
+    )
 
 
 class _Cell(BaseModel):
-    criterion: str = Field(description="one of the criteria, as listed")
-    value: str = Field(description="what the page says, short")
-    quote: str = Field(description="the exact words from the page that say it, copied character for character")
+    criterion: str = Field(description="one of the criteria, as listed", json_schema_extra={"maxLength": 60})
+    value: str = Field(description="what the page says, short", json_schema_extra={"maxLength": 200})
+    quote: str = Field(description="the exact words from the page that say it, copied character for character", json_schema_extra={"maxLength": 300})
 
 
 class _Row(BaseModel):
-    name: str = Field(description="the name of the one")
-    address: str = Field(default="", description="its street address or town, as the page gives it")
-    url: str = Field(default="", description="its own web address if the page gives one")
-    cells: list[_Cell] = Field(default_factory=list)
+    name: str = Field(description="the name of the one", json_schema_extra={"maxLength": 120})
+    address: str = Field(default="", description="its street address or town, as the page gives it", json_schema_extra={"maxLength": 160})
+    url: str = Field(default="", description="its own web address if the page gives one", json_schema_extra={"maxLength": 300})
+    cells: list[_Cell] = Field(default_factory=list, json_schema_extra={"maxItems": MAX_CRITERIA})
 
 
 class _Rows(BaseModel):
-    rows: list[_Row] = Field(default_factory=list, description="every one on the page that is in or near the place; empty when the page has none")
+    rows: list[_Row] = Field(default_factory=list, description="every one on the page that is in or near the place; empty when the page has none", json_schema_extra={"maxItems": MAX_ROWS_PER_PAGE})
 
 
 class _More(BaseModel):
-    searches: list[str] = Field(default_factory=list, description="new web searches, in different words from those already made")
+    searches: list[_Search] = Field(default_factory=list, description="new web searches, in different words from those already made", json_schema_extra={"maxItems": MAX_PHRASINGS_PER_ROUND})
 
 
 class _Rating(BaseModel):
     score: int = Field(description="0 to 10: how well it meets the criteria, judged from the cells given")
-    reason: str = Field(description="one short sentence")
+    reason: str = Field(description="one short sentence", json_schema_extra={"maxLength": 200})
 
 
 class _Summary(BaseModel):
-    text: str = Field(description="three to five sentences: what was found, which are the best and why, what could not be found")
+    text: str = Field(description="three to five sentences: what was found, which are the best and why, what could not be found", json_schema_extra={"maxLength": 1200})
 
 
 PLAN_SYSTEM = (
