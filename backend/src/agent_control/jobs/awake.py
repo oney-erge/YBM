@@ -1,4 +1,4 @@
-"""Keep the computer awake while a long job runs, and let it sleep again when none does.
+"""Keep the computer awake while a long job runs or a task is being worked on, and let it sleep again when neither is.
 
 A campaign (a survey for a night, a research for hours) stops being a background job the moment Windows goes to sleep with it half done. The owner said a campaign may keep the PC awake
 (11/19), so while a job of any kind but a watch is running, the process asks Windows not to sleep (`SetThreadExecutionState`, the call a video player makes); when the last such job ends,

@@ -35,6 +35,8 @@ class DeliveryUnavailable(RuntimeError):
 
 #: A task in one of these states is the person waiting: jobs give way.
 _ACTIVE = [TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.RUNNING, TaskStatus.RETRYING, TaskStatus.AWAITING_APPROVAL]
+#: A task being worked on keeps the computer awake too (jobs/awake.py); one waiting for the person does not, since that wait can last hours.
+_WORKING = [TaskStatus.RECEIVED, TaskStatus.INTERPRETING, TaskStatus.RUNNING, TaskStatus.RETRYING]
 UNIT_SECONDS = 240.0  # a unit that takes longer than this is counted as failed: a model that hangs must not stop the worker taking tasks
 MAX_ERRORS_IN_A_ROW = 8
 #: After a failed unit the job waits before it tries again: 30 s, then twice as long each time, at most half an hour. Five tries in five seconds were enough to stop a
@@ -84,7 +86,9 @@ class JobRunner:
     async def tick(self) -> int:
         """Do one unit of the oldest running job, if nobody is waiting. Returns 1 when a unit ran."""
         if self.awake is not None:
-            self.awake.want(any(job.kind != "watch" for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=20)))
+            # Live 11/20: the laptop went into connected standby mid-task (a plan revision waited 27 minutes, an answer 7), and its standby drops the network.
+            long_job = any(job.kind != "watch" for job in self.repositories.jobs.list(statuses=[JobStatus.RUNNING], limit=20))
+            self.awake.want(long_job or bool(self.repositories.tasks.list_by_statuses(_WORKING, limit=1)))
         if self._unit_lock.locked() or self.repositories.tasks.list_by_statuses(_ACTIVE, limit=1):
             return 0
         # The worker runs max_parallel_tasks loops, each calling tick(). Without this, two of them read the same saved state and did the same unit
