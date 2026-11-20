@@ -1140,12 +1140,12 @@ class TaskWorker(ApprovalStage, DelegationStage, ExternalStage, LearningStage, R
                     )
             if level >= AUTONOMOUS and not offer_pending and int(latest.metadata.get("operator_optional_question_recovery_count", 0)) >= 2:
                 # The question was sent back twice and came a third time. At this level the person is not asked: one last step may only answer (what was done, what could not be
-                # and what the nearest thing is) or stop with what blocks it. Frozen case v_cannot_order asked "which shop?" four times and was cancelled; the answer it owed was "I cannot order".
+                # and what the nearest thing is, and what blocks it, in words). Frozen case v_cannot_order asked "which shop?" four times and was cancelled; the answer it owed was "I cannot order".
                 history.append({
                     "tool_name": CHECK_ENTRY_STUCK, "input": None, "status": "stuck", "no_questions": True,
                     "error": (
                         "You may not ask the person anything more. Answer now with what you have: if what was asked cannot be done with the tools you have (ordering, paying, placing a call), "
-                        "say so plainly in one or two sentences and name the nearest thing you can do (action done); if something blocks you, say what (action blocked)."
+                        "say so plainly in one or two sentences and name the nearest thing you can do; if something blocks you, say what. Your answer is the whole message the person gets (action done)."
                     ),
                 })
                 return self.repositories.tasks.update_metadata(latest.id, {**latest.metadata, "operator_history": history}, TaskStatus.RUNNING)

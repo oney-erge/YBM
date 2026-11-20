@@ -4283,5 +4283,5 @@ def test_the_schema_of_a_step_that_may_not_ask_has_no_ask_branch() -> None:
 
     cached = CachedOperatorSchema(_NoTools())
     actions = {action for branch in cached(finish_only=True, may_ask=False)["anyOf"] for action in branch["properties"]["action"]["enum"]}
-    assert actions == {"done", "blocked"}
+    assert actions == {"done"}  # it can only answer
     assert {action for branch in cached(finish_only=True)["anyOf"] for action in branch["properties"]["action"]["enum"]} == {"done", "ask_user", "blocked"}
