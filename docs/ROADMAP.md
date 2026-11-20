@@ -61,40 +61,29 @@ And the three jobs that have to be excellent:
   outputs are excluded to prevent feedback loops. Read access is checked on every poll. See
   [USING.md](USING.md#projects-and-recurring-work) for the top-level polling limits.
 
-## Next: features that make YBM useful every week
+## Backlog: proposed, not built
 
-These are proposed features, not implemented capabilities. Prioritize a complete user outcome and
-measure repeat use after a real task. The differentiator to validate is a local work system that keeps
-project instructions, produces reviewable deliverables, and repeats successful work with receipts.
+What is left to build, in order, is [PLAN.md](PLAN.md#9-what-is-left-in-order). This list is the broader backlog of features that make YBM useful every week: proposed, not
+implemented. Prioritize a complete user outcome and measure repeat use after a real task. The differentiator to validate is a local work system that keeps project
+instructions, produces reviewable deliverables, and repeats successful work with receipts.
 
 | Priority | User-visible feature | Completion condition |
 |---|---|---|
 | 1 | **Whole-batch inbox reports:** drop several related files and get one combined result. | Add reviewed multi-file bindings, version snapshots, exclusion rules, and recursive watching. Current inbox triggers persist and deduplicate observed changes, wait for stable files, recover after restart, and show the triggering file, but process files separately rather than combining a batch. |
 | 2 | **Decision-ready comparisons:** an evidence-backed recommendation using the user's rubric. | Extract typed facts with source page/section citations; label missing and conflicting evidence; let the user set weights; recompute scores deterministically; export a readable report. Evaluate against reviewed documents, including misleading numbers and scanned files. Current keyword tables do not meet this bar. |
-| 3 | **Reviewed project memory:** a correction improves the next relevant task. | Offer a proposed correction with provenance, ask before retaining it, retrieve it only in its project, and support edit/delete. Measure repeat-error reduction. Manual instructions and task history exist; automatic retrieval and outcome learning do not. |
-| 4 | **One complete connected-work flow:** import selected work documents, prepare a deliverable, and draft its handoff. | Choose one ecosystem based on pilot users; implement OAuth, least-privilege scopes, secure token storage, refresh/revocation, account selection, and reviewed sends. Existing MCP/HTTP primitives are not a finished connector experience. |
-| 5 | **Explicit browser/file handoff:** act on exactly what the user selected. | Show the selected tab or file, capture its identity and context, detect stale selections, and confirm destinations before consequential actions. Generic browser control is not this workflow. |
-| 6 | **Recoverable file work:** inspect changes and restore a mistaken operation. | Record a change manifest and recoverable originals, preview the restore, detect files modified since the run, and verify restoration. A receipt alone is not undo. |
+| 3 | **One complete connected-work flow:** import selected work documents, prepare a deliverable, and draft its handoff. | Choose one ecosystem based on pilot users; implement OAuth, least-privilege scopes, secure token storage, refresh/revocation, account selection, and reviewed sends. Existing MCP/HTTP primitives are not a finished connector experience. |
+| 4 | **Explicit browser/file handoff:** act on exactly what the user selected. | Show the selected tab or file, capture its identity and context, detect stale selections, and confirm destinations before consequential actions. Generic browser control is not this workflow. |
 
-Ship each vertical slice with a short guided example and a real-stack integration test. Track time to
-first usable artifact, verified completion, corrections per task, repeat workflow use, and retained
-weekly users. Do not use tool count or a scripted demo as evidence that users will prefer YBM.
+Built since this list was written (11/20): **recoverable file work**, where `/undo` and the console's Undo button restore a move, with the manifest kept; **reviewed project memory**,
+in part, where projects, their notes, hooks and readable files exist and are answered from an index ([PLAN.md](PLAN.md#5-memory-projects-hooks-skills-and-goals-design-d5b)); what is
+missing is asking before a correction is retained.
 
-## Next: proof
+Ship each vertical slice with a short guided example and a real-stack integration test. Track time to first usable artifact, verified completion, corrections per task, repeat
+workflow use, and retained weekly users. Do not use tool count or a scripted demo as evidence that users will prefer YBM.
 
-Two concrete things, both about not having to take the agent's word:
-
-- **Screenshots as evidence.** Capture the screen before and after a consequential browser or desktop
-  action and attach it to the receipt. Today that work leaves no visual record at all, which is most of
-  job 2.
-- **Check the goal, do not infer it.** `fulfillment.py` infers success from the wording of the request.
-  An approved batch already states what it intends to do, so check that instead: "you asked for the
-  folder sorted; 34 files are now under Documents; confirmed."
-
-Smaller items that are real and unfinished:
-
-- A WhatsApp card in Settings (QR pairing and the allowlist), so it no longer needs a config edit.
-- A human clean-machine pass of the installers on Windows, macOS, and Linux.
+Proof, still open: **screenshots as evidence** (capture the screen before and after a consequential browser or desktop action and attach it to the receipt; today that work leaves
+no visual record), and **check the goal, do not infer it** (`fulfillment.py` still infers success from the wording; PLAN.md D3 is the change). Smaller and real: a WhatsApp card in
+Settings (QR pairing and the allowlist), and a human clean-machine pass of the installers on Windows, macOS, and Linux.
 
 ## Not doing
 
