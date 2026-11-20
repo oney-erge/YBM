@@ -56,6 +56,26 @@ or containing 'electrician'"). One is **open**: `v4_script_rename`, a `code.inte
 After the fixes, on the real bot: the memory suite 8 of 8 (it was 7 of 8); the continuity suite 9 of 11. The two that failed are not the fixes: a QR-code case that ended after a package install and said the image was
 made (the claims check was right; the case is flaky), and a remark answered in chat in 10 to 18 seconds, as it should be, where the runner's stored classifier verdict said "task". The sealed exam is not rerun.
 
+### After the exam (11/20): what each miss turned into
+
+Each miss was traced to its kind, and the fix went to the whole kind, not the one case:
+
+| Kind | What it was | State |
+|---|---|---|
+| Our check | The claims check took a future tense for a write (#299); the blocker report offered Claude Code for any task, a plan edit too (#311: code work only) | Fixed |
+| Our use of the grammar | An open field let the 9B write to the token cap: the fact keeper, then the planner (three minutes a plan) | Fixed for every structured answer, with a test that keeps it so (D6-2, #300, #310) |
+| Our skill question | "Tell me when it ends" scored as a watch (#301); near misses added for every routed skill, all still separate (#312) | Fixed |
+| The test | Phrase lists judged wording (`v4_retry_missing_notes`); the runner trusted a stored verdict over a chat reply it could see (#313) | Runner fixed; the sealed exam stays as sealed |
+| The computer | The laptop goes into connected standby, which drops the network: the twelve-minute rename stall was this (correction #316) | A task being worked on and a live test run now keep it awake (#315) |
+| Found on the way | `job.manage status` named a day-old job: the list kept a chat's oldest jobs (#314) | Fixed |
+
+Measured on the same cases, the computer awake: the continuity suite 11 of 11 (9 of 11 on 11/19); the plan made and revised twice 189.5 s (533 s); no model call ran to the
+token cap in 235 (19 in 2,523 on 11/19). **Open:** (1) "make a folder and put these files in it" blocked in 5 of the 6 runs there have been: the file tool has no way to say it
+(a move into a new folder makes it, but nothing says so) and the case accepts "blocked", so it hid this; a Design change to the file tool, with the recorded fixtures re-recorded.
+(2) The owner's decision: keep the computer awake whenever YBM runs, so a message never finds it asleep (a laptop's battery is the cost). (3) The claims check fired on drafts
+three times in a week (a capability sentence, a file Claude Code wrote in a sub-task); not reproducible from the final answers, watched. (4) The survey rerun and the 600-page
+research each need their own window with the computer awake and no other live runs.
+
 ### What went wrong on 11/19 ("revise the plan", twice)
 
 From the database, 21:05 to 21:10 UTC:
